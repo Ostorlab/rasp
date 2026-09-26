@@ -218,6 +218,33 @@ void rasp_detect_instrumentation_port(rasp_signal_list_t *list) {
     }
 }
 
+/* Behavioral, not name-based: an executable mapping backed by a scratch, memfd or deleted file is how
+ * injected code (a gadget, a dumped-and-patched .so) is typically run, whatever it is named. Complements the
+ * name-based map scan so a renamed Frida build is still caught. */
+static int match_exec_suspicious(const char *line, void *ctx_ptr) {
+    line_match_ctx_t *ctx = ctx_ptr;
+    /* Address bytes are hex (no 'x'); 'x' appears only in the permission field, so this means executable. */
+    if (strchr(line, 'x') == NULL) {
+        return 0;
+    }
+    const char *hit = rasp_match_any(line, ctx->needles, ctx->needle_count);
+    if (hit == NULL) {
+        return 0;
+    }
+    char evidence[RASP_EVIDENCE_LEN];
+    snprintf(evidence, sizeof(evidence), "%s", line);
+    evidence[strcspn(evidence, "\n")] = '\0';
+    rasp_signals_add(ctx->list, ctx->threat, ctx->detector, ctx->confidence, evidence);
+    return 1;
+}
+
+void rasp_detect_maps_exec_suspicious(rasp_signal_list_t *list) {
+    static const char *const needles[] = {"/data/local/tmp", "memfd:", "(deleted)"};
+    line_match_ctx_t ctx = {list, RASP_THREAT_HOOKING, "native.maps_exec_suspicious", 75, needles,
+                            ARRAY_LEN(needles)};
+    for_each_line("/proc/self/maps", match_exec_suspicious, &ctx);
+}
+
 void rasp_run_all(rasp_signal_list_t *list) {
     rasp_detect_su_binaries(list);
     rasp_detect_root_mounts(list);
@@ -227,4 +254,5 @@ void rasp_run_all(rasp_signal_list_t *list) {
     rasp_detect_instrumentation_maps(list);
     rasp_detect_instrumentation_threads(list);
     rasp_detect_instrumentation_port(list);
+    rasp_detect_maps_exec_suspicious(list);
 }

@@ -22,6 +22,20 @@ void rasp_signals_add(rasp_signal_list_t *list, rasp_threat_t threat,
     snprintf(signal->evidence, sizeof(signal->evidence), "%s", evidence ? evidence : "");
 }
 
+const char *rasp_threat_name(rasp_threat_t threat) {
+    switch (threat) {
+        case RASP_THREAT_ROOT:
+            return "root";
+        case RASP_THREAT_EMULATOR:
+            return "emulator";
+        case RASP_THREAT_DEBUGGER:
+            return "debugger";
+        case RASP_THREAT_HOOKING:
+            return "hooking";
+    }
+    return "unknown";
+}
+
 /* Writes `value` as a JSON string body, escaping quotes, backslashes and control characters. */
 static int append_escaped(char *out, size_t out_len, size_t *pos, const char *value) {
     for (const char *c = value; *c; c++) {
@@ -81,4 +95,12 @@ int rasp_signals_to_json(const rasp_signal_list_t *list, char *out, size_t out_l
     }
     out[pos] = '\0';
     return (int)pos;
+}
+
+int rasp_json_append_raw(char *out, size_t out_len, size_t *pos, const char *value) {
+    return append_raw(out, out_len, pos, value);
+}
+
+int rasp_json_append_escaped(char *out, size_t out_len, size_t *pos, const char *value) {
+    return append_escaped(out, out_len, pos, value);
 }

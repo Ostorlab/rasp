@@ -12,6 +12,7 @@ void rasp_detect_tracer(rasp_signal_list_t *list);
 void rasp_detect_instrumentation_maps(rasp_signal_list_t *list);
 void rasp_detect_instrumentation_threads(rasp_signal_list_t *list);
 void rasp_detect_instrumentation_port(rasp_signal_list_t *list);
+void rasp_detect_maps_exec_suspicious(rasp_signal_list_t *list);
 
 /* Runs every native detector. */
 void rasp_run_all(rasp_signal_list_t *list);
