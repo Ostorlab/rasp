@@ -75,10 +75,17 @@ def key_description(
     app_cert_sha256: str = APP_CERT_SHA256,
     boot_state: int = 0,
     locked: bool = True,
+    user_auth: bool = False,
+    auth_timeout: int | None = None,
 ) -> bytes:
     app_id = seq(set_of(seq(octets(package.encode()), integer(1))), set_of(octets(bytes.fromhex(app_cert_sha256))))
     software = seq(explicit(709, octets(app_id)))
+    # Tags must be in ascending order in DER; 503-505 come before 704.
+    auth = [explicit(504, integer(3))] if user_auth else [explicit(503, tlv(0x05, b""))]
+    if auth_timeout is not None:
+        auth.append(explicit(505, integer(auth_timeout)))
     hardware = seq(
+        *auth,
         explicit(704, seq(octets(b"\x11" * 32), boolean(locked), enum(boot_state), octets(b"\x22" * 32))),
         explicit(706, integer(202609)),
     )
@@ -90,13 +97,13 @@ def _name(cn: str) -> x509.Name:
     return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
 
 
-def _cert(subject, issuer, public_key, signing_key, *, ca: bool, extension: bytes | None = None, serial: int | None = None,
-          not_after: dt.datetime | None = None):
+def cert(subject, issuer, public_key, signing_key, *, ca: bool, extension: bytes | None = None, serial: int | None = None,
+         not_after: dt.datetime | None = None, issuer_name: x509.Name | None = None):
     now = dt.datetime.now(dt.timezone.utc)
     builder = (
         x509.CertificateBuilder()
         .subject_name(_name(subject))
-        .issuer_name(_name(issuer))
+        .issuer_name(issuer_name or _name(issuer))
         .public_key(public_key)
         .serial_number(serial or x509.random_serial_number())
         .not_valid_before(now - dt.timedelta(days=1))
@@ -112,19 +119,30 @@ class Chain:
     """root -> intermediate -> leaf, where the leaf is the attested device key."""
 
     def __init__(self, challenge: bytes, *, intermediate_serial: int | None = None,
-                 intermediate_not_after: dt.datetime | None = None, **kd):
+                 intermediate_not_after: dt.datetime | None = None, intermediate_ca: bool = True, **kd):
         self.root_key = ec.generate_private_key(ec.SECP256R1())
         self.intermediate_key = ec.generate_private_key(ec.SECP256R1())
         self.device_key = ec.generate_private_key(ec.SECP256R1())
-        self.root = _cert("Test Root", "Test Root", self.root_key.public_key(), self.root_key, ca=True)
-        self.intermediate = _cert("Test Intermediate", "Test Root", self.intermediate_key.public_key(), self.root_key,
-                                  ca=True, serial=intermediate_serial, not_after=intermediate_not_after)
-        self.leaf = _cert("Android Keystore Key", "Test Intermediate", self.device_key.public_key(),
+        self.root = cert("Test Root", "Test Root", self.root_key.public_key(), self.root_key, ca=True)
+        self.intermediate = cert("Test Intermediate", "Test Root", self.intermediate_key.public_key(), self.root_key,
+                                  ca=intermediate_ca, serial=intermediate_serial, not_after=intermediate_not_after)
+        self.leaf = cert("Android Keystore Key", "Test Intermediate", self.device_key.public_key(),
                           self.intermediate_key, ca=False, extension=key_description(challenge, **kd))
 
-    def b64(self) -> list[str]:
-        return [base64.b64encode(c.public_bytes(serialization.Encoding.DER)).decode()
-                for c in (self.leaf, self.intermediate, self.root)]
+    def certs(self) -> list[x509.Certificate]:
+        return [self.leaf, self.intermediate, self.root]
+
+    def b64(self, extra_below_leaf: x509.Certificate | None = None) -> list[str]:
+        certs = ([extra_below_leaf] if extra_below_leaf else []) + self.certs()
+        return [base64.b64encode(c.public_bytes(serialization.Encoding.DER)).decode() for c in certs]
+
+    def forge_below_leaf(self, challenge: bytes) -> tuple[x509.Certificate, ec.EllipticCurvePrivateKey]:
+        """The review finding: a certificate signed by the attested key itself, claiming a locked, verified device
+        and carrying a key that lives outside the keystore."""
+        outside_key = ec.generate_private_key(ec.SECP256R1())
+        forged = cert("forged", "", outside_key.public_key(), self.device_key, ca=False,
+                      extension=key_description(challenge, user_auth=True), issuer_name=self.leaf.subject)
+        return forged, outside_key
 
     def public_key_der(self) -> bytes:
         return self.device_key.public_key().public_bytes(

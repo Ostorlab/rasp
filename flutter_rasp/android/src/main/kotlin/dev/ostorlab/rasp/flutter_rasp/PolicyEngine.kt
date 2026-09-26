@@ -64,7 +64,7 @@ class PolicyEngine(private val config: RaspConfig) {
         )
         private val MEDIUM_RISK = setOf(
             ThreatType.ROOT, ThreatType.EMULATOR, ThreatType.ACTIVE_CALL, ThreatType.REMOTE_ACCESS_APP,
-            ThreatType.SCREEN_CAPTURE,
+            ThreatType.SCREEN_CAPTURE, ThreatType.DETECTOR_FAILURE,
         )
     }
 }

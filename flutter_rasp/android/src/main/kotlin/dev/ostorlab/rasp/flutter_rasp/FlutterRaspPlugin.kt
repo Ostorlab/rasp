@@ -69,6 +69,8 @@ class FlutterRaspPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
             try {
                 val value = handle(call)
                 mainHandler.post { result.success(value) }
+            } catch (e: UserConfirmationException) {
+                mainHandler.post { result.error(e.code, e.message, null) }
             } catch (e: IllegalStateException) {
                 mainHandler.post { result.error("not_started", e.message, null) }
             } catch (e: Exception) {
@@ -102,7 +104,7 @@ class FlutterRaspPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
         "isDeviceBound" -> deviceBinding.isBound()
         "bindDevice" -> {
             val challenge = call.argument<String>("challenge") ?: throw IllegalArgumentException("challenge is required")
-            deviceBinding.bind(Base64.decode(challenge, Base64.NO_WRAP))
+            deviceBinding.bind(Base64.decode(challenge, Base64.NO_WRAP), call.argument<Boolean>("requireUserAuth") ?: true)
         }
         "unbindDevice" -> {
             deviceBinding.unbind()
@@ -115,9 +117,18 @@ class FlutterRaspPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
             // Always sign, even when the policy would block: the server gets the verdict and decides.
             val (guard, decision) = requireEngine().guard(flow)
             val payload = SignedPayload.build(nonce, decision.timestampMillis, context.packageName, decision, fields)
+            var signature = deviceBinding.initSignature()
+            if (deviceBinding.requiresUserAuth()) {
+                val host = activity ?: throw IllegalStateException("no activity to ask the user")
+                signature = UserConfirmation.authorize(
+                    host, signature,
+                    call.argument<String>("confirmationTitle") ?: "Confirm",
+                    call.argument<String>("confirmationText") ?: fields.entries.joinToString { "${it.key}: ${it.value}" },
+                )
+            }
             mapOf(
                 "signedData" to payload,
-                "signature" to deviceBinding.sign(payload.toByteArray(Charsets.UTF_8)),
+                "signature" to deviceBinding.finish(signature, payload.toByteArray(Charsets.UTF_8)),
                 "guard" to guardMap(guard, decision),
             )
         }

@@ -5,6 +5,8 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
 import android.util.Base64
+import android.security.keystore.KeyInfo
+import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.PrivateKey
@@ -24,17 +26,24 @@ class DeviceBinding(private val alias: String = DEFAULT_ALIAS) {
 
     fun isBound(): Boolean = keyStore.containsAlias(alias)
 
-    fun bind(challenge: ByteArray): Map<String, Any> {
+    /**
+     * With [requireUserAuth], every signature needs the user's biometric or device credential, enforced by the secure
+     * hardware and visible to the server in the attestation. Malware driving the screen cannot sign silently.
+     * Needs a secure lock screen.
+     */
+    fun bind(challenge: ByteArray, requireUserAuth: Boolean): Map<String, Any> {
         require(challenge.size in 16..128) { "challenge must be 16 to 128 bytes" }
         unbind()
-        val strongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && tryGenerate(challenge, strongBox = true)
+        val strongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+            tryGenerate(challenge, strongBox = true, requireUserAuth)
         if (!strongBox) {
-            generate(challenge, strongBox = false)
+            generate(challenge, strongBox = false, requireUserAuth)
         }
         val chain = keyStore.getCertificateChain(alias).orEmpty()
         return mapOf(
             "keyAlias" to alias,
             "strongBox" to strongBox,
+            "userAuthRequired" to requireUserAuth,
             "publicKey" to b64(keyStore.getCertificate(alias).publicKey.encoded),
             "certificateChain" to chain.map { b64(it.encoded) },
         )
@@ -46,32 +55,52 @@ class DeviceBinding(private val alias: String = DEFAULT_ALIAS) {
         }
     }
 
-    fun sign(data: ByteArray): String {
-        val key = keyStore.getKey(alias, null) as? PrivateKey ?: throw IllegalStateException("device is not bound")
-        return b64(Signature.getInstance("SHA256withECDSA").run {
-            initSign(key)
-            update(data)
-            sign()
-        })
+    fun requiresUserAuth(): Boolean {
+        val key = privateKey()
+        val info = KeyFactory.getInstance(key.algorithm, ANDROID_KEYSTORE).getKeySpec(key, KeyInfo::class.java)
+        return info.isUserAuthenticationRequired
     }
 
-    private fun tryGenerate(challenge: ByteArray, strongBox: Boolean): Boolean = try {
-        generate(challenge, strongBox)
+    /** A signature object ready to sign; for user-auth keys it must go through BiometricPrompt before [finish]. */
+    fun initSignature(): Signature = Signature.getInstance("SHA256withECDSA").apply { initSign(privateKey()) }
+
+    fun finish(signature: Signature, data: ByteArray): String {
+        signature.update(data)
+        return b64(signature.sign())
+    }
+
+    private fun privateKey(): PrivateKey =
+        keyStore.getKey(alias, null) as? PrivateKey ?: throw IllegalStateException("device is not bound")
+
+    private fun tryGenerate(challenge: ByteArray, strongBox: Boolean, requireUserAuth: Boolean): Boolean = try {
+        generate(challenge, strongBox, requireUserAuth)
         true
     } catch (e: StrongBoxUnavailableException) {
         false
     }
 
-    private fun generate(challenge: ByteArray, strongBox: Boolean) {
+    private fun generate(challenge: ByteArray, strongBox: Boolean, requireUserAuth: Boolean) {
         val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
             .setDigests(KeyProperties.DIGEST_SHA256)
             .setAttestationChallenge(challenge)
             .apply { if (strongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) setIsStrongBoxBacked(true) }
+            .apply { if (requireUserAuth) requireUserAuthPerUse(this) }
             .build()
         KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, ANDROID_KEYSTORE).run {
             initialize(spec)
             generateKeyPair()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun requireUserAuthPerUse(builder: KeyGenParameterSpec.Builder) {
+        builder.setUserAuthenticationRequired(true).setInvalidatedByBiometricEnrollment(true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Timeout 0 = authentication for every single use.
+            builder.setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
+        } else {
+            builder.setUserAuthenticationValidityDurationSeconds(-1) // per use, biometric only before Android 11
         }
     }
 

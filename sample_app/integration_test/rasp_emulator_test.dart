@@ -53,6 +53,10 @@ void main() {
     // Signed with the expected certificate and running under the expected package name.
     expect(detectors, isNot(contains('platform.signing_cert')));
     expect(detectors, isNot(contains('platform.package_name')));
+    // Correctly configured build: native core loaded, integrity pinned, every detector ran.
+    expect(detectors, isNot(contains('native.core_missing')));
+    expect(detectors, isNot(contains('platform.integrity_unconfigured')));
+    expect(report.threats.keys, isNot(contains(ThreatType.detectorFailure)));
     // No root, debugger or hooking tool on a stock emulator image.
     expect(report.threats.keys, isNot(contains(ThreatType.root)));
     expect(report.threats.keys, isNot(contains(ThreatType.hooking)));

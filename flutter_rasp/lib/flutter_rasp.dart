@@ -53,9 +53,13 @@ class Rasp {
 
   /// Generates a hardware-backed key attested with the server's [challenge] (16 to 128 random bytes).
   /// Replaces any previous binding.
-  static Future<DeviceBindingResult> bindDevice(Uint8List challenge) async {
+  ///
+  /// With [requireUserAuth] (the default), every signature needs the user's biometric or device credential,
+  /// enforced by the secure hardware and visible to the server in the attestation. It needs a secure lock screen.
+  static Future<DeviceBindingResult> bindDevice(Uint8List challenge, {bool requireUserAuth = true}) async {
     final result = await _channel.invokeMapMethod<Object?, Object?>('bindDevice', {
       'challenge': base64Encode(challenge),
+      'requireUserAuth': requireUserAuth,
     });
     return DeviceBindingResult.fromMap(result!);
   }
@@ -64,15 +68,23 @@ class Rasp {
 
   /// Runs a fresh scan for [flow] and signs [fields] plus the verdict with the bound key.
   /// The [nonce] comes from the server, so a signed transaction cannot be replayed.
+  ///
+  /// For a user-auth key, the system prompt shows [confirmationTitle] and [confirmationText]; describe exactly what
+  /// is being signed ("Send \$50.00 to Alex Smith"). Throws a PlatformException with code `auth_cancelled` if the
+  /// user declines.
   static Future<SignedTransaction> signTransaction({
     required String flow,
     required String nonce,
     required Map<String, String> fields,
+    String confirmationTitle = 'Confirm',
+    String? confirmationText,
   }) async {
     final result = await _channel.invokeMapMethod<Object?, Object?>('signTransaction', {
       'flow': flow,
       'nonce': nonce,
       'fields': fields,
+      'confirmationTitle': confirmationTitle,
+      'confirmationText': confirmationText,
     });
     return SignedTransaction.fromMap(result!);
   }

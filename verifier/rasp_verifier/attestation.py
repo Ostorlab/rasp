@@ -22,6 +22,9 @@ from . import der
 KEY_DESCRIPTION_OID = x509.ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17")
 
 # AuthorizationList tags used here.
+TAG_NO_AUTH_REQUIRED = 503
+TAG_USER_AUTH_TYPE = 504
+TAG_AUTH_TIMEOUT = 505
 TAG_ROOT_OF_TRUST = 704
 TAG_OS_VERSION = 705
 TAG_OS_PATCH_LEVEL = 706
@@ -49,6 +52,7 @@ class AttestationResult:
     verified_boot_state: str | None
     device_locked: bool | None
     os_patch_level: int | None
+    user_auth_required: bool
     public_key_der: bytes
     warnings: list[str] = field(default_factory=list)
 
@@ -70,6 +74,26 @@ def load_revocations(status_json: dict) -> dict[str, str]:
 
 def _spki(cert: x509.Certificate) -> bytes:
     return cert.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+
+
+def _is_ca(cert: x509.Certificate) -> bool:
+    try:
+        if not cert.extensions.get_extension_for_class(x509.BasicConstraints).value.ca:
+            return False
+    except x509.ExtensionNotFound:
+        return False
+    try:
+        return cert.extensions.get_extension_for_class(x509.KeyUsage).value.key_cert_sign
+    except x509.ExtensionNotFound:
+        return True
+
+
+def _has_key_description(cert: x509.Certificate) -> bool:
+    try:
+        cert.extensions.get_extension_for_oid(KEY_DESCRIPTION_OID)
+        return True
+    except x509.ExtensionNotFound:
+        return False
 
 
 def _authorization_list(node: der.Node) -> dict[int, der.Node]:
@@ -102,14 +126,16 @@ def verify_key_attestation(
     signing_cert_sha256: list[str],
     *,
     require_hardware: bool = True,
+    require_user_auth: bool = False,
     trusted_roots: list[x509.Certificate] | None = None,
     revocations: dict[str, str] | None = None,
     now: dt.datetime | None = None,
 ) -> AttestationResult:
     """Verifies a Key Attestation chain (leaf first) for a key generated with `challenge`.
 
-    Checks, in order: chain signatures and validity, root, revocation, challenge, app identity (package name and
-    signing certificate, which stops relaying the challenge to another app or phone), then the security level.
+    Checks, in order: chain structure, chain signatures and validity, root, revocation, challenge, app identity
+    (package name and signing certificate, which stops relaying the challenge to another app or phone), the security
+    level, and optionally that every use of the key needs the user (biometric or device credential).
     """
     if len(chain_b64) < 2:
         raise AttestationError("bad_chain", "need at least a leaf and a root")
@@ -118,6 +144,19 @@ def verify_key_attestation(
     except ValueError as e:
         raise AttestationError("bad_chain", str(e)) from e
     now = now or dt.datetime.now(dt.timezone.utc)
+
+    # Structure. The attested key is a signing key: code that controls it can sign an extra certificate "below" the
+    # real leaf and put any claims in it. So only the leaf may carry the key description, the leaf must not be a CA,
+    # and every certificate above it must be a CA.
+    if _is_ca(chain[0]):
+        raise AttestationError("bad_chain", "the attested leaf is a CA certificate")
+    if not _has_key_description(chain[0]):
+        raise AttestationError("no_attestation", "leaf has no key description extension")
+    for cert in chain[1:]:
+        if _has_key_description(cert):
+            raise AttestationError("bad_chain", f"{cert.subject.rfc4514_string()} carries a key description")
+        if not _is_ca(cert):
+            raise AttestationError("bad_chain", f"{cert.subject.rfc4514_string()} is not a CA")
 
     for child, issuer in zip(chain, chain[1:]):
         try:
@@ -175,6 +214,17 @@ def verify_key_attestation(
         boot_state = BOOT_STATES.get(rot[2].as_int(), "unknown")
     if TAG_OS_PATCH_LEVEL in hardware:
         os_patch = hardware[TAG_OS_PATCH_LEVEL].as_int()
+    # Per-use user authentication: no "no auth required" tag, a user-auth type, and no timeout (a timeout would let
+    # one unlock cover later signatures). Only the hardware-enforced list counts, except in lenient (emulator) mode.
+    auth_tags = hardware if require_hardware else {**software, **hardware}
+    user_auth = (
+        TAG_NO_AUTH_REQUIRED not in auth_tags
+        and TAG_USER_AUTH_TYPE in auth_tags
+        and auth_tags[TAG_USER_AUTH_TYPE].as_int() != 0
+        and (TAG_AUTH_TIMEOUT not in auth_tags or auth_tags[TAG_AUTH_TIMEOUT].as_int() == 0)
+    )
+    if require_user_auth and not user_auth:
+        raise AttestationError("no_user_auth", "the key can be used without the user")
 
     if require_hardware:
         if security_level not in ("tee", "strongbox"):
@@ -196,6 +246,7 @@ def verify_key_attestation(
         verified_boot_state=boot_state,
         device_locked=device_locked,
         os_patch_level=os_patch,
+        user_auth_required=user_auth,
         public_key_der=_spki(chain[0]),
         warnings=warnings,
     )

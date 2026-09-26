@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Cleartext only for the reference bank server on the emulator's host loopback (demo). Everything else is HTTPS. -->
+<!-- Release: HTTPS only. Debug and profile builds override this file to reach the reference server on the emulator host. -->
 <network-security-config>
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">10.0.2.2</domain>
-    </domain-config>
+    <base-config cleartextTrafficPermitted="false" />
 </network-security-config>

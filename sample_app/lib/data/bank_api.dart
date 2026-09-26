@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter_rasp/flutter_rasp.dart';
 
 import '../rasp_setup.dart';
+import 'bank.dart';
 
 /// Backend base URL, e.g. `--dart-define=BANK_SERVER=http://10.0.2.2:8787` for the reference server
 /// (verifier/rasp_verifier/server.py) seen from an Android emulator. Empty = offline demo.
@@ -36,8 +37,10 @@ class BankApi {
 
   bool get enabled => bankServer.isNotEmpty;
 
+  String? sessionToken;
   String? deviceId;
   String? securityLevel;
+  bool userAuthRequired = false;
 
   final _http = HttpClient()..connectionTimeout = const Duration(seconds: 10);
 
@@ -56,32 +59,45 @@ class BankApi {
     return decoded;
   }
 
-  /// Binds this install to a hardware-backed key, attested for the server's challenge.
+  /// Logs the customer in; binding and transfers need the session.
+  Future<void> login({required String customerId, required String pin}) async {
+    final result = await _post('/v1/sessions', {'customerId': customerId, 'pin': pin});
+    sessionToken = result['sessionToken']! as String;
+  }
+
+  String get _session => sessionToken ?? (throw BankApiException('not logged in'));
+
+  /// Binds this install to a hardware-backed key, attested for the server's challenge. The key needs the user's
+  /// biometric or device credential for every signature, so malware cannot sign transfers silently.
   Future<void> bindDevice() async {
-    final challenge = await _post('/v1/challenge', {'purpose': 'bind'});
+    final challenge = await _post('/v1/challenge', {'sessionToken': _session, 'purpose': 'bind'});
     final nonce = challenge['nonce']! as String;
     final binding = await Rasp.bindDevice(Uint8List.fromList(base64Decode(nonce)));
     final result = await _post('/v1/devices', {
+      'sessionToken': _session,
       'challenge': nonce,
       'publicKey': binding.publicKey,
       'certificateChain': binding.certificateChain,
     });
     deviceId = result['deviceId']! as String;
     securityLevel = result['securityLevel'] as String?;
+    userAuthRequired = result['userAuthRequired'] == true;
   }
 
   /// Signs the transfer and the RASP verdict with the bound key; the server verifies and decides.
   Future<TransferResult> transfer({required String payee, required int amountCents}) async {
     final id = deviceId ?? (throw BankApiException('device is not bound'));
-    final challenge = await _post('/v1/challenge', {'purpose': 'transfer', 'deviceId': id});
+    final challenge = await _post('/v1/challenge', {'sessionToken': _session, 'purpose': 'transfer', 'deviceId': id});
     final signed = await Rasp.signTransaction(
       flow: Flows.transfer,
       nonce: challenge['nonce']! as String,
       fields: {'payee': payee, 'amountCents': '$amountCents', 'currency': 'USD'},
+      confirmationTitle: 'Confirm transfer',
+      confirmationText: 'Send ${formatCents(amountCents)} to $payee',
     );
     final result = await _post(
       '/v1/transfers',
-      {'deviceId': id, 'signedData': signed.signedData, 'signature': signed.signature},
+      {'sessionToken': _session, 'deviceId': id, 'signedData': signed.signedData, 'signature': signed.signature},
       ok: {200, 403},
     );
     final decision = switch (result['decision']) {

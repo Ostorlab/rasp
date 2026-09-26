@@ -41,6 +41,7 @@ void main() {
           return {
             'keyAlias': 'k',
             'strongBox': false,
+            'userAuthRequired': true,
             'publicKey': 'cHVi',
             'certificateChain': ['bGVhZg==', 'cm9vdA=='],
           };
@@ -95,17 +96,21 @@ void main() {
 
   test('bindDevice sends the challenge as base64', () async {
     final result = await Rasp.bindDevice(Uint8List.fromList(List.filled(16, 1)));
-    expect(calls.single.arguments, {'challenge': 'AQEBAQEBAQEBAQEBAQEBAQ=='});
+    expect(calls.single.arguments, {'challenge': 'AQEBAQEBAQEBAQEBAQEBAQ==', 'requireUserAuth': true});
     expect(result.certificateChain, hasLength(2));
+    expect(result.userAuthRequired, isTrue);
     expect(result.strongBox, isFalse);
   });
 
   test('signTransaction sends flow, nonce and fields', () async {
-    final result = await Rasp.signTransaction(flow: 'transfer', nonce: 'n1', fields: {'amount': '5.00'});
+    final result = await Rasp.signTransaction(
+        flow: 'transfer', nonce: 'n1', fields: {'amount': '5.00'}, confirmationText: 'Send \$5.00');
     expect(calls.single.arguments, {
       'flow': 'transfer',
       'nonce': 'n1',
       'fields': {'amount': '5.00'},
+      'confirmationTitle': 'Confirm',
+      'confirmationText': 'Send \$5.00',
     });
     expect(result.signature, 'c2ln');
     expect(result.guard.allowed, isTrue);

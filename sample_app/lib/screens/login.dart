@@ -36,12 +36,13 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
     final api = BankApi.instance;
-    if (api.enabled && api.deviceId == null) {
+    if (api.enabled) {
       try {
-        await api.bindDevice();
+        await api.login(customerId: 'demo', pin: _pin.text);
+        if (api.deviceId == null) await api.bindDevice();
       } on Exception catch (e) {
         if (!mounted) return;
-        setState(() => _error = 'Device binding failed: $e');
+        setState(() => _error = 'Sign-in failed: $e');
         return;
       }
     }

@@ -19,7 +19,10 @@ enum class ThreatType(val wireName: String, val nativeId: Int?) {
     SCREEN_RECORDING("screenRecording", null),
     SCREEN_MIRRORING("screenMirroring", null),
     REMOTE_ACCESS_APP("remoteAccessApp", null),
-    ACTIVE_CALL("activeCall", null);
+    ACTIVE_CALL("activeCall", null),
+
+    /** A detector could not run (exception, missing native core). Protection is degraded, so it is reported. */
+    DETECTOR_FAILURE("detectorFailure", null);
 
     companion object {
         fun fromWire(name: String): ThreatType? = entries.firstOrNull { it.wireName == name }
@@ -85,6 +88,7 @@ data class RaspConfig(
             ThreatType.REMOTE_ACCESS_APP to setOf(Reaction.REPORT),
             // A call during a payment is the typical impersonation scam: warn, let the user decide.
             ThreatType.ACTIVE_CALL to setOf(Reaction.REPORT, Reaction.WARN_USER),
+            ThreatType.DETECTOR_FAILURE to setOf(Reaction.REPORT),
         )
 
         /** Assistive tools that may read the screen without being treated as abuse. */

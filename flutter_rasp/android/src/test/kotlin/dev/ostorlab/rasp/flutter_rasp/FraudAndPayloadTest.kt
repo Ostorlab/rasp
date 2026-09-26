@@ -20,6 +20,14 @@ internal class FraudAndPayloadTest {
     }
 
     @Test
+    fun throwingDetectorIsReportedNotSilent() {
+        val ok = Signal(ThreatType.ROOT, "native.su_binary", 90, "/sbin/su")
+        val signals = runDetectors("platform", listOf({ listOf(ok) }, { throw SecurityException("hooked") }))
+        assertEquals(listOf(ThreatType.ROOT, ThreatType.DETECTOR_FAILURE), signals.map { it.threat })
+        assertEquals("SecurityException", signals[1].evidence)
+    }
+
+    @Test
     fun signedPayloadIsCanonical() {
         val config = RaspConfig.fromMap(mapOf("sensitiveFlows" to listOf("transfer")))
         val decision = PolicyEngine(config).evaluate(

@@ -19,7 +19,7 @@ DENY_THREATS = {
     "tamper", "hooking", "debugger", "accessibilityAbuse", "overlay", "screenRecording", "screenMirroring",
 }
 # Threats that call for extra confirmation (out-of-band OTP, a cooling-off delay, a call-back).
-STEP_UP_THREATS = {"root", "emulator", "activeCall", "remoteAccessApp", "screenCapture"}
+STEP_UP_THREATS = {"root", "emulator", "activeCall", "remoteAccessApp", "screenCapture", "detectorFailure"}
 
 
 class TransactionError(Exception):
@@ -57,6 +57,8 @@ def parse_signed_data(signed_data: str) -> SignedTransaction:
         if not sep:
             raise TransactionError("bad_format", f"line without '=': {line[:40]}")
         if key.startswith("f."):
+            if key[2:] in fields:
+                raise TransactionError("bad_format", f"duplicate field {key[2:]}")
             fields[key[2:]] = _unescape(value)
         elif key in header:
             raise TransactionError("bad_format", f"duplicate {key}")

@@ -31,6 +31,9 @@ See `rasp-research.md` for background and the design document for the full platf
 | `screenMirroring` | Presentation displays (Cast, Miracast, external screens) | Kotlin |
 | `remoteAccessApp` | AnyDesk, TeamViewer QuickSupport, RustDesk, AirDroid and similar installed | Kotlin |
 | `activeCall` | Phone or VoIP call in progress (audio mode; no permission needed) | Kotlin |
+| `detectorFailure` | A detector threw, so protection is degraded (reported instead of silently skipped) | native + Kotlin |
+
+Fail-closed rules: a missing native core (`librasp_core.so` removed from the APK) is reported as `tamper`, and so is a release build without a pinned signing certificate or package name. An allowlisted assistive tool only counts when it is a system app or was installed from an app store.
 
 Event-type signals (screenshots, obscured touches) stay active for 5 minutes, so the next guard still sees them.
 
@@ -84,10 +87,14 @@ if (!guard.allowed) { /* refuse */ }
 if (guard.warnings.contains(ThreatType.activeCall)) { /* "Is someone on the phone asking you to pay?" */ }
 
 // Device binding: the server sends a random challenge and verifies the Key Attestation chain.
+// By default the key needs the user's biometric or device credential for every signature.
 final binding = await Rasp.bindDevice(challengeBytes);   // send publicKey + certificateChain to the server
 
 // Every transfer: sign the fields and the RASP verdict with the bound key, using a server nonce.
-final signed = await Rasp.signTransaction(flow: 'transfer', nonce: nonce, fields: {'amountCents': '5000'});
+// The system prompt shows the confirmation text; the user approves with a fingerprint or PIN.
+final signed = await Rasp.signTransaction(
+  flow: 'transfer', nonce: nonce, fields: {'amountCents': '5000'},
+  confirmationTitle: 'Confirm transfer', confirmationText: r'Send $50.00 to Alex Smith');
 ```
 
 ### Signed transaction format (`rasp-tx-1`)
@@ -107,24 +114,28 @@ The signature is ECDSA P-256 / SHA-256 over the UTF-8 text, made with the hardwa
 ## Server side (`verifier/`)
 
 - `verify_key_attestation(chain, challenge, package, signer_digests)` runs these checks in order:
+    - chain structure: only the leaf carries the attestation extension, the leaf is not a CA, and every certificate above it is a CA. This stops a certificate forged with the attested key itself;
     - chain signatures, and validity of the issuing certificates;
     - Google root (both published roots are bundled, including the EC P-384 root used from February 2026);
     - revocation list (optional);
     - challenge;
     - **app identity**: package name and signing-certificate digest in `attestationApplicationId`. This blocks relaying the challenge to another app or phone;
     - key security level (TEE or StrongBox);
-    - locked bootloader and verified boot.
+    - locked bootloader and verified boot;
+    - optionally (`require_user_auth`), that every use of the key needs the user: the attestation shows a user-auth type, no "no auth required" tag and no timeout.
 - `verify_transaction(...)` checks the bound key's signature, the single-use nonce, the app and the clock skew.
 - `decide(tx)` returns:
     - **deny** for tamper, hooking, a debugger, accessibility abuse, overlays, recording or mirroring;
     - **step-up** for root, emulator, a call in progress, remote-access apps or screenshots;
     - **allow** otherwise.
-- `python -m rasp_verifier.server --package <pkg> --cert-sha256 <digest> [--allow-software-attestation]` runs the reference backend with these endpoints:
+- `RevocationList` keeps Google's revocation list fresh (refreshed every 12 h). Binding fails closed when the list is missing or older than 48 h.
+- `python -m rasp_verifier.server --package <pkg> --cert-sha256 <digest>` runs the reference backend with these endpoints:
+    - `/v1/sessions`: customer login, with a lockout after 5 wrong PINs;
     - `/v1/challenge`
-    - `/v1/devices`
-    - `/v1/transfers`
+    - `/v1/devices`: needs a session, and replaces the customer's previous device;
+    - `/v1/transfers`: needs a session, and the device must belong to that customer.
 
-    `--allow-software-attestation` is for emulators only; never use it in production.
+    By default it requires hardware attestation, user-auth keys and a fresh revocation list. `--allow-software-attestation`, `--allow-no-user-auth` and `--no-revocation-check` are for emulators and offline demos only; never use them in production.
 
 Demo Bank uses the backend when built with `--dart-define=BANK_SERVER=http://10.0.2.2:8787` (the host as seen from the emulator). Without it, the app runs offline as before.
 
@@ -164,21 +175,26 @@ DEFINES="--dart-define=RASP_E2E=true --dart-define=RASP_CERT_SHA256=$(tool/cert_
 DRIVE="flutter drive --profile -d emulator-5554 --driver=test_driver/integration_test.dart"
 # UI flow: login, transfer blocked on the emulator, no fraud false positives
 $DRIVE $DEFINES --target=integration_test/rasp_emulator_test.dart
-# Device binding and signed transfer against the reference backend (start it first, see the test header)
+# Login, device binding with a user-auth key, and a signed transfer against the reference backend.
+# Needs a screen lock (adb shell locksettings set-pin 1111) and the backend running (see the test header);
+# approve the prompt with: adb shell input text 1111 && adb shell input keyevent 66
 $DRIVE $DEFINES --dart-define=BANK_SERVER=http://10.0.2.2:8787 --target=integration_test/bank_server_test.dart
 # Scam call: run, then from the host: adb emu gsm call 5551234; adb emu gsm accept 5551234
 $DRIVE $DEFINES --target=integration_test/scam_call_test.dart
 ```
 
-`RASP_E2E` makes `tamper` report-only in test builds. `flutter drive` builds are debuggable, and the engine otherwise treats that as tampering and closes the app.
+`RASP_E2E` makes `tamper` report-only in test builds. `flutter drive` builds are debuggable, and the engine otherwise treats that as tampering and closes the app. It is honoured in profile builds only.
+
+Release builds allow HTTPS only. The cleartext exception for the reference server (`10.0.2.2`) exists in debug and profile builds only.
 
 ## Verified on an emulator (Pixel Fold, Android 16, x86_64)
 
 - **UI flow:** login works, and the transfer is blocked because the emulator is detected. There are no false positives for signing certificate, package name, root, hooking or any fraud threat. The Fold's second display is not taken for mirroring.
-- **Device binding:** real Android Keystore attestation from the emulator is verified by the reference backend. The signed transfer reaches the server, which denies it from the signed verdict (the test build reports `tamper`).
+- **Device binding:** the customer logs in, and real Android Keystore attestation from the emulator is verified by the reference backend, with Google's live revocation list. The attestation shows a user-auth key. The transfer is approved in the system `BiometricPrompt` with the device PIN, and the server denies it from the signed verdict (the test build reports `tamper`).
 - **Scam call:** a GSM call placed from the host and answered is detected as `activeCall` within a few seconds, and the transfer flow returns the warning.
 - **Sensitive screens:** `FLAG_SECURE` is set on the login screen, so screenshots come out black.
 - **Repackaging:** the release APK re-signed with a different key is flagged as `tamper` and closes itself after the warning. The genuine release APK stays open.
+- **Stripped native core:** the release APK with `librasp_core.so` removed (re-signed with the original key) reports `tamper` and closes itself. Before the fix, it ran with no native checks.
 
 ## Known limits
 
@@ -186,4 +202,5 @@ $DRIVE $DEFINES --target=integration_test/scam_call_test.dart
 - No obfuscation or build-time hardening. The checks are standard and can be found and bypassed by a determined reverse engineer, as the research notes explain. The server-side checks (attestation, signed verdicts, single-use nonces) are what keeps a bypass from turning into an accepted payment.
 - Accessibility-abuse, overlay and mirroring detection are covered by unit tests and a clean-device check, not yet by a live malicious-app test.
 - The emulator cannot produce hardware attestation under Google's roots. The strict (production) path is covered by the verifier's unit tests with synthetic chains, and still needs checking on a physical device.
-- Play Integrity is not integrated yet; it needs a Google Cloud project for the app.
+- The RASP verdict inside a signed transfer is still reported by the app itself. Code running inside the app on a rooted phone can sign a clean verdict. The user-auth key stops silent signing, but not a user who is tricked into approving. Play Integrity per transaction (a Google-signed verdict the app cannot forge) is the next step; it needs a Google Cloud project for the app.
+- The reference backend keeps customers and sessions in memory and uses a demo PIN; a bank uses its own authentication.

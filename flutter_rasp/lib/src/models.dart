@@ -29,7 +29,10 @@ enum ThreatType {
   remoteAccessApp,
 
   /// A phone or VoIP call is in progress.
-  activeCall;
+  activeCall,
+
+  /// A detector could not run (it threw, or the native core is missing). Protection is degraded.
+  detectorFailure;
 
   static ThreatType? fromName(String name) {
     for (final value in values) {
@@ -202,6 +205,7 @@ class DeviceBindingResult {
   const DeviceBindingResult({
     required this.keyAlias,
     required this.strongBox,
+    required this.userAuthRequired,
     required this.publicKey,
     required this.certificateChain,
   });
@@ -209,6 +213,7 @@ class DeviceBindingResult {
   factory DeviceBindingResult.fromMap(Map<Object?, Object?> map) => DeviceBindingResult(
         keyAlias: map['keyAlias']! as String,
         strongBox: map['strongBox']! as bool,
+        userAuthRequired: (map['userAuthRequired'] as bool?) ?? false,
         publicKey: map['publicKey']! as String,
         certificateChain: (map['certificateChain']! as List).cast<String>(),
       );
@@ -217,6 +222,9 @@ class DeviceBindingResult {
 
   /// Whether the key lives in a StrongBox secure element rather than the TEE.
   final bool strongBox;
+
+  /// Whether every signature needs the user's biometric or device credential.
+  final bool userAuthRequired;
 
   /// SubjectPublicKeyInfo, DER, base64.
   final String publicKey;

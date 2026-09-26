@@ -2,11 +2,11 @@ package dev.ostorlab.rasp.flutter_rasp
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
 import android.media.AudioManager
 import android.os.Build
-import android.util.Log
 import android.view.accessibility.AccessibilityManager
 
 /**
@@ -43,17 +43,10 @@ class FraudDetectors(
     private val screen: ScreenState,
 ) {
 
-    fun scan(): List<Signal> = listOf(
-        ::accessibilityServices, ::remoteAccessApps, ::activeCall, ::screenMirroring, ::screenRecording,
-        transient::active,
-    ).flatMap { detector ->
-        try {
-            detector()
-        } catch (e: Exception) {
-            Log.w("flutter_rasp", "fraud detector failed", e)
-            emptyList()
-        }
-    }
+    fun scan(): List<Signal> = runDetectors(
+        "fraud",
+        listOf(::accessibilityServices, ::remoteAccessApps, ::activeCall, ::screenMirroring, ::screenRecording, transient::active),
+    )
 
     /**
      * Enabled accessibility services that can read the screen or perform gestures, and are not known assistive tools.
@@ -66,7 +59,7 @@ class FraudDetectors(
                 val pkg = info.resolveInfo?.serviceInfo?.packageName ?: return@mapNotNull null
                 val canRead = info.capabilities and AccessibilityServiceInfo.CAPABILITY_CAN_RETRIEVE_WINDOW_CONTENT != 0
                 val canAct = info.capabilities and AccessibilityServiceInfo.CAPABILITY_CAN_PERFORM_GESTURES != 0
-                if (pkg in config.accessibilityAllowlist || (!canRead && !canAct)) return@mapNotNull null
+                if (isTrustedAssistiveTool(pkg) || (!canRead && !canAct)) return@mapNotNull null
                 Triple(pkg, canRead, canAct)
             }
         if (suspicious.isEmpty()) {
@@ -78,6 +71,21 @@ class FraudDetectors(
                 "installer=${installerOf(pkg) ?: "none"})"
         }
         return listOf(Signal(ThreatType.ACCESSIBILITY_ABUSE, "fraud.accessibility_services", if (sideloaded) 95 else 75, evidence))
+    }
+
+    /**
+     * An allowlisted package name is only trusted when the app is a system app or came from an app store: malware
+     * could otherwise install itself under TalkBack's package name on a device that does not have TalkBack.
+     */
+    private fun isTrustedAssistiveTool(packageName: String): Boolean {
+        if (packageName !in config.accessibilityAllowlist) return false
+        val flags = try {
+            context.packageManager.getApplicationInfo(packageName, 0).flags
+        } catch (e: PackageManager.NameNotFoundException) {
+            return false
+        }
+        val system = flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+        return system || installerOf(packageName) in STORE_INSTALLERS
     }
 
     private fun remoteAccessApps(): List<Signal> {

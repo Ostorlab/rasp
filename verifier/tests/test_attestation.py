@@ -72,6 +72,38 @@ class VerifyKeyAttestationTest(unittest.TestCase):
         self.assert_reason("wrong_package", lambda: self.verify(
             Chain(CHALLENGE, package="com.attacker.app"), trusted_roots=[], require_hardware=False))
 
+    def test_certificate_signed_by_the_attested_key_is_rejected(self):
+        # Regression for the review finding: an unlocked device's genuine chain plus a forged certificate below the
+        # leaf, signed by the attested app key, claiming a locked and verified device.
+        chain = Chain(CHALLENGE, locked=False, boot_state=2)
+        forged, _ = chain.forge_below_leaf(CHALLENGE)
+        with self.assertRaises(AttestationError) as ctx:
+            verify_key_attestation(chain.b64(extra_below_leaf=forged), CHALLENGE, PACKAGE, [APP_CERT_SHA256],
+                                   trusted_roots=[chain.root])
+        self.assertEqual("bad_chain", ctx.exception.reason)
+
+    def test_forged_certificate_is_rejected_in_lenient_mode_too(self):
+        chain = Chain(CHALLENGE, security_level=0)
+        forged, _ = chain.forge_below_leaf(CHALLENGE)
+        with self.assertRaises(AttestationError) as ctx:
+            verify_key_attestation(chain.b64(extra_below_leaf=forged), CHALLENGE, PACKAGE, [APP_CERT_SHA256],
+                                   trusted_roots=[], require_hardware=False)
+        self.assertEqual("bad_chain", ctx.exception.reason)
+
+    def test_non_ca_intermediate_is_rejected(self):
+        self.assert_reason("bad_chain", lambda: self.verify(Chain(CHALLENGE, intermediate_ca=False)))
+
+    def test_user_auth_bound_key(self):
+        self.assertTrue(self.verify(Chain(CHALLENGE, user_auth=True), require_user_auth=True).user_auth_required)
+
+    def test_key_without_user_auth_is_rejected_when_required(self):
+        self.assertFalse(self.verify(Chain(CHALLENGE)).user_auth_required)
+        self.assert_reason("no_user_auth", lambda: self.verify(Chain(CHALLENGE), require_user_auth=True))
+
+    def test_user_auth_with_timeout_is_not_per_use(self):
+        self.assert_reason("no_user_auth", lambda: self.verify(
+            Chain(CHALLENGE, user_auth=True, auth_timeout=300), require_user_auth=True))
+
     def test_google_roots_are_bundled(self):
         self.assertEqual(2, len(load_google_roots()))
 

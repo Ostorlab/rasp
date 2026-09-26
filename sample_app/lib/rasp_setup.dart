@@ -13,7 +13,8 @@ const _certDigest = String.fromEnvironment('RASP_CERT_SHA256');
 
 /// Set by the on-device integration test. `flutter drive` builds are debuggable, which the engine
 /// rightly treats as tampering and answers by closing the app; the test only needs that reported.
-const _e2e = bool.fromEnvironment('RASP_E2E');
+/// Honoured in profile builds only, so passing it to a release build by mistake changes nothing.
+const _e2e = bool.fromEnvironment('RASP_E2E') && kProfileMode;
 
 final raspConfig = RaspConfig(
   expectedPackageName: 'dev.ostorlab.rasp.demo_bank',

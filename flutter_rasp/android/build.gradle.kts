@@ -58,6 +58,8 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+            // android.util.Log and friends return defaults instead of throwing in JVM tests.
+            isReturnDefaultValues = true
             all {
                 it.useJUnitPlatform()
 

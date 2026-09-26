@@ -56,6 +56,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
                     subtitle: Text(BankApi.instance.enabled
                         ? 'Server: $bankServer · device ${BankApi.instance.deviceId ?? '-'} · '
                             'key ${BankApi.instance.securityLevel ?? '-'}'
+                            '${BankApi.instance.userAuthRequired ? ', needs biometric or PIN' : ''}'
                         : 'Offline demo (no BANK_SERVER)'),
                   ),
                 ),

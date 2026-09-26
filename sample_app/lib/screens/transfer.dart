@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_rasp/flutter_rasp.dart';
 
 import '../data/bank.dart';
@@ -93,6 +94,8 @@ class _TransferScreenState extends State<TransferScreen> {
       try {
         result = await api.transfer(payee: _payee.text, amountCents: cents);
       } on Exception catch (e) {
+        // The user declining the confirmation prompt is not an error.
+        if (e is PlatformException && e.code == 'auth_cancelled') return;
         if (mounted) await _inform('Transfer failed', '$e');
         return;
       }

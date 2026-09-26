@@ -59,6 +59,10 @@ class TransactionTest(unittest.TestCase):
     def test_bad_format(self):
         self.assert_reason("bad_format", lambda: parse_signed_data("v=rasp-tx-0\nnonce=n"))
 
+    def test_duplicate_field_is_rejected(self):
+        text = payload(amount="1.00") + "\nf.amount=5000.00"
+        self.assert_reason("bad_format", lambda: self.verify(text))
+
     def test_decisions(self):
         cases = {
             ("none", ""): "allow",
@@ -67,6 +71,7 @@ class TransactionTest(unittest.TestCase):
             ("high", "accessibilityAbuse"): "deny",
             ("high", "hooking,root"): "deny",
             ("low", "devOptions"): "allow",
+            ("medium", "detectorFailure"): "step_up",
         }
         for (risk, threats), expected in cases.items():
             with self.subTest(risk=risk, threats=threats):

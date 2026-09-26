@@ -28,31 +28,56 @@ object NativeDetectors {
 
     fun scan(): List<Signal> {
         if (!loaded) {
-            return emptyList()
+            // The native core ships in every build; if it cannot load, it was most likely removed from the APK.
+            return listOf(Signal(ThreatType.TAMPER, "native.core_missing", 90, "librasp_core.so could not be loaded"))
         }
-        val array = JSONArray(nativeScan())
-        return (0 until array.length()).mapNotNull { i ->
-            val item = array.getJSONObject(i)
-            ThreatType.fromNative(item.getInt("threat"))?.let { threat ->
-                Signal(threat, item.getString("detector"), item.getInt("confidence"), item.getString("evidence"))
+        return try {
+            val array = JSONArray(nativeScan())
+            (0 until array.length()).mapNotNull { i ->
+                val item = array.getJSONObject(i)
+                ThreatType.fromNative(item.getInt("threat"))?.let { threat ->
+                    Signal(threat, item.getString("detector"), item.getInt("confidence"), item.getString("evidence"))
+                }
             }
+        } catch (e: Exception) {
+            listOf(Signal(ThreatType.DETECTOR_FAILURE, "native.scan_failed", 70, e.javaClass.simpleName))
         }
+    }
+}
+
+/**
+ * Runs detectors and turns a detector that throws into a [ThreatType.DETECTOR_FAILURE] signal instead of silence,
+ * so a hooked API that throws does not quietly disable a check.
+ */
+internal fun runDetectors(layer: String, detectors: List<() -> List<Signal>>): List<Signal> = detectors.flatMap { detector ->
+    try {
+        detector()
+    } catch (e: Exception) {
+        Log.w("flutter_rasp", "$layer detector failed", e)
+        listOf(Signal(ThreatType.DETECTOR_FAILURE, "$layer.detector_failed", 60, e.javaClass.simpleName))
     }
 }
 
 /** Detectors that need Android framework APIs. Each returns zero or more signals and never throws. */
 class PlatformDetectors(private val context: Context, private val config: RaspConfig) {
 
-    fun scan(): List<Signal> = listOf(
-        ::rootPackages, ::buildTags, ::emulatorBuild, ::debugger, ::hookingFramework,
-        ::signingCertificate, ::packageName, ::debuggableFlag, ::installer, ::deviceSettings,
-    ).flatMap { detector ->
-        try {
-            detector()
-        } catch (e: Exception) {
-            Log.w("flutter_rasp", "detector failed", e)
-            emptyList()
-        }
+    fun scan(): List<Signal> = runDetectors(
+        "platform",
+        listOf(
+            ::rootPackages, ::buildTags, ::emulatorBuild, ::debugger, ::hookingFramework,
+            ::signingCertificate, ::packageName, ::integrityConfig, ::debuggableFlag, ::installer, ::deviceSettings,
+        ),
+    )
+
+    /** Release builds must pin the signing certificate and package name; running without them is not protected. */
+    private fun integrityConfig(): List<Signal> {
+        if (config.devMode) return emptyList()
+        val missing = listOfNotNull(
+            "expectedSigningCertSha256".takeIf { config.expectedSigningCertSha256.isEmpty() },
+            "expectedPackageName".takeIf { config.expectedPackageName == null },
+        )
+        return if (missing.isEmpty()) emptyList()
+        else listOf(Signal(ThreatType.TAMPER, "platform.integrity_unconfigured", 60, "missing ${missing.joinToString()}"))
     }
 
     private fun rootPackages(): List<Signal> {
