@@ -68,11 +68,22 @@ adb install -r build/app/outputs/flutter-apk/app-release.apk
 (cd sample_app && flutter test)
 # Kotlin policy engine (JVM)
 (cd sample_app/android && ./gradlew :flutter_rasp:testDebugUnitTest)
+# End to end on an Android emulator (profile build, real policy; RASP_E2E makes tamper report-only
+# because flutter drive builds are debuggable, which the engine otherwise treats as tampering)
+(cd sample_app && flutter drive --profile -d emulator-5554 --dart-define=RASP_E2E=true \
+  --dart-define=RASP_CERT_SHA256=$(tool/cert_digest.sh) \
+  --driver=test_driver/integration_test.dart --target=integration_test/rasp_emulator_test.dart)
 # Native core on the host
 gcc -Wall -Wextra -Werror -I flutter_rasp/android/src/main/cpp \
   flutter_rasp/android/src/test/cpp/native_test.c \
   flutter_rasp/android/src/main/cpp/{detectors,signals}.c -o /tmp/native_test && /tmp/native_test
 ```
+
+## Verified on an emulator (Pixel Fold, Android 16, x86_64)
+
+- The integration test passes: login works, the transfer is blocked because the emulator is detected (`native.emulator_files`, `platform.emulator_build`), and no false signing-certificate or package-name alerts appear.
+- The login screen's `FLAG_SECURE` is set: screenshots of it come out black.
+- Repackaging test: the release APK re-signed with a different key is flagged as `tamper` and closes itself after the warning. The genuine release APK stays open.
 
 ## Known limits of v1
 
