@@ -1,0 +1,13 @@
+[project]
+name = "rasp-verifier"
+version = "0.1.0"
+description = "Server-side verification for flutter_rasp: Android Key Attestation, device binding and signed transactions."
+requires-python = ">=3.10"
+dependencies = ["cryptography>=42"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+rasp_verifier = ["google_roots.json"]

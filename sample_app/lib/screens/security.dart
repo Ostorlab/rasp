@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_rasp/flutter_rasp.dart';
 
+import '../data/bank_api.dart';
 import '../main.dart';
 
 /// Shows what the on-device RASP engine sees. A production app would not expose this to users.
@@ -14,6 +15,7 @@ class SecurityScreen extends StatefulWidget {
 class _SecurityScreenState extends State<SecurityScreen> {
   SecurityReport? _report;
   List<ThreatEvent> _events = const [];
+  bool _bound = false;
 
   @override
   void initState() {
@@ -24,10 +26,12 @@ class _SecurityScreenState extends State<SecurityScreen> {
   Future<void> _refresh() async {
     final report = await Rasp.check();
     final events = await Rasp.eventLog();
+    final bound = await Rasp.isDeviceBound();
     if (!mounted) return;
     setState(() {
       _report = report;
       _events = events.reversed.toList();
+      _bound = bound;
     });
   }
 
@@ -45,6 +49,16 @@ class _SecurityScreenState extends State<SecurityScreen> {
               padding: const EdgeInsets.all(16),
               children: [
                 _RiskCard(report: report),
+                Card(
+                  child: ListTile(
+                    leading: Icon(_bound ? Icons.key : Icons.key_off),
+                    title: Text(_bound ? 'Device bound to a hardware key' : 'Device not bound'),
+                    subtitle: Text(BankApi.instance.enabled
+                        ? 'Server: $bankServer · device ${BankApi.instance.deviceId ?? '-'} · '
+                            'key ${BankApi.instance.securityLevel ?? '-'}'
+                        : 'Offline demo (no BANK_SERVER)'),
+                  ),
+                ),
                 const SizedBox(height: 16),
                 Text('Signals (${report.signals.length})', style: Theme.of(context).textTheme.titleMedium),
                 if (report.signals.isEmpty) const ListTile(title: Text('No threats detected')),

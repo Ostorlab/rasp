@@ -34,7 +34,26 @@ void main() {
             'flow': 'transfer',
             'allowed': false,
             'blockingThreats': ['root'],
+            'warnings': ['activeCall'],
             'report': report,
+          };
+        case 'bindDevice':
+          return {
+            'keyAlias': 'k',
+            'strongBox': false,
+            'publicKey': 'cHVi',
+            'certificateChain': ['bGVhZg==', 'cm9vdA=='],
+          };
+        case 'signTransaction':
+          return {
+            'signedData': 'v=rasp-tx-1',
+            'signature': 'c2ln',
+            'guard': {
+              'flow': 'transfer',
+              'allowed': true,
+              'blockingThreats': <String>[],
+              'report': report,
+            },
           };
       }
       return null;
@@ -71,6 +90,26 @@ void main() {
     expect(calls.single.arguments, {'flow': 'transfer'});
     expect(result.allowed, isFalse);
     expect(result.blockingThreats, [ThreatType.root]);
+    expect(result.warnings, [ThreatType.activeCall]);
+  });
+
+  test('bindDevice sends the challenge as base64', () async {
+    final result = await Rasp.bindDevice(Uint8List.fromList(List.filled(16, 1)));
+    expect(calls.single.arguments, {'challenge': 'AQEBAQEBAQEBAQEBAQEBAQ=='});
+    expect(result.certificateChain, hasLength(2));
+    expect(result.strongBox, isFalse);
+  });
+
+  test('signTransaction sends flow, nonce and fields', () async {
+    final result = await Rasp.signTransaction(flow: 'transfer', nonce: 'n1', fields: {'amount': '5.00'});
+    expect(calls.single.arguments, {
+      'flow': 'transfer',
+      'nonce': 'n1',
+      'fields': {'amount': '5.00'},
+    });
+    expect(result.signature, 'c2ln');
+    expect(result.guard.allowed, isTrue);
+    expect(result.guard.warnings, isEmpty);
   });
 
   test('threat event flags', () {

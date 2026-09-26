@@ -79,6 +79,7 @@ kotlin {
 }
 
 dependencies {
+    implementation("androidx.annotation:annotation:1.9.1")
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")
     testImplementation("org.json:json:20240303")

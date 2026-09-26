@@ -71,6 +71,32 @@ internal class PolicyEngineTest {
     }
 
     @Test
+    fun activeCallWarnsButAllowsTransfer() {
+        val engine = PolicyEngine(config())
+        val call = Signal(ThreatType.ACTIVE_CALL, "fraud.active_call", 90, "audio mode=2")
+        val guard = engine.guard("transfer", engine.evaluate(listOf(call), 0))
+        assertTrue(guard.allowed)
+        assertEquals(listOf(ThreatType.ACTIVE_CALL), guard.warnings)
+    }
+
+    @Test
+    fun accessibilityAbuseBlocksAndIsHighRisk() {
+        val engine = PolicyEngine(config())
+        val a11y = Signal(ThreatType.ACCESSIBILITY_ABUSE, "fraud.accessibility_services", 95, "com.evil.service")
+        val decision = engine.evaluate(listOf(a11y), 0)
+        assertEquals(RiskLevel.HIGH, decision.riskLevel)
+        val guard = engine.guard("transfer", decision)
+        assertFalse(guard.allowed)
+        // A blocking threat is not also listed as a warning.
+        assertTrue(guard.warnings.isEmpty())
+    }
+
+    @Test
+    fun assistiveToolsAreAllowlistedByDefault() {
+        assertTrue("com.google.android.marvin.talkback" in config().accessibilityAllowlist)
+    }
+
+    @Test
     fun digestsAreNormalized() {
         assertEquals(listOf("15a894"), config().expectedSigningCertSha256)
     }

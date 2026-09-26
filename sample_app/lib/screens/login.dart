@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_rasp/flutter_rasp.dart';
 
 import '../data/bank.dart';
+import '../data/bank_api.dart';
 import 'home.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -18,22 +19,33 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    // No screenshots or screen recording while the PIN is on screen.
-    Rasp.setSecureScreen(true);
+    // PIN on screen: no screenshots or recording, no overlays, hidden from non-assistive accessibility services.
+    Rasp.setSensitiveScreen(true);
   }
 
   @override
   void dispose() {
-    Rasp.setSecureScreen(false);
+    Rasp.setSensitiveScreen(false);
     _pin.dispose();
     super.dispose();
   }
 
-  void _login() {
+  Future<void> _login() async {
     if (_pin.text != Bank.pin) {
       setState(() => _error = 'Wrong PIN (hint: ${Bank.pin})');
       return;
     }
+    final api = BankApi.instance;
+    if (api.enabled && api.deviceId == null) {
+      try {
+        await api.bindDevice();
+      } on Exception catch (e) {
+        if (!mounted) return;
+        setState(() => _error = 'Device binding failed: $e');
+        return;
+      }
+    }
+    if (!mounted) return;
     Navigator.pushReplacement(context, MaterialPageRoute<void>(builder: (_) => const HomeScreen()));
   }
 

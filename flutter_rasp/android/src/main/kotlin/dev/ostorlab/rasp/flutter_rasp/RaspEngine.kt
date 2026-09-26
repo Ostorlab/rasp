@@ -25,6 +25,9 @@ class RaspEngine(
 ) {
     private val policy = PolicyEngine(config)
     private val platformDetectors = PlatformDetectors(context, config)
+    val transientSignals = TransientSignals()
+    val screenState = ScreenState()
+    private val fraudDetectors = FraudDetectors(context, config, transientSignals, screenState)
     private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "rasp-engine").apply { isDaemon = true }
     }
@@ -45,7 +48,7 @@ class RaspEngine(
     /** Runs all detectors now. Emits an event for threats that were not active in the previous scan. */
     @Synchronized
     fun scan(): Decision {
-        val signals = NativeDetectors.scan() + platformDetectors.scan()
+        val signals = NativeDetectors.scan() + platformDetectors.scan() + fraudDetectors.scan()
         val decision = policy.evaluate(signals, System.currentTimeMillis())
         val previous = lastDecision
         lastDecision = decision
@@ -66,6 +69,13 @@ class RaspEngine(
             listener.onReactionsChanged(decision.reactions)
         }
         return decision
+    }
+
+    /** Schedules a scan soon, e.g. after a window callback reported a screenshot. */
+    fun requestScan() {
+        if (!executor.isShutdown) {
+            executor.execute { scan() }
+        }
     }
 
     /** Runs a fresh scan before a sensitive flow, so a tool attached after the last scheduled scan is still seen. */

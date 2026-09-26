@@ -10,7 +10,16 @@ enum class ThreatType(val wireName: String, val nativeId: Int?) {
     UNTRUSTED_INSTALLER("untrustedInstaller", null),
     DEV_OPTIONS("devOptions", null),
     ADB_ENABLED("adbEnabled", null),
-    NO_SCREEN_LOCK("noScreenLock", null);
+    NO_SCREEN_LOCK("noScreenLock", null),
+
+    // Fraud threats: malware and scams that act on a genuine user's device.
+    ACCESSIBILITY_ABUSE("accessibilityAbuse", null),
+    OVERLAY("overlay", null),
+    SCREEN_CAPTURE("screenCapture", null),
+    SCREEN_RECORDING("screenRecording", null),
+    SCREEN_MIRRORING("screenMirroring", null),
+    REMOTE_ACCESS_APP("remoteAccessApp", null),
+    ACTIVE_CALL("activeCall", null);
 
     companion object {
         fun fromWire(name: String): ThreatType? = entries.firstOrNull { it.wireName == name }
@@ -49,6 +58,7 @@ data class Signal(
 
 data class RaspConfig(
     val expectedPackageName: String?,
+    val accessibilityAllowlist: Set<String>,
     val expectedSigningCertSha256: List<String>,
     val allowedInstallers: List<String>,
     val checkIntervalSeconds: Long,
@@ -67,6 +77,25 @@ data class RaspConfig(
             ThreatType.DEV_OPTIONS to setOf(Reaction.REPORT),
             ThreatType.ADB_ENABLED to setOf(Reaction.REPORT),
             ThreatType.NO_SCREEN_LOCK to setOf(Reaction.REPORT),
+            ThreatType.ACCESSIBILITY_ABUSE to setOf(Reaction.REPORT, Reaction.WARN_USER, Reaction.BLOCK_SENSITIVE),
+            ThreatType.OVERLAY to setOf(Reaction.REPORT, Reaction.BLOCK_SENSITIVE),
+            ThreatType.SCREEN_CAPTURE to setOf(Reaction.REPORT, Reaction.SECURE_SCREEN),
+            ThreatType.SCREEN_RECORDING to setOf(Reaction.REPORT, Reaction.SECURE_SCREEN, Reaction.BLOCK_SENSITIVE),
+            ThreatType.SCREEN_MIRRORING to setOf(Reaction.REPORT, Reaction.SECURE_SCREEN, Reaction.BLOCK_SENSITIVE),
+            ThreatType.REMOTE_ACCESS_APP to setOf(Reaction.REPORT),
+            // A call during a payment is the typical impersonation scam: warn, let the user decide.
+            ThreatType.ACTIVE_CALL to setOf(Reaction.REPORT, Reaction.WARN_USER),
+        )
+
+        /** Assistive tools that may read the screen without being treated as abuse. */
+        val DEFAULT_ACCESSIBILITY_ALLOWLIST = setOf(
+            "com.google.android.marvin.talkback",
+            "com.google.android.apps.accessibility.voiceaccess",
+            "com.google.android.accessibility.switchaccess",
+            "com.google.android.apps.accessibility.auditor",
+            "com.samsung.android.accessibility.talkback",
+            "com.samsung.accessibility",
+            "com.android.talkback",
         )
 
         /** Parses the map sent by the Dart side. Unknown threat or reaction names are ignored. */
@@ -78,6 +107,8 @@ data class RaspConfig(
             }?.toMap()
             return RaspConfig(
                 expectedPackageName = map["expectedPackageName"] as? String,
+                accessibilityAllowlist = DEFAULT_ACCESSIBILITY_ALLOWLIST +
+                    (map["accessibilityAllowlist"] as? List<String>).orEmpty(),
                 expectedSigningCertSha256 = (map["expectedSigningCertSha256"] as? List<String>).orEmpty()
                     .map(::normalizeDigest),
                 allowedInstallers = (map["allowedInstallers"] as? List<String>).orEmpty(),

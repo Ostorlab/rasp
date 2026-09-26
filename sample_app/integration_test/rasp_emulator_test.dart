@@ -57,6 +57,17 @@ void main() {
     expect(report.threats.keys, isNot(contains(ThreatType.root)));
     expect(report.threats.keys, isNot(contains(ThreatType.hooking)));
     expect(report.threats[ThreatType.emulator], contains(Reaction.blockSensitive));
+    // No fraud false positives on a clean emulator (it has two displays, neither is a presentation display).
+    for (final threat in [
+      ThreatType.accessibilityAbuse,
+      ThreatType.overlay,
+      ThreatType.screenRecording,
+      ThreatType.screenMirroring,
+      ThreatType.remoteAccessApp,
+      ThreatType.activeCall,
+    ]) {
+      expect(report.threats.keys, isNot(contains(threat)), reason: '$threat');
+    }
 
     final events = await Rasp.eventLog();
     expect(events.expand((e) => e.newThreats), containsAll([ThreatType.emulator, ThreatType.tamper]));

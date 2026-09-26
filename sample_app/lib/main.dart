@@ -79,4 +79,11 @@ String threatLabel(ThreatType threat) => switch (threat) {
       ThreatType.devOptions => 'developer options on',
       ThreatType.adbEnabled => 'USB debugging on',
       ThreatType.noScreenLock => 'no screen lock',
+      ThreatType.accessibilityAbuse => 'an app controlling your screen (accessibility service)',
+      ThreatType.overlay => 'another app drawing over Demo Bank',
+      ThreatType.screenCapture => 'a screenshot',
+      ThreatType.screenRecording => 'screen recording',
+      ThreatType.screenMirroring => 'screen mirroring',
+      ThreatType.remoteAccessApp => 'a remote-access app',
+      ThreatType.activeCall => 'a phone call in progress',
     };

@@ -18,7 +18,16 @@ data class Decision(
     )
 }
 
-data class GuardResult(val flow: String, val allowed: Boolean, val blockingThreats: List<ThreatType>)
+/**
+ * [warnings] are active threats whose policy asks to warn the user, e.g. a phone call during a transfer.
+ * The flow is still allowed; the app should confirm with the user first.
+ */
+data class GuardResult(
+    val flow: String,
+    val allowed: Boolean,
+    val blockingThreats: List<ThreatType>,
+    val warnings: List<ThreatType> = emptyList(),
+)
 
 /** Pure policy evaluation: signals in, decision out. No Android dependencies, so it is unit-tested on the JVM. */
 class PolicyEngine(private val config: RaspConfig) {
@@ -37,7 +46,8 @@ class PolicyEngine(private val config: RaspConfig) {
             return GuardResult(flow, allowed = true, blockingThreats = emptyList())
         }
         val blocking = decision.threats.filterValues { Reaction.BLOCK_SENSITIVE in it }.keys.sorted()
-        return GuardResult(flow, allowed = blocking.isEmpty(), blockingThreats = blocking)
+        val warnings = decision.threats.filterValues { Reaction.WARN_USER in it }.keys.sorted() - blocking.toSet()
+        return GuardResult(flow, allowed = blocking.isEmpty(), blockingThreats = blocking, warnings = warnings)
     }
 
     private fun riskLevel(threats: Set<ThreatType>): RiskLevel = when {
@@ -48,7 +58,13 @@ class PolicyEngine(private val config: RaspConfig) {
     }
 
     companion object {
-        private val HIGH_RISK = setOf(ThreatType.TAMPER, ThreatType.HOOKING, ThreatType.DEBUGGER)
-        private val MEDIUM_RISK = setOf(ThreatType.ROOT, ThreatType.EMULATOR)
+        private val HIGH_RISK = setOf(
+            ThreatType.TAMPER, ThreatType.HOOKING, ThreatType.DEBUGGER,
+            ThreatType.ACCESSIBILITY_ABUSE, ThreatType.OVERLAY, ThreatType.SCREEN_RECORDING, ThreatType.SCREEN_MIRRORING,
+        )
+        private val MEDIUM_RISK = setOf(
+            ThreatType.ROOT, ThreatType.EMULATOR, ThreatType.ACTIVE_CALL, ThreatType.REMOTE_ACCESS_APP,
+            ThreatType.SCREEN_CAPTURE,
+        )
     }
 }

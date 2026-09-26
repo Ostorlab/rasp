@@ -1,6 +1,8 @@
 /// Offline runtime application self-protection for Flutter apps (Android).
 library;
 
+import 'dart:convert';
+
 import 'package:flutter/services.dart';
 
 import 'src/models.dart';
@@ -39,6 +41,41 @@ class Rasp {
   /// Blocks screenshots and screen recording of the app window (FLAG_SECURE), e.g. on a PIN screen.
   static Future<void> setSecureScreen(bool enabled) =>
       _channel.invokeMethod<void>('setSecureScreen', {'enabled': enabled});
+
+  /// Full protection for a sensitive screen (PIN, transfer confirmation): no screenshots or recording, other apps'
+  /// overlays hidden, touches through overlays dropped and reported, content hidden from accessibility services that
+  /// are not assistive tools. Turn it off when the screen closes.
+  static Future<void> setSensitiveScreen(bool enabled) =>
+      _channel.invokeMethod<void>('setSensitiveScreen', {'enabled': enabled});
+
+  /// Whether this install already holds a bound device key.
+  static Future<bool> isDeviceBound() async => await _channel.invokeMethod<bool>('isDeviceBound') ?? false;
+
+  /// Generates a hardware-backed key attested with the server's [challenge] (16 to 128 random bytes).
+  /// Replaces any previous binding.
+  static Future<DeviceBindingResult> bindDevice(Uint8List challenge) async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>('bindDevice', {
+      'challenge': base64Encode(challenge),
+    });
+    return DeviceBindingResult.fromMap(result!);
+  }
+
+  static Future<void> unbindDevice() => _channel.invokeMethod<void>('unbindDevice');
+
+  /// Runs a fresh scan for [flow] and signs [fields] plus the verdict with the bound key.
+  /// The [nonce] comes from the server, so a signed transaction cannot be replayed.
+  static Future<SignedTransaction> signTransaction({
+    required String flow,
+    required String nonce,
+    required Map<String, String> fields,
+  }) async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>('signTransaction', {
+      'flow': flow,
+      'nonce': nonce,
+      'fields': fields,
+    });
+    return SignedTransaction.fromMap(result!);
+  }
 
   /// Threat events recorded on the device, oldest first.
   static Future<List<ThreatEvent>> eventLog() async {

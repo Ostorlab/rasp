@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Normal (install-time) permissions for the fraud protections. -->
+    <uses-permission android:name="android.permission.DETECT_SCREEN_CAPTURE" />
+    <uses-permission android:name="android.permission.DETECT_SCREEN_RECORDING" />
+    <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
+
     <!-- Package visibility for root-manager detection (Android 11+). Keep in sync with PlatformDetectors.ROOT_PACKAGES. -->
     <queries>
         <package android:name="com.topjohnwu.magisk" />
@@ -10,5 +15,20 @@
         <package android:name="com.noshufou.android.su" />
         <package android:name="org.lsposed.manager" />
         <package android:name="de.robv.android.xposed.installer" />
+        <!-- Remote-access apps used in banking scams. Keep in sync with FraudDetectors.REMOTE_ACCESS_PACKAGES. -->
+        <package android:name="com.anydesk.anydeskandroid" />
+        <package android:name="com.teamviewer.quicksupport.market" />
+        <package android:name="com.teamviewer.teamviewer.market.mobile" />
+        <package android:name="com.carriez.flutter_hbb" />
+        <package android:name="com.sand.airdroid" />
+        <package android:name="com.sand.airdroidbiz" />
+        <package android:name="com.splashtop.remote.pad.v2" />
+        <package android:name="com.rsupport.mvagent" />
+        <package android:name="com.logmein.rescuemobile" />
+        <package android:name="com.remotepc.viewer" />
+        <!-- Accessibility services, to read the installer of an enabled service. -->
+        <intent>
+            <action android:name="android.accessibilityservice.AccessibilityService" />
+        </intent>
     </queries>
 </manifest>

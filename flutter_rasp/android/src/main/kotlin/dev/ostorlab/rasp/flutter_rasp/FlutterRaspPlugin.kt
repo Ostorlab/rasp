@@ -4,7 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import android.view.WindowManager
+import android.util.Base64
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -21,12 +21,17 @@ class FlutterRaspPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
     private lateinit var eventChannel: EventChannel
     private val mainHandler = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "rasp-calls").apply { isDaemon = true } }
+    private val deviceBinding by lazy { DeviceBinding() }
 
     private var engine: RaspEngine? = null
     private var activity: Activity? = null
+    private var screen: ScreenProtector? = null
     private var eventSink: EventChannel.EventSink? = null
-    private var appSecureScreen = false
-    private var policySecureScreen = false
+
+    // Kept here so they survive activity re-creation and apply to the next ScreenProtector.
+    private var appSecure = false
+    private var appSensitive = false
+    private var policySecure = false
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
@@ -45,7 +50,21 @@ class FlutterRaspPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
-        // Detectors do file and socket I/O, so every call runs off the platform thread.
+        // Screen flags must be changed on the UI thread; everything else does I/O and runs on the worker.
+        when (call.method) {
+            "setSecureScreen" -> {
+                appSecure = call.argument<Boolean>("enabled") ?: false
+                screen?.setSecure(appSecure)
+                result.success(null)
+                return
+            }
+            "setSensitiveScreen" -> {
+                appSensitive = call.argument<Boolean>("enabled") ?: false
+                screen?.setSensitive(appSensitive)
+                result.success(null)
+                return
+            }
+        }
         worker.execute {
             try {
                 val value = handle(call)
@@ -73,25 +92,45 @@ class FlutterRaspPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
         "guard" -> {
             val flow = call.argument<String>("flow") ?: throw IllegalArgumentException("flow is required")
             val (guard, decision) = requireEngine().guard(flow)
-            mapOf(
-                "flow" to guard.flow,
-                "allowed" to guard.allowed,
-                "blockingThreats" to guard.blockingThreats.map { it.wireName },
-                "report" to decision.toMap(),
-            )
-        }
-        "setSecureScreen" -> {
-            appSecureScreen = call.argument<Boolean>("enabled") ?: false
-            mainHandler.post { applySecureFlag() }
-            null
+            guardMap(guard, decision)
         }
         "eventLog" -> requireEngine().events()
         "clearEventLog" -> {
             requireEngine().clearEvents()
             null
         }
+        "isDeviceBound" -> deviceBinding.isBound()
+        "bindDevice" -> {
+            val challenge = call.argument<String>("challenge") ?: throw IllegalArgumentException("challenge is required")
+            deviceBinding.bind(Base64.decode(challenge, Base64.NO_WRAP))
+        }
+        "unbindDevice" -> {
+            deviceBinding.unbind()
+            null
+        }
+        "signTransaction" -> {
+            val flow = call.argument<String>("flow") ?: throw IllegalArgumentException("flow is required")
+            val nonce = call.argument<String>("nonce") ?: throw IllegalArgumentException("nonce is required")
+            val fields = call.argument<Map<String, String>>("fields").orEmpty()
+            // Always sign, even when the policy would block: the server gets the verdict and decides.
+            val (guard, decision) = requireEngine().guard(flow)
+            val payload = SignedPayload.build(nonce, decision.timestampMillis, context.packageName, decision, fields)
+            mapOf(
+                "signedData" to payload,
+                "signature" to deviceBinding.sign(payload.toByteArray(Charsets.UTF_8)),
+                "guard" to guardMap(guard, decision),
+            )
+        }
         else -> throw IllegalArgumentException("unknown method ${call.method}")
     }
+
+    private fun guardMap(guard: GuardResult, decision: Decision) = mapOf(
+        "flow" to guard.flow,
+        "allowed" to guard.allowed,
+        "blockingThreats" to guard.blockingThreats.map { it.wireName },
+        "warnings" to guard.warnings.map { it.wireName },
+        "report" to decision.toMap(),
+    )
 
     private fun requireEngine(): RaspEngine = engine ?: throw IllegalStateException("call Rasp.start() first")
 
@@ -106,17 +145,20 @@ class FlutterRaspPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
     }
 
     override fun onReactionsChanged(reactions: Set<Reaction>) {
-        policySecureScreen = Reaction.SECURE_SCREEN in reactions
-        mainHandler.post { applySecureFlag() }
+        policySecure = Reaction.SECURE_SCREEN in reactions
+        mainHandler.post { screen?.setPolicySecure(policySecure) }
     }
 
-    private fun applySecureFlag() {
-        val window = activity?.window ?: return
-        if (appSecureScreen || policySecureScreen) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        } else {
-            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        }
+    private fun onScreenSignal(signal: Signal) {
+        val current = engine ?: return
+        current.transientSignals.record(signal)
+        current.requestScan()
+    }
+
+    private fun onRecordingChanged(visible: Boolean) {
+        val current = engine ?: return
+        current.screenState.recordingVisible = visible
+        current.requestScan()
     }
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
@@ -129,18 +171,21 @@ class FlutterRaspPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
-        applySecureFlag()
+        screen = ScreenProtector(binding.activity, ::onScreenSignal, ::onRecordingChanged).apply {
+            attach()
+            setSecure(appSecure)
+            setSensitive(appSensitive)
+            setPolicySecure(policySecure)
+        }
     }
 
-    override fun onDetachedFromActivityForConfigChanges() {
-        activity = null
-    }
+    override fun onDetachedFromActivityForConfigChanges() = onDetachedFromActivity()
 
-    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
-        onAttachedToActivity(binding)
-    }
+    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) = onAttachedToActivity(binding)
 
     override fun onDetachedFromActivity() {
+        screen?.detach()
+        screen = null
         activity = null
     }
 
