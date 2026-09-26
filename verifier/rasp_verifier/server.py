@@ -1,21 +1,29 @@
-"""Reference bank backend for the Demo Bank sample (in-memory, for demos and tests; not production code).
+"""Reference backend for the Demo Bank sample: the trust service and a bank resource server in one process.
 
-    python -m rasp_verifier.server --package dev.ostorlab.rasp.demo_bank --cert-sha256 <digest> [--port 8787]
-        [--allow-software-attestation] [--allow-no-user-auth] [--no-revocation-check]
+The two are logically separate (the design deploys them apart), but the reference serves both so the sample
+hits a single URL, and the bank verifies tokens against the trust service's JWKS in-process.
 
-Endpoints (JSON):
-    POST /v1/sessions   {"customerId", "pin"}                                  -> {"sessionToken"}
-    POST /v1/challenge  {"sessionToken", "purpose": "bind"|"transfer", "deviceId"?} -> {"nonce"}
-    POST /v1/devices    {"sessionToken", "challenge", "publicKey", "certificateChain"} -> {"deviceId", ...}
-    POST /v1/transfers  {"sessionToken", "deviceId", "signedData", "signature"}  -> {"decision", "reasons"} (403 on deny)
+    python -m rasp_verifier.server --package dev.ostorlab.rasp.demo_bank --cert-sha256 <digest>
+        --build-id <id> --build-key-hex <hex>  [--port 8787]
+        [--allow-software-attestation] [--allow-no-user-auth] [--no-revocation-check] [--stub-play-integrity]
 
-Binding needs a logged-in customer and replaces the customer's previous device.
+Trust service routes (JSON):
+    POST /v1/challenge  {"installId","purpose":"bind"|"token"}                 -> {"nonce"}
+    POST /v1/bind       {"installId","nonce","publicKey","certificateChain","playIntegrityToken"?} -> {...}
+    POST /v1/token      {"installId","nonce","proof","sealedReport","playIntegrityToken"?} -> {"token",...}
+    GET  /.well-known/jwks.json                                                -> JWKS
+
+Bank resource routes (JSON):
+    POST /v1/sessions   {"customerId","pin"}                                   -> {"sessionToken"}
+    POST /v1/transfers  {"sessionToken","payee","amountCents","currency"} + X-Integrity-* headers
+                                                                              -> {"decision","reasons"} (403 on deny)
+
+Every bank route that needs device trust also needs the X-Integrity-* headers (see `resource`).
 """
 
 from __future__ import annotations
 
 import argparse
-import base64
 import hmac
 import json
 import secrets
@@ -25,39 +33,42 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .attestation import AttestationError, verify_key_attestation
+from .jose import SigningKey
+from .platform import DisabledPlatformAttestation, StubPlatformAttestation
+from .policy import TokenPolicy
+from .registry import Build, BuildRegistry, InstallRegistry
+from .resource import ResourceError, decide, verify_request
 from .revocation import RevocationList
-from .transaction import TransactionError, decide, verify_transaction
+from .trust import TrustError, TrustService
 
-CHALLENGE_TTL_SECONDS = 120
 SESSION_TTL_SECONDS = 15 * 60
 MAX_PIN_FAILURES = 5
 
 
 @dataclass
-class Device:
-    customer_id: str
-    public_key_der: bytes
+class RequestContext:
+    method: str
+    path: str
+    headers: dict
+    body: bytes
+    json: dict
 
 
 @dataclass
 class BankState:
+    """The bank resource server: it verifies trust-service tokens and decides on transfers."""
+
     package_name: str
-    signing_cert_sha256: list[str]
-    customers: dict[str, str] = field(default_factory=lambda: {"demo": "1234"})  # customerId -> PIN (demo only)
-    require_hardware: bool = True
-    require_user_auth: bool = True
-    revocations: RevocationList | None = None  # None = revocation check disabled (tests, offline demos)
-    trusted_roots: list | None = None  # None = Google's published roots
-    sessions: dict[str, tuple[str, float]] = field(default_factory=dict)  # token -> (customer, expiry)
+    jwks_provider: object  # callable -> {"keys":[...]}
+    customers: dict[str, str] = field(default_factory=lambda: {"demo": "1234"})
+    sessions: dict[str, tuple[str, float]] = field(default_factory=dict)
     pin_failures: dict[str, int] = field(default_factory=dict)
-    challenges: dict[str, tuple[str, str, str | None, float]] = field(default_factory=dict)
-    devices: dict[str, Device] = field(default_factory=dict)
+    session_install: dict[str, str] = field(default_factory=dict)  # session -> install id (sub)
+    install_counter: dict[str, int] = field(default_factory=dict)  # install id -> last proof counter
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    # --- sessions -------------------------------------------------------------------------------------------------
-
-    def login(self, body: dict) -> tuple[int, dict]:
+    def login(self, ctx: RequestContext) -> tuple[int, dict]:
+        body = ctx.json
         customer_id, pin = str(body.get("customerId", "")), str(body.get("pin", ""))
         with self.lock:
             if self.pin_failures.get(customer_id, 0) >= MAX_PIN_FAILURES:
@@ -78,139 +89,110 @@ class BankState:
             return None
         return entry[0]
 
-    # --- challenges -----------------------------------------------------------------------------------------------
-
-    def _issue(self, purpose: str, customer_id: str, device_id: str | None) -> str:
-        nonce = base64.b64encode(secrets.token_bytes(32)).decode()
-        with self.lock:
-            self.challenges[nonce] = (purpose, customer_id, device_id, time.time())
-        return nonce
-
-    def _consume(self, nonce: str, purpose: str, customer_id: str, device_id: str | None) -> bool:
-        """Single use: a nonce is removed as soon as it is presented, valid or not."""
-        with self.lock:
-            entry = self.challenges.pop(nonce, None)
-        if entry is None:
-            return False
-        issued_purpose, issued_customer, issued_device, issued_at = entry
-        return (
-            (issued_purpose, issued_customer, issued_device) == (purpose, customer_id, device_id)
-            and time.time() - issued_at <= CHALLENGE_TTL_SECONDS
-        )
-
-    def challenge(self, body: dict) -> tuple[int, dict]:
-        customer_id = self._customer(body)
+    def transfer(self, ctx: RequestContext) -> tuple[int, dict]:
+        customer_id = self._customer(ctx.json)
         if customer_id is None:
             return HTTPStatus.UNAUTHORIZED, {"error": "log in first"}
-        purpose = body.get("purpose")
-        if purpose not in ("bind", "transfer"):
-            return HTTPStatus.BAD_REQUEST, {"error": "purpose must be bind or transfer"}
-        device_id = body.get("deviceId") if purpose == "transfer" else None
-        if purpose == "transfer" and not self._owns(customer_id, device_id):
-            return HTTPStatus.NOT_FOUND, {"error": "unknown device"}
-        nonce = self._issue(purpose, customer_id, device_id)
-        return HTTPStatus.OK, {"nonce": nonce, "expiresIn": CHALLENGE_TTL_SECONDS}
-
-    def _owns(self, customer_id: str, device_id: object) -> bool:
-        with self.lock:
-            device = self.devices.get(device_id) if isinstance(device_id, str) else None
-        return device is not None and device.customer_id == customer_id
-
-    # --- binding and transfers ------------------------------------------------------------------------------------
-
-    def bind(self, body: dict) -> tuple[int, dict]:
-        customer_id = self._customer(body)
-        if customer_id is None:
-            return HTTPStatus.UNAUTHORIZED, {"error": "log in first"}
-        challenge = body.get("challenge", "")
-        if not self._consume(challenge, "bind", customer_id, None):
-            return HTTPStatus.BAD_REQUEST, {"error": "unknown, used or expired challenge"}
-        revocations = None
-        if self.revocations is not None:
-            revocations = self.revocations.current()
-            if revocations is None:  # fail closed: without a fresh list, revoked keys would be accepted
-                return HTTPStatus.SERVICE_UNAVAILABLE, {"error": "revocation list unavailable, try again later"}
+        headers = ctx.headers
+        session = str(ctx.json.get("sessionToken", ""))
         try:
-            result = verify_key_attestation(
-                body.get("certificateChain", []),
-                base64.b64decode(challenge),
-                self.package_name,
-                self.signing_cert_sha256,
-                require_hardware=self.require_hardware,
-                require_user_auth=self.require_user_auth,
-                trusted_roots=self.trusted_roots,
-                revocations=revocations,
+            with self.lock:
+                last = self.install_counter.get(self.session_install.get(session, ""))
+            verified = verify_request(
+                token=headers.get("x-integrity-token", ""),
+                install_key_der_b64=headers.get("x-integrity-key", ""),
+                signature_b64=headers.get("x-integrity-sig", ""),
+                ts_ms=int(headers.get("x-integrity-ts", "0")),
+                counter=int(headers.get("x-integrity-counter", "0")),
+                method=ctx.method,
+                path=ctx.path,
+                body=ctx.body,
+                jwks_keys=self.jwks_provider()["keys"],
+                last_counter=last,
             )
-        except AttestationError as e:
-            return HTTPStatus.FORBIDDEN, {"error": "attestation_failed", "reason": e.reason, "detail": str(e)}
-        # The key the app will sign with must be the attested one.
-        if base64.b64decode(body.get("publicKey", "")) != result.public_key_der:
-            return HTTPStatus.FORBIDDEN, {"error": "attestation_failed", "reason": "key_mismatch"}
-        device_id = secrets.token_hex(16)
-        with self.lock:
-            # One active device per customer: binding a new phone revokes the old one.
-            revoked = [d for d, dev in self.devices.items() if dev.customer_id == customer_id]
-            for old in revoked:
-                del self.devices[old]
-            self.devices[device_id] = Device(customer_id, result.public_key_der)
-        return HTTPStatus.CREATED, {
-            "deviceId": device_id,
-            "revokedDevices": len(revoked),
-            "securityLevel": result.security_level,
-            "trustedRoot": result.trusted_root,
-            "userAuthRequired": result.user_auth_required,
-            "verifiedBootState": result.verified_boot_state,
-            "warnings": result.warnings,
-        }
+        except (ResourceError, ValueError) as e:
+            reason = e.reason if isinstance(e, ResourceError) else "bad_headers"
+            return HTTPStatus.UNAUTHORIZED, {"error": "integrity_failed", "reason": reason}
 
-    def transfer(self, body: dict) -> tuple[int, dict]:
-        customer_id = self._customer(body)
-        if customer_id is None:
-            return HTTPStatus.UNAUTHORIZED, {"error": "log in first"}
-        device_id = body.get("deviceId")
-        if not self._owns(customer_id, device_id):
-            return HTTPStatus.NOT_FOUND, {"error": "unknown device"}
+        if verified.claims.get("app") != self.package_name:
+            return HTTPStatus.FORBIDDEN, {"error": "integrity_failed", "reason": "wrong_app"}
         with self.lock:
-            public_key = self.devices[device_id].public_key_der
-        signed_data = body.get("signedData", "")
-        nonce = next((line[6:] for line in signed_data.split("\n") if line.startswith("nonce=")), None)
-        if nonce is None or not self._consume(nonce, "transfer", customer_id, device_id):
-            return HTTPStatus.BAD_REQUEST, {"error": "unknown, used or expired nonce"}
-        try:
-            tx = verify_transaction(
-                signed_data, body.get("signature", ""), public_key,
-                expected_nonce=nonce, package_name=self.package_name,
-            )
-        except TransactionError as e:
-            return HTTPStatus.FORBIDDEN, {"error": "verification_failed", "reason": e.reason}
-        decision = decide(tx)
+            bound = self.session_install.get(session)
+            if bound is None:
+                self.session_install[session] = verified.install_id
+            elif bound != verified.install_id:
+                return HTTPStatus.FORBIDDEN, {"error": "integrity_failed", "reason": "install_mismatch"}
+            self.install_counter[verified.install_id] = verified.counter
+
+        # A transfer is sensitive: high risk (malware watching, unlocked/compromised device) is denied,
+        # medium (root, emulator, a call, a screenshot) needs step-up.
+        decision = decide(verified.risk, verified.threats, deny_at="high", step_up_at="medium")
         status = HTTPStatus.FORBIDDEN if decision.action == "deny" else HTTPStatus.OK
-        return status, {"decision": decision.action, "reasons": decision.reasons, "fields": tx.fields}
+        fields = {
+            "payee": ctx.json.get("payee"),
+            "amountCents": ctx.json.get("amountCents"),
+            "currency": ctx.json.get("currency", "USD"),
+        }
+        return status, {"decision": decision.action, "reasons": decision.reasons, "fields": fields}
 
 
-def make_handler(state: BankState):
-    routes = {
-        "/v1/sessions": state.login,
-        "/v1/challenge": state.challenge,
-        "/v1/devices": state.bind,
-        "/v1/transfers": state.transfer,
+def make_handler(trust: TrustService, bank: BankState):
+    def trust_challenge(ctx: RequestContext):
+        return HTTPStatus.OK, trust.challenge(str(ctx.json.get("installId", "")), str(ctx.json.get("purpose", "")))
+
+    def trust_bind(ctx: RequestContext):
+        return HTTPStatus.CREATED, trust.bind(ctx.json)
+
+    def trust_token(ctx: RequestContext):
+        return HTTPStatus.OK, trust.token(ctx.json)
+
+    post_routes = {
+        "/v1/challenge": trust_challenge,
+        "/v1/bind": trust_bind,
+        "/v1/token": trust_token,
+        "/v1/sessions": bank.login,
+        "/v1/transfers": bank.transfer,
+    }
+    get_routes = {
+        "/.well-known/jwks.json": lambda ctx: (HTTPStatus.OK, trust.jwks()),
+        "/v1/jwks": lambda ctx: (HTTPStatus.OK, trust.jwks()),
     }
 
     class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):  # noqa: N802 (http.server naming)
-            route = routes.get(self.path)
+        def do_GET(self):  # noqa: N802
+            route = get_routes.get(self.path)
+            if route is None:
+                return self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
+            self._run(route, b"", {})
+
+        def do_POST(self):  # noqa: N802
+            route = post_routes.get(self.path)
             if route is None:
                 return self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if length > 256 * 1024:
                     return self._send(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "body too large"})
-                body = json.loads(self.rfile.read(length) or b"{}")
-                if not isinstance(body, dict):
+                raw = self.rfile.read(length) or b"{}"
+                parsed = json.loads(raw)
+                if not isinstance(parsed, dict):
                     raise ValueError("body must be an object")
             except ValueError:
                 return self._send(HTTPStatus.BAD_REQUEST, {"error": "invalid JSON"})
-            status, payload = route(body)
+            self._run(route, raw, parsed)
+
+        def _run(self, route, raw: bytes, parsed: dict):
+            ctx = RequestContext(
+                method=self.command,
+                path=self.path,
+                headers={k.lower(): v for k, v in self.headers.items()},
+                body=raw,
+                json=parsed,
+            )
+            try:
+                status, payload = route(ctx)
+            except TrustError as e:
+                status, payload = e.status, {"error": e.reason, "detail": e.detail}
             self._send(status, payload)
 
         def _send(self, status: int, payload: dict):
@@ -222,9 +204,31 @@ def make_handler(state: BankState):
             self.wfile.write(data)
 
         def log_message(self, fmt, *args):
-            print(f"[bank] {self.address_string()} {fmt % args}", flush=True)
+            print(f"[server] {self.address_string()} {fmt % args}", flush=True)
 
     return Handler
+
+
+def build_services(args, revocations=None):
+    builds = BuildRegistry([Build(args.build_id, bytes.fromhex(args.build_key_hex), args.package, args.cert_sha256)])
+    installs = InstallRegistry()
+    platform = StubPlatformAttestation() if args.stub_play_integrity else DisabledPlatformAttestation()
+    policy = TokenPolicy(
+        require_hardware=not args.allow_software_attestation,
+        require_user_auth=not args.allow_no_user_auth,
+    )
+    trust = TrustService(
+        signing_key=SigningKey.generate(),
+        package_name=args.package,
+        signing_cert_sha256=args.cert_sha256,
+        builds=builds,
+        installs=installs,
+        platform_attestation=platform,
+        policy=policy,
+        revocations=revocations,
+    )
+    bank = BankState(package_name=args.package, jwks_provider=trust.jwks)
+    return trust, bank
 
 
 def main() -> None:
@@ -233,31 +237,29 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--package", required=True)
     parser.add_argument("--cert-sha256", action="append", required=True, help="app signing certificate digest")
-    parser.add_argument(
-        "--allow-software-attestation", action="store_true",
-        help="accept software-backed keys and non-Google roots (emulators). Never in production.",
-    )
+    parser.add_argument("--build-id", required=True, help="the genuine build's id (matches the app's build_config.h)")
+    parser.add_argument("--build-key-hex", required=True, help="the build's report-MAC key, hex (matches build_config.h)")
+    parser.add_argument("--allow-software-attestation", action="store_true",
+                        help="accept software-backed keys and non-Google roots (emulators). Never in production.")
     parser.add_argument("--allow-no-user-auth", action="store_true",
                         help="accept keys usable without biometric or device credential. Never in production.")
     parser.add_argument("--no-revocation-check", action="store_true",
                         help="skip Google's revocation list (offline demos). Never in production.")
+    parser.add_argument("--stub-play-integrity", action="store_true",
+                        help="accept the self-describing stub platform token (demos/tests). Never in production.")
     args = parser.parse_args()
 
     revocations = None
     if not args.no_revocation_check:
         revocations = RevocationList()
         if not revocations.refresh():
-            print("[bank] revocation list not loaded yet; binding is refused until it is", flush=True)
+            print("[server] revocation list not loaded yet; binding is refused until it is", flush=True)
         revocations.start_background_refresh()
-    state = BankState(
-        args.package, args.cert_sha256,
-        require_hardware=not args.allow_software_attestation,
-        require_user_auth=not args.allow_no_user_auth,
-        revocations=revocations,
-    )
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(state))
-    print(f"[bank] listening on {args.host}:{args.port} (hardware attestation: {state.require_hardware}, "
-          f"user auth: {state.require_user_auth}, revocation check: {revocations is not None})", flush=True)
+    trust, bank = build_services(args, revocations=revocations)
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(trust, bank))
+    print(f"[server] listening on {args.host}:{args.port} (hardware: {trust.policy.require_hardware}, "
+          f"user auth: {trust.policy.require_user_auth}, revocation: {revocations is not None}, "
+          f"platform attestation: {trust.platform.available})", flush=True)
     server.serve_forever()
 
 
