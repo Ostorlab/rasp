@@ -43,9 +43,14 @@ class TrustError(Exception):
         self.status = status
 
 
-def token_proof_message(nonce: str, report_mac: str) -> bytes:
-    """What the install key signs to prove possession and bind the request to this report and challenge."""
-    return f"rasp-token-1\n{nonce}\n{report_mac}".encode()
+def token_proof_message(nonce: str, report_mac: str, session_jkt: str) -> bytes:
+    """What the user-auth install key signs at token issuance.
+
+    It binds the challenge, the sealed report, and the ephemeral session key the token will be bound to. So
+    one user authentication (a biometric prompt showing the action) authorizes a short-lived token whose
+    per-request proofs the session key then makes silently, with no prompt per request.
+    """
+    return f"rasp-token-1\n{nonce}\n{report_mac}\n{session_jkt}".encode()
 
 
 class TrustService:
@@ -183,10 +188,19 @@ class TrustService:
         if not isinstance(envelope.get("report"), str) or not isinstance(mac, str):
             raise TrustError("bad_report", "sealedReport.report and .mac are required", status=400)
 
-        # Proof of possession, binding this challenge to this exact report.
-        public_key = jose.load_public_key_der(install.public_key_der)
+        # The ephemeral session key the token will be bound to (cnf). The install key authorizes it.
         try:
-            jose.verify_proof(public_key, token_proof_message(nonce, mac), str(body.get("proof", "")))
+            session_key = jose.load_public_key_der(base64.b64decode(str(body.get("sessionPublicKey", ""))))
+        except (jose.JoseError, ValueError) as e:
+            raise TrustError("bad_session_key", str(e), status=400) from e
+        session_jkt = jose.public_key_thumbprint(session_key)
+
+        # Proof of possession by the user-auth install key, binding this challenge, report and session key.
+        install_key = jose.load_public_key_der(install.public_key_der)
+        try:
+            jose.verify_proof(
+                install_key, token_proof_message(nonce, mac, session_jkt), str(body.get("proof", ""))
+            )
         except jose.JoseError as e:
             raise TrustError("bad_proof", e.reason, status=403) from e
 
@@ -243,7 +257,9 @@ class TrustService:
             "signals": assessment.threat_summary,
             "uauth": install.user_auth_required,
             "sec": install.security_level,
-            "cnf": {"jkt": install.thumbprint},
+            # The token is bound to the ephemeral session key; the install key that authorized it (and its
+            # per-use user-auth property) is reflected in `uauth`.
+            "cnf": {"jkt": session_jkt},
             "iat": now,
             "nbf": now,
             "exp": now + ttl,

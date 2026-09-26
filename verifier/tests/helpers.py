@@ -190,6 +190,14 @@ def seal_report(nonce: str, signals=(), *, build_id: str = BUILD_ID, build_key: 
     return {"report": report, "mac": mac}
 
 
+def session_keypair() -> tuple[ec.EllipticCurvePrivateKey, str]:
+    """An ephemeral session key: (private key, SubjectPublicKeyInfo DER as base64)."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    der = key.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    return key, base64.b64encode(der).decode()
+
+
 def stub_play_integrity(nonce: str, *, verdict: str = "STRONG", package: str = PACKAGE) -> str:
     """A StubPlatformAttestation token bound to the challenge nonce (SHA-256), for tests only."""
     request_hash = hashlib.sha256(nonce.encode()).digest()

@@ -26,6 +26,7 @@ from tests.helpers import (
     Chain,
     raw_es256,
     seal_report,
+    session_keypair,
     stub_play_integrity,
 )
 
@@ -83,27 +84,30 @@ class ServerTest(unittest.TestCase):
         return chain, body
 
     def get_token(self, chain, install_id="install-1", signals=(), verdict="STRONG"):
+        """Returns (token, session_private_key). The session key signs per-request proofs silently."""
         _, challenge, _ = self.post("/v1/challenge", {"installId": install_id, "purpose": "token"})
         nonce = challenge["nonce"]
         sealed = seal_report(nonce, signals)
-        proof = raw_es256(chain.device_key, token_proof_message(nonce, sealed["mac"]))
+        session_key, session_b64 = session_keypair()
+        session_jkt = jose.public_key_thumbprint(session_key.public_key())
+        proof = raw_es256(chain.device_key, token_proof_message(nonce, sealed["mac"], session_jkt))
         status, body, _ = self.post("/v1/token", {
-            "installId": install_id, "nonce": nonce, "proof": proof, "sealedReport": sealed,
-            "playIntegrityToken": stub_play_integrity(nonce, verdict=verdict),
+            "installId": install_id, "nonce": nonce, "proof": proof, "sessionPublicKey": session_b64,
+            "sealedReport": sealed, "playIntegrityToken": stub_play_integrity(nonce, verdict=verdict),
         })
         self.assertEqual(200, status, body)
-        return body["token"]
+        return body["token"], session_key
 
-    def transfer(self, session, chain, token, *, counter=1, amount_cents=5000, session_override=None):
+    def transfer(self, session, session_key, token, *, counter=1, amount_cents=5000, session_override=None):
         body = {"sessionToken": session_override or session, "payee": "Alex Smith",
                 "amountCents": amount_cents, "currency": "USD"}
         raw = json.dumps(body).encode()
         import time
 
         ts = int(time.time() * 1000)
-        key_der = chain.device_key.public_key().public_bytes(
+        key_der = session_key.public_key().public_bytes(
             serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
-        sig = raw_es256(chain.device_key, canonical_request("POST", "/v1/transfers", raw, ts, counter))
+        sig = raw_es256(session_key, canonical_request("POST", "/v1/transfers", raw, ts, counter))
         headers = {
             "X-Integrity-Token": token,
             "X-Integrity-Key": base64.b64encode(key_der).decode(),
@@ -125,7 +129,8 @@ class ServerTest(unittest.TestCase):
         session = self.login()
         chain, bound = self.bind()
         self.assertTrue(bound["userAuthRequired"])
-        status, body = self.transfer(session, chain, self.get_token(chain))
+        token, session_key = self.get_token(chain)
+        status, body = self.transfer(session, session_key, token)
         self.assertEqual((200, "allow"), (status, body["decision"]))
         self.assertEqual(5000, body["fields"]["amountCents"])
 
@@ -140,40 +145,43 @@ class ServerTest(unittest.TestCase):
     def test_malware_on_device_is_denied(self):
         session = self.login()
         chain, _ = self.bind()
-        token = self.get_token(chain, signals=[("accessibilityAbuse", 95, "fraud.a11y", "evil.apk")])
-        status, body = self.transfer(session, chain, token)
+        token, sk = self.get_token(chain, signals=[("accessibilityAbuse", 95, "fraud.a11y", "evil.apk")])
+        status, body = self.transfer(session, sk, token)
         self.assertEqual((403, "deny"), (status, body["decision"]))
 
     def test_call_during_transfer_needs_step_up(self):
         session = self.login()
         chain, _ = self.bind()
-        token = self.get_token(chain, signals=[("activeCall", 90, "fraud.active_call", "mode=2")])
-        status, body = self.transfer(session, chain, token)
+        token, sk = self.get_token(chain, signals=[("activeCall", 90, "fraud.active_call", "mode=2")])
+        status, body = self.transfer(session, sk, token)
         self.assertEqual((200, "step_up"), (status, body["decision"]))
 
     def test_replayed_request_proof_is_rejected(self):
         session = self.login()
         chain, _ = self.bind()
-        token = self.get_token(chain)
-        self.assertEqual(200, self.transfer(session, chain, token, counter=1)[0])
+        token, sk = self.get_token(chain)
+        self.assertEqual(200, self.transfer(session, sk, token, counter=1)[0])
         # A fresh token but the same (or lower) counter is a replayed proof.
-        status, body = self.transfer(session, chain, self.get_token(chain), counter=1)
+        token2, sk2 = self.get_token(chain)
+        status, body = self.transfer(session, sk2, token2, counter=1)
         self.assertEqual((401, "replayed_proof"), (status, body.get("reason")))
 
     def test_a_second_install_cannot_use_the_first_sessions(self):
         session = self.login()
         chain, _ = self.bind("install-1")
-        self.assertEqual(200, self.transfer(session, chain, self.get_token(chain))[0])
+        token, sk = self.get_token(chain)
+        self.assertEqual(200, self.transfer(session, sk, token)[0])
         other, _ = self.bind("install-2")
-        token = self.get_token(other, install_id="install-2")
-        status, body = self.transfer(session, other, token, counter=2)
+        token2, sk2 = self.get_token(other, install_id="install-2")
+        status, body = self.transfer(session, sk2, token2, counter=2)
         self.assertEqual((403, "install_mismatch"), (status, body.get("reason")))
 
     def test_wrong_key_for_token_is_rejected(self):
         session = self.login()
         chain, _ = self.bind()
-        token = self.get_token(chain)
-        status, body = self.transfer(session, Chain(b"x" * 32), token)
+        token, _ = self.get_token(chain)
+        wrong_key, _ = session_keypair()  # not the session key the token is bound to
+        status, body = self.transfer(session, wrong_key, token)
         self.assertEqual((401, "key_mismatch"), (status, body.get("reason")))
 
     def test_key_without_user_auth_is_refused_at_bind(self):

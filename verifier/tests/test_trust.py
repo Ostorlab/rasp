@@ -17,6 +17,7 @@ from .helpers import (
     Chain,
     raw_es256,
     seal_report,
+    session_keypair,
     stub_play_integrity,
 )
 
@@ -56,13 +57,17 @@ class TrustFlow(unittest.TestCase):
     def _token(self, chain, install_id="install-1", signals=(), verdict="STRONG", **overrides):
         nonce = self.trust.challenge(install_id, "token")["nonce"]
         sealed = overrides.pop("sealed", None) or seal_report(nonce, signals)
+        session_key, session_b64 = session_keypair()
+        self.last_session_key = session_key
+        session_jkt = jose.public_key_thumbprint(session_key.public_key())
         proof = overrides.pop("proof", None)
         if proof is None:
-            proof = raw_es256(chain.device_key, token_proof_message(nonce, sealed["mac"]))
+            proof = raw_es256(chain.device_key, token_proof_message(nonce, sealed["mac"], session_jkt))
         body = {
             "installId": install_id,
             "nonce": nonce,
             "proof": proof,
+            "sessionPublicKey": session_b64,
             "sealedReport": sealed,
             "playIntegrityToken": stub_play_integrity(nonce, verdict=verdict),
         }
@@ -81,7 +86,8 @@ class TrustFlow(unittest.TestCase):
         claims = self.claims(issued["token"])
         self.assertEqual(claims["app"], PACKAGE)
         self.assertEqual(claims["build"], BUILD_ID)
-        self.assertEqual(claims["cnf"]["jkt"], jose.public_key_thumbprint(chain.device_key.public_key()))
+        # The token is bound to the ephemeral session key, not the install key directly.
+        self.assertEqual(claims["cnf"]["jkt"], jose.public_key_thumbprint(self.last_session_key.public_key()))
         self.assertTrue(claims["uauth"])
 
     def test_hooking_in_the_report_is_critical(self):
@@ -100,8 +106,11 @@ class TrustFlow(unittest.TestCase):
         chain, _ = self._bind()
         nonce = self.trust.challenge("install-1", "token")["nonce"]
         sealed = seal_report(nonce)
-        proof = raw_es256(chain.device_key, token_proof_message(nonce, sealed["mac"]))
-        issued = self.trust.token({"installId": "install-1", "nonce": nonce, "proof": proof, "sealedReport": sealed})
+        session_key, session_b64 = session_keypair()
+        jkt = jose.public_key_thumbprint(session_key.public_key())
+        proof = raw_es256(chain.device_key, token_proof_message(nonce, sealed["mac"], jkt))
+        issued = self.trust.token({"installId": "install-1", "nonce": nonce, "proof": proof,
+                                   "sessionPublicKey": session_b64, "sealedReport": sealed})
         self.assertEqual(issued["risk"], "medium")  # clean report, but no platform proof -> floor raised
 
     def test_weak_play_integrity_verdict_is_high(self):
@@ -115,17 +124,19 @@ class TrustFlow(unittest.TestCase):
         # sealed report's own nonce is replaced with the token nonce inside _token via a fresh seal below.
         nonce = self.trust.challenge("install-1", "token")["nonce"]
         forged = seal_report(nonce, build_key=b"\x00" * 32)
-        proof = raw_es256(chain.device_key, token_proof_message(nonce, forged["mac"]))
+        session_key, session_b64 = session_keypair()
+        jkt = jose.public_key_thumbprint(session_key.public_key())
+        proof = raw_es256(chain.device_key, token_proof_message(nonce, forged["mac"], jkt))
         with self.assertRaises(TrustError) as cm:
-            self.trust.token({"installId": "install-1", "nonce": nonce, "proof": proof, "sealedReport": forged,
-                              "playIntegrityToken": stub_play_integrity(nonce)})
+            self.trust.token({"installId": "install-1", "nonce": nonce, "proof": proof, "sessionPublicKey": session_b64,
+                              "sealedReport": forged, "playIntegrityToken": stub_play_integrity(nonce)})
         self.assertEqual(cm.exception.reason, "bad_report")
 
     def test_forged_proof_is_refused(self):
         chain, _ = self._bind()
         other = Chain(b"x" * 32)
         with self.assertRaises(TrustError) as cm:
-            self._token(chain, proof=raw_es256(other.device_key, b"rasp-token-1\nx\ny"))
+            self._token(chain, proof=raw_es256(other.device_key, b"rasp-token-1\nx\ny\nz"))
         self.assertEqual(cm.exception.reason, "bad_proof")
 
     def test_report_bound_to_a_different_nonce_is_refused(self):
@@ -139,9 +150,11 @@ class TrustFlow(unittest.TestCase):
         chain, _ = self._bind()
         nonce = self.trust.challenge("install-1", "token")["nonce"]
         sealed = seal_report(nonce)
-        proof = raw_es256(chain.device_key, token_proof_message(nonce, sealed["mac"]))
-        body = {"installId": "install-1", "nonce": nonce, "proof": proof, "sealedReport": sealed,
-                "playIntegrityToken": stub_play_integrity(nonce)}
+        session_key, session_b64 = session_keypair()
+        jkt = jose.public_key_thumbprint(session_key.public_key())
+        proof = raw_es256(chain.device_key, token_proof_message(nonce, sealed["mac"], jkt))
+        body = {"installId": "install-1", "nonce": nonce, "proof": proof, "sessionPublicKey": session_b64,
+                "sealedReport": sealed, "playIntegrityToken": stub_play_integrity(nonce)}
         self.trust.token(body)
         with self.assertRaises(TrustError) as cm:
             self.trust.token(body)
@@ -158,10 +171,12 @@ class TrustFlow(unittest.TestCase):
         chain, _ = self._bind()
         nonce = self.trust.challenge("install-1", "token")["nonce"]
         sealed = seal_report(nonce, build_id="not-registered")
-        proof = raw_es256(chain.device_key, token_proof_message(nonce, sealed["mac"]))
+        session_key, session_b64 = session_keypair()
+        jkt = jose.public_key_thumbprint(session_key.public_key())
+        proof = raw_es256(chain.device_key, token_proof_message(nonce, sealed["mac"], jkt))
         with self.assertRaises(TrustError) as cm:
-            self.trust.token({"installId": "install-1", "nonce": nonce, "proof": proof, "sealedReport": sealed,
-                              "playIntegrityToken": stub_play_integrity(nonce)})
+            self.trust.token({"installId": "install-1", "nonce": nonce, "proof": proof, "sessionPublicKey": session_b64,
+                              "sealedReport": sealed, "playIntegrityToken": stub_play_integrity(nonce)})
         self.assertEqual(cm.exception.reason, "unknown_build")
 
 
