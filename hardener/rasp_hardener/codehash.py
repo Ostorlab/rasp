@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import pathlib
 
-from . import guardmesh
+from rasp_hardener import guardmesh
 
 
 def hash_file(path: str | pathlib.Path) -> str:

@@ -5,7 +5,7 @@ import unittest
 from rasp_verifier.registry import Build, BuildRegistry, RegistryError
 from rasp_verifier.report import ReportError, verify_sealed_report
 
-from .helpers import seal_report
+from tests.helpers import seal_report
 
 MANIFEST = {
     "version": "raxp-build-manifest-1",
@@ -60,6 +60,12 @@ class RegistryManifestTest(unittest.TestCase):
         registry = BuildRegistry()
         with self.assertRaises(RegistryError) as cm:
             registry.register_manifest({"build_id": "x"})  # no build_key_hex
+        self.assertEqual(cm.exception.reason, "bad_manifest")
+
+    def test_malformed_build_key_hex_rejected(self):
+        registry = BuildRegistry()
+        with self.assertRaises(RegistryError) as cm:
+            registry.register_manifest({**MANIFEST, "build_key_hex": "nothex!!"})
         self.assertEqual(cm.exception.reason, "bad_manifest")
 
     def test_revoked_manifest_build_refused_on_get(self):

@@ -10,8 +10,8 @@ This is the Python-implemented portion of the design's build-time hardening. The
 obfuscation passes, the DEX/ASM Gradle plugin, and code virtualization remain future work (see the repo TODO).
 """
 
-from .guardmesh import guard_offset, guard_root
-from .manifest import BuildManifest, build_manifest
-from .seed import BuildProfile
+from rasp_hardener.guardmesh import guard_offset, guard_root
+from rasp_hardener.manifest import BuildManifest, build_manifest
+from rasp_hardener.seed import BuildProfile
 
 __all__ = ["BuildProfile", "BuildManifest", "build_manifest", "guard_root", "guard_offset"]

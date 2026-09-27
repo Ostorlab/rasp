@@ -15,12 +15,13 @@ over a trusted channel. ``--seed`` takes hex (32 chars / 16 bytes); omit it for 
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 import sys
 
-from . import emit
-from .manifest import build_manifest
-from .seed import SEED_LEN, BuildProfile
+from rasp_hardener import emit
+from rasp_hardener.manifest import build_manifest
+from rasp_hardener.seed import SEED_LEN, BuildProfile
 
 # The native sources whose bytes define the build, hashed into the integrity root.
 NATIVE_SOURCES = ["detectors.c", "signals.c", "sha256.c", "report.c", "rasp_jni.c", "guard.c", "strobf.c"]
@@ -52,7 +53,8 @@ def cmd_gen_build(args: argparse.Namespace) -> int:
     manifest_path = pathlib.Path(args.manifest)
     manifest.write(manifest_path)
     print(f"build_id      {profile.build_id}")
-    print(f"seed          {profile.seed_hex}")
+    # Never print the raw seed: it derives build_key (the report MAC key) and would leak into CI logs.
+    print(f"seed_fp       {profile.seed_fingerprint}")
     for p in written:
         print(f"emitted       {p}")
     print(f"manifest      {manifest_path}")
@@ -61,8 +63,6 @@ def cmd_gen_build(args: argparse.Namespace) -> int:
 
 
 def cmd_show(args: argparse.Namespace) -> int:
-    import json
-
     profile = _profile_from_arg(args.seed)
     print(json.dumps(profile.summary(), indent=2))
     return 0

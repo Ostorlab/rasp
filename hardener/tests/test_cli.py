@@ -1,5 +1,7 @@
 """CLI: gen-build emits headers + manifest, show is non-secret, register emits a manifest."""
 
+import contextlib
+import io
 import json
 import pathlib
 import tempfile
@@ -38,9 +40,6 @@ class CliTest(unittest.TestCase):
             self.assertEqual(len(manifest["integrity_root"]), 64)
 
     def test_show_is_non_secret(self):
-        import contextlib
-        import io
-
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = cli.main(["show", "--seed", SEED_HEX])
@@ -48,12 +47,12 @@ class CliTest(unittest.TestCase):
         out = json.loads(buf.getvalue())
         profile = BuildProfile.derive(bytes.fromhex(SEED_HEX))
         self.assertEqual(out["build_id"], profile.build_id)
+        self.assertEqual(out["seed_fingerprint"], profile.seed_fingerprint)
+        # Neither the build key nor the raw seed (which derives it) may appear in the output.
         self.assertNotIn(profile.build_key_hex, buf.getvalue())
+        self.assertNotIn(SEED_HEX, buf.getvalue())
 
     def test_register_to_stdout(self):
-        import contextlib
-        import io
-
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = cli.main(["register", "--seed", SEED_HEX, "--cpp-dir", "/nonexistent",

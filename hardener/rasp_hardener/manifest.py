@@ -12,14 +12,13 @@ fingerprint, so a build can be correlated without being reproduced.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import pathlib
 import time
 from dataclasses import asdict, dataclass, field
 
-from . import codehash
-from .seed import BuildProfile
+from rasp_hardener import codehash
+from rasp_hardener.seed import BuildProfile
 
 MANIFEST_VERSION = "raxp-build-manifest-1"
 
@@ -64,8 +63,13 @@ def build_manifest(
     code_paths: list[str | pathlib.Path] | None = None,
 ) -> BuildManifest:
     """Assemble a manifest for `profile`, hashing `code_paths` and folding in the signer digests."""
-    code_hashes = codehash.hash_paths(code_paths) if code_paths else {}
-    root = codehash.integrity_root(code_hashes, signing_cert_sha256) if code_hashes else ""
+    code_hashes = codehash.hash_paths(code_paths) if len(code_paths or []) > 0 else {}
+    # The signing cert is part of the code identity, so bind it whenever either input is present — not only
+    # when code files were hashed (otherwise `register` with just --cert would drop the cert from the root).
+    if len(code_hashes) > 0 or len(signing_cert_sha256) > 0:
+        root = codehash.integrity_root(code_hashes, signing_cert_sha256)
+    else:
+        root = ""
     return BuildManifest(
         build_id=profile.build_id,
         build_key_hex=profile.build_key_hex,
@@ -73,5 +77,5 @@ def build_manifest(
         signing_cert_sha256=list(signing_cert_sha256),
         code_hashes=code_hashes,
         integrity_root=root,
-        seed_fingerprint=hashlib.sha256(profile.seed).hexdigest()[:16],
+        seed_fingerprint=profile.seed_fingerprint,
     )

@@ -1,19 +1,21 @@
 # rasp-hardener
 
-Build-time hardening toolchain for `flutter_rasp` (design §6). It runs in CI before/around the app build and
-turns a single random **build seed** into everything that must differ build-to-build, so a bypass developed
-against one build does not carry to the next, and so the trust service can recognise exactly what it accepts.
+Build-time hardening toolchain for `flutter_rasp` (design §6), run in CI around the app build.
+
+A single random **build seed** produces everything that must differ build-to-build: keys, ids, opcode
+orderings, detector layout, encrypted literals, guard hashes. Change the seed and a bypass developed against
+one build does not carry to the next — and the trust service accepts exactly the build it registered.
 
 This is the Python-implemented portion of the design's build-time hardening. The native LLVM/O-LLVM
 obfuscation passes, the DEX/ASM Gradle plugin, and code virtualization are **not** implemented yet (see the
 repo `TODO.md`); what is here is fully covered by tests that run in this repo.
 
-## What it does
+## What does the hardener do?
 
 | Piece | Module | Design |
 | :--- | :--- | :--- |
 | Per-build polymorphism: seed → build key, build id, string key, VM opcode permutation, detector order | `seed.py` | §6 per-build polymorphism |
-| Compile-time string/constant encryption (no cleartext literals in `.rodata`) | `strenc.py` ↔ `strobf.c` | §6 obfuscation, §2 consteval strings |
+| Compile-time encryption of the JNI class/method/signature literals (kept out of `.rodata`) | `strenc.py` ↔ `strobf.c` | §6 obfuscation, §2 consteval strings |
 | Guard mesh: mutually-hashing integrity guards; result feeds data (keys/offsets), not branches | `guardmesh.py` ↔ `guard.c` | §6 guard network, check weaving |
 | Code-tamper hashing folded into an integrity root | `codehash.py` | §6 check weaving, §8 code-tamper hashing |
 | Header generation the native build consumes | `emit.py` → `build_generated.h`, `build_seed.h` | §6 pre-build generator |
@@ -26,20 +28,26 @@ is reproducible for debugging and re-registration, while the outputs stay indepe
 
 ## Usage
 
+Install the package (from the repo root) so the `rasp-hardener` entry point and the `rasp_hardener` module
+resolve; the paths below are relative to the repo root:
+
 ```bash
+pip install -e ./hardener
+
 # Derive a build from a fresh random seed: write build_generated.h + build_seed.h into the native dir and the
 # registration manifest to hand to the trust service.
-python3 -m rasp_hardener.cli gen-build \
+rasp-hardener gen-build \
     --cpp-dir flutter_rasp/android/src/main/cpp \
     --package dev.ostorlab.rasp.demo_bank \
     --cert <app-signing-cert-sha256> \
     --manifest build_manifest.json
 
-# Inspect (non-secret) what a seed produces, without writing anything.
-python3 -m rasp_hardener.cli show --seed 000102030405060708090a0b0c0d0e0f
+# Echo the seed's derived, non-secret layout (build id, seed fingerprint, opcode map, detector order).
+# The seed itself is secret — `show` never prints it, but treat its output as sensitive on shared runners.
+rasp-hardener show --seed 000102030405060708090a0b0c0d0e0f
 
 # Re-emit only the manifest for a known seed.
-python3 -m rasp_hardener.cli register --seed <hex> --cert <sha256>
+rasp-hardener register --seed <hex> --cert <sha256>
 ```
 
 `build_config.h` includes `build_generated.h` when present (via `__has_include`) and otherwise falls back to
@@ -55,9 +63,14 @@ never commit it.
 cd hardener && python3 -m unittest discover -s tests -t .
 ```
 
-Coverage: seed determinism/independence/diversity; string-encryption round trip and no cleartext leakage;
-guard-mesh known answers, order/tamper sensitivity and key folding; manifest contents and JSON round trip; the
-CLI. Two cross-language tests compile the generated header and the native primitives with a C compiler and
-assert the C side agrees byte-for-byte with the Python reference (string decode, guard root), and one drives
-a hardener manifest through the trust service's `BuildRegistry` and verifies a report sealed with the derived
+Coverage:
+
+- seed determinism, output independence, and build diversity;
+- string-encryption round trip with no cleartext leakage;
+- guard-mesh known answers, order and tamper sensitivity, and key folding;
+- manifest contents and JSON round trip, and the CLI (including that `show`/`gen-build` never print the seed).
+
+Two cross-language tests compile the generated header and the native primitives with a C compiler and assert
+the C side agrees byte-for-byte with the Python reference (string decode, guard root). One more drives a
+hardener manifest through the trust service's `BuildRegistry` and verifies a report sealed with the derived
 build key — the same bar as the verifier's native-seal interop test.

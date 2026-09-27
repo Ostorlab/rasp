@@ -129,11 +129,20 @@ class BuildProfile:
     def build_key_hex(self) -> str:
         return self.build_key.hex()
 
+    @property
+    def seed_fingerprint(self) -> str:
+        """A non-secret 16-hex-char fingerprint of the seed, safe to log and to correlate builds by."""
+        return hashlib.sha256(self.seed).hexdigest()[:16]
+
     def summary(self) -> dict:
-        """A JSON-safe summary for logs and the ``show`` CLI (never includes the secret key material)."""
+        """A JSON-safe summary for logs and the ``show`` CLI (never includes the secret key material).
+
+        The raw seed deterministically derives ``build_key`` (the report MAC key), so it is a secret and must
+        never appear here; only the non-secret fingerprint and derived layout are exposed.
+        """
         return {
             "build_id": self.build_id,
-            "seed": self.seed_hex,
+            "seed_fingerprint": self.seed_fingerprint,
             "opcode_map": self.opcode_map,
             "detector_order": list(self.detector_order),
         }

@@ -57,7 +57,7 @@ The current scope is Android + a trust service. "Verified" means covered by test
 
 ### Tests
 - [x] Python: trust flow, DPoP proofs, risk mapping, HTTP server, attestation, revocation, build-manifest
-  ingestion (64 tests).
+  ingestion (65 tests).
 - [x] Hardener: per-build polymorphism, string encryption, guard mesh, code hashing, manifest, CLI (34 tests).
 - [x] Native host: parsers, SHA-256/HMAC known-answer vectors, report sealing, guard mesh, string decode.
 - [x] Cross-language: native seal, string decode, and guard root verified against the Python reference
@@ -87,12 +87,14 @@ The current scope is Android + a trust service. "Verified" means covered by test
 - [~] **Compiler plugins / post-build CLI / SDK-only mode.** `rasp-hardener` CLI (`gen-build`/`show`/
   `register`) is the Python pre-build generator + post-build registration step. LLVM/O-LLVM Clang passes,
   the Xcode toolchain, and the DEX/ASM Gradle plugin are not implemented.
-- [~] **Obfuscation.** String/constant encryption done: literals are XOR-encrypted per build (`strenc.py`)
-  and decrypted natively on use (`strobf.c`), cross-language verified. Name obfuscation, control-flow
-  flattening, MBA, code virtualization, class/asset encryption, and anti-disassembly are not done.
-- [x] **Check weaving; results feeding data (keys/offsets) not branches.** Guard-mesh output derives an
-  offset/key (`rasp_guard_offset`, `guardmesh.fold_key`); a single flipped byte changes it, no `if(tampered)`
-  branch. Weaving these calls into arbitrary app functions (vs. the RASP core) is not automated yet.
+- [~] **Obfuscation.** String/constant encryption done for the five JNI registration literals (the class name,
+  `nativeScan`/`nativeSeal`, and their two signatures): XOR-encrypted per build (`strenc.py`) and decrypted
+  natively on use (`strobf.c`), cross-language verified. Detector IDs, JSON keys, and file paths remain
+  cleartext; name obfuscation, control-flow flattening, MBA, code virtualization, class/asset encryption, and
+  anti-disassembly are not done.
+- [x] **Results feeding data (keys/offsets) not branches.** Guard-mesh output derives an offset/key
+  (`rasp_guard_offset`, `guardmesh.fold_key`); a single flipped byte changes it, no `if(tampered)` branch.
+- [ ] **Weave check calls into arbitrary app functions** (vs. only the RASP core) — not automated yet.
 - [x] **Guard network (mutually-hashing integrity guards).** `guard.c` ↔ `guardmesh.py`, chained per-region
   hashing, known-answer + cross-language tests.
 - [x] **Per-build polymorphism (seed → layout/keys/opcodes/detector placement) and build registration.**

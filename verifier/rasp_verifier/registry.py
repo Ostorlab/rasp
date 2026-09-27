@@ -41,9 +41,13 @@ class Build:
         """Builds a registry entry from a `rasp-hardener` build manifest (see hardener/manifest.py)."""
         if "build_id" not in data or "build_key_hex" not in data:
             raise RegistryError("bad_manifest", "missing build_id or build_key_hex")
+        try:
+            build_key = bytes.fromhex(data["build_key_hex"])
+        except (ValueError, TypeError) as e:
+            raise RegistryError("bad_manifest", f"invalid build_key_hex: {e}") from e
         return cls(
             build_id=data["build_id"],
-            build_key=bytes.fromhex(data["build_key_hex"]),
+            build_key=build_key,
             package_name=data.get("package_name", ""),
             signing_cert_sha256=list(data.get("signing_cert_sha256", [])),
             revoked=bool(data.get("revoked", False)),

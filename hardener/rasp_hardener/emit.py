@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import pathlib
 
-from . import strenc
-from .seed import BASE_OPCODES, BuildProfile
+from rasp_hardener import strenc
+from rasp_hardener.seed import BASE_OPCODES, BuildProfile
 
 # The literals currently sitting in cleartext in rasp_jni.c. In a hardened build these move into the encrypted
 # table and are decrypted into a stack buffer at registration time. Order fixes each entry's table index.
