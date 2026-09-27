@@ -5,9 +5,11 @@
 #include <string.h>
 
 #include "detectors.h"
+#include "guard.h"
 #include "report.h"
 #include "sha256.h"
 #include "signals.h"
+#include "strobf.h"
 
 static void test_parse_tracer_pid(void) {
     assert(rasp_parse_tracer_pid("Name:\tapp\nTracerPid:\t0\nUid:\t1\n") == 0);
@@ -107,6 +109,49 @@ static void test_seal_report_structure(void) {
     assert(mac[64] == '"');
 }
 
+static void test_guard_mesh_known_answer(void) {
+    /* Known answers from the hardener's guardmesh.py over the same regions (cross-language reference). */
+    const uint8_t r1[] = {0};                 /* empty region: len 0 */
+    const uint8_t r2[] = {'a', 'b', 'c'};
+    const uint8_t r3[] = {0x00, 0x01, 0x02};
+    rasp_region_t regions[3] = {{r1, 0}, {r2, 3}, {r3, 3}};
+
+    uint8_t root[RASP_SHA256_DIGEST_LEN];
+    rasp_guard_root(regions, 3, root);
+    char hex[RASP_SHA256_DIGEST_LEN * 2 + 1];
+    rasp_hex_encode(root, sizeof(root), hex);
+    assert(strcmp(hex, "42d544dbe00b9b6a4e567625542fc3b155a72f23a2b5e20d6308bf7690d0dc5f") == 0);
+
+    assert(rasp_guard_offset(regions, 3, 1000) == 162);
+
+    /* Results feed data, not branches: a single flipped byte changes the root and the offset. */
+    uint8_t r2t[] = {'a', 'b', 'd'};
+    regions[1].data = r2t;
+    uint8_t root2[RASP_SHA256_DIGEST_LEN];
+    rasp_guard_root(regions, 3, root2);
+    rasp_hex_encode(root2, sizeof(root2), hex);
+    assert(strcmp(hex, "8c1c54f8b5ebf5d74cb99ea4feb0c638d040b7985cec24dd7848126ab4ff0a71") == 0);
+    assert(rasp_guard_offset(regions, 3, 1000) != 162);
+}
+
+static void test_strobf_decode(void) {
+    /* Known cipher from the hardener's strenc.py: obfuscate("nativeScan", key=0..31, idx=1). */
+    const uint8_t key[RASP_STRING_KEY_LEN] = {
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
+    const uint8_t cipher[] = {0x68, 0x6b, 0x7e, 0x67, 0x78, 0x6f, 0x59, 0x65, 0x67, 0x74};
+    char out[sizeof(cipher) + 1];
+    rasp_strobf_decode(cipher, sizeof(cipher), 1, key, out);
+    assert(strcmp(out, "nativeScan") == 0);
+
+    /* Self-inverse: re-encoding the plaintext reproduces the cipher. */
+    uint8_t again[sizeof(cipher)];
+    char tmp[sizeof(cipher) + 1];
+    rasp_strobf_decode((const uint8_t *)out, sizeof(cipher), 1, key, tmp);
+    memcpy(again, tmp, sizeof(cipher));
+    assert(memcmp(again, cipher, sizeof(cipher)) == 0);
+}
+
 static void test_run_all_on_host(void) {
     /* Smoke test: must not crash, and a plain host process is not traced. */
     rasp_signal_list_t list = {.count = 0};
@@ -125,6 +170,8 @@ int main(void) {
     test_sha256_known_answer();
     test_hmac_sha256_known_answer();
     test_seal_report_structure();
+    test_guard_mesh_known_answer();
+    test_strobf_decode();
     test_run_all_on_host();
     printf("native tests passed\n");
     return 0;

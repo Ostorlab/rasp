@@ -31,6 +31,25 @@ class Build:
     package_name: str
     signing_cert_sha256: list[str]
     revoked: bool = False
+    # Code identity recorded by the hardener at build time (design §6 build registration): the per-file
+    # hashes and the guard-mesh integrity root they fold into. Empty for unhardened/dev builds.
+    code_hashes: dict[str, str] = field(default_factory=dict)
+    integrity_root: str = ""
+
+    @classmethod
+    def from_manifest(cls, data: dict) -> "Build":
+        """Builds a registry entry from a `rasp-hardener` build manifest (see hardener/manifest.py)."""
+        if "build_id" not in data or "build_key_hex" not in data:
+            raise RegistryError("bad_manifest", "missing build_id or build_key_hex")
+        return cls(
+            build_id=data["build_id"],
+            build_key=bytes.fromhex(data["build_key_hex"]),
+            package_name=data.get("package_name", ""),
+            signing_cert_sha256=list(data.get("signing_cert_sha256", [])),
+            revoked=bool(data.get("revoked", False)),
+            code_hashes=dict(data.get("code_hashes", {})),
+            integrity_root=str(data.get("integrity_root", "")),
+        )
 
 
 class BuildRegistry:
@@ -41,6 +60,12 @@ class BuildRegistry:
     def register(self, build: Build) -> None:
         with self._lock:
             self._builds[build.build_id] = build
+
+    def register_manifest(self, data: dict) -> Build:
+        """Registers a build from a hardener manifest dict; returns the stored entry."""
+        build = Build.from_manifest(data)
+        self.register(build)
+        return build
 
     def revoke(self, build_id: str) -> None:
         with self._lock:
