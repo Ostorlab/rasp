@@ -30,3 +30,10 @@ uint64_t rasp_guard_offset(const rasp_region_t *regions, size_t count, uint64_t 
     }
     return modulus ? value % modulus : 0;
 }
+
+void rasp_guard_fold_key(const uint8_t *base_key, size_t base_key_len, const rasp_region_t *regions,
+                         size_t count, uint8_t out[RASP_SHA256_DIGEST_LEN]) {
+    uint8_t root[RASP_SHA256_DIGEST_LEN];
+    rasp_guard_root(regions, count, root);
+    rasp_hmac_sha256(base_key, base_key_len, root, RASP_SHA256_DIGEST_LEN, out);
+}

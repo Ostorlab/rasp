@@ -124,7 +124,16 @@ static void test_guard_mesh_known_answer(void) {
 
     assert(rasp_guard_offset(regions, 3, 1000) == 162);
 
-    /* Results feed data, not branches: a single flipped byte changes the root and the offset. */
+    /* Integrity-derived key: HMAC(base_key, guard_root), matching guardmesh.fold_key in Python. */
+    const uint8_t base_key[32] = {
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
+    uint8_t folded[RASP_SHA256_DIGEST_LEN];
+    rasp_guard_fold_key(base_key, sizeof(base_key), regions, 3, folded);
+    rasp_hex_encode(folded, sizeof(folded), hex);
+    assert(strcmp(hex, "4500af4d306867c320025903977d60ba0455aa1cd57c726fd8c10ad50f695cee") == 0);
+
+    /* Results feed data, not branches: a single flipped byte changes the root, offset and derived key. */
     uint8_t r2t[] = {'a', 'b', 'd'};
     regions[1].data = r2t;
     uint8_t root2[RASP_SHA256_DIGEST_LEN];
@@ -132,6 +141,9 @@ static void test_guard_mesh_known_answer(void) {
     rasp_hex_encode(root2, sizeof(root2), hex);
     assert(strcmp(hex, "8c1c54f8b5ebf5d74cb99ea4feb0c638d040b7985cec24dd7848126ab4ff0a71") == 0);
     assert(rasp_guard_offset(regions, 3, 1000) != 162);
+    uint8_t folded2[RASP_SHA256_DIGEST_LEN];
+    rasp_guard_fold_key(base_key, sizeof(base_key), regions, 3, folded2);
+    assert(memcmp(folded, folded2, sizeof(folded)) != 0);
 }
 
 static void test_strobf_decode(void) {
@@ -150,6 +162,27 @@ static void test_strobf_decode(void) {
     rasp_strobf_decode((const uint8_t *)out, sizeof(cipher), 1, key, tmp);
     memcpy(again, tmp, sizeof(cipher));
     assert(memcmp(again, cipher, sizeof(cipher)) == 0);
+}
+
+static void test_new_detector_helpers(void) {
+    /* Emulator: cpuinfo hardware field. */
+    assert(rasp_cpuinfo_is_emulator("Processor\t: ARMv7\nHardware\t: Goldfish\n") == 1);
+    assert(rasp_cpuinfo_is_emulator("Hardware\t: ranchu\n") == 1);
+    assert(rasp_cpuinfo_is_emulator("Hardware\t: Qualcomm Technologies MSM8998\n") == 0);
+
+    /* Emulator: goldfish tty driver. */
+    assert(rasp_ttydrivers_is_emulator("/dev/tty  goldfish  4 64 console\n") == 1);
+    assert(rasp_ttydrivers_is_emulator("/dev/ttyMSM  serial  4 64 serial\n") == 0);
+
+    /* Root-hiding: KernelSU/APatch markers, but not legit kernel threads like sugov. */
+    assert(rasp_wchan_is_suspicious("kernelsu_handler") == 1);
+    assert(rasp_wchan_is_suspicious("apd_work") == 1);
+    assert(rasp_wchan_is_suspicious("do_epoll_wait") == 0);
+    assert(rasp_wchan_is_suspicious("sugov:0") == 0);
+
+    /* Debugger: PTRACE_TRACEME returns 0 when not traced, non-zero when a debugger is attached. */
+    assert(rasp_selfptrace_is_debugged(0) == 0);
+    assert(rasp_selfptrace_is_debugged(-1) == 1);
 }
 
 static void test_run_all_on_host(void) {
@@ -172,6 +205,7 @@ int main(void) {
     test_seal_report_structure();
     test_guard_mesh_known_answer();
     test_strobf_decode();
+    test_new_detector_helpers();
     test_run_all_on_host();
     printf("native tests passed\n");
     return 0;

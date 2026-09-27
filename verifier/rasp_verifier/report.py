@@ -55,18 +55,36 @@ def verify_sealed_report(
     expected_nonce: str,
     now: float | None = None,
     max_age_seconds: float = MAX_REPORT_AGE_SECONDS,
+    integrity_root: str | None = None,
 ) -> SealedReport:
     """Verifies the MAC over the exact report bytes, then the version, nonce and freshness.
 
     `build_key` comes from the build registry, keyed by the `buildId` inside the report. `expected_nonce`
     is the challenge the trust service issued for this token request.
+
+    `integrity_root` (hex) opts the build into integrity-derived sealing (design §8): the device MACs the
+    report with ``HMAC(build_key, guard_root(code_regions))`` rather than the raw build key, and the server
+    derives the same key from the root registered for the build. A tampered binary produces a different
+    runtime root, so its derived key no longer matches and the report is refused — the tamper fails closed
+    with no on-device branch to patch. When omitted, the raw build key is used (the default/dev path).
     """
     report_text = envelope.get("report")
     mac_hex = envelope.get("mac")
     if not isinstance(report_text, str) or not isinstance(mac_hex, str):
         raise ReportError("bad_envelope", "report and mac are required strings")
 
-    expected_mac = hmac.new(build_key, report_text.encode(), hashlib.sha256).hexdigest()
+    # `None` means "no integrity derivation" (the raw build key). Callers make the fallback deliberate by
+    # passing `integrity_root or None`, so an empty string is treated as an explicit (degenerate) root here
+    # rather than silently meaning "absent".
+    effective_key = build_key
+    if integrity_root is not None:
+        try:
+            root_bytes = bytes.fromhex(integrity_root)
+        except ValueError as e:
+            raise ReportError("bad_integrity_root", str(e)) from e
+        effective_key = hmac.new(build_key, root_bytes, hashlib.sha256).digest()
+
+    expected_mac = hmac.new(effective_key, report_text.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected_mac, mac_hex.lower()):
         raise ReportError("bad_mac", "report MAC does not match the build key")
 

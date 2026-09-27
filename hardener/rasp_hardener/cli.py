@@ -15,13 +15,20 @@ over a trusted channel. ``--seed`` takes hex (32 chars / 16 bytes); omit it for 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
+import os
 import pathlib
 import sys
 
+from rasp_hardener import aes
 from rasp_hardener import emit
+from rasp_hardener import whitebox
 from rasp_hardener.manifest import build_manifest
 from rasp_hardener.seed import SEED_LEN, BuildProfile
+
+WBAES_KEY_LEN = 16
 
 # The native sources whose bytes define the build, hashed into the integrity root.
 NATIVE_SOURCES = ["detectors.c", "signals.c", "sha256.c", "report.c", "rasp_jni.c", "guard.c", "strobf.c"]
@@ -49,7 +56,15 @@ def cmd_gen_build(args: argparse.Namespace) -> int:
         package_name=args.package,
         signing_cert_sha256=args.cert or [],
         code_paths=_code_paths(cpp_dir),
+        so_path=args.so,
     )
+    # With a compiled .so, emit the regions header so the device hashes the same bytes and seals with the
+    # integrity-derived key (design §8). Without --so, the manifest carries only the legacy source-hash root.
+    if args.so is not None:
+        regions = [(r["offset"], r["length"]) for r in manifest.integrity_regions]
+        integrity_header = cpp_dir / "integrity_regions.h"
+        integrity_header.write_text(emit.render_integrity_regions_h(regions))
+        written = written + [integrity_header]
     manifest_path = pathlib.Path(args.manifest)
     manifest.write(manifest_path)
     print(f"build_id      {profile.build_id}")
@@ -85,6 +100,38 @@ def cmd_register(args: argparse.Namespace) -> int:
     return 0
 
 
+def _wbaes_key(args: argparse.Namespace) -> bytes:
+    """The white-box AES key: explicit --key, else derived from --seed, else random."""
+    if args.key:
+        key = bytes.fromhex(args.key)
+        if len(key) != WBAES_KEY_LEN:
+            raise SystemExit(f"--key must be {WBAES_KEY_LEN} bytes ({WBAES_KEY_LEN * 2} hex chars)")
+        return key
+    if args.seed:
+        seed = bytes.fromhex(args.seed)
+        if len(seed) != SEED_LEN:
+            raise SystemExit(f"--seed must be {SEED_LEN} bytes")
+        return hmac.new(seed, b"raxp/wbaes-key", hashlib.sha256).digest()[:WBAES_KEY_LEN]
+    return os.urandom(WBAES_KEY_LEN)
+
+
+def cmd_gen_wbkey(args: argparse.Namespace) -> int:
+    key = _wbaes_key(args)
+    tables = whitebox.generate(key)
+    out_path = pathlib.Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(whitebox.render_tables_h(tables))
+    # Self-check: the emitted tables must reproduce reference AES over several distinct probes (one probe
+    # can coincide for a broken table; a handful across the state space catches generation/emission bugs).
+    round_keys = aes.key_expansion(key)
+    probes = [bytes(range(16)), bytes(16), b"\xff" * 16, bytes(range(15, -1, -1))]
+    ok = all(tables.encrypt_block(p) == aes.encrypt_block(round_keys, p) for p in probes)
+    print(f"wbaes tables  {out_path}")
+    print(f"self-check    {'ok' if ok else 'FAILED'}")
+    print("note          plain Chow tables: not key-hiding yet (see TODO §8)")
+    return 0 if ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rasp-hardener", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -96,6 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
     gb.add_argument("--cpp-dir", default=default_cpp, help="native cpp dir to write headers into")
     gb.add_argument("--package", default="dev.ostorlab.rasp.demo_bank", help="app package name")
     gb.add_argument("--cert", action="append", help="app signing-cert SHA-256 (repeatable)")
+    gb.add_argument("--so", help="compiled .so to hash for the integrity root; emits integrity_regions.h")
     gb.add_argument("--manifest", default="build_manifest.json", help="registration manifest output path")
     gb.set_defaults(func=cmd_gen_build)
 
@@ -110,6 +158,12 @@ def build_parser() -> argparse.ArgumentParser:
     rg.add_argument("--cert", action="append", help="app signing-cert SHA-256 (repeatable)")
     rg.add_argument("--manifest", help="output path; prints to stdout if omitted")
     rg.set_defaults(func=cmd_register)
+
+    wb = sub.add_parser("gen-wbkey", help="emit white-box AES-128 tables (wbaes_tables.h) for SecureStore")
+    wb.add_argument("--key", help="16-byte AES key as hex; overrides --seed")
+    wb.add_argument("--seed", help="16-byte build seed as hex; derives the WB key when --key is omitted")
+    wb.add_argument("--out", default=default_cpp + "/wbaes_tables.h", help="output header path")
+    wb.set_defaults(func=cmd_gen_wbkey)
 
     return parser
 

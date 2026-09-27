@@ -57,21 +57,30 @@ The current scope is Android + a trust service. "Verified" means covered by test
 
 ### Tests
 - [x] Python: trust flow, DPoP proofs, risk mapping, HTTP server, attestation, revocation, build-manifest
-  ingestion (65 tests).
-- [x] Hardener: per-build polymorphism, string encryption, guard mesh, code hashing, manifest, CLI (34 tests).
-- [x] Native host: parsers, SHA-256/HMAC known-answer vectors, report sealing, guard mesh, string decode.
-- [x] Cross-language: native seal, string decode, and guard root verified against the Python reference
-  (byte-exact); hardener manifest verified through the trust-service build registry end-to-end.
+  ingestion, integrity-derived-key sealing (73 tests).
+- [x] Hardener: per-build polymorphism, string encryption, guard mesh, code hashing, manifest, CLI, AES-128
+  reference, white-box AES, CTR/SecureStore AEAD (CMAC), ELF/.so integrity hashing (71 tests).
+- [x] Native host: parsers, new detector helpers (cpuinfo/tty/wchan/self-ptrace), SHA-256/HMAC vectors,
+  report sealing, guard mesh + integrity-derived key, string decode.
+- [x] Cross-language: native seal, string decode, guard root and fold-key, white-box AES block and
+  SecureStore, and the `.so` integrity root (native runtime == build-time over the same regions, tamper flips
+  both) verified against the Python reference (byte-exact); the hardener manifest is verified through the
+  trust-service build registry, and integrity-derived sealing through the full token route, end-to-end.
 
 ## Partial
 
 - [~] **Play Integrity / App Attest (design §7).** Pluggable interface + stub only; no real Google/Apple
   verification. Reference runs in degraded mode (needs a Google Cloud project).
 - [~] **Certificate pinning (design §7).** Detection only (`netMitm`); no client-side pin enforcement.
-- [~] **Detectors per threat (design §4).** Not yet "≥3 independent per threat"; missing root-hiding
-  consistency checks (mount namespaces, zygote/PID anomalies, KernelSU/APatch side channels), behavioral
-  Frida beyond names (D-Bus probe, RWX pages, prologue hashes), self-ptrace, timing, sensor/telephony
-  plausibility.
+- [~] **Detectors per threat (design §4).** Counted as independent *signals* on the same axis as the README
+  table (native + Kotlin). All four threats now meet ≥3: root = 7 (su binaries, root-manager dirs, mounts,
+  KernelSU/APatch `wchan`, SELinux, root-manager packages, `test-keys`); emulator = 4 (qemu files, cpuinfo,
+  goldfish tty, build fingerprint); debugger = 3 (native TracerPid, native self-ptrace via `fork`+
+  `PTRACE_TRACEME`, Kotlin JDWP `Debug.isDebuggerConnected`); hooking = 5 (maps libs, Frida threads, Frida
+  port, Xposed classes/frames, behavioral exec-mapping). This PR added the native cpuinfo/tty/`wchan`/
+  self-ptrace signals. Still missing: a 4th debugger signal (timing/breakpoint scan, deferred pending
+  false-positive tuning), mount-namespace/zygote-PID anomalies, D-Bus/prologue-hash Frida probes, and
+  sensor/telephony plausibility.
 - [~] **Client trust wiring.** `prepareToken`/`signRequest`, two-key model, `RegisterNatives`, `netMitm`
   are written but not yet compiled or re-verified on an emulator / physical device.
 - [~] **Compliance mapping (design §14).** Documented in the design; detectors not yet linked to MASVS/
@@ -102,9 +111,25 @@ The current scope is Android + a trust service. "Verified" means covered by test
   `manifest.py` + `BuildRegistry.from_manifest` register the build with the trust service end-to-end.
 
 ### Crypto and storage (design §8)
-- [ ] Integrity-derived keys (KDF over code hashes + signer + check outputs) so tampering fails closed.
-- [ ] White-box crypto (build key, no-hardware devices; DCA/DFA countermeasures).
-- [ ] `SecureStore` API; data keys; wipe on critical.
+- [x] Integrity-derived keys so tampering fails closed — end-to-end. The hardener hashes the compiled `.so`'s
+  code/read-only regions (`elf.py` + `codehash.so_integrity_root`) into the registered integrity root and
+  emits `integrity_regions.h`. The device reproduces the same root at runtime over its own `.so`
+  (`integrity.c`, located via `dladdr`) and seals the report with `HMAC(build_key, root)` (`rasp_guard_fold_key`
+  in `rasp_jni.c`); the trust service derives the same key from the registered root and wires it into the token
+  route (`TrustService.token` → `verify_sealed_report(integrity_root=...)`), so a patched binary is refused
+  with no on-device branch. Cross-language KAT: the native runtime root equals the build-time root over the
+  same `.so`, and a flipped byte changes both; the token route accepts a derived seal and refuses a raw one.
+  Remaining: run the `dladdr` self-location path on-device (host tests cover the root computation, not the
+  device self-location).
+- [~] White-box crypto (build key, no-hardware devices; DCA/DFA countermeasures). Plain white-box AES-128
+  (Chow tables) implemented: `aes.py` reference (FIPS-197), `whitebox.py` table generator, native `wbaes.c`
+  evaluator; the key is not a contiguous literal, cross-language KAT-verified. **Not key-hiding yet** — the
+  internal encodings / mixing bijections and DCA/DFA countermeasures are the next step.
+- [~] `SecureStore` API; data keys; wipe on critical. Native `securestore.c` provides authenticated
+  data-at-rest under white-box AES-128: CTR for confidentiality + AES-CMAC for integrity, encrypt-then-MAC,
+  framed `nonce||ciphertext||tag`; `open` verifies the tag in constant time before decrypting. CMAC is
+  RFC-4493 KAT-verified and cross-language tested (C == Python; tamper rejected both sides). Missing: key
+  wipe-on-critical, and the Kotlin/Dart API surface (JNI binding + method channel).
 - [~] Code-tamper hashing folded into keys. `codehash.py` hashes the native sources + signer digest into a
   guard-mesh integrity root recorded in the build manifest; hashing `.so` `.text`/resources/`libapp.so`
   regions and folding the root into the live report/data keys at runtime is not wired yet.
