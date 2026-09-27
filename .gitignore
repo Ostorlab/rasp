@@ -12,3 +12,8 @@ __pycache__/
 
 # Local Python venv for the verifier
 .venv/
+
+# Per-build hardener output — secret (carries the build key); regenerated per build, never committed.
+build_generated.h
+build_seed.h
+build_manifest.json

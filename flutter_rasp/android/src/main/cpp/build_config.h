@@ -9,9 +9,18 @@
  * repackaged app's (which cannot know this key) and from a forged or replayed report.
  *
  * The values below are DEVELOPMENT DEFAULTS, committed so the sample builds and the host tests run. They
- * are not secret. A release must override them (e.g. -DRASP_BUILD_ID=... -DRASP_BUILD_KEY_HEX=... via a
- * generated header) and register the matching build with the trust service.
+ * are not secret. A release must override them and register the matching build with the trust service.
+ *
+ * The hardener (`rasp-hardener gen-build`) writes `build_generated.h` with the per-build id and key derived
+ * from the build seed. When that header is present it wins; otherwise the dev defaults below apply, so the
+ * host tests and an unhardened build still compile.
  */
+#if defined(__has_include)
+#if __has_include("build_generated.h")
+#include "build_generated.h"
+#endif
+#endif
+
 #ifndef RASP_BUILD_ID
 #define RASP_BUILD_ID "test-build"
 #endif

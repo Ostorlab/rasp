@@ -159,12 +159,14 @@ adb install -r build/app/outputs/flutter-apk/app-release.apk
 (cd sample_app && flutter test)
 # Kotlin policy engine and fraud signal store (JVM)
 (cd sample_app/android && ./gradlew :flutter_rasp:testDebugUnitTest)
-# Trust service, resource server, attestation, revocation, and C↔Python seal interop
+# Trust service, resource server, attestation, revocation, build-manifest ingestion, and C↔Python seal interop
 (cd verifier && python3 -m unittest discover -s tests -t .)
+# Build-time hardener: per-build polymorphism, string encryption, guard mesh, build registration (C↔Python)
+(cd hardener && python3 -m unittest discover -s tests -t .)
 # Native core on the host
 gcc -Wall -Wextra -Werror -I flutter_rasp/android/src/main/cpp \
   flutter_rasp/android/src/test/cpp/native_test.c \
-  flutter_rasp/android/src/main/cpp/{detectors,signals,sha256,report}.c -o /tmp/native_test && /tmp/native_test
+  flutter_rasp/android/src/main/cpp/{detectors,signals,sha256,report,guard,strobf}.c -o /tmp/native_test && /tmp/native_test
 ```
 
 On an Android emulator, with the profile build and the real policy:
@@ -185,14 +187,15 @@ $DRIVE $DEFINES --target=integration_test/scam_call_test.dart
 
 ## What is verified
 
-- **Trust service and resource server:** the Python suite (57 tests) covers the full challenge → bind → token → request flow and its refusals — repackaged build (wrong MAC key), forged or replayed proof, replayed challenge, weak or missing platform attestation, forged/relayed/revoked attestation chains, and the risk-to-decision mapping.
+- **Trust service and resource server:** the Python suite (65 tests) covers the full challenge → bind → token → request flow and its refusals — repackaged build (wrong MAC key), forged or replayed proof, replayed challenge, weak or missing platform attestation, forged/relayed/revoked attestation chains — plus the risk-to-decision mapping and ingestion of a hardener build manifest into the build registry.
+- **Build-time hardener:** the `hardener/` suite (34 tests) covers per-build polymorphism (seed → keys/opcodes/detector layout), string-constant encryption, the guard mesh and integrity roots, the build manifest, and the CLI. Two cross-language tests compile the generated header and the native primitives (`strobf.c`, `guard.c`) and assert the C side agrees byte-for-byte with the Python reference; one drives a hardener manifest through the trust service's build registry and verifies a report sealed with the derived build key.
 - **Native core:** the host tests cover the detectors' parsers, SHA-256/HMAC known-answer vectors, and report sealing; a cross-language test compiles the native seal and verifies it with the Python trust service, so the device and server HMACs agree byte for byte.
 - **On device:** the earlier offline detection, device binding, scam-call and sensitive-screen behaviour were verified on an emulator. The client trust-service wiring (`prepareToken`/`signRequest`, the two-key model, `RegisterNatives`, NET_MITM) is new and needs re-running on an emulator and a physical device; it has not yet been compiled or run on-device in this change.
 
 ## Known limits
 
 - Android only. iOS is not implemented (the trust service's App Attest path is stubbed).
-- No obfuscation or build-time hardening yet. The device checks can be found and bypassed by a determined reverse engineer; the trust service (attestation, the per-build-MAC'd report, single-use nonces, per-request proofs) is what stops a bypass becoming an accepted payment.
+- Build-time hardening is partial (see `hardener/`). Per-build polymorphism (seed → build key/id, VM opcode permutation, detector order), compile-time string encryption, the mutually-hashing guard mesh, code-tamper hashing, and trust-service build registration are implemented and cross-language tested. The heavy native obfuscation (LLVM/O-LLVM control-flow flattening, MBA, code virtualization, class/asset encryption, anti-disassembly) and the DEX/ASM Gradle plugin are not done, so the device checks can still be found and bypassed by a determined reverse engineer; the trust service (attestation, the per-build-MAC'd report, single-use nonces, per-request proofs) remains what stops a bypass becoming an accepted payment.
 - The sealed report authenticates the build and stops forgery and replay, but a determined attacker running inside the app on a compromised device can still influence the managed-layer signals it contains. Hardware attestation and the server-side risk decision are the backstop. **Play Integrity per request** (a Google-signed verdict the app cannot forge) is the next step and needs a Google Cloud project; until then the reference runs in degraded mode (risk floored at medium) and `platform.py` carries the pluggable interface.
 - Certificate pinning is detected around (NET_MITM) but not yet enforced in the client; enforcement belongs in the native/OkHttp layer per the design.
 - The emulator cannot produce hardware attestation under Google's roots; the strict path is covered by unit tests with synthetic chains and still needs a physical device.

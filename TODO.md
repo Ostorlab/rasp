@@ -56,9 +56,12 @@ The current scope is Android + a trust service. "Verified" means covered by test
 - [x] Password managers no longer flagged as accessibility abuse.
 
 ### Tests
-- [x] Python: trust flow, DPoP proofs, risk mapping, HTTP server, attestation, revocation (58 tests).
-- [x] Native host: parsers, SHA-256/HMAC known-answer vectors, report sealing.
-- [x] Cross-language: native seal verified by the Python trust service (byte-exact HMAC).
+- [x] Python: trust flow, DPoP proofs, risk mapping, HTTP server, attestation, revocation, build-manifest
+  ingestion (65 tests).
+- [x] Hardener: per-build polymorphism, string encryption, guard mesh, code hashing, manifest, CLI (34 tests).
+- [x] Native host: parsers, SHA-256/HMAC known-answer vectors, report sealing, guard mesh, string decode.
+- [x] Cross-language: native seal, string decode, and guard root verified against the Python reference
+  (byte-exact); hardener manifest verified through the trust-service build registry end-to-end.
 
 ## Partial
 
@@ -80,19 +83,31 @@ The current scope is Android + a trust service. "Verified" means covered by test
 - [ ] **iOS** (SDK, jailbreak/instrumentation detection, App Attest, self-integrity).
 - [ ] React Native, Flutter (pub.dev packaging), KMP, MAUI, Cordova/Capacitor, Unity wrappers.
 
-### Build-time hardening (design §6) — none of it yet
-- [ ] Compiler plugins (Gradle R8/D8, LLVM/Xcode), post-build CLI, SDK-only mode.
-- [ ] Obfuscation: name/string/constant encryption, control-flow flattening, MBA, code virtualization,
-  class/asset encryption, anti-disassembly.
-- [ ] Check weaving into app functions; results feeding data (keys/offsets) not branches.
-- [ ] Guard network (mutually-hashing integrity guards).
-- [ ] Per-build polymorphism (seed → layout/keys/opcodes/detector placement) and build registration.
+### Build-time hardening (design §6) — `hardener/` toolchain started
+- [~] **Compiler plugins / post-build CLI / SDK-only mode.** `rasp-hardener` CLI (`gen-build`/`show`/
+  `register`) is the Python pre-build generator + post-build registration step. LLVM/O-LLVM Clang passes,
+  the Xcode toolchain, and the DEX/ASM Gradle plugin are not implemented.
+- [~] **Obfuscation.** String/constant encryption done for the five JNI registration literals (the class name,
+  `nativeScan`/`nativeSeal`, and their two signatures): XOR-encrypted per build (`strenc.py`) and decrypted
+  natively on use (`strobf.c`), cross-language verified. Detector IDs, JSON keys, and file paths remain
+  cleartext; name obfuscation, control-flow flattening, MBA, code virtualization, class/asset encryption, and
+  anti-disassembly are not done.
+- [x] **Results feeding data (keys/offsets) not branches.** Guard-mesh output derives an offset/key
+  (`rasp_guard_offset`, `guardmesh.fold_key`); a single flipped byte changes it, no `if(tampered)` branch.
+- [ ] **Weave check calls into arbitrary app functions** (vs. only the RASP core) — not automated yet.
+- [x] **Guard network (mutually-hashing integrity guards).** `guard.c` ↔ `guardmesh.py`, chained per-region
+  hashing, known-answer + cross-language tests.
+- [x] **Per-build polymorphism (seed → layout/keys/opcodes/detector placement) and build registration.**
+  `seed.py` derives build key/id, string key, VM opcode permutation and detector order from a seed;
+  `manifest.py` + `BuildRegistry.from_manifest` register the build with the trust service end-to-end.
 
 ### Crypto and storage (design §8)
 - [ ] Integrity-derived keys (KDF over code hashes + signer + check outputs) so tampering fails closed.
 - [ ] White-box crypto (build key, no-hardware devices; DCA/DFA countermeasures).
 - [ ] `SecureStore` API; data keys; wipe on critical.
-- [ ] Code-tamper hashing (dex, `.so` `.text`, resources, `libapp.so`) folded into keys.
+- [~] Code-tamper hashing folded into keys. `codehash.py` hashes the native sources + signer digest into a
+  guard-mesh integrity root recorded in the build manifest; hashing `.so` `.text`/resources/`libapp.so`
+  regions and folding the root into the live report/data keys at runtime is not wired yet.
 
 ### Control plane (design §10)
 - [ ] OTA signed policy delivery (detector params, thresholds, reactions, pins, allowlists) — currently all

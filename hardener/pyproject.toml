@@ -1,0 +1,13 @@
+[project]
+name = "rasp-hardener"
+version = "0.1.0"
+description = "Build-time hardening toolchain for flutter_rasp: per-build polymorphism (seed -> keys/opcodes/detector layout), compile-time string encryption, guard-mesh integrity roots, and trust-service build registration."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+rasp-hardener = "rasp_hardener.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
