@@ -50,14 +50,19 @@ int main(int argc, char **argv) {
         get_hex(argv[2], in);
         rasp_wbaes_encrypt_block(t2, last, in, out);
         put_hex(out, 16);
+    } else if (argc >= 3 && strcmp(argv[1], "cmac") == 0) {
+        uint8_t msg[8192], tag[16];
+        size_t n = get_hex(argv[2], msg);
+        rasp_wbaes_cmac(t2, last, msg, n, tag);
+        put_hex(tag, 16);
     } else if (argc >= 4 && strcmp(argv[1], "seal") == 0) {
-        uint8_t nonce[12], plain[4096], out[4096 + 12];
+        uint8_t nonce[12], plain[4096], out[4096 + 28];
         get_hex(argv[2], nonce);
         size_t n = get_hex(argv[3], plain);
         int m = rasp_secure_store_seal(t2, last, nonce, plain, n, out);
         put_hex(out, (size_t)m);
     } else if (argc >= 3 && strcmp(argv[1], "open") == 0) {
-        uint8_t sealed[4096 + 12], out[4096];
+        uint8_t sealed[4096 + 28], out[4096];
         size_t n = get_hex(argv[2], sealed);
         int m = rasp_secure_store_open(t2, last, sealed, n, out);
         if (m < 0) { printf("ERR\n"); return 0; }
@@ -105,16 +110,23 @@ class WbAesInterop(unittest.TestCase):
             pt = os.urandom(16)
             self.assertEqual(self.run_harness("block", pt.hex()), self.tables.encrypt_block(pt).hex())
 
+    def test_native_cmac_matches_python(self):
+        for length in (0, 1, 16, 20, 32, 100):
+            msg = os.urandom(length)
+            self.assertEqual(self.run_harness("cmac", msg.hex()), whitebox.cmac(self.tables, msg).hex())
+
     def test_native_secure_store_matches_python(self):
         for length in (0, 1, 16, 33, 100):
             nonce = os.urandom(12)
             plain = os.urandom(length)
             c_sealed = self.run_harness("seal", nonce.hex(), plain.hex())
-            py_sealed = whitebox.secure_store_seal(self.tables, nonce, plain).hex()
-            self.assertEqual(c_sealed, py_sealed)
+            py_sealed = whitebox.secure_store_seal(self.tables, nonce, plain)
+            self.assertEqual(c_sealed, py_sealed.hex())
+            # nonce(12) + ciphertext(length) + tag(16)
+            self.assertEqual(len(py_sealed), length + 28)
             # And the C side opens the Python-sealed blob back to the plaintext.
-            opened = self.run_harness("open", py_sealed) if py_sealed else self.run_harness("open", nonce.hex())
-            self.assertEqual(opened, plain.hex() if length else "")
+            opened = self.run_harness("open", py_sealed.hex())
+            self.assertEqual(opened, plain.hex())
 
     def test_native_opens_python_seal(self):
         nonce = os.urandom(12)
@@ -122,6 +134,16 @@ class WbAesInterop(unittest.TestCase):
         py_sealed = whitebox.secure_store_seal(self.tables, nonce, plain)
         opened = self.run_harness("open", binascii.hexlify(py_sealed).decode())
         self.assertEqual(opened, plain.hex())
+
+    def test_native_open_rejects_tamper(self):
+        nonce = os.urandom(12)
+        sealed = bytearray(whitebox.secure_store_seal(self.tables, nonce, b"sensitive-value"))
+        sealed[13] ^= 0x01  # flip a ciphertext byte
+        self.assertEqual(self.run_harness("open", bytes(sealed).hex()), "ERR")
+        # Flipping a tag byte is also rejected.
+        sealed2 = bytearray(whitebox.secure_store_seal(self.tables, nonce, b"sensitive-value"))
+        sealed2[-1] ^= 0x01
+        self.assertEqual(self.run_harness("open", bytes(sealed2).hex()), "ERR")
 
 
 if __name__ == "__main__":

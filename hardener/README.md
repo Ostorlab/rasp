@@ -61,14 +61,16 @@ rasp-hardener gen-wbkey --seed <hex> --out flutter_rasp/android/src/main/cpp/wba
 
 `aes.py` is a FIPS-197 AES-128 reference used only to expand the key and validate output. `whitebox.py`
 generates plain Chow white-box tables (T-boxes ∘ Tyi MixColumns, and a final table) so the native evaluator
-(`wbaes.c`) encrypts AES-128 without the key appearing as a contiguous literal. `securestore.c` uses it in
-CTR mode to seal local data at rest (`nonce(12) || ciphertext`) for devices with no hardware keystore.
+(`wbaes.c`) encrypts AES-128 without the key appearing as a contiguous literal, and provides AES-CMAC
+(RFC 4493) over the same block. `securestore.c` uses both for authenticated data at rest: CTR for
+confidentiality + AES-CMAC for integrity (encrypt-then-MAC), framed `nonce(12) || ciphertext || tag(16)`;
+`open` verifies the tag in constant time before decrypting.
 
 **Security caveat.** These are the *plain* Chow tables — no internal encodings or mixing bijections yet — so
 they do **not** resist key extraction on their own (an analyst can invert Tyi and the S-box to recover the
 round key). What this slice delivers is the correct, KAT-verified table architecture and the removal of the
-contiguous key literal; the encodings that make white-box AES key-hiding, plus a SecureStore integrity tag
-(AEAD/AES-CMAC) and key wipe-on-critical, are the next steps (see the repo `TODO.md` §8).
+contiguous key literal; the encodings that make white-box AES key-hiding, plus SecureStore key
+wipe-on-critical, are the next steps (see the repo `TODO.md` §8).
 
 `build_config.h` includes `build_generated.h` when present (via `__has_include`) and otherwise falls back to
 the committed dev defaults, so an unhardened build and the host tests keep compiling.
@@ -89,7 +91,8 @@ Coverage:
 - string-encryption round trip with no cleartext leakage;
 - guard-mesh known answers, order and tamper sensitivity, and key folding;
 - manifest contents and JSON round trip, and the CLI (including that `show`/`gen-build` never print the seed);
-- AES-128 against FIPS-197, white-box AES vs the reference, and CTR/SecureStore round trips;
+- AES-128 against FIPS-197, white-box AES vs the reference, AES-CMAC against RFC 4493, and SecureStore
+  round trips with tamper rejection;
 - ELF `.so` section selection and the integrity root (native runtime root == build-time root, tamper flips both).
 
 Cross-language tests compile the generated headers and the native primitives with a C compiler and assert the
