@@ -11,7 +11,8 @@ add_library(rasp_core SHARED
     strobf.c
     wbaes.c
     securestore.c
+    integrity.c
 )
 
 target_compile_options(rasp_core PRIVATE -Wall -Wextra -Werror -O2 -fvisibility=hidden)
-target_link_libraries(rasp_core log)
+target_link_libraries(rasp_core log dl)

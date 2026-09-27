@@ -1,6 +1,8 @@
 """End-to-end tests for the trust service: challenge -> bind -> token, and the ways it refuses."""
 
 import base64
+import hashlib
+import hmac
 import unittest
 
 from rasp_verifier import jose
@@ -22,8 +24,8 @@ from .helpers import (
 )
 
 
-def make_service(*, platform=None, require_hardware=True, require_user_auth=True):
-    builds = BuildRegistry([Build(BUILD_ID, BUILD_KEY, PACKAGE, [APP_CERT_SHA256])])
+def make_service(*, platform=None, require_hardware=True, require_user_auth=True, integrity_root=""):
+    builds = BuildRegistry([Build(BUILD_ID, BUILD_KEY, PACKAGE, [APP_CERT_SHA256], integrity_root=integrity_root)])
     return TrustService(
         signing_key=jose.SigningKey.generate(),
         package_name=PACKAGE,
@@ -54,9 +56,11 @@ class TrustFlow(unittest.TestCase):
         })
         return chain, result
 
-    def _token(self, chain, install_id="install-1", signals=(), verdict="STRONG", **overrides):
+    def _token(self, chain, install_id="install-1", signals=(), verdict="STRONG", seal_key=None, **overrides):
         nonce = self.trust.challenge(install_id, "token")["nonce"]
-        sealed = overrides.pop("sealed", None) or seal_report(nonce, signals)
+        sealed = overrides.pop("sealed", None)
+        if sealed is None:
+            sealed = seal_report(nonce, signals, build_key=seal_key) if seal_key is not None else seal_report(nonce, signals)
         session_key, session_b64 = session_keypair()
         self.last_session_key = session_key
         session_jkt = jose.public_key_thumbprint(session_key.public_key())
@@ -178,6 +182,27 @@ class TrustFlow(unittest.TestCase):
             self.trust.token({"installId": "install-1", "nonce": nonce, "proof": proof, "sessionPublicKey": session_b64,
                               "sealedReport": sealed, "playIntegrityToken": stub_play_integrity(nonce)})
         self.assertEqual(cm.exception.reason, "unknown_build")
+
+    def test_integrity_derived_sealing_is_accepted(self):
+        # A build registered with an integrity root: the device seals with HMAC(build_key, root), and the
+        # trust service verifies with the same derived key (design §8, end-to-end through the token route).
+        root_hex = "5a" * 32
+        self.trust = make_service(integrity_root=root_hex)
+        self.trust.trusted_roots = None
+        chain, _ = self._bind()
+        derived = hmac.new(BUILD_KEY, bytes.fromhex(root_hex), hashlib.sha256).digest()
+        issued = self._token(chain, seal_key=derived)
+        self.assertEqual(issued["risk"], "none")
+        self.assertEqual(self.claims(issued["token"])["build"], BUILD_ID)
+
+    def test_integrity_registered_but_raw_key_seal_is_refused(self):
+        # Same build, but a report sealed with the RAW key (a tampered/legacy device) must be refused.
+        self.trust = make_service(integrity_root="5a" * 32)
+        self.trust.trusted_roots = None
+        chain, _ = self._bind()
+        with self.assertRaises(TrustError) as cm:
+            self._token(chain)  # seal_key=None -> raw BUILD_KEY
+        self.assertEqual(cm.exception.reason, "bad_report")
 
 
 if __name__ == "__main__":

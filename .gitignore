@@ -18,3 +18,4 @@ build_generated.h
 build_seed.h
 build_manifest.json
 wbaes_tables.h
+integrity_regions.h

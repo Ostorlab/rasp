@@ -56,7 +56,15 @@ def cmd_gen_build(args: argparse.Namespace) -> int:
         package_name=args.package,
         signing_cert_sha256=args.cert or [],
         code_paths=_code_paths(cpp_dir),
+        so_path=args.so,
     )
+    # With a compiled .so, emit the regions header so the device hashes the same bytes and seals with the
+    # integrity-derived key (design §8). Without --so, the manifest carries only the legacy source-hash root.
+    if args.so is not None:
+        regions = [(r["offset"], r["length"]) for r in manifest.integrity_regions]
+        integrity_header = cpp_dir / "integrity_regions.h"
+        integrity_header.write_text(emit.render_integrity_regions_h(regions))
+        written = written + [integrity_header]
     manifest_path = pathlib.Path(args.manifest)
     manifest.write(manifest_path)
     print(f"build_id      {profile.build_id}")
@@ -135,6 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
     gb.add_argument("--cpp-dir", default=default_cpp, help="native cpp dir to write headers into")
     gb.add_argument("--package", default="dev.ostorlab.rasp.demo_bank", help="app package name")
     gb.add_argument("--cert", action="append", help="app signing-cert SHA-256 (repeatable)")
+    gb.add_argument("--so", help="compiled .so to hash for the integrity root; emits integrity_regions.h")
     gb.add_argument("--manifest", default="build_manifest.json", help="registration manifest output path")
     gb.set_defaults(func=cmd_gen_build)
 

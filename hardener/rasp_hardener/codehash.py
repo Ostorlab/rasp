@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import pathlib
 
+from rasp_hardener import elf
 from rasp_hardener import guardmesh
 
 
@@ -42,3 +43,22 @@ def integrity_root(code_hashes: dict[str, str], signer_digests: list[str]) -> st
     regions = [bytes.fromhex(h) for h in code_hashes.values()]
     regions += [bytes.fromhex(d) for d in sorted(signer_digests)]
     return guardmesh.guard_root(regions).hex()
+
+
+def so_regions(path: str | pathlib.Path) -> list[tuple[int, int]]:
+    """The (file offset, length) ranges of a `.so`'s code/read-only sections — what the device hashes."""
+    data = pathlib.Path(path).read_bytes()
+    return [(s.offset, s.size) for s in elf.integrity_sections(data)]
+
+
+def so_integrity_root(path: str | pathlib.Path) -> tuple[str, list[tuple[int, int]]]:
+    """Compute the integrity root over a `.so`'s code/read-only region bytes.
+
+    Returns ``(root_hex, regions)`` where the root is ``guard_root`` over the bytes of each region in offset
+    order — exactly what the native `rasp_integrity_root_from_file` computes on device over the same file and
+    regions, so build-time and runtime roots agree (verified by the cross-language test).
+    """
+    data = pathlib.Path(path).read_bytes()
+    regions = [(s.offset, s.size) for s in elf.integrity_sections(data)]
+    region_bytes = [data[off : off + size] for (off, size) in regions]
+    return guardmesh.guard_root(region_bytes).hex(), regions

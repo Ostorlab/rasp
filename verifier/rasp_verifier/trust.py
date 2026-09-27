@@ -215,13 +215,15 @@ class TrustService:
         except RegistryError as e:
             raise TrustError(e.reason, str(e), status=403) from e
         try:
-            # Integrity-derived sealing (design §8) is intentionally NOT wired here yet: the device still
-            # seals with the raw build key, and the registered integrity root is currently computed over
-            # source-file hashes rather than the device's runtime `.so` regions, so passing
-            # `integrity_root=build.integrity_root` would reject every manifest-registered build. It is
-            # enabled once the device derives the key and the two roots align (see TODO §8); the server-side
-            # `verify_sealed_report(integrity_root=...)` path is exercised by test_integrity_keys.py.
-            report = verify_sealed_report(envelope, build_key=build.build_key, expected_nonce=nonce)
+            # Integrity-derived sealing (design §8): a build registered with a non-empty integrity root is
+            # verified with HMAC(build_key, root), which the device reproduces by hashing its own `.so`
+            # regions (see integrity.c / codehash.so_integrity_root). A tampered binary derives a different
+            # root and is refused. `or None` keeps the raw-key path deliberate for builds with no root (dev
+            # builds, and any build registered without a `.so`).
+            report = verify_sealed_report(
+                envelope, build_key=build.build_key, expected_nonce=nonce,
+                integrity_root=build.integrity_root or None,
+            )
         except ReportError as e:
             raise TrustError("bad_report", f"{e.reason}: {e}", status=403) from e
 

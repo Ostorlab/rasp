@@ -18,6 +18,7 @@ repo `TODO.md`); what is here is fully covered by tests that run in this repo.
 | Compile-time encryption of the JNI class/method/signature literals (kept out of `.rodata`) | `strenc.py` ↔ `strobf.c` | §6 obfuscation, §2 consteval strings |
 | Guard mesh: mutually-hashing integrity guards; result feeds data (keys/offsets), not branches | `guardmesh.py` ↔ `guard.c` | §6 guard network, check weaving |
 | Code-tamper hashing folded into an integrity root | `codehash.py` | §6 check weaving, §8 code-tamper hashing |
+| `.so` code/read-only region hashing → device-reproducible integrity root (fail-closed sealing) | `elf.py`, `codehash.py` → `integrity_regions.h` ↔ `integrity.c` | §8 integrity-derived keys |
 | Header generation the native build consumes | `emit.py` → `build_generated.h`, `build_seed.h` | §6 pre-build generator |
 | Build-registration manifest the trust service loads | `manifest.py` → `BuildRegistry.from_manifest` | §6 build registration, §7 build registry |
 | White-box AES-128 table generation (SecureStore data key) | `aes.py`, `whitebox.py` → `wbaes_tables.h` ↔ `wbaes.c`, `securestore.c` | §8 white-box crypto, SecureStore |
@@ -36,11 +37,13 @@ resolve; the paths below are relative to the repo root:
 pip install -e ./hardener
 
 # Derive a build from a fresh random seed: write build_generated.h + build_seed.h into the native dir and the
-# registration manifest to hand to the trust service.
+# registration manifest to hand to the trust service. Pass --so on the compiled library to hash its code/
+# read-only regions into the integrity root and emit integrity_regions.h (design §8 fail-closed sealing).
 rasp-hardener gen-build \
     --cpp-dir flutter_rasp/android/src/main/cpp \
     --package dev.ostorlab.rasp.demo_bank \
     --cert <app-signing-cert-sha256> \
+    --so app/build/.../arm64-v8a/librasp_core.so \
     --manifest build_manifest.json
 
 # Echo the seed's derived, non-secret layout (build id, seed fingerprint, opcode map, detector order).
@@ -86,7 +89,8 @@ Coverage:
 - string-encryption round trip with no cleartext leakage;
 - guard-mesh known answers, order and tamper sensitivity, and key folding;
 - manifest contents and JSON round trip, and the CLI (including that `show`/`gen-build` never print the seed);
-- AES-128 against FIPS-197, white-box AES vs the reference, and CTR/SecureStore round trips.
+- AES-128 against FIPS-197, white-box AES vs the reference, and CTR/SecureStore round trips;
+- ELF `.so` section selection and the integrity root (native runtime root == build-time root, tamper flips both).
 
 Cross-language tests compile the generated headers and the native primitives with a C compiler and assert the
 C side agrees byte-for-byte with the Python reference (string decode, guard root, white-box block, SecureStore

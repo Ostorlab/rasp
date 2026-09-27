@@ -9,7 +9,10 @@ import hashlib
 import hmac
 import json
 import pathlib
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 import unittest
 
@@ -124,6 +127,41 @@ class ManifestTest(unittest.TestCase):
         # A malformed manifest is rejected at registration.
         with self.assertRaises(RegistryError):
             registry.register_manifest({"build_id": "x"})
+
+
+@unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "no C compiler")
+class ManifestFromSoTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp())
+        src = cls.tmp / "lib.c"
+        src.write_text("int f(int a){ return a + 1; }\nint g(int a){ return a * 2; }\n")
+        cls.lib = cls.tmp / "lib.so"
+        compiler = shutil.which("cc") or shutil.which("gcc")
+        subprocess.run([compiler, "-shared", "-fPIC", "-O2", str(src), "-o", str(cls.lib)],
+                       check=True, capture_output=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_so_root_and_regions_recorded(self):
+        profile = BuildProfile.derive(bytes(range(SEED_LEN)))
+        m = build_manifest(profile, package_name=PACKAGE, signing_cert_sha256=[CERT], so_path=self.lib)
+        expected_root, expected_regions = codehash.so_integrity_root(self.lib)
+        self.assertEqual(m.integrity_root, expected_root)
+        self.assertEqual(len(m.integrity_root), 64)
+        self.assertGreater(len(m.integrity_regions), 0)
+        self.assertEqual(
+            [(r["offset"], r["length"]) for r in m.integrity_regions], expected_regions
+        )
+
+    def test_so_root_matches_device_derivation(self):
+        # The manifest root must equal guard_root over the region bytes — the exact value the device derives.
+        _, regions = codehash.so_integrity_root(self.lib)
+        data = self.lib.read_bytes()
+        region_bytes = [data[off : off + size] for (off, size) in regions]
+        self.assertEqual(codehash.so_integrity_root(self.lib)[0], guardmesh.guard_root(region_bytes).hex())
 
 
 if __name__ == "__main__":

@@ -4,11 +4,14 @@ import contextlib
 import io
 import json
 import pathlib
+import shutil
+import subprocess
 import tempfile
 import unittest
 
 from rasp_hardener import aes
 from rasp_hardener import cli
+from rasp_hardener import codehash
 from rasp_hardener import whitebox
 from rasp_hardener.seed import BuildProfile
 
@@ -88,6 +91,34 @@ class CliTest(unittest.TestCase):
     def test_gen_wbkey_bad_key_length_exits(self):
         with self.assertRaises(SystemExit):
             cli.main(["gen-wbkey", "--key", "00", "--out", "/dev/null"])
+
+    @unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "no C compiler")
+    def test_gen_build_with_so_emits_integrity_regions(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = pathlib.Path(d)
+            src = d / "lib.c"
+            src.write_text("int f(int a){ return a + 1; }\n")
+            lib = d / "lib.so"
+            compiler = shutil.which("cc") or shutil.which("gcc")
+            subprocess.run([compiler, "-shared", "-fPIC", "-O2", str(src), "-o", str(lib)],
+                           check=True, capture_output=True)
+            cpp = d / "cpp"
+            cpp.mkdir()
+            manifest_path = d / "build_manifest.json"
+            rc = cli.main(
+                ["gen-build", "--seed", SEED_HEX, "--cpp-dir", str(cpp), "--so", str(lib),
+                 "--manifest", str(manifest_path)]
+            )
+            self.assertEqual(rc, 0)
+            self.assertTrue((cpp / "integrity_regions.h").exists())
+            header = (cpp / "integrity_regions.h").read_text()
+            self.assertIn("RASP_INTEGRITY_REGIONS[]", header)
+
+            manifest = json.loads(manifest_path.read_text())
+            expected_root, expected_regions = codehash.so_integrity_root(lib)
+            self.assertEqual(manifest["integrity_root"], expected_root)
+            self.assertEqual(len(manifest["integrity_regions"]), len(expected_regions))
+            self.assertEqual(header.count("ULL, "), len(expected_regions))
 
 
 if __name__ == "__main__":
