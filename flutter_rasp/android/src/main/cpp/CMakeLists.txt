@@ -9,6 +9,8 @@ add_library(rasp_core SHARED
     report.c
     guard.c
     strobf.c
+    wbaes.c
+    securestore.c
 )
 
 target_compile_options(rasp_core PRIVATE -Wall -Wextra -Werror -O2 -fvisibility=hidden)

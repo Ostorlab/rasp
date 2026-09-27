@@ -58,7 +58,8 @@ The current scope is Android + a trust service. "Verified" means covered by test
 ### Tests
 - [x] Python: trust flow, DPoP proofs, risk mapping, HTTP server, attestation, revocation, build-manifest
   ingestion (65 tests).
-- [x] Hardener: per-build polymorphism, string encryption, guard mesh, code hashing, manifest, CLI (34 tests).
+- [x] Hardener: per-build polymorphism, string encryption, guard mesh, code hashing, manifest, CLI, AES-128
+  reference, white-box AES, CTR/SecureStore (56 tests).
 - [x] Native host: parsers, SHA-256/HMAC known-answer vectors, report sealing, guard mesh, string decode.
 - [x] Cross-language: native seal, string decode, and guard root verified against the Python reference
   (byte-exact); hardener manifest verified through the trust-service build registry end-to-end.
@@ -103,8 +104,13 @@ The current scope is Android + a trust service. "Verified" means covered by test
 
 ### Crypto and storage (design §8)
 - [ ] Integrity-derived keys (KDF over code hashes + signer + check outputs) so tampering fails closed.
-- [ ] White-box crypto (build key, no-hardware devices; DCA/DFA countermeasures).
-- [ ] `SecureStore` API; data keys; wipe on critical.
+- [~] White-box crypto (build key, no-hardware devices; DCA/DFA countermeasures). Plain white-box AES-128
+  (Chow tables) implemented: `aes.py` reference (FIPS-197), `whitebox.py` table generator, native `wbaes.c`
+  evaluator; the key is not a contiguous literal, cross-language KAT-verified. **Not key-hiding yet** — the
+  internal encodings / mixing bijections and DCA/DFA countermeasures are the next step.
+- [~] `SecureStore` API; data keys; wipe on critical. Native `securestore.c` seals data at rest with
+  white-box AES-128-CTR (`nonce||ciphertext`), cross-language tested. Missing: an integrity tag (AEAD/
+  AES-CMAC), key wipe-on-critical, and the Kotlin/Dart API surface (JNI binding + method channel).
 - [~] Code-tamper hashing folded into keys. `codehash.py` hashes the native sources + signer digest into a
   guard-mesh integrity root recorded in the build manifest; hashing `.so` `.text`/resources/`libapp.so`
   regions and folding the root into the live report/data keys at runtime is not wired yet.

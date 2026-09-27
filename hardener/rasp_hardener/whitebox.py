@@ -1,0 +1,155 @@
+"""White-box AES-128 table generation (Chow et al. 2002), plain / unencoded.
+
+Turns a 16-byte AES key into lookup tables that a table-driven evaluator (native ``wbaes.c``) uses to encrypt
+AES-128 blocks **without the key appearing as a contiguous literal** in the binary. This is the structural
+foundation of white-box AES:
+
+  round r (1..9):  x = ShiftRows(state)
+                   col c out(32-bit) = XOR_{i=0..3}  TypeII[r][4c+i][ x[4c+i] ]
+  round 10:        x = ShiftRows(state);  state[p] = TypeIILast[p][ x[p] ]
+
+Each ``TypeII`` entry folds, for one byte position, the previous round's AddRoundKey (as ShiftRows(k)), the
+SubBytes S-box, and one column of MixColumns (the "Tyi" tables). The initial AddRoundKey(k0) is folded into
+round 1; the final AddRoundKey(k10) into the last table.
+
+SECURITY CAVEAT: these are the *plain* Chow tables, with no internal encodings or mixing bijections. On their
+own they do NOT resist key extraction — an analyst can invert Tyi and the S-box to recover the round key. The
+encodings that give white-box AES its security are the deliberate next step (see the repo TODO §8). What this
+module buys today is the correct, KAT-verified table architecture and the removal of the contiguous key
+literal, which the encodings then build on. Do not treat the current output as key-hiding.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from . import aes
+
+# AES MixColumns matrix (used to build the Tyi tables).
+MIXCOL = ((2, 3, 1, 1), (1, 2, 3, 1), (1, 1, 2, 3), (3, 1, 1, 2))
+
+
+def pack32(b: tuple[int, int, int, int]) -> int:
+    """Pack 4 bytes (row0..row3) into a 32-bit int, row0 most significant. Must match wbaes.c."""
+    return (b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]
+
+
+def unpack32(v: int) -> list[int]:
+    return [(v >> 24) & 0xFF, (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF]
+
+
+def _tyi(row: int, t: int) -> int:
+    """Tyi table for a byte `t` sitting in MixColumns input `row`: its 32-bit contribution to the column."""
+    return pack32(tuple(aes.gf_mul(MIXCOL[j][row], t) for j in range(4)))
+
+
+@dataclass(frozen=True)
+class WhiteBoxTables:
+    """The generated tables. ``type2[r-1][p][x]`` for r in 1..9; ``last[p][x]`` for round 10."""
+
+    type2: list[list[list[int]]]  # [9][16][256] of uint32
+    last: list[list[int]]         # [16][256] of uint8
+
+    def encrypt_block(self, plaintext: bytes) -> bytes:
+        """Evaluate AES-128 using only the tables. Mirrors wbaes.c byte-for-byte."""
+        if len(plaintext) != 16:
+            raise ValueError("AES block must be 16 bytes")
+        state = list(plaintext)
+        for r in range(9):
+            x = aes.shift_rows(state)
+            new_state = [0] * 16
+            for c in range(4):
+                acc = 0
+                for i in range(4):
+                    p = c * 4 + i
+                    acc ^= self.type2[r][p][x[p]]
+                new_state[c * 4 : c * 4 + 4] = unpack32(acc)
+            state = new_state
+        x = aes.shift_rows(state)
+        state = [self.last[p][x[p]] for p in range(16)]
+        return bytes(state)
+
+
+def generate(key: bytes) -> WhiteBoxTables:
+    """Generate plain white-box AES-128 tables for `key`."""
+    round_keys = aes.key_expansion(key)
+    # sk[r] = ShiftRows(k[r]) so that AddRoundKey-before-ShiftRows folds into SubBytes-after-ShiftRows.
+    sk = [aes.shift_rows(rk) for rk in round_keys]
+
+    type2: list[list[list[int]]] = []
+    for r in range(1, 10):
+        round_tables: list[list[int]] = []
+        for p in range(16):
+            row = p % 4
+            key_byte = sk[r - 1][p]
+            table = [_tyi(row, aes.SBOX[x ^ key_byte]) for x in range(256)]
+            round_tables.append(table)
+        type2.append(round_tables)
+
+    last: list[list[int]] = []
+    for p in range(16):
+        key_byte = sk[9][p]
+        final_key = round_keys[10][p]
+        last.append([aes.SBOX[x ^ key_byte] ^ final_key for x in range(256)])
+
+    return WhiteBoxTables(type2=type2, last=last)
+
+
+# --- CTR mode / SecureStore reference (mirrors wbaes.c / securestore.c) --------------------------------------
+
+NONCE_LEN = 12
+
+
+def ctr(tables: WhiteBoxTables, nonce: bytes, data: bytes) -> bytes:
+    """AES-128-CTR over the white-box block function; keystream = E(nonce || counter_be32) from counter 0."""
+    if len(nonce) != NONCE_LEN:
+        raise ValueError(f"nonce must be {NONCE_LEN} bytes")
+    out = bytearray()
+    counter = 0
+    for off in range(0, max(len(data), 0), 16):
+        keystream = tables.encrypt_block(bytes(nonce) + counter.to_bytes(4, "big"))
+        chunk = data[off : off + 16]
+        out += bytes(a ^ b for a, b in zip(chunk, keystream))
+        counter += 1
+    return bytes(out)
+
+
+def secure_store_seal(tables: WhiteBoxTables, nonce: bytes, plaintext: bytes) -> bytes:
+    """Frame ``nonce(12) || ciphertext`` (confidentiality only — see the securestore.h caveat)."""
+    return bytes(nonce) + ctr(tables, nonce, plaintext)
+
+
+def secure_store_open(tables: WhiteBoxTables, sealed: bytes) -> bytes:
+    if len(sealed) < NONCE_LEN:
+        raise ValueError("sealed blob too short")
+    return ctr(tables, sealed[:NONCE_LEN], sealed[NONCE_LEN:])
+
+
+# --- C header emission --------------------------------------------------------------------------------------
+
+_AUTOGEN = "/* Generated by rasp-hardener. Do not edit; regenerate from the white-box key. */"
+
+
+def render_tables_h(tables: WhiteBoxTables, name: str = "RASP_WBAES") -> str:
+    """Render the tables as a C header: ``<name>_TYPE2[9][16][256]`` and ``<name>_LAST[16][256]``."""
+    lines = [
+        _AUTOGEN,
+        f"#ifndef {name}_TABLES_H",
+        f"#define {name}_TABLES_H",
+        "",
+        "#include <stdint.h>",
+        "",
+        f"static const uint32_t {name}_TYPE2[9][16][256] = {{",
+    ]
+    for r in range(9):
+        lines.append("  {")
+        for p in range(16):
+            row = ", ".join(f"0x{v:08x}" for v in tables.type2[r][p])
+            lines.append(f"    {{ {row} }},")
+        lines.append("  },")
+    lines += ["};", "", f"static const uint8_t {name}_LAST[16][256] = {{"]
+    for p in range(16):
+        row = ", ".join(f"0x{v:02x}" for v in tables.last[p])
+        lines.append(f"  {{ {row} }},")
+    lines += ["};", "", "#endif", ""]
+    return "\n".join(lines)

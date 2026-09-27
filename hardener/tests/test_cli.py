@@ -7,7 +7,9 @@ import pathlib
 import tempfile
 import unittest
 
+from rasp_hardener import aes
 from rasp_hardener import cli
+from rasp_hardener import whitebox
 from rasp_hardener.seed import BuildProfile
 
 SEED_HEX = "000102030405060708090a0b0c0d0e0f"
@@ -66,6 +68,26 @@ class CliTest(unittest.TestCase):
     def test_bad_seed_length_exits(self):
         with self.assertRaises(SystemExit):
             cli.main(["show", "--seed", "00"])
+
+    def test_gen_wbkey_emits_tables(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = pathlib.Path(d) / "wbaes_tables.h"
+            key = "0f0e0d0c0b0a09080706050403020100"
+            rc = cli.main(["gen-wbkey", "--key", key, "--out", str(out)])
+            self.assertEqual(rc, 0)
+            header = out.read_text()
+            self.assertIn("RASP_WBAES_TYPE2[9][16][256]", header)
+            self.assertNotIn(key, header)  # key is not a contiguous literal
+            # The emitted tables reproduce a reference AES encryption.
+            probe = bytes(range(16))
+            self.assertEqual(
+                whitebox.generate(bytes.fromhex(key)).encrypt_block(probe),
+                aes.encrypt_block_key(bytes.fromhex(key), probe),
+            )
+
+    def test_gen_wbkey_bad_key_length_exits(self):
+        with self.assertRaises(SystemExit):
+            cli.main(["gen-wbkey", "--key", "00", "--out", "/dev/null"])
 
 
 if __name__ == "__main__":

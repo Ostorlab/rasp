@@ -20,7 +20,8 @@ repo `TODO.md`); what is here is fully covered by tests that run in this repo.
 | Code-tamper hashing folded into an integrity root | `codehash.py` | §6 check weaving, §8 code-tamper hashing |
 | Header generation the native build consumes | `emit.py` → `build_generated.h`, `build_seed.h` | §6 pre-build generator |
 | Build-registration manifest the trust service loads | `manifest.py` → `BuildRegistry.from_manifest` | §6 build registration, §7 build registry |
-| CLI (`gen-build` / `show` / `register`) | `cli.py` | §6 post-build CLI, SDK-only mode |
+| White-box AES-128 table generation (SecureStore data key) | `aes.py`, `whitebox.py` → `wbaes_tables.h` ↔ `wbaes.c`, `securestore.c` | §8 white-box crypto, SecureStore |
+| CLI (`gen-build` / `show` / `register` / `gen-wbkey`) | `cli.py` | §6 post-build CLI, SDK-only mode |
 
 The derivation is deterministic in the seed (HMAC-SHA256 as a PRF with distinct labels per output), so a build
 is reproducible for debugging and re-registration, while the outputs stay independent — leaking the public
@@ -48,7 +49,23 @@ rasp-hardener show --seed 000102030405060708090a0b0c0d0e0f
 
 # Re-emit only the manifest for a known seed.
 rasp-hardener register --seed <hex> --cert <sha256>
+
+# Generate white-box AES-128 tables for SecureStore (key derived from the build seed, or --key <hex>).
+rasp-hardener gen-wbkey --seed <hex> --out flutter_rasp/android/src/main/cpp/wbaes_tables.h
 ```
+
+## White-box crypto & SecureStore (§8)
+
+`aes.py` is a FIPS-197 AES-128 reference used only to expand the key and validate output. `whitebox.py`
+generates plain Chow white-box tables (T-boxes ∘ Tyi MixColumns, and a final table) so the native evaluator
+(`wbaes.c`) encrypts AES-128 without the key appearing as a contiguous literal. `securestore.c` uses it in
+CTR mode to seal local data at rest (`nonce(12) || ciphertext`) for devices with no hardware keystore.
+
+**Security caveat.** These are the *plain* Chow tables — no internal encodings or mixing bijections yet — so
+they do **not** resist key extraction on their own (an analyst can invert Tyi and the S-box to recover the
+round key). What this slice delivers is the correct, KAT-verified table architecture and the removal of the
+contiguous key literal; the encodings that make white-box AES key-hiding, plus a SecureStore integrity tag
+(AEAD/AES-CMAC) and key wipe-on-critical, are the next steps (see the repo `TODO.md` §8).
 
 `build_config.h` includes `build_generated.h` when present (via `__has_include`) and otherwise falls back to
 the committed dev defaults, so an unhardened build and the host tests keep compiling.
@@ -68,9 +85,10 @@ Coverage:
 - seed determinism, output independence, and build diversity;
 - string-encryption round trip with no cleartext leakage;
 - guard-mesh known answers, order and tamper sensitivity, and key folding;
-- manifest contents and JSON round trip, and the CLI (including that `show`/`gen-build` never print the seed).
+- manifest contents and JSON round trip, and the CLI (including that `show`/`gen-build` never print the seed);
+- AES-128 against FIPS-197, white-box AES vs the reference, and CTR/SecureStore round trips.
 
-Two cross-language tests compile the generated header and the native primitives with a C compiler and assert
-the C side agrees byte-for-byte with the Python reference (string decode, guard root). One more drives a
-hardener manifest through the trust service's `BuildRegistry` and verifies a report sealed with the derived
-build key — the same bar as the verifier's native-seal interop test.
+Cross-language tests compile the generated headers and the native primitives with a C compiler and assert the
+C side agrees byte-for-byte with the Python reference (string decode, guard root, white-box block, SecureStore
+seal/open). One more drives a hardener manifest through the trust service's `BuildRegistry` and verifies a
+report sealed with the derived build key — the same bar as the verifier's native-seal interop test.
