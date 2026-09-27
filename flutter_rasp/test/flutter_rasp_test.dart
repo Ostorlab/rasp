@@ -39,23 +39,22 @@ void main() {
           };
         case 'bindDevice':
           return {
+            'installId': 'install-1',
             'keyAlias': 'k',
             'strongBox': false,
             'userAuthRequired': true,
             'publicKey': 'cHVi',
             'certificateChain': ['bGVhZg==', 'cm9vdA=='],
           };
-        case 'signTransaction':
+        case 'prepareToken':
           return {
-            'signedData': 'v=rasp-tx-1',
-            'signature': 'c2ln',
-            'guard': {
-              'flow': 'transfer',
-              'allowed': true,
-              'blockingThreats': <String>[],
-              'report': report,
-            },
+            'installId': 'install-1',
+            'proof': 'cHJvb2Y',
+            'sessionPublicKey': 'c2Vzcw==',
+            'sealedReport': {'report': '{"v":"rasp-report-1"}', 'mac': 'ab12'},
           };
+        case 'signRequest':
+          return {'key': 'c2Vzcw==', 'sig': 'c2ln', 'ts': 1790000000000, 'counter': 1};
       }
       return null;
     });
@@ -97,24 +96,33 @@ void main() {
   test('bindDevice sends the challenge as base64', () async {
     final result = await Rasp.bindDevice(Uint8List.fromList(List.filled(16, 1)));
     expect(calls.single.arguments, {'challenge': 'AQEBAQEBAQEBAQEBAQEBAQ==', 'requireUserAuth': true});
+    expect(result.installId, 'install-1');
     expect(result.certificateChain, hasLength(2));
     expect(result.userAuthRequired, isTrue);
     expect(result.strongBox, isFalse);
   });
 
-  test('signTransaction sends flow, nonce and fields', () async {
-    final result = await Rasp.signTransaction(
-        flow: 'transfer', nonce: 'n1', fields: {'amount': '5.00'}, confirmationText: 'Send \$5.00');
+  test('prepareToken returns a token authorization for /v1/token', () async {
+    final auth = await Rasp.prepareToken(nonce: 'n1', confirmationText: 'Send \$5.00');
     expect(calls.single.arguments, {
-      'flow': 'transfer',
       'nonce': 'n1',
-      'fields': {'amount': '5.00'},
-      'confirmationTitle': 'Confirm',
+      'confirmationTitle': 'Authorize',
       'confirmationText': 'Send \$5.00',
     });
-    expect(result.signature, 'c2ln');
-    expect(result.guard.allowed, isTrue);
-    expect(result.guard.warnings, isEmpty);
+    expect(auth.sessionPublicKey, 'c2Vzcw==');
+    expect(auth.sealedReport['mac'], 'ab12');
+    final request = auth.toRequest('n1', playIntegrityToken: 'pi');
+    expect(request['proof'], 'cHJvb2Y');
+    expect(request['playIntegrityToken'], 'pi');
+  });
+
+  test('signRequest builds DPoP headers', () async {
+    final proof = await Rasp.signRequest(method: 'POST', path: '/v1/transfers', body: Uint8List.fromList([1, 2, 3]));
+    expect((calls.single.arguments as Map)['path'], '/v1/transfers');
+    final headers = proof.headers('tok');
+    expect(headers['X-Integrity-Token'], 'tok');
+    expect(headers['X-Integrity-Sig'], 'c2ln');
+    expect(headers['X-Integrity-Counter'], '1');
   });
 
   test('threat event flags', () {

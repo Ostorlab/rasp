@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 CRITICAL_THREATS = {"tamper", "hooking", "debugger"}
 HIGH_THREATS = {"accessibilityAbuse", "overlay", "screenRecording", "screenMirroring"}
-MEDIUM_THREATS = {"root", "emulator", "activeCall", "remoteAccessApp", "screenCapture", "detectorFailure"}
+MEDIUM_THREATS = {"root", "emulator", "activeCall", "remoteAccessApp", "screenCapture", "netMitm", "detectorFailure"}
 
 RISK_ORDER = ["none", "low", "medium", "high", "critical"]
 

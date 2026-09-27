@@ -11,6 +11,7 @@ import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import org.json.JSONObject
 import java.util.concurrent.Executors
 
 class FlutterRaspPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChannel.StreamHandler,
@@ -27,6 +28,9 @@ class FlutterRaspPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
     private var activity: Activity? = null
     private var screen: ScreenProtector? = null
     private var eventSink: EventChannel.EventSink? = null
+
+    // The ephemeral session key bound into the current token; signs per-request DPoP proofs.
+    private var sessionKey: SessionKey? = null
 
     // Kept here so they survive activity re-creation and apply to the next ScreenProtector.
     private var appSecure = false
@@ -102,34 +106,60 @@ class FlutterRaspPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
             null
         }
         "isDeviceBound" -> deviceBinding.isBound()
+        "installId" -> TrustCrypto.installId(context)
         "bindDevice" -> {
             val challenge = call.argument<String>("challenge") ?: throw IllegalArgumentException("challenge is required")
-            deviceBinding.bind(Base64.decode(challenge, Base64.NO_WRAP), call.argument<Boolean>("requireUserAuth") ?: true)
+            deviceBinding.bind(Base64.decode(challenge, Base64.NO_WRAP), call.argument<Boolean>("requireUserAuth") ?: true) +
+                mapOf("installId" to TrustCrypto.installId(context))
         }
         "unbindDevice" -> {
             deviceBinding.unbind()
+            sessionKey = null
             null
         }
-        "signTransaction" -> {
-            val flow = call.argument<String>("flow") ?: throw IllegalArgumentException("flow is required")
+        // Seals a fresh report and authorizes a token: the user-auth install key signs a proof over the
+        // challenge, the report MAC and a new ephemeral session key. One biometric prompt (showing the
+        // action) per token; the session key then signs each request silently.
+        "prepareToken" -> {
             val nonce = call.argument<String>("nonce") ?: throw IllegalArgumentException("nonce is required")
-            val fields = call.argument<Map<String, String>>("fields").orEmpty()
-            // Always sign, even when the policy would block: the server gets the verdict and decides.
-            val (guard, decision) = requireEngine().guard(flow)
-            val payload = SignedPayload.build(nonce, decision.timestampMillis, context.packageName, decision, fields)
+            val engine = requireEngine()
+            val envelope = JSONObject(engine.sealedReport(nonce))
+            val mac = envelope.optString("mac")
+            if (mac.isEmpty()) {
+                throw IllegalStateException("native core unavailable; cannot seal the report")
+            }
+            val session = SessionKey()
+            sessionKey = session
+            val proofMessage = ProofMessages.tokenProof(nonce, mac, session.thumbprint)
             var signature = deviceBinding.initSignature()
             if (deviceBinding.requiresUserAuth()) {
                 val host = activity ?: throw IllegalStateException("no activity to ask the user")
                 signature = UserConfirmation.authorize(
                     host, signature,
-                    call.argument<String>("confirmationTitle") ?: "Confirm",
-                    call.argument<String>("confirmationText") ?: fields.entries.joinToString { "${it.key}: ${it.value}" },
+                    call.argument<String>("confirmationTitle") ?: "Authorize",
+                    call.argument<String>("confirmationText") ?: "Confirm this action",
                 )
             }
             mapOf(
-                "signedData" to payload,
-                "signature" to deviceBinding.finish(signature, payload.toByteArray(Charsets.UTF_8)),
-                "guard" to guardMap(guard, decision),
+                "installId" to TrustCrypto.installId(context),
+                "proof" to deviceBinding.finishRaw(signature, proofMessage),
+                "sessionPublicKey" to session.publicKeyBase64,
+                "sealedReport" to mapOf("report" to envelope.getString("report"), "mac" to mac),
+            )
+        }
+        // Signs the DPoP proof for one request with the current session key (silent, no prompt).
+        "signRequest" -> {
+            val session = sessionKey ?: throw IllegalStateException("no session; call prepareToken first")
+            val method = call.argument<String>("method") ?: "POST"
+            val path = call.argument<String>("path") ?: throw IllegalArgumentException("path is required")
+            val body = call.argument<ByteArray>("body") ?: ByteArray(0)
+            val ts = System.currentTimeMillis()
+            val counter = session.nextCounter()
+            mapOf(
+                "key" to session.publicKeyBase64,
+                "sig" to session.signRaw(ProofMessages.request(method, path, body, ts, counter)),
+                "ts" to ts,
+                "counter" to counter,
             )
         }
         else -> throw IllegalArgumentException("unknown method ${call.method}")

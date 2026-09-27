@@ -86,5 +86,6 @@ String threatLabel(ThreatType threat) => switch (threat) {
       ThreatType.screenMirroring => 'screen mirroring',
       ThreatType.remoteAccessApp => 'a remote-access app',
       ThreatType.activeCall => 'a phone call in progress',
+      ThreatType.netMitm => 'a proxy or added certificate (possible interception)',
       ThreatType.detectorFailure => 'a security check that could not run',
     };

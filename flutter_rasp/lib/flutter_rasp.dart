@@ -51,6 +51,9 @@ class Rasp {
   /// Whether this install already holds a bound device key.
   static Future<bool> isDeviceBound() async => await _channel.invokeMethod<bool>('isDeviceBound') ?? false;
 
+  /// The stable per-install id the trust service knows this install by.
+  static Future<String> installId() async => (await _channel.invokeMethod<String>('installId'))!;
+
   /// Generates a hardware-backed key attested with the server's [challenge] (16 to 128 random bytes).
   /// Replaces any previous binding.
   ///
@@ -66,27 +69,39 @@ class Rasp {
 
   static Future<void> unbindDevice() => _channel.invokeMethod<void>('unbindDevice');
 
-  /// Runs a fresh scan for [flow] and signs [fields] plus the verdict with the bound key.
-  /// The [nonce] comes from the server, so a signed transaction cannot be replayed.
+  /// Seals a fresh RASP report bound to the trust service's [nonce] and authorizes a token: the user-auth
+  /// install key signs a proof over the challenge, the report MAC and a new ephemeral session key. One
+  /// biometric prompt (showing [confirmationText]) per token; the session key then signs each request
+  /// silently via [signRequest].
   ///
-  /// For a user-auth key, the system prompt shows [confirmationTitle] and [confirmationText]; describe exactly what
-  /// is being signed ("Send \$50.00 to Alex Smith"). Throws a PlatformException with code `auth_cancelled` if the
-  /// user declines.
-  static Future<SignedTransaction> signTransaction({
-    required String flow,
+  /// Send the result to the trust service's `/v1/token` (see [TokenAuthorization.toRequest]). Throws a
+  /// PlatformException with code `auth_cancelled` if the user declines, or `auth_unsupported` below Android 9.
+  static Future<TokenAuthorization> prepareToken({
     required String nonce,
-    required Map<String, String> fields,
-    String confirmationTitle = 'Confirm',
+    String confirmationTitle = 'Authorize',
     String? confirmationText,
   }) async {
-    final result = await _channel.invokeMapMethod<Object?, Object?>('signTransaction', {
-      'flow': flow,
+    final result = await _channel.invokeMapMethod<Object?, Object?>('prepareToken', {
       'nonce': nonce,
-      'fields': fields,
       'confirmationTitle': confirmationTitle,
       'confirmationText': confirmationText,
     });
-    return SignedTransaction.fromMap(result!);
+    return TokenAuthorization.fromMap(result!);
+  }
+
+  /// Signs the DPoP proof for one API request with the current session key (silent, no prompt). [body] is
+  /// the exact request body bytes that will be sent. Call [prepareToken] first.
+  static Future<RequestProof> signRequest({
+    required String method,
+    required String path,
+    required Uint8List body,
+  }) async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>('signRequest', {
+      'method': method,
+      'path': path,
+      'body': body,
+    });
+    return RequestProof.fromMap(result!);
   }
 
   /// Threat events recorded on the device, oldest first.

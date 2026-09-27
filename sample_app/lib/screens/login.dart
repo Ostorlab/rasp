@@ -38,8 +38,8 @@ class _LoginScreenState extends State<LoginScreen> {
     final api = BankApi.instance;
     if (api.enabled) {
       try {
+        // login() also binds the install with hardware Key Attestation on first sign-in.
         await api.login(customerId: 'demo', pin: _pin.text);
-        if (api.deviceId == null) await api.bindDevice();
       } on Exception catch (e) {
         if (!mounted) return;
         setState(() => _error = 'Sign-in failed: $e');

@@ -26,6 +26,37 @@ object NativeDetectors {
     @JvmStatic
     private external fun nativeScan(): String
 
+    /** Runs the native detectors and seals them together with [managed] under the per-build MAC key. */
+    @JvmStatic
+    private external fun nativeSeal(managed: String?, nonce: String, tsMillis: Long): String
+
+    /**
+     * Seals a report for the trust service: the native core reruns its detectors, splices in the [managed]
+     * signals, and MACs the exact bytes with the per-build key. Returns the `{"report","mac"}` envelope, or
+     * `{}` if the native core is unavailable (the trust service then refuses the unMAC'd report).
+     */
+    fun seal(managed: List<Signal>, nonce: String, tsMillis: Long): String {
+        if (!loaded) {
+            return "{}"
+        }
+        val array = JSONArray()
+        managed.forEach { signal ->
+            array.put(
+                org.json.JSONObject()
+                    .put("threat", signal.threat.wireName)
+                    .put("confidence", signal.confidence)
+                    .put("detector", signal.detector)
+                    .put("evidence", signal.evidence),
+            )
+        }
+        return try {
+            nativeSeal(array.toString(), nonce, tsMillis)
+        } catch (e: Exception) {
+            Log.w(TAG, "native seal failed", e)
+            "{}"
+        }
+    }
+
     fun scan(): List<Signal> {
         if (!loaded) {
             // The native core ships in every build; if it cannot load, it was most likely removed from the APK.
@@ -65,9 +96,38 @@ class PlatformDetectors(private val context: Context, private val config: RaspCo
         "platform",
         listOf(
             ::rootPackages, ::buildTags, ::emulatorBuild, ::debugger, ::hookingFramework,
-            ::signingCertificate, ::packageName, ::integrityConfig, ::debuggableFlag, ::installer, ::deviceSettings,
+            ::signingCertificate, ::packageName, ::integrityConfig, ::debuggableFlag, ::installer,
+            ::deviceSettings, ::networkInterception,
         ),
     )
+
+    /**
+     * Signs of a man-in-the-middle setup: an HTTP(S) proxy is configured, or the user has added a CA to the
+     * system trust store (how most interception proxies are installed). Reported and fed to the server;
+     * certificate pinning is what actually blocks the intercepted request.
+     */
+    private fun networkInterception(): List<Signal> {
+        val signals = mutableListOf<Signal>()
+        val proxyHost = System.getProperty("http.proxyHost")
+        if (!proxyHost.isNullOrBlank()) {
+            val port = System.getProperty("http.proxyPort").orEmpty()
+            signals += Signal(ThreatType.NET_MITM, "platform.proxy", 55, "proxy $proxyHost:$port")
+        }
+        val userCas = userInstalledCaCount()
+        if (userCas > 0) {
+            signals += Signal(ThreatType.NET_MITM, "platform.user_ca", 60, "$userCas user-installed CA certificate(s)")
+        }
+        return signals
+    }
+
+    /** Counts user-added CAs in the system trust store; their aliases are prefixed "user:". */
+    private fun userInstalledCaCount(): Int = try {
+        val store = java.security.KeyStore.getInstance("AndroidCAStore")
+        store.load(null)
+        store.aliases().asSequence().count { it.startsWith("user:") }
+    } catch (e: Exception) {
+        0
+    }
 
     /** Release builds must pin the signing certificate and package name; running without them is not protected. */
     private fun integrityConfig(): List<Signal> {
