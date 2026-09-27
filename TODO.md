@@ -57,22 +57,26 @@ The current scope is Android + a trust service. "Verified" means covered by test
 
 ### Tests
 - [x] Python: trust flow, DPoP proofs, risk mapping, HTTP server, attestation, revocation, build-manifest
-  ingestion (65 tests).
+  ingestion, integrity-derived-key sealing (70 tests).
 - [x] Hardener: per-build polymorphism, string encryption, guard mesh, code hashing, manifest, CLI, AES-128
-  reference, white-box AES, CTR/SecureStore (56 tests).
-- [x] Native host: parsers, SHA-256/HMAC known-answer vectors, report sealing, guard mesh, string decode.
-- [x] Cross-language: native seal, string decode, and guard root verified against the Python reference
-  (byte-exact); hardener manifest verified through the trust-service build registry end-to-end.
+  reference, white-box AES, CTR/SecureStore (57 tests).
+- [x] Native host: parsers, new detector helpers (cpuinfo/tty/wchan/self-ptrace), SHA-256/HMAC vectors,
+  report sealing, guard mesh + integrity-derived key, string decode.
+- [x] Cross-language: native seal, string decode, guard root and fold-key, white-box AES block and
+  SecureStore verified against the Python reference (byte-exact); hardener manifest verified through the
+  trust-service build registry end-to-end.
 
 ## Partial
 
 - [~] **Play Integrity / App Attest (design §7).** Pluggable interface + stub only; no real Google/Apple
   verification. Reference runs in degraded mode (needs a Google Cloud project).
 - [~] **Certificate pinning (design §7).** Detection only (`netMitm`); no client-side pin enforcement.
-- [~] **Detectors per threat (design §4).** Not yet "≥3 independent per threat"; missing root-hiding
-  consistency checks (mount namespaces, zygote/PID anomalies, KernelSU/APatch side channels), behavioral
-  Frida beyond names (D-Bus probe, RWX pages, prologue hashes), self-ptrace, timing, sensor/telephony
-  plausibility.
+- [~] **Detectors per threat (design §4).** Broadened: root (su/root-dirs, mounts, SELinux, +KernelSU/APatch
+  `wchan` side channel = 4), emulator (qemu files, +cpuinfo, +goldfish tty = 3), hooking (maps, threads,
+  port, behavioral exec-mapping = 4) now meet ≥3 independent. Debugger has 2 (TracerPid + behavioral
+  self-ptrace via `fork`+`PTRACE_TRACEME`); a 3rd (timing/JDWP/breakpoint scan) is deferred pending
+  false-positive tuning. Still missing: mount-namespace/zygote-PID anomalies, D-Bus/prologue-hash Frida
+  probes, sensor/telephony plausibility.
 - [~] **Client trust wiring.** `prepareToken`/`signRequest`, two-key model, `RegisterNatives`, `netMitm`
   are written but not yet compiled or re-verified on an emulator / physical device.
 - [~] **Compliance mapping (design §14).** Documented in the design; detectors not yet linked to MASVS/
@@ -103,7 +107,12 @@ The current scope is Android + a trust service. "Verified" means covered by test
   `manifest.py` + `BuildRegistry.from_manifest` register the build with the trust service end-to-end.
 
 ### Crypto and storage (design §8)
-- [ ] Integrity-derived keys (KDF over code hashes + signer + check outputs) so tampering fails closed.
+- [~] Integrity-derived keys so tampering fails closed. Native `rasp_guard_fold_key` derives the report MAC
+  key as `HMAC(build_key, guard_root(code_regions))`; the trust service derives the same key from the build's
+  registered integrity root (`verify_sealed_report(integrity_root=...)`), so a patched binary's report is
+  refused with no on-device branch. Cross-language KAT-verified. Remaining: hashing the live `.so`
+  `.text`/`.rodata` regions on device so the runtime root equals a build-time-registered root, and turning
+  this on by default in the device seal path (currently opt-in).
 - [~] White-box crypto (build key, no-hardware devices; DCA/DFA countermeasures). Plain white-box AES-128
   (Chow tables) implemented: `aes.py` reference (FIPS-197), `whitebox.py` table generator, native `wbaes.c`
   evaluator; the key is not a contiguous literal, cross-language KAT-verified. **Not key-hiding yet** — the

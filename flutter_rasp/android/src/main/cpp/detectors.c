@@ -1,6 +1,7 @@
 #include "detectors.h"
 
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -9,10 +10,32 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ptrace.h>
 #include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+
+/* Case-insensitive substring test (strcasestr is a GNU extension not guaranteed on the NDK). */
+static int ci_contains(const char *haystack, const char *needle) {
+    size_t nl = strlen(needle);
+    if (nl == 0) {
+        return 1;
+    }
+    for (const char *p = haystack; *p != '\0'; p++) {
+        size_t i = 0;
+        while (i < nl && p[i] != '\0' &&
+               tolower((unsigned char)p[i]) == tolower((unsigned char)needle[i])) {
+            i++;
+        }
+        if (i == nl) {
+            return 1;
+        }
+    }
+    return 0;
+}
 
 const char *rasp_match_any(const char *haystack, const char *const *needles, size_t count) {
     for (size_t i = 0; i < count; i++) {
@@ -245,12 +268,109 @@ void rasp_detect_maps_exec_suspicious(rasp_signal_list_t *list) {
     for_each_line("/proc/self/maps", match_exec_suspicious, &ctx);
 }
 
+/* --- Emulator: a second and third independent signal beyond the qemu device files ------------------------- */
+
+int rasp_cpuinfo_is_emulator(const char *cpuinfo) {
+    static const char *const needles[] = {"goldfish", "ranchu", "genymotion", "vbox86", "virtualbox"};
+    for (size_t i = 0; i < ARRAY_LEN(needles); i++) {
+        if (ci_contains(cpuinfo, needles[i])) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void rasp_detect_cpuinfo_emulator(rasp_signal_list_t *list) {
+    char buf[8192];
+    if (read_text_file("/proc/cpuinfo", buf, sizeof(buf)) > 0 && rasp_cpuinfo_is_emulator(buf)) {
+        rasp_signals_add(list, RASP_THREAT_EMULATOR, "native.cpuinfo_emulator", 70, "cpuinfo hardware");
+    }
+}
+
+int rasp_ttydrivers_is_emulator(const char *drivers) {
+    /* The Android emulator exposes a goldfish tty driver in /proc/tty/drivers. */
+    return ci_contains(drivers, "goldfish");
+}
+
+void rasp_detect_ttydrivers_emulator(rasp_signal_list_t *list) {
+    char buf[4096];
+    if (read_text_file("/proc/tty/drivers", buf, sizeof(buf)) > 0 && rasp_ttydrivers_is_emulator(buf)) {
+        rasp_signals_add(list, RASP_THREAT_EMULATOR, "native.ttydrivers_emulator", 70, "goldfish tty");
+    }
+}
+
+/* --- Root-hiding side channel: KernelSU / APatch kernel worker seen via a thread's wchan ------------------- */
+
+int rasp_wchan_is_suspicious(const char *wchan) {
+    /* Match specific KernelSU/APatch markers; avoid generic "su" which hits legit kernel threads (e.g. sugov). */
+    static const char *const needles[] = {"kernelsu", "ksud", "apatch", "apd_"};
+    for (size_t i = 0; i < ARRAY_LEN(needles); i++) {
+        if (ci_contains(wchan, needles[i])) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void rasp_detect_ksu_wchan(rasp_signal_list_t *list) {
+    DIR *tasks = opendir("/proc/self/task");
+    if (tasks == NULL) {
+        return;
+    }
+    struct dirent *entry;
+    while ((entry = readdir(tasks)) != NULL) {
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+        char path[288];
+        char wchan[128];
+        snprintf(path, sizeof(path), "/proc/self/task/%s/wchan", entry->d_name);
+        if (read_text_file(path, wchan, sizeof(wchan)) <= 0) {
+            continue;
+        }
+        if (rasp_wchan_is_suspicious(wchan)) {
+            rasp_signals_add(list, RASP_THREAT_ROOT, "native.ksu_wchan", 75, wchan);
+            break;
+        }
+    }
+    closedir(tasks);
+}
+
+/* --- Debugger: a behavioral self-ptrace check independent of the TracerPid read ------------------------- */
+
+int rasp_selfptrace_is_debugged(long traceme_ret) {
+    /* In a fresh child, PTRACE_TRACEME returns 0; it fails only if the child is already being traced
+     * (a debugger following forks), so a non-zero return means a debugger is attached. */
+    return traceme_ret != 0;
+}
+
+void rasp_detect_self_ptrace(rasp_signal_list_t *list) {
+    pid_t child = fork();
+    if (child == 0) {
+        long r = ptrace(PTRACE_TRACEME, 0, 0, 0);
+        _exit(rasp_selfptrace_is_debugged(r) ? 1 : 0);
+    }
+    if (child > 0) {
+        int status = 0;
+        while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+            /* retry */
+        }
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
+            rasp_signals_add(list, RASP_THREAT_DEBUGGER, "native.self_ptrace", 85, "PTRACE_TRACEME denied");
+        }
+    }
+}
+
 void rasp_run_all(rasp_signal_list_t *list) {
     rasp_detect_su_binaries(list);
     rasp_detect_root_mounts(list);
     rasp_detect_selinux_permissive(list);
+    rasp_detect_ksu_wchan(list);
     rasp_detect_emulator_files(list);
+    rasp_detect_cpuinfo_emulator(list);
+    rasp_detect_ttydrivers_emulator(list);
     rasp_detect_tracer(list);
+    rasp_detect_self_ptrace(list);
     rasp_detect_instrumentation_maps(list);
     rasp_detect_instrumentation_threads(list);
     rasp_detect_instrumentation_port(list);

@@ -43,9 +43,9 @@ Two keys keep this usable: the **install key** is hardware-backed and user-auth 
 
 | Threat | Detectors | Layer |
 | --- | --- | --- |
-| `root` | su binaries, root-manager data dirs, root mounts in `/proc/self/mounts`, SELinux permissive, root-manager packages, `test-keys` | native + Kotlin |
-| `emulator` | QEMU/goldfish device files, build fingerprint/model/hardware/product | native + Kotlin |
-| `debugger` | `TracerPid` in `/proc/self/status`, JDWP debugger connected | native + Kotlin |
+| `root` | su binaries, root-manager data dirs, root mounts in `/proc/self/mounts`, KernelSU/APatch worker via thread `wchan`, SELinux permissive, root-manager packages, `test-keys` | native + Kotlin |
+| `emulator` | QEMU/goldfish device files, `goldfish`/`ranchu` in `/proc/cpuinfo`, goldfish tty in `/proc/tty/drivers`, build fingerprint/model/hardware/product | native + Kotlin |
+| `debugger` | `TracerPid` in `/proc/self/status`, behavioral self-ptrace (`fork` + `PTRACE_TRACEME`), JDWP debugger connected | native + Kotlin |
 | `hooking` | Frida/Xposed/LSPosed/Substrate libraries in `/proc/self/maps`, Frida thread names, Frida default port, Xposed classes and stack frames, executable mappings from tmp/memfd/deleted files | native + Kotlin |
 | `tamper` | Signing certificate SHA-256 vs expected, package name, `debuggable` flag on a release build | Kotlin |
 | `netMitm` | An HTTP(S) proxy is set, or a user-installed CA is in the system trust store | Kotlin |
@@ -187,9 +187,9 @@ $DRIVE $DEFINES --target=integration_test/scam_call_test.dart
 
 ## What is verified
 
-- **Trust service and resource server:** the Python suite (65 tests) covers the full challenge → bind → token → request flow and its refusals — repackaged build (wrong MAC key), forged or replayed proof, replayed challenge, weak or missing platform attestation, forged/relayed/revoked attestation chains — plus the risk-to-decision mapping and ingestion of a hardener build manifest into the build registry.
-- **Build-time hardener:** the `hardener/` suite (56 tests) covers per-build polymorphism (seed → keys/opcodes/detector layout), string-constant encryption, the guard mesh and integrity roots, the build manifest, the CLI, and white-box AES-128 (FIPS-197 KAT for the reference, white-box tables vs the reference, CTR/SecureStore round trips). Cross-language tests compile the generated headers and the native primitives (`strobf.c`, `guard.c`, `wbaes.c`, `securestore.c`) and assert the C side agrees byte-for-byte with the Python reference; one drives a hardener manifest through the trust service's build registry and verifies a report sealed with the derived build key.
-- **Native core:** the host tests cover the detectors' parsers, SHA-256/HMAC known-answer vectors, and report sealing; a cross-language test compiles the native seal and verifies it with the Python trust service, so the device and server HMACs agree byte for byte.
+- **Trust service and resource server:** the Python suite (70 tests) covers the full challenge → bind → token → request flow and its refusals — repackaged build (wrong MAC key), forged or replayed proof, replayed challenge, weak or missing platform attestation, forged/relayed/revoked attestation chains — plus the risk-to-decision mapping, ingestion of a hardener build manifest into the build registry, and integrity-derived report sealing (a tampered binary's report fails closed).
+- **Build-time hardener:** the `hardener/` suite (57 tests) covers per-build polymorphism (seed → keys/opcodes/detector layout), string-constant encryption, the guard mesh and integrity roots, the build manifest, the CLI, and white-box AES-128 (FIPS-197 KAT for the reference, white-box tables vs the reference, CTR/SecureStore round trips). Cross-language tests compile the generated headers and the native primitives (`strobf.c`, `guard.c`, `wbaes.c`, `securestore.c`) and assert the C side agrees byte-for-byte with the Python reference; one drives a hardener manifest through the trust service's build registry and verifies a report sealed with the derived build key.
+- **Native core:** the host tests cover the detectors' parsers (including the added emulator/root-hiding/self-ptrace helpers), SHA-256/HMAC known-answer vectors, report sealing, the guard mesh and its integrity-derived key; a cross-language test compiles the native seal and verifies it with the Python trust service, so the device and server HMACs agree byte for byte.
 - **On device:** the earlier offline detection, device binding, scam-call and sensitive-screen behaviour were verified on an emulator. The client trust-service wiring (`prepareToken`/`signRequest`, the two-key model, `RegisterNatives`, NET_MITM) is new and needs re-running on an emulator and a physical device; it has not yet been compiled or run on-device in this change.
 
 ## Known limits

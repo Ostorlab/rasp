@@ -48,6 +48,15 @@ class GuardMeshTest(unittest.TestCase):
         )
         self.assertEqual(len(guardmesh.fold_key(key, [b"clean"])), 32)
 
+    def test_fold_key_known_answer(self):
+        # Pinned so guard.c's rasp_guard_fold_key (native_test.c) can assert byte-for-byte agreement.
+        base = bytes(range(32))
+        regions = [b"", b"abc", bytes([0, 1, 2])]
+        self.assertEqual(
+            guardmesh.fold_key(base, regions).hex(),
+            "4500af4d306867c320025903977d60ba0455aa1cd57c726fd8c10ad50f695cee",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

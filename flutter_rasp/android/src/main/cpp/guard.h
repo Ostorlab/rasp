@@ -29,4 +29,13 @@ void rasp_guard_root(const rasp_region_t *regions, size_t count, uint8_t out[RAS
  * feeding data": a single flipped byte in any region changes the offset. `modulus` must be non-zero. */
 uint64_t rasp_guard_offset(const rasp_region_t *regions, size_t count, uint64_t modulus);
 
+/* Integrity-derived key (design §8): out = HMAC-SHA256(base_key, guard_root(regions)). Folding the guard
+ * root into the key means a tampered binary derives a different, useless key — the operation (e.g. sealing
+ * the report) then fails the server's MAC check with no local "if (tampered)" branch to patch out.
+ *
+ * The server, which cannot hash the device's memory, derives the same key from the integrity root registered
+ * for the build at hardening time (see the hardener's manifest and guardmesh.fold_key). */
+void rasp_guard_fold_key(const uint8_t *base_key, size_t base_key_len, const rasp_region_t *regions,
+                         size_t count, uint8_t out[RASP_SHA256_DIGEST_LEN]);
+
 #endif
