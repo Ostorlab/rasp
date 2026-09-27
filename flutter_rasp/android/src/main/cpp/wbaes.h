@@ -23,7 +23,11 @@ void rasp_wbaes_encrypt_block(const uint32_t *type2, const uint8_t *last,
 
 /* AES-128 counter (CTR) mode over the white-box block function: keystream = E(nonce || counter_be32),
  * counter starting at 0. XORs `len` bytes of `in` into `out` (encryption and decryption are identical).
- * `nonce` is 12 bytes. */
+ * `nonce` is 12 bytes.
+ *
+ * The counter is 32-bit, so a single (nonce, key) pair is safe for up to 2^32 blocks (64 GiB). Beyond that
+ * the counter wraps and the keystream repeats — callers must keep `len` under that bound and never reuse a
+ * nonce with the same key. */
 void rasp_wbaes_ctr(const uint32_t *type2, const uint8_t *last, const uint8_t nonce[12],
                     const uint8_t *in, size_t len, uint8_t *out);
 

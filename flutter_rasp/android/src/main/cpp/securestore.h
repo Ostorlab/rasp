@@ -14,7 +14,11 @@
  *
  * SCOPE: this first slice is confidentiality only. There is no integrity tag yet, so a sealed blob is
  * malleable; an AEAD/AES-CMAC tag and key wipe-on-critical are the next step (see the repo TODO §8). And the
- * plain white-box tables do not yet hide the key (see wbaes.h). */
+ * plain white-box tables do not yet hide the key (see wbaes.h).
+ *
+ * PRECONDITIONS: `out` must not overlap `plain`/`sealed` (seal writes the nonce over the first bytes of `out`
+ * before encrypting, so in-place operation would corrupt the data). Confidentiality holds only while the
+ * plaintext stays under the CTR length bound in wbaes.h (2^32 blocks per nonce). */
 
 #define RASP_SECURESTORE_NONCE_LEN 12
 #define RASP_SECURESTORE_OVERHEAD RASP_SECURESTORE_NONCE_LEN
