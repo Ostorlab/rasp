@@ -31,4 +31,9 @@ void rasp_wbaes_encrypt_block(const uint32_t *type2, const uint8_t *last,
 void rasp_wbaes_ctr(const uint32_t *type2, const uint8_t *last, const uint8_t nonce[12],
                     const uint8_t *in, size_t len, uint8_t *out);
 
+/* AES-CMAC (RFC 4493) over `msg` using the white-box block E_k; writes the 16-byte `tag`. Mirrors
+ * whitebox.cmac in the hardener, and is verified against the RFC 4493 vectors by the cross-language test. */
+void rasp_wbaes_cmac(const uint32_t *type2, const uint8_t *last, const uint8_t *msg, size_t len,
+                     uint8_t tag[16]);
+
 #endif

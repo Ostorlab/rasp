@@ -21,9 +21,10 @@ literal, which the encodings then build on. Do not treat the current output as k
 
 from __future__ import annotations
 
+import hmac
 from dataclasses import dataclass
 
-from . import aes
+from rasp_hardener import aes
 
 # AES MixColumns matrix (used to build the Tyi tables).
 MIXCOL = ((2, 3, 1, 1), (1, 2, 3, 1), (1, 1, 2, 3), (3, 1, 1, 2))
@@ -95,9 +96,11 @@ def generate(key: bytes) -> WhiteBoxTables:
     return WhiteBoxTables(type2=type2, last=last)
 
 
-# --- CTR mode / SecureStore reference (mirrors wbaes.c / securestore.c) --------------------------------------
+# --- CTR mode, AES-CMAC, and SecureStore reference (mirrors wbaes.c / securestore.c) -------------------------
 
 NONCE_LEN = 12
+TAG_LEN = 16
+_CMAC_RB = b"\x00" * 15 + b"\x87"  # GF(2^128) reduction constant for the CMAC subkeys (RFC 4493)
 
 
 def ctr(tables: WhiteBoxTables, nonce: bytes, data: bytes) -> bytes:
@@ -114,15 +117,64 @@ def ctr(tables: WhiteBoxTables, nonce: bytes, data: bytes) -> bytes:
     return bytes(out)
 
 
+def _xor(a: bytes, b: bytes) -> bytes:
+    return bytes(x ^ y for x, y in zip(a, b))
+
+
+def _shift_left_1(block: bytes) -> bytes:
+    return ((int.from_bytes(block, "big") << 1) & ((1 << 128) - 1)).to_bytes(16, "big")
+
+
+def _cmac_subkeys(tables: WhiteBoxTables) -> tuple[bytes, bytes]:
+    """The two CMAC subkeys K1, K2 derived from E(0^128) per RFC 4493."""
+    k0 = tables.encrypt_block(bytes(16))
+    k1 = _shift_left_1(k0)
+    if k0[0] & 0x80:
+        k1 = _xor(k1, _CMAC_RB)
+    k2 = _shift_left_1(k1)
+    if k1[0] & 0x80:
+        k2 = _xor(k2, _CMAC_RB)
+    return k1, k2
+
+
+def cmac(tables: WhiteBoxTables, message: bytes) -> bytes:
+    """AES-CMAC (RFC 4493) over `message` using the white-box block E_k. Returns the 16-byte tag."""
+    k1, k2 = _cmac_subkeys(tables)
+    complete = len(message) > 0 and len(message) % 16 == 0
+    blocks = max((len(message) + 15) // 16, 1)
+    if complete:
+        last = _xor(message[(blocks - 1) * 16 :], k1)
+    else:
+        rem = message[(blocks - 1) * 16 :]
+        padded = rem + b"\x80" + b"\x00" * (15 - len(rem))
+        last = _xor(padded, k2)
+    x = bytes(16)
+    for i in range(blocks - 1):
+        x = tables.encrypt_block(_xor(x, message[i * 16 : (i + 1) * 16]))
+    return tables.encrypt_block(_xor(x, last))
+
+
 def secure_store_seal(tables: WhiteBoxTables, nonce: bytes, plaintext: bytes) -> bytes:
-    """Frame ``nonce(12) || ciphertext`` (confidentiality only — see the securestore.h caveat)."""
-    return bytes(nonce) + ctr(tables, nonce, plaintext)
+    """Authenticated seal: ``nonce(12) || ciphertext || tag(16)``, encrypt-then-MAC (CTR + AES-CMAC).
+
+    The tag authenticates ``nonce || ciphertext``, so any change to the nonce or ciphertext is detected on
+    open. Single-key CTR+CMAC composition, in the spirit of CCM (the white-box carries one embedded key).
+    """
+    ciphertext = ctr(tables, nonce, plaintext)
+    tag = cmac(tables, bytes(nonce) + ciphertext)
+    return bytes(nonce) + ciphertext + tag
 
 
 def secure_store_open(tables: WhiteBoxTables, sealed: bytes) -> bytes:
-    if len(sealed) < NONCE_LEN:
+    """Verify the tag (constant-time), then decrypt. Raises ``ValueError`` on any tampering."""
+    if len(sealed) < NONCE_LEN + TAG_LEN:
         raise ValueError("sealed blob too short")
-    return ctr(tables, sealed[:NONCE_LEN], sealed[NONCE_LEN:])
+    nonce = sealed[:NONCE_LEN]
+    tag = sealed[-TAG_LEN:]
+    ciphertext = sealed[NONCE_LEN:-TAG_LEN]
+    if not hmac.compare_digest(cmac(tables, nonce + ciphertext), tag):
+        raise ValueError("integrity check failed")
+    return ctr(tables, nonce, ciphertext)
 
 
 # --- C header emission --------------------------------------------------------------------------------------

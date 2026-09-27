@@ -98,6 +98,32 @@ def render_build_seed_h(profile: BuildProfile, strings: dict[str, str] | None = 
     return "\n".join(lines)
 
 
+def render_integrity_regions_h(regions: list[tuple[int, int]]) -> str:
+    """Render the code/read-only `.so` regions the device hashes at runtime (design §8) as a C header.
+
+    Consumed by ``rasp_jni.c`` (guarded by ``__has_include``): when present the report is sealed with the
+    integrity-derived key. `regions` is a list of ``(file_offset, length)`` from ``codehash.so_integrity_root``.
+    """
+    lines = [
+        _AUTOGEN,
+        "#ifndef RASP_INTEGRITY_REGIONS_H",
+        "#define RASP_INTEGRITY_REGIONS_H",
+        "",
+        '#include "integrity.h"',
+        "",
+        "static const rasp_file_region_t RASP_INTEGRITY_REGIONS[] = {",
+    ]
+    lines += [f"    {{ {off}ULL, {size}ULL }}," for (off, size) in regions]
+    lines += [
+        "};",
+        f"#define RASP_INTEGRITY_REGION_COUNT {len(regions)}",
+        "",
+        "#endif",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def emit_headers(
     profile: BuildProfile, out_dir: str | pathlib.Path, strings: dict[str, str] | None = None
 ) -> list[pathlib.Path]:

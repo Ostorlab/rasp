@@ -31,6 +31,9 @@ class BuildManifest:
     signing_cert_sha256: list[str]
     code_hashes: dict[str, str] = field(default_factory=dict)
     integrity_root: str = ""
+    # File offset/length ranges the device hashes at runtime to reproduce `integrity_root` (design §8),
+    # present when the build was hashed from a compiled `.so`. Empty for the legacy source-hash root.
+    integrity_regions: list[dict] = field(default_factory=list)
     seed_fingerprint: str = ""
     created_at: float = field(default_factory=time.time)
     revoked: bool = False
@@ -61,15 +64,27 @@ def build_manifest(
     package_name: str,
     signing_cert_sha256: list[str],
     code_paths: list[str | pathlib.Path] | None = None,
+    so_path: str | pathlib.Path | None = None,
 ) -> BuildManifest:
-    """Assemble a manifest for `profile`, hashing `code_paths` and folding in the signer digests."""
+    """Assemble a manifest for `profile`.
+
+    When `so_path` is given, the integrity root is taken over the compiled `.so`'s code/read-only regions —
+    the exact bytes the device reproduces at runtime (design §8), and the regions are recorded so the device
+    knows what to hash. Otherwise it falls back to the legacy root over `code_paths` source hashes plus the
+    signing cert.
+    """
     code_hashes = codehash.hash_paths(code_paths) if len(code_paths or []) > 0 else {}
-    # The signing cert is part of the code identity, so bind it whenever either input is present — not only
-    # when code files were hashed (otherwise `register` with just --cert would drop the cert from the root).
-    if len(code_hashes) > 0 or len(signing_cert_sha256) > 0:
-        root = codehash.integrity_root(code_hashes, signing_cert_sha256)
+    if so_path is not None:
+        root, regions = codehash.so_integrity_root(so_path)
+        integrity_regions = [{"offset": off, "length": size} for (off, size) in regions]
     else:
-        root = ""
+        integrity_regions = []
+        # The signing cert is part of the code identity, so bind it whenever either input is present — not
+        # only when code files were hashed (otherwise `register` with just --cert would drop the cert).
+        if len(code_hashes) > 0 or len(signing_cert_sha256) > 0:
+            root = codehash.integrity_root(code_hashes, signing_cert_sha256)
+        else:
+            root = ""
     return BuildManifest(
         build_id=profile.build_id,
         build_key_hex=profile.build_key_hex,
@@ -77,5 +92,6 @@ def build_manifest(
         signing_cert_sha256=list(signing_cert_sha256),
         code_hashes=code_hashes,
         integrity_root=root,
+        integrity_regions=integrity_regions,
         seed_fingerprint=profile.seed_fingerprint,
     )

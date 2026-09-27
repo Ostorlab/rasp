@@ -57,14 +57,15 @@ The current scope is Android + a trust service. "Verified" means covered by test
 
 ### Tests
 - [x] Python: trust flow, DPoP proofs, risk mapping, HTTP server, attestation, revocation, build-manifest
-  ingestion, integrity-derived-key sealing (71 tests).
+  ingestion, integrity-derived-key sealing (73 tests).
 - [x] Hardener: per-build polymorphism, string encryption, guard mesh, code hashing, manifest, CLI, AES-128
-  reference, white-box AES, CTR/SecureStore (57 tests).
+  reference, white-box AES, CTR/SecureStore AEAD (CMAC), ELF/.so integrity hashing (71 tests).
 - [x] Native host: parsers, new detector helpers (cpuinfo/tty/wchan/self-ptrace), SHA-256/HMAC vectors,
   report sealing, guard mesh + integrity-derived key, string decode.
 - [x] Cross-language: native seal, string decode, guard root and fold-key, white-box AES block and
-  SecureStore verified against the Python reference (byte-exact); hardener manifest verified through the
-  trust-service build registry end-to-end.
+  SecureStore, and the `.so` integrity root (native runtime == build-time over the same regions, tamper flips
+  both) verified against the Python reference (byte-exact); the hardener manifest is verified through the
+  trust-service build registry, and integrity-derived sealing through the full token route, end-to-end.
 
 ## Partial
 
@@ -110,19 +111,25 @@ The current scope is Android + a trust service. "Verified" means covered by test
   `manifest.py` + `BuildRegistry.from_manifest` register the build with the trust service end-to-end.
 
 ### Crypto and storage (design §8)
-- [~] Integrity-derived keys so tampering fails closed. Native `rasp_guard_fold_key` derives the report MAC
-  key as `HMAC(build_key, guard_root(code_regions))`; the trust service derives the same key from the build's
-  registered integrity root (`verify_sealed_report(integrity_root=...)`), so a patched binary's report is
-  refused with no on-device branch. Cross-language KAT-verified. Remaining: hashing the live `.so`
-  `.text`/`.rodata` regions on device so the runtime root equals a build-time-registered root, and turning
-  this on by default in the device seal path (currently opt-in).
+- [x] Integrity-derived keys so tampering fails closed — end-to-end. The hardener hashes the compiled `.so`'s
+  code/read-only regions (`elf.py` + `codehash.so_integrity_root`) into the registered integrity root and
+  emits `integrity_regions.h`. The device reproduces the same root at runtime over its own `.so`
+  (`integrity.c`, located via `dladdr`) and seals the report with `HMAC(build_key, root)` (`rasp_guard_fold_key`
+  in `rasp_jni.c`); the trust service derives the same key from the registered root and wires it into the token
+  route (`TrustService.token` → `verify_sealed_report(integrity_root=...)`), so a patched binary is refused
+  with no on-device branch. Cross-language KAT: the native runtime root equals the build-time root over the
+  same `.so`, and a flipped byte changes both; the token route accepts a derived seal and refuses a raw one.
+  Remaining: run the `dladdr` self-location path on-device (host tests cover the root computation, not the
+  device self-location).
 - [~] White-box crypto (build key, no-hardware devices; DCA/DFA countermeasures). Plain white-box AES-128
   (Chow tables) implemented: `aes.py` reference (FIPS-197), `whitebox.py` table generator, native `wbaes.c`
   evaluator; the key is not a contiguous literal, cross-language KAT-verified. **Not key-hiding yet** — the
   internal encodings / mixing bijections and DCA/DFA countermeasures are the next step.
-- [~] `SecureStore` API; data keys; wipe on critical. Native `securestore.c` seals data at rest with
-  white-box AES-128-CTR (`nonce||ciphertext`), cross-language tested. Missing: an integrity tag (AEAD/
-  AES-CMAC), key wipe-on-critical, and the Kotlin/Dart API surface (JNI binding + method channel).
+- [~] `SecureStore` API; data keys; wipe on critical. Native `securestore.c` provides authenticated
+  data-at-rest under white-box AES-128: CTR for confidentiality + AES-CMAC for integrity, encrypt-then-MAC,
+  framed `nonce||ciphertext||tag`; `open` verifies the tag in constant time before decrypting. CMAC is
+  RFC-4493 KAT-verified and cross-language tested (C == Python; tamper rejected both sides). Missing: key
+  wipe-on-critical, and the Kotlin/Dart API surface (JNI binding + method channel).
 - [~] Code-tamper hashing folded into keys. `codehash.py` hashes the native sources + signer digest into a
   guard-mesh integrity root recorded in the build manifest; hashing `.so` `.text`/resources/`libapp.so`
   regions and folding the root into the live report/data keys at runtime is not wired yet.
