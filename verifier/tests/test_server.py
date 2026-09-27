@@ -98,7 +98,8 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(200, status, body)
         return body["token"], session_key
 
-    def transfer(self, session, session_key, token, *, counter=1, amount_cents=5000, session_override=None):
+    def build_transfer(self, session, session_key, token, *, counter=1, amount_cents=5000, session_override=None):
+        """Returns the (raw body, headers) for a transfer request, so a test can send or replay it."""
         body = {"sessionToken": session_override or session, "payee": "Alex Smith",
                 "amountCents": amount_cents, "currency": "USD"}
         raw = json.dumps(body).encode()
@@ -115,6 +116,9 @@ class ServerTest(unittest.TestCase):
             "X-Integrity-Ts": str(ts),
             "X-Integrity-Counter": str(counter),
         }
+        return raw, headers
+
+    def send(self, raw, headers):
         request = urllib.request.Request(self.base + "/v1/transfers", raw,
                                          {"Content-Type": "application/json", **headers})
         try:
@@ -122,6 +126,9 @@ class ServerTest(unittest.TestCase):
                 return response.status, json.loads(response.read())
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read())
+
+    def transfer(self, session, session_key, token, **kwargs):
+        return self.send(*self.build_transfer(session, session_key, token, **kwargs))
 
     # --- tests ----------------------------------------------------------------------------------------------
 
@@ -160,11 +167,20 @@ class ServerTest(unittest.TestCase):
         session = self.login()
         chain, _ = self.bind()
         token, sk = self.get_token(chain)
-        self.assertEqual(200, self.transfer(session, sk, token, counter=1)[0])
-        # A fresh token but the same (or lower) counter is a replayed proof.
-        token2, sk2 = self.get_token(chain)
-        status, body = self.transfer(session, sk2, token2, counter=1)
+        raw, headers = self.build_transfer(session, sk, token, counter=1)
+        self.assertEqual(200, self.send(raw, headers)[0])
+        # Replaying the exact same proof (same token, session key and counter) is rejected.
+        status, body = self.send(raw, headers)
         self.assertEqual((401, "replayed_proof"), (status, body.get("reason")))
+
+    def test_a_new_token_restarts_the_counter(self):
+        # Each token has its own session key, so a legitimate second transfer with counter 1 is allowed.
+        session = self.login()
+        chain, _ = self.bind()
+        token, sk = self.get_token(chain)
+        self.assertEqual(200, self.transfer(session, sk, token, counter=1)[0])
+        token2, sk2 = self.get_token(chain)
+        self.assertEqual(200, self.transfer(session, sk2, token2, counter=1)[0])
 
     def test_a_second_install_cannot_use_the_first_sessions(self):
         session = self.login()

@@ -64,7 +64,7 @@ class BankState:
     sessions: dict[str, tuple[str, float]] = field(default_factory=dict)
     pin_failures: dict[str, int] = field(default_factory=dict)
     session_install: dict[str, str] = field(default_factory=dict)  # session -> install id (sub)
-    install_counter: dict[str, int] = field(default_factory=dict)  # install id -> last proof counter
+    install_counter: dict[str, int] = field(default_factory=dict)  # session key thumbprint (cnf.jkt) -> last counter
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def login(self, ctx: RequestContext) -> tuple[int, dict]:
@@ -96,8 +96,6 @@ class BankState:
         headers = ctx.headers
         session = str(ctx.json.get("sessionToken", ""))
         try:
-            with self.lock:
-                last = self.install_counter.get(self.session_install.get(session, ""))
             verified = verify_request(
                 token=headers.get("x-integrity-token", ""),
                 install_key_der_b64=headers.get("x-integrity-key", ""),
@@ -108,7 +106,6 @@ class BankState:
                 path=ctx.path,
                 body=ctx.body,
                 jwks_keys=self.jwks_provider()["keys"],
-                last_counter=last,
             )
         except (ResourceError, ValueError) as e:
             reason = e.reason if isinstance(e, ResourceError) else "bad_headers"
@@ -116,13 +113,19 @@ class BankState:
 
         if verified.claims.get("app") != self.package_name:
             return HTTPStatus.FORBIDDEN, {"error": "integrity_failed", "reason": "wrong_app"}
+        # Replay protection is scoped to the session key (cnf.jkt): each token has its own session key, so a
+        # new token legitimately restarts the counter, but a proof cannot be replayed within one token's life.
+        jkt = (verified.claims.get("cnf") or {}).get("jkt", "")
         with self.lock:
             bound = self.session_install.get(session)
             if bound is None:
                 self.session_install[session] = verified.install_id
             elif bound != verified.install_id:
                 return HTTPStatus.FORBIDDEN, {"error": "integrity_failed", "reason": "install_mismatch"}
-            self.install_counter[verified.install_id] = verified.counter
+            last = self.install_counter.get(jkt)
+            if last is not None and verified.counter <= last:
+                return HTTPStatus.UNAUTHORIZED, {"error": "integrity_failed", "reason": "replayed_proof"}
+            self.install_counter[jkt] = verified.counter
 
         # A transfer is sensitive: high risk (malware watching, unlocked/compromised device) is denied,
         # medium (root, emulator, a call, a screenshot) needs step-up.
