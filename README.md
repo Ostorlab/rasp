@@ -2,16 +2,42 @@
 
 This repo holds three things:
 
-- **`flutter_rasp/`**: a Flutter plugin (Android) for runtime self-protection. Detection, policy and reactions run on the device and work offline.
-- **`verifier/`**: server-side verification for a bank's backend. It checks Android Key Attestation (device binding) and transactions signed by the bound key, then decides allow, step-up or deny. It includes a small reference backend.
+- **`flutter_rasp/`**: a Flutter plugin (Android) for runtime self-protection. Detection and local reactions run on the device and work offline; for server-enforced trust it seals a report and drives the trust-service flow below.
+- **`verifier/`**: the **trust service** and a reference **bank resource server**. The trust service issues single-use challenges, binds an install with Android Key Attestation, and mints short-lived integrity tokens from a sealed RASP report, the hardware attestation and a platform (Play Integrity) verdict. The bank verifies those tokens and decides allow, step-up or deny.
 - **`sample_app/`**: *Demo Bank*, a Flutter banking app used as the protection target.
 
 See `rasp-research.md` for background and the design document for the full platform.
 
+**Core decision: the device detects and reports; the server decides and enforces.** No client-side verdict is trusted on its own. A device that is rooted, hooked or repackaged still cannot turn a bypass into an accepted payment, because the backend acts only on a trust-service token, and that token is bound to a request-signing key held by a genuine, attested install.
+
 | Tier | Contents |
 | --- | --- |
-| v1 (on device, offline) | Root, emulator, debugger, hooking, tamper and installer detection; local policy and reactions; event log |
-| Banking tier | Anti-fraud (accessibility abuse, overlays and tapjacking, screen capture, recording and mirroring, remote-access apps, calls during a transfer); sensitive-screen mode; hardware-backed device binding with Key Attestation; transactions signed together with the RASP verdict; server-side verifier and decision |
+| On device (offline) | Root, emulator, debugger, hooking, tamper, installer and network-interception detection; local policy and reactions; event log |
+| Trust tier | Hardware device binding with Key Attestation; a sealed RASP report MAC'd with a per-build key; the trust service scores risk and issues an integrity token; each API request carries a DPoP-style proof bound to the token; the bank verifies the token via JWKS and decides |
+
+## Trust flow
+
+```
+device                              trust service                     bank
+  │  POST /v1/challenge (bind) ───────►                                │
+  │  ◄─────────────────── nonce                                        │
+  │  bindDevice(nonce) → key + Key Attestation chain                   │
+  │  POST /v1/bind ───────────────────►  verify chain, store install   │
+  │                                                                    │
+  │  POST /v1/challenge (token) ──────►                                │
+  │  ◄─────────────────── nonce                                        │
+  │  prepareToken(nonce):                                              │
+  │    seal report (per-build MAC), new session key,                   │
+  │    install key signs proof (nonce+mac+session) via BiometricPrompt │
+  │  POST /v1/token ──────────────────►  verify proof, report, Play    │
+  │  ◄──────────── integrity token (ES256 JWT, cnf = session key)      │
+  │                                                                    │
+  │  signRequest → X-Integrity-* headers (session key) ───────────────►│  verify JWT (JWKS),
+  │                                                                    │  verify DPoP proof, decide
+  │  ◄─────────────────────────────────────────── allow | step_up | deny
+```
+
+Two keys keep this usable: the **install key** is hardware-backed and user-auth bound, and it authorizes token issuance with one biometric prompt (showing the action); the **session key** is ephemeral and signs each request's proof silently for the token's short life, so there is no prompt per request.
 
 ## What the plugin detects
 
@@ -20,11 +46,12 @@ See `rasp-research.md` for background and the design document for the full platf
 | `root` | su binaries, root-manager data dirs, root mounts in `/proc/self/mounts`, SELinux permissive, root-manager packages, `test-keys` | native + Kotlin |
 | `emulator` | QEMU/goldfish device files, build fingerprint/model/hardware/product | native + Kotlin |
 | `debugger` | `TracerPid` in `/proc/self/status`, JDWP debugger connected | native + Kotlin |
-| `hooking` | Frida/Xposed/LSPosed/Substrate libraries in `/proc/self/maps`, Frida thread names, Frida default port, Xposed classes and stack frames | native + Kotlin |
+| `hooking` | Frida/Xposed/LSPosed/Substrate libraries in `/proc/self/maps`, Frida thread names, Frida default port, Xposed classes and stack frames, executable mappings from tmp/memfd/deleted files | native + Kotlin |
 | `tamper` | Signing certificate SHA-256 vs expected, package name, `debuggable` flag on a release build | Kotlin |
+| `netMitm` | An HTTP(S) proxy is set, or a user-installed CA is in the system trust store | Kotlin |
 | `untrustedInstaller` | Installer package not in the allowlist | Kotlin |
 | `devOptions`, `adbEnabled`, `noScreenLock` | Device settings | Kotlin |
-| `accessibilityAbuse` | Enabled accessibility services that can read the screen or perform gestures and are not known assistive tools (TalkBack, Voice Access, Switch Access...); higher confidence when sideloaded | Kotlin |
+| `accessibilityAbuse` | Enabled accessibility services that can read the screen or perform gestures and are not known assistive tools (TalkBack, Voice Access, password managers...); higher confidence when sideloaded | Kotlin |
 | `overlay` | Touches on a sensitive screen that arrive through another app's window (`FLAG_WINDOW_IS_OBSCURED` / `PARTIALLY_OBSCURED`) | Kotlin |
 | `screenCapture` | Screenshot callback (Android 14+) | Kotlin |
 | `screenRecording` | Screen-recording callback, including the initial state (Android 15+) | Kotlin |
@@ -33,11 +60,13 @@ See `rasp-research.md` for background and the design document for the full platf
 | `activeCall` | Phone or VoIP call in progress (audio mode; no permission needed) | Kotlin |
 | `detectorFailure` | A detector threw, so protection is degraded (reported instead of silently skipped) | native + Kotlin |
 
-Fail-closed rules: a missing native core (`librasp_core.so` removed from the APK) is reported as `tamper`, and so is a release build without a pinned signing certificate or package name. An allowlisted assistive tool only counts when it is a system app or was installed from an app store.
+The native core runs its detectors twice: `nativeScan()` returns numeric signals for the local policy, and `nativeSeal()` reruns them, splices in the managed-layer (Kotlin) signals, and MACs the exact report bytes with the per-build key so the trust service can authenticate the report. The native methods are bound with `RegisterNatives` (no exported `Java_*` symbol).
 
-Event-type signals (screenshots, obscured touches) stay active for 5 minutes, so the next guard still sees them.
+Fail-closed rules: a missing native core (`librasp_core.so` removed) is reported as `tamper`; a release build without a pinned signing certificate or package name is `tamper`; a report the trust service cannot authenticate (unknown build, wrong per-build key, as with a repackaged app) is refused. An allowlisted assistive tool only counts when it is a system app or was installed from an app store.
 
 ## Reactions (local policy)
+
+Local reactions still run on the device, offline. They are advisory; the **server decision on the token is authoritative** for API calls.
 
 | Reaction | Effect |
 | --- | --- |
@@ -46,22 +75,6 @@ Event-type signals (screenshots, obscured touches) stay active for 5 minutes, so
 | `blockSensitive` | `Rasp.guard(flow)` denies flows listed in `sensitiveFlows` |
 | `secureScreen` | Sets `FLAG_SECURE` on the window while the threat is active |
 | `closeApp` | Closes the app 4 s after the event, so the warning can be shown first |
-
-Default policy:
-
-| Threat | Reactions |
-| --- | --- |
-| `root` | report, warn, block sensitive |
-| `emulator` | report, block sensitive |
-| `debugger` | report, block sensitive, secure screen |
-| `hooking` | report, warn, block sensitive, secure screen |
-| `tamper` | report, warn, close app |
-| `accessibilityAbuse` | report, warn, block sensitive |
-| `overlay` | report, block sensitive |
-| `screenRecording`, `screenMirroring` | report, secure screen, block sensitive |
-| `screenCapture` | report, secure screen |
-| `activeCall` | report, warn (scam warning; the user decides) |
-| everything else | report |
 
 `devMode: true` turns every reaction into report only.
 
@@ -78,66 +91,53 @@ await Rasp.start(RaspConfig(
 
 Rasp.events.listen((event) { /* show a warning */ });
 
-// PIN and transfer screens: no screenshots or recording, overlays hidden, touches through
-// overlays dropped and reported, content hidden from non-assistive accessibility services.
+// Sensitive screens: no screenshots or recording, overlays hidden, touches through overlays dropped,
+// content hidden from non-assistive accessibility services.
 await Rasp.setSensitiveScreen(true);
 
-final guard = await Rasp.guard('transfer');   // fresh scan right before the action
-if (!guard.allowed) { /* refuse */ }
-if (guard.warnings.contains(ThreatType.activeCall)) { /* "Is someone on the phone asking you to pay?" */ }
+final guard = await Rasp.guard('transfer');   // local check right before the action
+if (!guard.allowed) { /* refuse locally */ }
 
-// Device binding: the server sends a random challenge and verifies the Key Attestation chain.
-// By default the key needs the user's biometric or device credential for every signature.
-final binding = await Rasp.bindDevice(challengeBytes);   // send publicKey + certificateChain to the server
+// 1. Bind the install (once): the trust service sends a challenge and verifies the Key Attestation chain.
+final binding = await Rasp.bindDevice(challengeBytes);   // POST publicKey + certificateChain to /v1/bind
 
-// Every transfer: sign the fields and the RASP verdict with the bound key, using a server nonce.
-// The system prompt shows the confirmation text; the user approves with a fingerprint or PIN.
-final signed = await Rasp.signTransaction(
-  flow: 'transfer', nonce: nonce, fields: {'amountCents': '5000'},
-  confirmationTitle: 'Confirm transfer', confirmationText: r'Send $50.00 to Alex Smith');
+// 2. Authorize a token: seal a fresh report and sign it with the install key (one biometric prompt).
+final auth = await Rasp.prepareToken(nonce: nonce, confirmationText: r'Send $50.00 to Alex Smith');
+//    POST auth.toRequest(nonce) to /v1/token → integrity token
+
+// 3. Sign each request with the session key (silent) and attach the headers.
+final proof = await Rasp.signRequest(method: 'POST', path: '/v1/transfers', body: bodyBytes);
+//    request headers: proof.headers(token)   → X-Integrity-Token / -Key / -Sig / -Ts / -Counter
 ```
 
-### Signed transaction format (`rasp-tx-1`)
-
-```
-v=rasp-tx-1
-nonce=<server nonce>
-ts=<device time, ms>
-app=<package name>
-risk=none|low|medium|high
-threats=<comma-separated, sorted>
-f.<field>=<value>          (sorted by name; %, CR and LF percent-escaped)
-```
-
-The signature is ECDSA P-256 / SHA-256 over the UTF-8 text, made with the hardware-backed key. The verdict is inside the signed text, so hiding a threat or changing the amount breaks the signature.
+`sample_app/lib/data/bank_api.dart` shows the whole flow end to end.
 
 ## Server side (`verifier/`)
 
-- `verify_key_attestation(chain, challenge, package, signer_digests)` runs these checks in order:
-    - chain structure: only the leaf carries the attestation extension, the leaf is not a CA, and every certificate above it is a CA. This stops a certificate forged with the attested key itself;
-    - chain signatures, and validity of the issuing certificates;
-    - Google root (both published roots are bundled, including the EC P-384 root used from February 2026);
-    - revocation list (optional);
-    - challenge;
-    - **app identity**: package name and signing-certificate digest in `attestationApplicationId`. This blocks relaying the challenge to another app or phone;
-    - key security level (TEE or StrongBox);
-    - locked bootloader and verified boot;
-    - optionally (`require_user_auth`), that every use of the key needs the user: the attestation shows a user-auth type, no "no auth required" tag and no timeout.
-- `verify_transaction(...)` checks the bound key's signature, the single-use nonce, the app and the clock skew.
-- `decide(tx)` returns:
-    - **deny** for tamper, hooking, a debugger, accessibility abuse, overlays, recording or mirroring;
-    - **step-up** for root, emulator, a call in progress, remote-access apps or screenshots;
-    - **allow** otherwise.
-- `RevocationList` keeps Google's revocation list fresh (refreshed every 12 h). Binding fails closed when the list is missing or older than 48 h.
-- `python -m rasp_verifier.server --package <pkg> --cert-sha256 <digest>` runs the reference backend with these endpoints:
-    - `/v1/sessions`: customer login, with a lockout after 5 wrong PINs;
-    - `/v1/challenge`
-    - `/v1/devices`: needs a session, and replaces the customer's previous device;
-    - `/v1/transfers`: needs a session, and the device must belong to that customer.
+One installable package (`rasp-verifier`) providing the trust service and a reference resource server.
 
-    By default it requires hardware attestation, user-auth keys and a fresh revocation list. `--allow-software-attestation`, `--allow-no-user-auth` and `--no-revocation-check` are for emulators and offline demos only; never use them in production.
+**Trust service** (`trust.py`, `attestation.py`, `report.py`, `platform.py`, `policy.py`, `registry.py`, `jose.py`):
 
-Demo Bank uses the backend when built with `--dart-define=BANK_SERVER=http://10.0.2.2:8787` (the host as seen from the emulator). Without it, the app runs offline as before.
+- `verify_key_attestation(...)` checks, in order: chain structure (only the leaf carries the attestation extension, the leaf is not a CA, every issuer is a CA — this stops a certificate forged with the attested key itself); chain signatures and validity; Google root (both published roots, including the EC P-384 root from February 2026); revocation list; challenge; **app identity** (package and signing-certificate digest in `attestationApplicationId`, blocking a relayed challenge); key security level (TEE or StrongBox); locked bootloader and verified boot; and optionally that every use of the key needs the user.
+- `verify_sealed_report(...)` recomputes the per-build HMAC over the exact report bytes, then checks the version, that the report is bound to the challenge nonce, and freshness. A repackaged build cannot know the key, so its report fails.
+- `assess_risk(...)` combines the report signals, the attestation summary and the platform verdict into one risk (`none`..`critical`); a missing platform attestation is the design's degraded mode (risk floor raised to medium).
+- The trust service issues an ES256 JWT with `risk`, `signals`, `cnf.jkt` (the session key it is bound to), `uauth`, `exp` and a `jti`, and publishes its key at `/.well-known/jwks.json`.
+- `RevocationList` keeps Google's revocation list fresh (every 12 h); binding fails closed when the list is missing or older than 48 h.
+
+**Resource server** (`resource.py`): `verify_request(...)` verifies the token via JWKS, that the presented key matches the token's `cnf.jkt`, the request proof (method, path, body hash, timestamp, monotonic counter), and freshness; `decide(risk, ...)` maps risk to allow / step-up / deny with per-endpoint thresholds (a payment denies at `high`, steps up at `medium`).
+
+Run the reference server (trust service + bank in one process, sharing the JWKS):
+
+```bash
+cd verifier
+python -m rasp_verifier.server --package dev.ostorlab.rasp.demo_bank --cert-sha256 <digest> \
+  --build-id test-build \
+  --build-key-hex 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+```
+
+Endpoints: `POST /v1/challenge`, `/v1/bind`, `/v1/token`, `GET /.well-known/jwks.json` (trust service); `POST /v1/sessions`, `/v1/transfers` (bank). By default it requires hardware attestation, user-auth keys, a fresh revocation list, and a platform attestation. The flags `--allow-software-attestation`, `--allow-no-user-auth`, `--no-revocation-check` and `--stub-play-integrity` are for emulators and offline demos only; never use them in production. The `--build-id`/`--build-key-hex` must match the app's `flutter_rasp/android/src/main/cpp/build_config.h` (dev defaults shown).
+
+Demo Bank uses the server when built with `--dart-define=BANK_SERVER=http://10.0.2.2:8787` (the host as seen from the emulator). Without it, the app runs offline with local reactions only.
 
 ## Build and run the sample
 
@@ -157,14 +157,14 @@ adb install -r build/app/outputs/flutter-apk/app-release.apk
 (cd flutter_rasp && flutter test)
 # Sample app
 (cd sample_app && flutter test)
-# Kotlin policy engine, fraud signal store, signed payload (JVM)
+# Kotlin policy engine and fraud signal store (JVM)
 (cd sample_app/android && ./gradlew :flutter_rasp:testDebugUnitTest)
-# Verifier and reference backend
+# Trust service, resource server, attestation, revocation, and C↔Python seal interop
 (cd verifier && python3 -m unittest discover -s tests -t .)
 # Native core on the host
 gcc -Wall -Wextra -Werror -I flutter_rasp/android/src/main/cpp \
   flutter_rasp/android/src/test/cpp/native_test.c \
-  flutter_rasp/android/src/main/cpp/{detectors,signals}.c -o /tmp/native_test && /tmp/native_test
+  flutter_rasp/android/src/main/cpp/{detectors,signals,sha256,report}.c -o /tmp/native_test && /tmp/native_test
 ```
 
 On an Android emulator, with the profile build and the real policy:
@@ -175,32 +175,25 @@ DEFINES="--dart-define=RASP_E2E=true --dart-define=RASP_CERT_SHA256=$(tool/cert_
 DRIVE="flutter drive --profile -d emulator-5554 --driver=test_driver/integration_test.dart"
 # UI flow: login, transfer blocked on the emulator, no fraud false positives
 $DRIVE $DEFINES --target=integration_test/rasp_emulator_test.dart
-# Login, device binding with a user-auth key, and a signed transfer against the reference backend.
-# Needs a screen lock (adb shell locksettings set-pin 1111) and the backend running (see the test header);
-# approve the prompt with: adb shell input text 1111 && adb shell input keyevent 66
+# Bind, token, and a signed transfer against the reference server (see the test header for setup):
 $DRIVE $DEFINES --dart-define=BANK_SERVER=http://10.0.2.2:8787 --target=integration_test/bank_server_test.dart
 # Scam call: run, then from the host: adb emu gsm call 5551234; adb emu gsm accept 5551234
 $DRIVE $DEFINES --target=integration_test/scam_call_test.dart
 ```
 
-`RASP_E2E` makes `tamper` report-only in test builds. `flutter drive` builds are debuggable, and the engine otherwise treats that as tampering and closes the app. It is honoured in profile builds only.
+`RASP_E2E` makes `tamper` report-only in test builds; it is honoured in profile builds only. Release builds allow HTTPS only; the cleartext exception for `10.0.2.2` exists in debug and profile builds only.
 
-Release builds allow HTTPS only. The cleartext exception for the reference server (`10.0.2.2`) exists in debug and profile builds only.
+## What is verified
 
-## Verified on an emulator (Pixel Fold, Android 16, x86_64)
-
-- **UI flow:** login works, and the transfer is blocked because the emulator is detected. There are no false positives for signing certificate, package name, root, hooking or any fraud threat. The Fold's second display is not taken for mirroring.
-- **Device binding:** the customer logs in, and real Android Keystore attestation from the emulator is verified by the reference backend, with Google's live revocation list. The attestation shows a user-auth key. The transfer is approved in the system `BiometricPrompt` with the device PIN, and the server denies it from the signed verdict (the test build reports `tamper`).
-- **Scam call:** a GSM call placed from the host and answered is detected as `activeCall` within a few seconds, and the transfer flow returns the warning.
-- **Sensitive screens:** `FLAG_SECURE` is set on the login screen, so screenshots come out black.
-- **Repackaging:** the release APK re-signed with a different key is flagged as `tamper` and closes itself after the warning. The genuine release APK stays open.
-- **Stripped native core:** the release APK with `librasp_core.so` removed (re-signed with the original key) reports `tamper` and closes itself. Before the fix, it ran with no native checks.
+- **Trust service and resource server:** the Python suite (57 tests) covers the full challenge → bind → token → request flow and its refusals — repackaged build (wrong MAC key), forged or replayed proof, replayed challenge, weak or missing platform attestation, forged/relayed/revoked attestation chains, and the risk-to-decision mapping.
+- **Native core:** the host tests cover the detectors' parsers, SHA-256/HMAC known-answer vectors, and report sealing; a cross-language test compiles the native seal and verifies it with the Python trust service, so the device and server HMACs agree byte for byte.
+- **On device:** the earlier offline detection, device binding, scam-call and sensitive-screen behaviour were verified on an emulator. The client trust-service wiring (`prepareToken`/`signRequest`, the two-key model, `RegisterNatives`, NET_MITM) is new and needs re-running on an emulator and a physical device; it has not yet been compiled or run on-device in this change.
 
 ## Known limits
 
-- Android only. iOS is not implemented.
-- No obfuscation or build-time hardening. The checks are standard and can be found and bypassed by a determined reverse engineer, as the research notes explain. The server-side checks (attestation, signed verdicts, single-use nonces) are what keeps a bypass from turning into an accepted payment.
-- Accessibility-abuse, overlay and mirroring detection are covered by unit tests and a clean-device check, not yet by a live malicious-app test.
-- The emulator cannot produce hardware attestation under Google's roots. The strict (production) path is covered by the verifier's unit tests with synthetic chains, and still needs checking on a physical device.
-- The RASP verdict inside a signed transfer is still reported by the app itself. Code running inside the app on a rooted phone can sign a clean verdict. The user-auth key stops silent signing, but not a user who is tricked into approving. Play Integrity per transaction (a Google-signed verdict the app cannot forge) is the next step; it needs a Google Cloud project for the app.
-- The reference backend keeps customers and sessions in memory and uses a demo PIN; a bank uses its own authentication.
+- Android only. iOS is not implemented (the trust service's App Attest path is stubbed).
+- No obfuscation or build-time hardening yet. The device checks can be found and bypassed by a determined reverse engineer; the trust service (attestation, the per-build-MAC'd report, single-use nonces, per-request proofs) is what stops a bypass becoming an accepted payment.
+- The sealed report authenticates the build and stops forgery and replay, but a determined attacker running inside the app on a compromised device can still influence the managed-layer signals it contains. Hardware attestation and the server-side risk decision are the backstop. **Play Integrity per request** (a Google-signed verdict the app cannot forge) is the next step and needs a Google Cloud project; until then the reference runs in degraded mode (risk floored at medium) and `platform.py` carries the pluggable interface.
+- Certificate pinning is detected around (NET_MITM) but not yet enforced in the client; enforcement belongs in the native/OkHttp layer per the design.
+- The emulator cannot produce hardware attestation under Google's roots; the strict path is covered by unit tests with synthetic chains and still needs a physical device.
+- The reference server keeps state in memory and uses a demo PIN; a bank uses its own authentication and a database for the registries.
