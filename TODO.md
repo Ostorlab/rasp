@@ -59,7 +59,7 @@ The current scope is Android + a trust service. "Verified" means covered by test
 - [x] Python: trust flow, DPoP proofs, risk mapping, HTTP server, attestation, revocation, build-manifest
   ingestion, integrity-derived-key sealing (73 tests).
 - [x] Hardener: per-build polymorphism, string encryption, guard mesh, code hashing, manifest, CLI, AES-128
-  reference, white-box AES, CTR/SecureStore, ELF/.so integrity hashing (67 tests).
+  reference, white-box AES, CTR/SecureStore AEAD (CMAC), ELF/.so integrity hashing (71 tests).
 - [x] Native host: parsers, new detector helpers (cpuinfo/tty/wchan/self-ptrace), SHA-256/HMAC vectors,
   report sealing, guard mesh + integrity-derived key, string decode.
 - [x] Cross-language: native seal, string decode, guard root and fold-key, white-box AES block and
@@ -125,9 +125,11 @@ The current scope is Android + a trust service. "Verified" means covered by test
   (Chow tables) implemented: `aes.py` reference (FIPS-197), `whitebox.py` table generator, native `wbaes.c`
   evaluator; the key is not a contiguous literal, cross-language KAT-verified. **Not key-hiding yet** — the
   internal encodings / mixing bijections and DCA/DFA countermeasures are the next step.
-- [~] `SecureStore` API; data keys; wipe on critical. Native `securestore.c` seals data at rest with
-  white-box AES-128-CTR (`nonce||ciphertext`), cross-language tested. Missing: an integrity tag (AEAD/
-  AES-CMAC), key wipe-on-critical, and the Kotlin/Dart API surface (JNI binding + method channel).
+- [~] `SecureStore` API; data keys; wipe on critical. Native `securestore.c` provides authenticated
+  data-at-rest under white-box AES-128: CTR for confidentiality + AES-CMAC for integrity, encrypt-then-MAC,
+  framed `nonce||ciphertext||tag`; `open` verifies the tag in constant time before decrypting. CMAC is
+  RFC-4493 KAT-verified and cross-language tested (C == Python; tamper rejected both sides). Missing: key
+  wipe-on-critical, and the Kotlin/Dart API surface (JNI binding + method channel).
 - [~] Code-tamper hashing folded into keys. `codehash.py` hashes the native sources + signer digest into a
   guard-mesh integrity root recorded in the build manifest; hashing `.so` `.text`/resources/`libapp.so`
   regions and folding the root into the live report/data keys at runtime is not wired yet.

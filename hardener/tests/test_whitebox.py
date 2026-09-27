@@ -52,13 +52,40 @@ class WhiteBoxTest(unittest.TestCase):
         block1 = aes.encrypt_block_key(KEY, bytes(12) + (1).to_bytes(4, "big"))
         self.assertEqual(keystream, block0 + block1)
 
+    def test_cmac_rfc4493_vectors(self):
+        # Authoritative AES-CMAC vectors from RFC 4493 (key 2b7e1516...).
+        tables = whitebox.generate(bytes.fromhex("2b7e151628aed2a6abf7158809cf4f3c"))
+        msg = bytes.fromhex(
+            "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51"
+            "30c81c46a35ce411e5fbc1191a0a52eff69f2445df4f9b17ad2b417be66c3710"
+        )
+        expected = {
+            0: "bb1d6929e95937287fa37d129b756746",
+            16: "070a16b46b4d4144f79bdd9dd04a287c",
+            40: "dfa66747de9ae63030ca32611497c827",
+            64: "51f0bebf7e3b9d92fc49741779363cfe",
+        }
+        for length, want in expected.items():
+            self.assertEqual(whitebox.cmac(tables, msg[:length]).hex(), want)
+
     def test_secure_store_seal_open(self):
         nonce = os.urandom(12)
         plain = b"account balance: 42.00 EUR"
         sealed = whitebox.secure_store_seal(self.tables, nonce, plain)
-        self.assertEqual(len(sealed), len(plain) + whitebox.NONCE_LEN)
+        self.assertEqual(len(sealed), len(plain) + whitebox.NONCE_LEN + whitebox.TAG_LEN)
         self.assertNotIn(plain, sealed)  # ciphertext, not cleartext
         self.assertEqual(whitebox.secure_store_open(self.tables, sealed), plain)
+
+    def test_secure_store_rejects_tamper(self):
+        nonce = os.urandom(12)
+        sealed = bytearray(whitebox.secure_store_seal(self.tables, nonce, b"sensitive-value"))
+        sealed[13] ^= 0x01  # flip a ciphertext byte
+        with self.assertRaises(ValueError):
+            whitebox.secure_store_open(self.tables, bytes(sealed))
+        sealed2 = bytearray(whitebox.secure_store_seal(self.tables, nonce, b"sensitive-value"))
+        sealed2[-1] ^= 0x01  # flip a tag byte
+        with self.assertRaises(ValueError):
+            whitebox.secure_store_open(self.tables, bytes(sealed2))
 
     def test_secure_store_open_too_short(self):
         with self.assertRaises(ValueError):
