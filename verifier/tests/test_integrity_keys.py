@@ -12,7 +12,7 @@ import unittest
 
 from rasp_verifier.report import ReportError, verify_sealed_report
 
-from .helpers import BUILD_KEY, seal_report
+from tests.helpers import BUILD_KEY, seal_report
 
 # The integrity root registered for the build at hardening time (hex).
 REGISTERED_ROOT = "42d544dbe00b9b6a4e567625542fc3b155a72f23a2b5e20d6308bf7690d0dc5f"
