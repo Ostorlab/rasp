@@ -57,7 +57,7 @@ The current scope is Android + a trust service. "Verified" means covered by test
 
 ### Tests
 - [x] Python: trust flow, DPoP proofs, risk mapping, HTTP server, attestation, revocation, build-manifest
-  ingestion, integrity-derived-key sealing (70 tests).
+  ingestion, integrity-derived-key sealing (71 tests).
 - [x] Hardener: per-build polymorphism, string encryption, guard mesh, code hashing, manifest, CLI, AES-128
   reference, white-box AES, CTR/SecureStore (57 tests).
 - [x] Native host: parsers, new detector helpers (cpuinfo/tty/wchan/self-ptrace), SHA-256/HMAC vectors,
@@ -71,12 +71,15 @@ The current scope is Android + a trust service. "Verified" means covered by test
 - [~] **Play Integrity / App Attest (design §7).** Pluggable interface + stub only; no real Google/Apple
   verification. Reference runs in degraded mode (needs a Google Cloud project).
 - [~] **Certificate pinning (design §7).** Detection only (`netMitm`); no client-side pin enforcement.
-- [~] **Detectors per threat (design §4).** Broadened: root (su/root-dirs, mounts, SELinux, +KernelSU/APatch
-  `wchan` side channel = 4), emulator (qemu files, +cpuinfo, +goldfish tty = 3), hooking (maps, threads,
-  port, behavioral exec-mapping = 4) now meet ≥3 independent. Debugger has 2 (TracerPid + behavioral
-  self-ptrace via `fork`+`PTRACE_TRACEME`); a 3rd (timing/JDWP/breakpoint scan) is deferred pending
-  false-positive tuning. Still missing: mount-namespace/zygote-PID anomalies, D-Bus/prologue-hash Frida
-  probes, sensor/telephony plausibility.
+- [~] **Detectors per threat (design §4).** Counted as independent *signals* on the same axis as the README
+  table (native + Kotlin). All four threats now meet ≥3: root = 7 (su binaries, root-manager dirs, mounts,
+  KernelSU/APatch `wchan`, SELinux, root-manager packages, `test-keys`); emulator = 4 (qemu files, cpuinfo,
+  goldfish tty, build fingerprint); debugger = 3 (native TracerPid, native self-ptrace via `fork`+
+  `PTRACE_TRACEME`, Kotlin JDWP `Debug.isDebuggerConnected`); hooking = 5 (maps libs, Frida threads, Frida
+  port, Xposed classes/frames, behavioral exec-mapping). This PR added the native cpuinfo/tty/`wchan`/
+  self-ptrace signals. Still missing: a 4th debugger signal (timing/breakpoint scan, deferred pending
+  false-positive tuning), mount-namespace/zygote-PID anomalies, D-Bus/prologue-hash Frida probes, and
+  sensor/telephony plausibility.
 - [~] **Client trust wiring.** `prepareToken`/`signRequest`, two-key model, `RegisterNatives`, `netMitm`
   are written but not yet compiled or re-verified on an emulator / physical device.
 - [~] **Compliance mapping (design §14).** Documented in the design; detectors not yet linked to MASVS/

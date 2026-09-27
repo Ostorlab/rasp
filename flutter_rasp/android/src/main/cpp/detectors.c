@@ -299,7 +299,7 @@ void rasp_detect_ttydrivers_emulator(rasp_signal_list_t *list) {
     }
 }
 
-/* --- Root-hiding side channel: KernelSU / APatch kernel worker seen via a thread's wchan ------------------- */
+/* --- Root-hiding side channel: one of our OWN threads parked in a KernelSU/APatch kernel routine ----------- */
 
 int rasp_wchan_is_suspicious(const char *wchan) {
     /* Match specific KernelSU/APatch markers; avoid generic "su" which hits legit kernel threads (e.g. sugov). */
@@ -312,6 +312,11 @@ int rasp_wchan_is_suspicious(const char *wchan) {
     return 0;
 }
 
+/* Reads the wait channel of each of THIS process's own threads (/proc/self/task/<tid>/wchan). It cannot see a
+ * separate KernelSU/APatch worker daemon — modern Android hides other processes' /proc under hidepid — but it
+ * flags the case where one of our threads is blocked inside a KSU/APatch kernel routine (e.g. a syscall that
+ * the root manager hooks), which is a cheap in-process side channel. Broader process-tree scanning is out of
+ * scope. */
 void rasp_detect_ksu_wchan(rasp_signal_list_t *list) {
     DIR *tasks = opendir("/proc/self/task");
     if (tasks == NULL) {

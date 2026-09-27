@@ -73,8 +73,11 @@ def verify_sealed_report(
     if not isinstance(report_text, str) or not isinstance(mac_hex, str):
         raise ReportError("bad_envelope", "report and mac are required strings")
 
+    # `None` means "no integrity derivation" (the raw build key). Callers make the fallback deliberate by
+    # passing `integrity_root or None`, so an empty string is treated as an explicit (degenerate) root here
+    # rather than silently meaning "absent".
     effective_key = build_key
-    if integrity_root:
+    if integrity_root is not None:
         try:
             root_bytes = bytes.fromhex(integrity_root)
         except ValueError as e:

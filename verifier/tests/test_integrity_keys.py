@@ -10,9 +10,11 @@ import hashlib
 import hmac
 import unittest
 
-from rasp_verifier.report import ReportError, verify_sealed_report
+from rasp_verifier.report import ReportError
+from rasp_verifier.report import verify_sealed_report
 
-from tests.helpers import BUILD_KEY, seal_report
+from tests.helpers import BUILD_KEY
+from tests.helpers import seal_report
 
 # The integrity root registered for the build at hardening time (hex).
 REGISTERED_ROOT = "42d544dbe00b9b6a4e567625542fc3b155a72f23a2b5e20d6308bf7690d0dc5f"
@@ -55,11 +57,19 @@ class IntegrityKeyTest(unittest.TestCase):
         self.assertEqual(cm.exception.reason, "bad_mac")
 
     def test_default_path_unaffected(self):
-        # With no integrity_root, the raw build key is used exactly as before.
+        # With no integrity_root (None), the raw build key is used exactly as before.
         nonce = "aW50ZWdyaXR5"
         envelope = seal_report(nonce, build_key=BUILD_KEY)
         report = verify_sealed_report(envelope, build_key=BUILD_KEY, expected_nonce=nonce)
         self.assertEqual(report.nonce, nonce)
+
+    def test_empty_root_is_not_treated_as_absent(self):
+        # An explicit "" is a (degenerate) root, distinct from None: it derives a key, not the raw build key.
+        nonce = "aW50ZWdyaXR5"
+        envelope = seal_report(nonce, build_key=BUILD_KEY)  # sealed with the RAW key
+        with self.assertRaises(ReportError) as cm:
+            verify_sealed_report(envelope, build_key=BUILD_KEY, expected_nonce=nonce, integrity_root="")
+        self.assertEqual(cm.exception.reason, "bad_mac")
 
     def test_bad_integrity_root_hex(self):
         nonce = "aW50ZWdyaXR5"
