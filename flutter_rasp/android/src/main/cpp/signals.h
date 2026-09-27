@@ -30,7 +30,16 @@ void rasp_signals_add(rasp_signal_list_t *list, rasp_threat_t threat,
                       const char *detector, int confidence,
                       const char *evidence);
 
-/* Serializes the list as a JSON array. Returns bytes written, or -1 if the buffer is too small. */
+/* Serializes the list as a JSON array with numeric threat ids. Consumed by the Kotlin local policy layer.
+ * Returns bytes written, or -1 if the buffer is too small. */
 int rasp_signals_to_json(const rasp_signal_list_t *list, char *out, size_t out_len);
+
+/* Wire name of a threat, shared with ThreatType.wireName and the sealed report. */
+const char *rasp_threat_name(rasp_threat_t threat);
+
+/* JSON building blocks, shared with report.c. Each returns 0, or -1 if `out` would overflow. `*pos` is the
+ * current write offset and is advanced. */
+int rasp_json_append_raw(char *out, size_t out_len, size_t *pos, const char *value);
+int rasp_json_append_escaped(char *out, size_t out_len, size_t *pos, const char *value);
 
 #endif

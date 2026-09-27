@@ -21,6 +21,11 @@ object UserConfirmation {
 
     /** Blocks the calling (background) thread until the user confirms or cancels. Must not run on the UI thread. */
     fun authorize(activity: Activity, signature: Signature, title: String, description: String): Signature {
+        // The platform BiometricPrompt and Activity.mainExecutor are API 28+. minSdk is 24, so guard rather
+        // than crash on Android 7-8.1; the caller surfaces auth_unsupported instead of the app dying.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            throw UserConfirmationException("auth_unsupported", "user confirmation needs Android 9 or newer")
+        }
         val result = CompletableFuture<Signature>()
         activity.runOnUiThread {
             try {

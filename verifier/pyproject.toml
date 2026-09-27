@@ -1,7 +1,7 @@
 [project]
 name = "rasp-verifier"
 version = "0.1.0"
-description = "Server-side verification for flutter_rasp: Android Key Attestation, device binding and signed transactions."
+description = "Trust service and reference resource server for flutter_rasp: Key Attestation, sealed reports, integrity tokens (JWKS) and DPoP request proofs."
 requires-python = ">=3.10"
 dependencies = ["cryptography>=42"]
 

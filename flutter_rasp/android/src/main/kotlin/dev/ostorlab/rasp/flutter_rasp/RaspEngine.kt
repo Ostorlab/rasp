@@ -84,6 +84,15 @@ class RaspEngine(
         return policy.guard(flow, decision) to decision
     }
 
+    /**
+     * Seals a fresh report for the trust service, bound to the server [nonce]. The native core reruns its
+     * detectors and MACs them together with the managed-layer signals (platform and fraud) from this scan.
+     */
+    fun sealedReport(nonce: String): String {
+        val managed = platformDetectors.scan() + fraudDetectors.scan()
+        return NativeDetectors.seal(managed, nonce, System.currentTimeMillis())
+    }
+
     fun events(): List<Map<String, Any?>> = eventLog.readAll()
 
     fun clearEvents() = eventLog.clear()

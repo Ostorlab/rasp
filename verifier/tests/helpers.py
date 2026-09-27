@@ -1,14 +1,18 @@
-"""Builds synthetic Android Key Attestation chains for tests."""
+"""Builds synthetic Android Key Attestation chains and simulates a device for the trust-service tests."""
 
 from __future__ import annotations
 
 import base64
 import datetime as dt
 import hashlib
+import hmac
+import json
+import time
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.x509.oid import NameOID
 
 from rasp_verifier.attestation import KEY_DESCRIPTION_OID
@@ -147,3 +151,54 @@ class Chain:
     def public_key_der(self) -> bytes:
         return self.device_key.public_key().public_bytes(
             serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+
+
+# --- device simulation (native sealed report + ES256 proofs) ------------------------------------------------
+
+BUILD_ID = "test-build"
+BUILD_KEY = bytes.fromhex("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+
+
+def raw_es256(private_key: ec.EllipticCurvePrivateKey, message: bytes) -> str:
+    """ES256 over `message` as raw R||S, base64url (what the device install key produces)."""
+    der = private_key.sign(message, ec.ECDSA(hashes.SHA256()))
+    r, s = decode_dss_signature(der)
+    raw = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def seal_report(nonce: str, signals=(), *, build_id: str = BUILD_ID, build_key: bytes = BUILD_KEY,
+                ts_ms: int | None = None) -> dict:
+    """Mirrors the native `rasp_seal_report`: canonical JSON + HMAC-SHA256 with the build key.
+
+    `signals` is an iterable of (threat_name, confidence, detector, evidence).
+    """
+    ts = int(time.time() * 1000) if ts_ms is None else ts_ms
+    report = json.dumps(
+        {
+            "v": "rasp-report-1",
+            "buildId": build_id,
+            "nonce": nonce,
+            "ts": ts,
+            "signals": [
+                {"threat": t, "confidence": c, "detector": d, "evidence": e} for (t, c, d, e) in signals
+            ],
+        },
+        separators=(",", ":"),
+    )
+    mac = hmac.new(build_key, report.encode(), hashlib.sha256).hexdigest()
+    return {"report": report, "mac": mac}
+
+
+def session_keypair() -> tuple[ec.EllipticCurvePrivateKey, str]:
+    """An ephemeral session key: (private key, SubjectPublicKeyInfo DER as base64)."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    der = key.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    return key, base64.b64encode(der).decode()
+
+
+def stub_play_integrity(nonce: str, *, verdict: str = "STRONG", package: str = PACKAGE) -> str:
+    """A StubPlatformAttestation token bound to the challenge nonce (SHA-256), for tests only."""
+    request_hash = hashlib.sha256(nonce.encode()).digest()
+    return json.dumps({"verdict": verdict, "package": package, "requestHash": base64.b64encode(request_hash).decode()})

@@ -5,6 +5,8 @@ add_library(rasp_core SHARED
     rasp_jni.c
     detectors.c
     signals.c
+    sha256.c
+    report.c
 )
 
 target_compile_options(rasp_core PRIVATE -Wall -Wextra -Werror -O2 -fvisibility=hidden)

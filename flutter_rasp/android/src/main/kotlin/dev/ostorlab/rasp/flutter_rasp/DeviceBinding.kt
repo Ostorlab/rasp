@@ -61,12 +61,13 @@ class DeviceBinding(private val alias: String = DEFAULT_ALIAS) {
         return info.isUserAuthenticationRequired
     }
 
-    /** A signature object ready to sign; for user-auth keys it must go through BiometricPrompt before [finish]. */
+    /** A signature object ready to sign; for user-auth keys it must go through BiometricPrompt before [finishRaw]. */
     fun initSignature(): Signature = Signature.getInstance("SHA256withECDSA").apply { initSign(privateKey()) }
 
-    fun finish(signature: Signature, data: ByteArray): String {
+    /** Signs [data] with the install key and returns the ECDSA signature as raw R||S, base64url (ES256). */
+    fun finishRaw(signature: Signature, data: ByteArray): String {
         signature.update(data)
-        return b64(signature.sign())
+        return TrustCrypto.b64Url(TrustCrypto.derToRaw(signature.sign()))
     }
 
     private fun privateKey(): PrivateKey =
@@ -105,42 +106,9 @@ class DeviceBinding(private val alias: String = DEFAULT_ALIAS) {
     }
 
     companion object {
-        const val DEFAULT_ALIAS = "flutter_rasp_device_key"
+        const val DEFAULT_ALIAS = "flutter_rasp_install_key"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
 
         private fun b64(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.NO_WRAP)
     }
-}
-
-/**
- * Canonical text that is signed for a transaction: a fixed header, the server's nonce, the RASP verdict, then the
- * transaction fields sorted by name. Line-based and escaped, so the server can parse it without ambiguity.
- */
-object SignedPayload {
-    const val VERSION = "rasp-tx-1"
-
-    fun build(
-        nonce: String,
-        timestampMillis: Long,
-        packageName: String,
-        decision: Decision,
-        fields: Map<String, String>,
-    ): String {
-        require(fields.keys.all { KEY.matches(it) }) { "field names must match ${KEY.pattern}" }
-        val lines = mutableListOf(
-            "v=$VERSION",
-            "nonce=${escape(nonce)}",
-            "ts=$timestampMillis",
-            "app=${escape(packageName)}",
-            "risk=${decision.riskLevel.wireName}",
-            "threats=${decision.threats.keys.map { it.wireName }.sorted().joinToString(",")}",
-        )
-        fields.toSortedMap().forEach { (key, value) -> lines += "f.$key=${escape(value)}" }
-        return lines.joinToString("\n")
-    }
-
-    /** Percent-escapes the characters that would break the line format. */
-    fun escape(value: String): String = value.replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
-
-    private val KEY = Regex("[A-Za-z0-9_.-]{1,64}")
 }

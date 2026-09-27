@@ -54,8 +54,8 @@ class _SecurityScreenState extends State<SecurityScreen> {
                     leading: Icon(_bound ? Icons.key : Icons.key_off),
                     title: Text(_bound ? 'Device bound to a hardware key' : 'Device not bound'),
                     subtitle: Text(BankApi.instance.enabled
-                        ? 'Server: $bankServer · device ${BankApi.instance.deviceId ?? '-'} · '
-                            'key ${BankApi.instance.securityLevel ?? '-'}'
+                        ? 'Server: $bankServer · install ${BankApi.instance.installId ?? '-'} · '
+                            'key ${BankApi.instance.deviceSecurityLevel ?? '-'}'
                             '${BankApi.instance.userAuthRequired ? ', needs biometric or PIN' : ''}'
                         : 'Offline demo (no BANK_SERVER)'),
                   ),

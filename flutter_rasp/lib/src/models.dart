@@ -31,6 +31,9 @@ enum ThreatType {
   /// A phone or VoIP call is in progress.
   activeCall,
 
+  /// A proxy is set or a user-installed CA is trusted: the network may be intercepted.
+  netMitm,
+
   /// A detector could not run (it threw, or the native core is missing). Protection is degraded.
   detectorFailure;
 
@@ -200,9 +203,11 @@ class GuardResult {
   final SecurityReport report;
 }
 
-/// Result of binding the install to a hardware-backed key. Send all of it to the bank's server.
+/// Result of binding the install to a hardware-backed key. Send the public key and chain to the trust
+/// service's `/v1/bind`.
 class DeviceBindingResult {
   const DeviceBindingResult({
+    required this.installId,
     required this.keyAlias,
     required this.strongBox,
     required this.userAuthRequired,
@@ -211,6 +216,7 @@ class DeviceBindingResult {
   });
 
   factory DeviceBindingResult.fromMap(Map<Object?, Object?> map) => DeviceBindingResult(
+        installId: map['installId']! as String,
         keyAlias: map['keyAlias']! as String,
         strongBox: map['strongBox']! as bool,
         userAuthRequired: (map['userAuthRequired'] as bool?) ?? false,
@@ -218,6 +224,8 @@ class DeviceBindingResult {
         certificateChain: (map['certificateChain']! as List).cast<String>(),
       );
 
+  /// Stable per-install id; identifies this install to the trust service.
+  final String installId;
   final String keyAlias;
 
   /// Whether the key lives in a StrongBox secure element rather than the TEE.
@@ -233,24 +241,73 @@ class DeviceBindingResult {
   final List<String> certificateChain;
 }
 
-/// A transaction signed by the bound key, with the RASP verdict inside the signed text.
-class SignedTransaction {
-  const SignedTransaction({required this.signedData, required this.signature, required this.guard});
+/// Everything the trust service's `/v1/token` needs, produced by [Rasp.prepareToken]. The user-auth install
+/// key has authorized the ephemeral session key that the token will be bound to (one biometric prompt).
+class TokenAuthorization {
+  const TokenAuthorization({
+    required this.installId,
+    required this.proof,
+    required this.sessionPublicKey,
+    required this.sealedReport,
+  });
 
-  factory SignedTransaction.fromMap(Map<Object?, Object?> map) => SignedTransaction(
-        signedData: map['signedData']! as String,
-        signature: map['signature']! as String,
-        guard: GuardResult.fromMap(map['guard']! as Map<Object?, Object?>),
+  factory TokenAuthorization.fromMap(Map<Object?, Object?> map) => TokenAuthorization(
+        installId: map['installId']! as String,
+        proof: map['proof']! as String,
+        sessionPublicKey: map['sessionPublicKey']! as String,
+        sealedReport: {
+          for (final entry in (map['sealedReport']! as Map).entries) entry.key as String: entry.value as String,
+        },
       );
 
-  /// Canonical text that was signed (format `rasp-tx-1`).
-  final String signedData;
+  final String installId;
 
-  /// ECDSA P-256 / SHA-256 signature over [signedData], DER, base64.
+  /// ES256 proof (raw R||S, base64url) by the install key over the challenge, report MAC and session key.
+  final String proof;
+
+  /// The ephemeral session public key (SPKI DER, base64) the token binds to.
+  final String sessionPublicKey;
+
+  /// The sealed RASP report: `{"report": <canonical json>, "mac": <hex>}`.
+  final Map<String, String> sealedReport;
+
+  Map<String, Object?> toRequest(String nonce, {String? playIntegrityToken}) => {
+        'installId': installId,
+        'nonce': nonce,
+        'proof': proof,
+        'sessionPublicKey': sessionPublicKey,
+        'sealedReport': sealedReport,
+        if (playIntegrityToken != null) 'playIntegrityToken': playIntegrityToken,
+      };
+}
+
+/// A DPoP proof for one API request, produced by [Rasp.signRequest]. Attach the headers to the request.
+class RequestProof {
+  const RequestProof({required this.key, required this.signature, required this.timestampMs, required this.counter});
+
+  factory RequestProof.fromMap(Map<Object?, Object?> map) => RequestProof(
+        key: map['key']! as String,
+        signature: map['sig']! as String,
+        timestampMs: (map['ts']! as num).toInt(),
+        counter: (map['counter']! as num).toInt(),
+      );
+
+  /// The session public key (SPKI DER, base64); its thumbprint must match the token's `cnf.jkt`.
+  final String key;
+
+  /// ES256 proof (raw R||S, base64url) over the canonical request.
   final String signature;
+  final int timestampMs;
+  final int counter;
 
-  /// The local verdict for the flow, computed in the same scan as the signed report.
-  final GuardResult guard;
+  /// The `X-Integrity-*` headers to add to the request (the token is added by the caller).
+  Map<String, String> headers(String token) => {
+        'X-Integrity-Token': token,
+        'X-Integrity-Key': key,
+        'X-Integrity-Sig': signature,
+        'X-Integrity-Ts': '$timestampMs',
+        'X-Integrity-Counter': '$counter',
+      };
 }
 
 /// Emitted when threats become active that were not active in the previous scan.

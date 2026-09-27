@@ -21,6 +21,9 @@ enum class ThreatType(val wireName: String, val nativeId: Int?) {
     REMOTE_ACCESS_APP("remoteAccessApp", null),
     ACTIVE_CALL("activeCall", null),
 
+    /** A proxy is set or a user-installed CA is trusted: the network may be intercepted (MITM). */
+    NET_MITM("netMitm", null),
+
     /** A detector could not run (exception, missing native core). Protection is degraded, so it is reported. */
     DETECTOR_FAILURE("detectorFailure", null);
 
@@ -88,10 +91,14 @@ data class RaspConfig(
             ThreatType.REMOTE_ACCESS_APP to setOf(Reaction.REPORT),
             // A call during a payment is the typical impersonation scam: warn, let the user decide.
             ThreatType.ACTIVE_CALL to setOf(Reaction.REPORT, Reaction.WARN_USER),
+            // Reported and fed to the server; pinning (section 7) is what actually blocks a MITM request.
+            ThreatType.NET_MITM to setOf(Reaction.REPORT),
             ThreatType.DETECTOR_FAILURE to setOf(Reaction.REPORT),
         )
 
-        /** Assistive tools that may read the screen without being treated as abuse. */
+        /** Assistive tools that may read the screen without being treated as abuse. Includes major password
+         * managers, whose autofill uses an accessibility service; blocking them would break a legitimate,
+         * common flow. Only counts when the app is a system or store install (see FraudDetectors). */
         val DEFAULT_ACCESSIBILITY_ALLOWLIST = setOf(
             "com.google.android.marvin.talkback",
             "com.google.android.apps.accessibility.voiceaccess",
@@ -100,6 +107,13 @@ data class RaspConfig(
             "com.samsung.android.accessibility.talkback",
             "com.samsung.accessibility",
             "com.android.talkback",
+            // Password managers (accessibility autofill).
+            "com.x8bit.bitwarden",
+            "com.agilebits.onepassword",
+            "com.lastpass.lpandroid",
+            "com.dashlane",
+            "com.callpod.android_apps.keeper",
+            "com.microsoft.authenticator",
         )
 
         /** Parses the map sent by the Dart side. Unknown threat or reaction names are ignored. */
