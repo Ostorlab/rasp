@@ -9,8 +9,8 @@ const { fileURLToPath } = require('node:url');
 const { syncBuiltinESMExports } = require('node:module');
 
 const context = new AsyncLocalStorage();
-const realpath = fs.realpathSync.bind(fs);
-const exists = fs.existsSync.bind(fs);
+const realpath = fs.realpathSync.native.bind(fs.realpathSync);
+const lstat = fs.lstatSync.bind(fs);
 const connect = net.Socket.prototype.connect;
 const originalLookup = dns.lookup.bind(dns);
 let installed = false;
@@ -46,9 +46,13 @@ function patch(scope, sink) {
 function canonical(value) {
   const input = value instanceof URL ? fileURLToPath(value) : Buffer.isBuffer(value) ? value.toString() : value;
   if (typeof input !== 'string') throw new TypeError('path must be a string');
-  let current = path.resolve(input);
+  // Preserve symlink/.. ordering: path.resolve and JS realpath normalize '..'
+  // before resolving symlinks, unlike the kernel used by the actual file sink.
+  let current = path.isAbsolute(input) ? input : process.cwd() + path.sep + input;
   const suffix = [];
-  while (!exists(current)) {
+  while (true) {
+    try { lstat(current); break; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
     const parent = path.dirname(current);
     if (parent === current) throw new Error('path has no existing ancestor');
     suffix.unshift(path.basename(current)); current = parent;
@@ -135,10 +139,11 @@ function install() {
     const original = fs.promises[name];
     fs.promises[name] = async function(file, ...args) { checkPath(file); return original.call(this, file, ...args); };
   }
-  for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync']) {
+  for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork']) {
     const original = child[name];
     child[name] = function(executable, ...args) {
-      checkProcess(executable);
+      const forkOptions = name === 'fork' ? args.find(value => value && !Array.isArray(value) && typeof value === 'object') : null;
+      checkProcess(name === 'fork' ? (forkOptions?.execPath || process.execPath) : executable);
       const scope = context.getStore();
       if (scope && args.some(value => value && !Array.isArray(value) && typeof value === 'object' && value.shell)) block(scope, 'process', 'shell_execution');
       return original.call(this, executable, ...args);

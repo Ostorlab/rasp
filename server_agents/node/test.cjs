@@ -13,6 +13,7 @@ test('shell and process execution are blocked before side effects', () => {
   agent.withRequest({ tenantId: 'a', requestId: '1', sources: [] }, {}, () => {
     assert.throws(() => child.execSync('printf bad'), agent.Blocked);
     assert.throws(() => child.spawnSync(process.execPath, ['-e', 'process.exit(0)']), agent.Blocked);
+    assert.throws(() => child.fork(__filename), agent.Blocked);
   });
 });
 
@@ -25,6 +26,7 @@ test('explicitly allowed executable and file roots work', () => {
         assert.equal(fs.readFileSync(path.join(root, 'ok'), 'utf8'), 'ok');
         assert.throws(() => fs.readFileSync('/etc/passwd'), agent.Blocked);
         assert.equal(child.execFileSync(process.execPath, ['-e', 'process.stdout.write("ok")']).toString(), 'ok');
+        assert.throws(() => child.fork(__filename, [], {execPath:'/bin/sh'}), agent.Blocked);
       });
   } finally { fs.rmSync(root, { recursive: true }); }
 });
@@ -38,6 +40,32 @@ test('SQL source values are blocked in statements and stay allowed as parameters
     client.query('select * from users where name=$1', ["' OR 1=1 --"]);
   });
   assert.equal(calls.length, 1);
+});
+
+test('symlink followed by parent traversal cannot escape the allowed root', () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rasp-traversal-'));
+  try {
+    fs.mkdirSync(root+'/allowed'); fs.mkdirSync(root+'/outside/sub',{recursive:true});
+    fs.writeFileSync(root+'/outside/secret','private');
+    fs.symlinkSync(root+'/outside/sub',root+'/allowed/link');
+    agent.withRequest({tenantId:'a',requestId:'traversal'},{allowedRoots:[root+'/allowed']},()=>{
+      assert.throws(()=>fs.readFileSync(root+'/allowed/link/../secret'),agent.Blocked);
+      assert.throws(()=>fs.writeFileSync(root+'/allowed/link/../new','forbidden'),agent.Blocked);
+    });
+    assert.equal(fs.existsSync(root+'/outside/new'),false);
+  } finally { fs.rmSync(root,{recursive:true}); }
+});
+
+test('dangling symlink cannot redirect a new write outside an allowed root', () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rasp-dangling-'));
+  try {
+    fs.mkdirSync(root+'/allowed'); fs.mkdirSync(root+'/outside');
+    fs.symlinkSync(root+'/outside/new',root+'/allowed/link');
+    agent.withRequest({tenantId:'a',requestId:'dangling'},{allowedRoots:[root+'/allowed']},()=>{
+      assert.throws(()=>fs.writeFileSync(root+'/allowed/link','forbidden'));
+    });
+    assert.equal(fs.existsSync(root+'/outside/new'),false);
+  } finally { fs.rmSync(root,{recursive:true}); }
 });
 
 test('file streams enforce roots and filesystem root includes descendants', () => {
