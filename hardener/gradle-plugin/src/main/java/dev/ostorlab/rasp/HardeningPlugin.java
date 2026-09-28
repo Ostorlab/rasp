@@ -1,5 +1,6 @@
 package dev.ostorlab.rasp;
 
+import java.util.Collections;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.plugins.JavaPluginExtension;
@@ -18,6 +19,8 @@ public final class HardeningPlugin implements Plugin<Project> {
             task.getClasses().from(main.getOutput().getClassesDirs());
             task.getDestination().convention(project.getLayout().getBuildDirectory().dir("rasp/classes"));
             task.getProbeOwner().convention("dev/ostorlab/rasp/Guard");
+            task.getRenameMethods().convention(Collections.emptyList());
+            task.getSymbolsMap().convention(project.getLayout().getBuildDirectory().file("rasp/private-methods.map"));
         });
         project.getTasks().register("hardenedJar", Jar.class, task -> {
             task.dependsOn(transform);

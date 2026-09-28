@@ -32,4 +32,4 @@ jobs:
         run: '"$GRADLE_HOME/bin/gradle" -p hardener/gradle-plugin --no-daemon build'
       - name: Compile, transform, verify IR and execute native and JVM artifacts
         working-directory: hardener
-        run: python3 -m unittest tests.test_compiler tests.test_gradle_plugin -v
+        run: python3 -m unittest tests.test_compiler tests.test_gradle_plugin tests.test_classloader tests.test_fault_detection -v

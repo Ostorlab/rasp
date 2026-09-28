@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import tempfile
 import unittest
+import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 GRADLE = pathlib.Path(os.environ.get("GRADLE_HOME", "/nonexistent")) / "bin/gradle"
@@ -24,6 +25,7 @@ tasks.named('hardenClasses') {
     seed = providers.gradleProperty('raspSeed').map { Long.parseLong(it) }
     methods = [providers.gradleProperty('raspMethod').getOrElse('demo/Example#compute(II)I')]
     probeOwner = 'demo/Guard'
+    renameMethods = ['demo/Example#hidden(I)I']
 }
 ''')
             source = root / "src/main/java/demo"
@@ -33,7 +35,8 @@ public final class Guard { public static int probe(int site) { return Boolean.ge
 ''')
             (source / "Example.java").write_text('''package demo;
 public final class Example {
-    public static int compute(int x, int y) { int a = x + 123456; if ((x & 1) == 0) a ^= y; else a -= 7; return a; }
+    private static int hidden(int x) { return x + 123456; }
+    public static int compute(int x, int y) { java.util.function.IntUnaryOperator f = Example::hidden; int a = f.applyAsInt(x); if ((x & 1) == 0) a ^= y; else a -= 7; return a; }
     public static void main(String[] args) { for(int x=0;x<100;x++) System.out.println(compute(x, x*17)); }
 }
 ''')
@@ -43,6 +46,11 @@ public final class Example {
             self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
             jar = root / "build/libs/fixture-hardened.jar"
             first = jar.read_bytes()
+            with zipfile.ZipFile(jar) as artifact:
+                self.assertFalse(any(name.endswith(".map") for name in artifact.namelist()))
+            mapping = (root / "build/rasp/private-methods.map").read_text()
+            self.assertIn("demo/Example#hidden(I)I\t", mapping)
+            self.assertNotIn(b"hidden", (root / "build/rasp/classes/demo/Example.class").read_bytes())
             java = pathlib.Path(os.environ["JAVA_HOME"]) / "bin/java"
             plain = subprocess.run([str(java), "-Xverify:all", "-cp", str(root / "build/classes/java/main"), "demo.Example"], check=True, capture_output=True).stdout
             hardened = subprocess.run([str(java), "-Xverify:all", "-cp", str(jar), "demo.Example"], check=True, capture_output=True).stdout
