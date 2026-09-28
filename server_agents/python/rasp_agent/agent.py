@@ -13,11 +13,15 @@ import contextlib
 import contextvars
 import dataclasses
 import ipaddress
+import importlib._bootstrap_external
+import inspect
 import os
 import pathlib
+import re
 import socket
 import sqlite3
 import sqlite3.dbapi2
+import subprocess
 import sys
 import threading
 import typing
@@ -70,6 +74,11 @@ _scope: contextvars.ContextVar[Scope | None] = contextvars.ContextVar(
 _install_lock = threading.Lock()
 _installed = False
 _sqlite_connect = sqlite3.connect
+_popen_init = subprocess.Popen.__init__
+_popen_signature = inspect.signature(_popen_init)
+_loader_read = importlib._bootstrap_external.FileLoader.get_data
+_module_read: contextvars.ContextVar[str | None] = contextvars.ContextVar("rasp_module_read", default=None)
+_sql_tokens = re.compile(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`(?:``|[^`])*`|\[(?:[^\]])*\]|--[^\n]*|/\*[\s\S]*?\*/|[\w$]+|[^\s]", re.UNICODE)
 
 
 @contextlib.contextmanager
@@ -113,8 +122,45 @@ def check_sql(query: str) -> None:
     if scope is None:
         return
     _enforce_patch(scope, "sql")
-    if any(source in query for source in scope.sources):
+    if any(_source_changes_sql(query, source) is True for source in scope.sources):
         _block(scope, "sql", "request_value_in_statement")
+
+
+def _source_changes_sql(query: str, source: str) -> bool:
+    """Conservative token correlation; short values and literal contents are data."""
+    if len(source) < 3:
+        return False
+    tokens = list(_sql_tokens.finditer(query))
+    start = query.find(source)
+    while start != -1:
+        end = start + len(source)
+        overlaps = [token for token in tokens if token.start() < end and token.end() > start]
+        if len(overlaps) > 1:
+            return True
+        if len(overlaps) == 1:
+            token = overlaps[0]
+            text = token.group()
+            if text.startswith(("'", '"', "`", "[", "--", "/*")) is False and token.start() == start and token.end() == end:
+                return True
+        start = query.find(source, start + 1)
+    return False
+
+
+def _read_module(loader: typing.Any, path: str) -> bytes:
+    token = _module_read.set(os.path.realpath(path))
+    try:
+        return _loader_read(loader, path)
+    finally:
+        _module_read.reset(token)
+
+
+def _init_process(process: subprocess.Popen[typing.Any], *args: typing.Any, **kwargs: typing.Any) -> None:
+    scope = _scope.get()
+    if scope is not None:
+        bound = _popen_signature.bind(process, *args, **kwargs)
+        if bool(bound.arguments.get("shell", False)) is True:
+            _block(scope, "process", "shell_execution")
+    _popen_init(process, *args, **kwargs)
 
 
 def _check_path(scope: Scope, path: str | bytes | int) -> None:
@@ -174,6 +220,23 @@ def _audit(event: str, args: tuple[typing.Any, ...]) -> None:
     if scope is None:
         return
     if event == "open":
+        _enforce_patch(scope, "file")
+        module_path = _module_read.get()
+        flags = args[2]
+        is_read_only = flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND) == 0
+        if module_path is not None and isinstance(args[0], (str, bytes)) and is_read_only is True and os.path.realpath(os.fsdecode(args[0])) == module_path:
+            return  # Only the loader's exact read, never arbitrary reads under sys.path.
+        _check_path(scope, args[0])
+    elif event in {"os.remove", "os.rmdir", "os.mkdir", "os.listdir", "os.scandir", "os.chmod", "os.chown", "os.utime", "os.truncate"}:
+        _check_path(scope, args[0])
+    elif event in {"os.rename", "os.link", "shutil.copyfile", "shutil.copytree"}:
+        _check_path(scope, args[0])
+        _check_path(scope, args[1])
+    elif event == "os.symlink":
+        target, link = os.fsdecode(args[0]), os.fsdecode(args[1])
+        _check_path(scope, link)
+        _check_path(scope, target if os.path.isabs(target) is True else os.path.join(os.path.dirname(link), target))
+    elif event == "shutil.rmtree":
         _check_path(scope, args[0])
     elif event in {"subprocess.Popen", "os.exec", "os.posix_spawn"}:
         _check_process(scope, args[0])
@@ -249,6 +312,8 @@ def install() -> None:
         if _installed is True:
             return
         sys.addaudithook(_audit)
+        subprocess.Popen.__init__ = _init_process
+        importlib._bootstrap_external.FileLoader.get_data = _read_module
         sqlite3.connect = _connect
         sqlite3.dbapi2.connect = _connect
         _installed = True

@@ -9,8 +9,9 @@ const { fileURLToPath } = require('node:url');
 const { syncBuiltinESMExports } = require('node:module');
 
 const context = new AsyncLocalStorage();
-const realpath = fs.realpathSync.native.bind(fs.realpathSync);
 const lstat = fs.lstatSync.bind(fs);
+const readlink = fs.readlinkSync.bind(fs);
+const readdir = fs.readdirSync.bind(fs);
 const connect = net.Socket.prototype.connect;
 const originalLookup = dns.lookup.bind(dns);
 let installed = false;
@@ -46,18 +47,35 @@ function patch(scope, sink) {
 function canonical(value) {
   const input = value instanceof URL ? fileURLToPath(value) : Buffer.isBuffer(value) ? value.toString() : value;
   if (typeof input !== 'string') throw new TypeError('path must be a string');
-  // Preserve symlink/.. ordering: path.resolve and JS realpath normalize '..'
-  // before resolving symlinks, unlike the kernel used by the actual file sink.
-  let current = path.isAbsolute(input) ? input : process.cwd() + path.sep + input;
-  const suffix = [];
-  while (true) {
-    try { lstat(current); break; }
+  // Resolve each component in kernel order, including dangling link targets.
+  let current = path.parse(process.cwd()).root;
+  let components = (path.isAbsolute(input) ? input : process.cwd() + path.sep + input).split(path.sep);
+  let links = 0;
+  while (components.length) {
+    const component = components.shift();
+    if (!component || component === '.') continue;
+    if (component === '..') { current = path.dirname(current); continue; }
+    const candidate = path.join(current, component);
+    let metadata;
+    try { metadata = lstat(candidate); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
-    const parent = path.dirname(current);
-    if (parent === current) throw new Error('path has no existing ancestor');
-    suffix.unshift(path.basename(current)); current = parent;
+    if (metadata?.isSymbolicLink()) {
+      if (++links > 40) { const error = new Error('too many symbolic links'); error.code = 'ELOOP'; throw error; }
+      const target = readlink(candidate);
+      if (path.isAbsolute(target)) current = path.parse(target).root;
+      components = target.split(path.sep).concat(components);
+    } else current = candidate;
   }
-  return path.join(realpath(current), ...suffix);
+  return current;
+}
+
+function unmappedAddress(address) {
+  if (net.isIP(address) !== 6) return address;
+  const normalized = new URL('http://[' + address.split('%')[0] + ']/').hostname.slice(1, -1);
+  const match = /^::ffff:([a-f0-9]+):([a-f0-9]+)$/i.exec(normalized);
+  if (!match) return address;
+  const high = parseInt(match[1], 16), low = parseInt(match[2], 16);
+  return [high >>> 8, high & 255, low >>> 8, low & 255].join('.');
 }
 
 function withRequest(identity, policy, operation) {
@@ -103,7 +121,8 @@ function checkProcess(executable) {
 
 function checkAddress(scope, address) {
   patch(scope, 'network');
-  if (scope.policy.allowedAddresses.includes(address)) return;
+  address = unmappedAddress(address);
+  if (scope.policy.allowedAddresses.some(allowed => unmappedAddress(allowed) === address)) return;
   const family = net.isIP(address);
   if (family === 0 || restricted.check(address, family === 6 ? 'ipv6' : 'ipv4') ||
       (family === 6 && !publicV6.check(address, 'ipv6'))) block(scope, 'network', 'nonpublic_address');
@@ -114,7 +133,61 @@ function checkSql(statement) {
   if (!scope) return;
   patch(scope, 'sql');
   if (typeof statement !== 'string') throw new TypeError('SQL text required');
-  if (scope.sources.some(source => statement.includes(source))) block(scope, 'sql', 'request_value_in_statement');
+  if (scope.sources.some(source => sourceChangesSql(statement, source))) block(scope, 'sql', 'request_value_in_statement');
+}
+
+function sourceChangesSql(statement, source) {
+  if (source.length < 3) return false;
+  const tokens = [...statement.matchAll(/'(?:''|[^'])*'|"(?:""|[^"])*"|`(?:``|[^`])*`|\[[^\]]*\]|--[^\n]*|\/\*[\s\S]*?\*\/|[\p{L}\p{N}_$]+|[^\s]/gu)];
+  for (let start = statement.indexOf(source); start !== -1; start = statement.indexOf(source, start + 1)) {
+    const end = start + source.length;
+    const overlaps = tokens.filter(token => token.index < end && token.index + token[0].length > start);
+    if (overlaps.length > 1) return true;
+    if (overlaps.length === 1) {
+      const token = overlaps[0];
+      if (!/^(?:['"`\[]|--|\/\*)/.test(token[0]) && token.index === start && token.index + token[0].length === end) return true;
+    }
+  }
+  return false;
+}
+
+function preflightCopy(source, destination, options, ancestors = new Set()) {
+  checkPath(source);
+  checkPath(destination);
+  const metadata = lstat(source);
+  if (metadata.isSymbolicLink()) {
+    const target = readlink(source);
+    checkPath(path.isAbsolute(target) ? target : path.dirname(destination) + path.sep + target);
+    if (!options?.dereference) return;
+    source = canonical(source);
+  }
+  if (!lstat(source).isDirectory() || !options?.recursive) return;
+  const resolved = canonical(source);
+  if (ancestors.has(resolved)) block(context.getStore(), 'file', 'symlink_cycle');
+  ancestors.add(resolved);
+  try {
+    for (const entry of readdir(source)) {
+      preflightCopy(source + path.sep + entry, destination + path.sep + entry, options, ancestors);
+    }
+  } finally { ancestors.delete(resolved); }
+}
+
+function checkFileOperands(name, first, second, options) {
+  if (!context.getStore()) return;
+  if (name === 'cp' || name === 'cpSync') {
+    const convert = value => value instanceof URL ? fileURLToPath(value) : Buffer.isBuffer(value) ? value.toString() : value;
+    preflightCopy(convert(first), convert(second), options);
+    return;
+  }
+  if (name.startsWith('symlink')) {
+    checkPath(second);
+    const target = Buffer.isBuffer(first) ? first.toString() : first;
+    const link = second instanceof URL ? fileURLToPath(second) : Buffer.isBuffer(second) ? second.toString() : second;
+    checkPath(path.isAbsolute(target) ? target : path.dirname(link) + path.sep + target);
+  } else {
+    checkPath(first);
+    if (/^(rename|copyFile|cp|link)/.test(name)) checkPath(second);
+  }
 }
 
 function protectSqlClient(client) {
@@ -131,13 +204,16 @@ function protectSqlClient(client) {
 
 function install() {
   if (installed) return;
-  for (const name of ['readFile', 'readFileSync', 'writeFile', 'writeFileSync', 'appendFile', 'appendFileSync', 'open', 'openSync', 'createReadStream', 'createWriteStream']) {
+  const fileMethods = ['readFile', 'writeFile', 'appendFile', 'open', 'unlink', 'rm', 'rmdir', 'mkdir', 'rename', 'copyFile', 'cp', 'link', 'symlink', 'readdir', 'opendir', 'truncate', 'chmod', 'chown', 'utimes'];
+  for (const name of [...fileMethods, ...fileMethods.map(name => name + 'Sync'), 'createReadStream', 'createWriteStream']) {
     const original = fs[name];
-    fs[name] = function(file, ...args) { checkPath(file); return original.call(this, file, ...args); };
+    if (typeof original !== 'function') continue;
+    fs[name] = function(file, ...args) { checkFileOperands(name, file, args[0], args[1]); return original.call(this, file, ...args); };
   }
-  for (const name of ['readFile', 'writeFile', 'appendFile', 'open']) {
+  for (const name of fileMethods) {
     const original = fs.promises[name];
-    fs.promises[name] = async function(file, ...args) { checkPath(file); return original.call(this, file, ...args); };
+    if (typeof original !== 'function') continue;
+    fs.promises[name] = async function(file, ...args) { checkFileOperands(name, file, args[0], args[1]); return original.call(this, file, ...args); };
   }
   for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork']) {
     const original = child[name];

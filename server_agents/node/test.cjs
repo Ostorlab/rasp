@@ -124,3 +124,101 @@ test('async tenant request contexts remain isolated', async () => {
     })));
   assert.deepEqual(results, ['a', 'b']);
 });
+
+test('short sources, quoted values and identifier substrings permit parameterized SQL', () => {
+  const client = agent.protectSqlClient({ query(text, values) { return values; } });
+  agent.withRequest({tenantId:'a',requestId:'sql',sources:['1','id','alice','user']},{},()=>{
+    assert.deepEqual(client.query("select $1 as user_name, 'alice' limit 10",['1']),['1']);
+  });
+});
+
+test('dangling links emit redacted denials and allow in-root targets', () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rasp-links-'));
+  try {
+    fs.mkdirSync(root+'/allowed'); fs.mkdirSync(root+'/outside');
+    fs.symlinkSync(root+'/outside/new',root+'/allowed/bad');
+    fs.symlinkSync('new',root+'/allowed/good');
+    agent.withRequest({tenantId:'a',requestId:'links'},{allowedRoots:[root+'/allowed']},scope=>{
+      assert.throws(()=>fs.writeFileSync(root+'/allowed/bad','secret'),agent.Blocked);
+      assert.equal(scope.events[0].reason,'outside_allowed_roots');
+      fs.writeFileSync(root+'/allowed/good','ok');
+    });
+    assert.equal(fs.readFileSync(root+'/allowed/new','utf8'),'ok');
+  } finally {fs.rmSync(root,{recursive:true});}
+});
+
+test('delete rename copy symlink and listing enforce both file operands', async () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rasp-ops-'));
+  try {
+    fs.mkdirSync(root+'/allowed'); fs.mkdirSync(root+'/outside');
+    fs.writeFileSync(root+'/allowed/safe','safe');fs.writeFileSync(root+'/outside/secret','secret');
+    const source=root+'/outside/secret', safe=root+'/allowed/safe';
+    await agent.withRequest({tenantId:'a',requestId:'ops'},{allowedRoots:[root+'/allowed']}, async scope=>{
+      const operations=[()=>fs.unlinkSync(source),()=>fs.rmSync(root+'/outside',{recursive:true}),
+        ()=>fs.renameSync(source,root+'/allowed/new'),()=>fs.renameSync(safe,root+'/outside/new'),
+        ()=>fs.copyFileSync(source,root+'/allowed/new'),()=>fs.copyFileSync(safe,root+'/outside/new'),
+        ()=>fs.cpSync(root+'/outside',root+'/allowed/new',{recursive:true}),
+        ()=>fs.symlinkSync(source,root+'/allowed/link'),()=>fs.symlinkSync('../outside/secret',root+'/allowed/link'),
+        ()=>fs.symlinkSync(safe,root+'/outside/link'),()=>fs.readdirSync(root+'/outside'),()=>fs.opendirSync(root+'/outside')];
+      for(const operation of operations) assert.throws(operation,agent.Blocked);
+      await assert.rejects(fs.promises.unlink(source),agent.Blocked);
+      await assert.rejects(fs.promises.rename(safe,root+'/outside/new'),agent.Blocked);
+      await assert.rejects(fs.promises.copyFile(source,root+'/allowed/new'),agent.Blocked);
+      await assert.rejects(fs.promises.symlink(source,root+'/allowed/link'),agent.Blocked);
+      await assert.rejects(fs.promises.readdir(root+'/outside'),agent.Blocked);
+      assert.equal(scope.events.length,operations.length+5);
+    });
+    assert.equal(fs.readFileSync(source,'utf8'),'secret');assert.equal(fs.readFileSync(safe,'utf8'),'safe');
+  } finally {fs.rmSync(root,{recursive:true});}
+});
+
+test('mapped public IPv6 reaches transport without a policy denial', async () => {
+  // Stub transport only: public Internet access must never be needed by the test.
+  const probe = require('node:child_process').spawnSync(process.execPath,['-e',`
+    const assert=require('node:assert/strict'), net=require('node:net');
+    let calls=0; net.Socket.prototype.connect=function(){ calls++; return this; };
+    const agent=require('./index.cjs'); agent.install();
+    agent.withRequest({tenantId:'a',requestId:'mapped'},{},()=>{
+      for(const host of ['::ffff:8.8.8.8','::ffff:808:808']) net.connect({host,port:443});
+      assert.throws(()=>net.connect({host:'::ffff:7f00:1',port:9}),agent.Blocked);
+    }); assert.equal(calls,2);
+  `],{cwd:__dirname,encoding:'utf8'});
+  assert.equal(probe.status,0,probe.stderr);
+});
+
+test('recursive copies cannot read or recreate escaping symlinks', async () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rasp-recursive-'));
+  try {
+    fs.mkdirSync(root+'/allowed/source',{recursive:true});fs.mkdirSync(root+'/outside');
+    fs.writeFileSync(root+'/outside/secret','secret');fs.symlinkSync(root+'/outside/secret',root+'/allowed/source/link');
+    await agent.withRequest({tenantId:'a',requestId:'recursive'},{allowedRoots:[root+'/allowed']},async()=>{
+      assert.throws(()=>fs.cpSync(root+'/allowed/source',root+'/allowed/copy',{recursive:true,dereference:true}),agent.Blocked);
+      await assert.rejects(fs.promises.cp(root+'/allowed/source',root+'/allowed/copy',{recursive:true}),agent.Blocked);
+    });
+    assert.equal(fs.existsSync(root+'/allowed/copy'),false);
+  } finally {fs.rmSync(root,{recursive:true});}
+});
+
+test('in-root file mutations preserve callback sync and promise APIs', async () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rasp-safe-'));
+  try {
+    await agent.withRequest({tenantId:'a',requestId:'safe'},{allowedRoots:[root]},async()=>{
+      fs.mkdirSync(root+'/source');fs.writeFileSync(root+'/source/file','safe');
+      fs.symlinkSync('file',root+'/source/link');
+      fs.cpSync(root+'/source',root+'/copy',{recursive:true});
+      assert.equal(fs.readFileSync(root+'/copy/link','utf8'),'safe');
+      await fs.promises.rename(root+'/copy/file',root+'/copy/renamed');
+      assert.ok((await fs.promises.readdir(root+'/copy')).includes('renamed'));
+      await new Promise((resolve,reject)=>fs.unlink(root+'/copy/link',error=>error?reject(error):resolve()));
+      await fs.promises.rm(root+'/copy',{recursive:true});
+    });
+  } finally {fs.rmSync(root,{recursive:true});}
+});
+
+test('denials retain at most 100 events with only approved fields', () => {
+  agent.withRequest({tenantId:'a',requestId:'events',sources:['attack']},{},scope=>{
+    for(let index=0;index<105;index++) assert.throws(()=>agent.checkSql('select attack'),agent.Blocked);
+    assert.equal(scope.events.length,100);
+    assert.deepEqual(Object.keys(scope.events[0]).sort(),['reason','requestId','sink','tenantId']);
+  });
+});
