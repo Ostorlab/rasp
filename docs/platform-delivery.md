@@ -19,12 +19,13 @@ Delivery order and acceptance boundaries:
 | Server protection | Java/.NET/Node/Python/Go/PHP sink instrumentation, SCA-selected virtual patches, optional eBPF observation |
 | Device evidence | Bypass regression matrix, tuned detectors, coverage/size budgets, measured reference devices, private crash mapping |
 
-Shared trust rules: device observations remain advisory; the server enforces
-fresh attestation and session-key possession. App Attest does not prove biometric
-authentication of another key. Signed policy payload bytes are verified exactly,
-revisions never decrease, rollback republishes a higher revision, and pins retain
-bootstrap trust. Database keys and operations always include tenant/application
-scope. ML cannot lower deterministic security floors.
+**Shared trust rules:**
+
+- Device observations remain advisory; the server enforces fresh attestation and session-key possession.
+- App Attest does not prove biometric authentication of another key.
+- Signed policy bytes are verified exactly. Revisions never decrease; rollback republishes a higher revision; pins retain bootstrap trust.
+- Database keys and operations always include tenant/application scope.
+- ML cannot lower deterministic security floors.
 
 Local tests and configurable adapters do not establish successful live Google or
 Apple attestation, physical-device behavior, resistance to DCA/DFA, or production
