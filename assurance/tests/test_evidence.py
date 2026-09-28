@@ -34,3 +34,15 @@ class EvidenceTest(unittest.TestCase):
         report = evidence.export({"signals": []}, "a" * 64, "android")
         self.assertEqual(report["assessment"], "not_assessed")
         self.assertEqual(report["signals"], [])
+
+    def testExport_whenDigestContainsNonHex_rejects(self) -> None:
+        for digest in ("z" * 64, "a" * 63 + "!", " " * 64):
+            with self.subTest(digest=digest), self.assertRaises(ValueError):
+                evidence.export({"signals": []}, digest, "android")
+
+    def testExport_whenDigestIsMixedCaseHex_accepts(self) -> None:
+        digest = "aB12" * 16
+        self.assertEqual(
+            evidence.export({"signals": []}, digest, "android")["artifactSha256"],
+            digest,
+        )

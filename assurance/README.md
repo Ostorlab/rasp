@@ -34,11 +34,17 @@ request timeout, and no redirects. Only the AES-256-GCM encrypted archive is
 uploaded. The configured artifact service must authorize the destination's
 tenant/app scope. Local archive files are immutable and mode 0600. Tenant,
 application, build and final binary SHA-256 are authenticated; a map for another
-binary or scope is refused. Preserve wrapping-key versions with archived maps.
+binary or scope is refused. Store the wrapping-key version identifier beside
+each archive so rotating the deployment secret does not orphan older maps.
+Retain the matching key securely; the identifier alone cannot decrypt an archive.
 Symbolization replaces complete symbol names; address-to-line resolution still
 requires the matching private debug symbols and platform symbolizer.
 
 ## Evidence export
+
+`rasp-evidence` converts a trust-service report into a redacted evidence export:
+it strips free-text, marks authenticity `not_verified_by_exporter`, and maps
+detector IDs to reviewed OWASP references.
 
 ```sh
 rasp-evidence private/verified-report.json --artifact release/app.apk --platform android
@@ -51,8 +57,13 @@ export, and retain its evidence separately. Output marks authenticity as
 evidence and maps reported detector/threat identifiers to applicable references.
 No signals is **not** a passing compliance result.
 
-Mappings were reviewed on 2026-09-28 against the official [MASVS controls](https://mas.owasp.org/MASVS/),
-[MASWE index](https://mas.owasp.org/MASWE/), and [MASTG test index](https://mas.owasp.org/MASTG/tests/).
+The [mapping table at revision `7f0941d`](https://github.com/Ostorlab/rasp/blob/7f0941de0541fc30a72c81e06c18b6776b524497/assurance/rasp_assurance/evidence.py)
+records the references reviewed on 2026-09-28 against the official
+[MASVS controls](https://mas.owasp.org/MASVS/), [MASWE index](https://mas.owasp.org/MASWE/),
+and [MASTG test index](https://mas.owasp.org/MASTG/tests/). Re-run the mapping review
+when those indexes add, rename, or deprecate referenced identifiers, or when the
+mapping table changes. This pins this tool's reviewed mapping, not an upstream
+OWASP release or a claim that future index revisions were verified.
 The current Android tests include [emulator detection](https://mas.owasp.org/MASTG/tests/android/MASVS-RESILIENCE/MASTG-TEST-0351/)
 and [debugging detection](https://mas.owasp.org/MASTG/tests/android/MASVS-RESILIENCE/MASTG-TEST-0353/).
 Where there is no applicable current test, the mapping uses a knowledge article
@@ -65,8 +76,13 @@ operator-supplied preparation/probe/cleanup adapters for local devices or a
 remote device farm. Commands are argument arrays, never shell strings. Run the
 runner on Linux/macOS in a dedicated lab; adapters must target your provisioned
 test devices and application. Cleanup runs even when preparation or probing
-fails. Timeouts kill the process group, output is bounded, and raw logs/tokens
-are not copied into result artifacts.
+fails. The command timeout includes a 100 ms reserve for process-group kill and
+reaping; output is bounded, and raw logs/tokens are not copied into result artifacts.
+The final wait uses only the remaining deadline. If a kernel task cannot be
+reaped after a repeated kill and final nonblocking wait, the case records an
+error rather than waiting indefinitely. Uninterruptible kernel tasks can outlive
+the caller; Python's subprocess cleanup may reap them later, or the operating
+system adopts them when the runner exits. This is not a process sandbox.
 
 Configuration example (adapter paths are supplied by your lab):
 
@@ -110,11 +126,15 @@ bypass results.
 
 ## How are physical-device performance budgets measured?
 
-The `rasp_verifier` package provides release size and latency gates through
-`python -m rasp_verifier.budgets`.
-`sample_app/integration_test/scan_benchmark_test.dart`
-is the benchmark collection path when the mobile
-benchmark integration is installed. Collect at least 30 actual scan samples. Label emulators as emulators; evaluate
-physical reference devices separately. Neither host timing nor mocked samples
-establish physical-device performance. Preserve the artifact SHA, OS, device
-model, build mode and sample file with the release evidence.
+The included `verifier/` package provides release size and latency gates. Install
+it with `python -m pip install -e ./verifier` from the repository root, then run
+`python -m rasp_verifier.budgets`. See [validation commands and the measurement
+format](../docs/validation.md#how-do-i-run-the-performance-and-size-gates).
+
+This branch does not include a mobile scan benchmark collector. Provide a device
+adapter that measures the actual scan operation and emits at least 30 finite,
+nonnegative `samplesMs` values with a `device` identifier. Tag emulator samples
+explicitly and evaluate physical reference devices separately. Neither host
+timing nor mocked samples establish physical-device performance. Preserve the
+artifact SHA-256, OS, device model, build mode, warmup method, measurement
+conditions, and sample file with the release evidence.

@@ -95,3 +95,18 @@ class CrashMapTest(unittest.TestCase):
     def testUpload_whenCleartextUrl_rejectsBeforeSending(self) -> None:
         with self.assertRaises(ValueError):
             crashmaps.upload("http://127.0.0.1/private", b"RCM1", "secret")
+
+    def testUpload_whenArchiveIsTruncated_rejectsBeforeConnecting(self) -> None:
+        for data in (b"RCM1", b"RCM1" + b"x" * 31):
+            with (
+                self.subTest(length=len(data)),
+                mock.patch.object(
+                    crashmaps.http.client, "HTTPSConnection"
+                ) as connection,
+            ):
+                connection.return_value.getresponse.return_value.status = 201
+                with self.assertRaises(ValueError):
+                    crashmaps.upload(
+                        "https://artifacts.example.test/private", data, "fixture-token"
+                    )
+                connection.assert_not_called()

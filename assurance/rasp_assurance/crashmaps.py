@@ -127,7 +127,8 @@ def upload(url: str, data: bytes, token: str) -> int:
             "artifact upload requires an HTTPS URL without credentials or fragments"
         )
     if (
-        len(data) > MAX_ARCHIVE_BYTES
+        len(data) < 36
+        or len(data) > MAX_ARCHIVE_BYTES
         or data[:4] != MAGIC
         or token == ""
         or "\r" in token
@@ -211,7 +212,12 @@ def main() -> int:
                     read_bounded(args.archive, MAX_ARCHIVE_BYTES), key, binding
                 )
                 print(
-                    symbolize(read_bounded(args.trace, MAX_MAP_BYTES).decode(errors="replace"), mapping)
+                    symbolize(
+                        read_bounded(args.trace, MAX_MAP_BYTES).decode(
+                            errors="replace"
+                        ),
+                        mapping,
+                    )
                 )
     except (
         ValueError,

@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import pathlib
+import re
 import typing
 
 from rasp_assurance import crashmaps
@@ -36,7 +37,10 @@ def export(
 ) -> dict[str, typing.Any]:
     if not isinstance(report, dict):
         raise TypeError("report must be an object")
-    if platform not in {"android", "ios"} or len(artifact_sha256) != 64:
+    if (
+        platform not in {"android", "ios"}
+        or re.fullmatch(r"[0-9a-fA-F]{64}", artifact_sha256) is None
+    ):
         raise ValueError("platform and SHA-256 required")
     signals = report.get("signals")
     if not isinstance(signals, list) or len(signals) > 4096:

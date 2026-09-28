@@ -17,6 +17,8 @@ import xml.etree.ElementTree as element_tree
 
 from rasp_assurance import crashmaps
 
+_REAP_RESERVE_SECONDS = 0.1
+
 SCENARIOS = frozenset(
     {
         "baseline",
@@ -54,10 +56,11 @@ def command(args: list[str], environment: dict[str, str], timeout: int) -> bytes
             start_new_session=True,
         )
         deadline = time.monotonic() + timeout
+        execution_deadline = deadline - _REAP_RESERVE_SECONDS
         try:
             while process.poll() is None:
                 if (
-                    time.monotonic() >= deadline
+                    time.monotonic() >= execution_deadline
                     or os.fstat(output.fileno()).st_size > 262144
                 ):
                     raise ValueError("adapter timeout or output limit")
@@ -72,7 +75,19 @@ def command(args: list[str], environment: dict[str, str], timeout: int) -> bytes
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            process.wait()
+            try:
+                process.wait(timeout=max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                # A retry is bounded too: an uninterruptible kernel task cannot
+                # be forced to exit or reaped within a userspace deadline.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=0)
+                except subprocess.TimeoutExpired as error:
+                    raise ValueError("adapter cleanup deadline exceeded") from error
 
 
 def evaluate(value: dict[str, typing.Any], expected: dict[str, str]) -> bool:

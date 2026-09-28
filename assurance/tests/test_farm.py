@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import pathlib
+import subprocess
+import time
 import sys
 import tempfile
 import unittest
@@ -110,3 +112,34 @@ class FarmTest(unittest.TestCase):
             )
             self.assertEqual(marker.read_text(), "done")
             self.assertEqual(report["cases"][0]["status"], "error")
+
+    def testCommand_whenFinalReapNeverCompletes_returnsBoundedCleanupError(
+        self,
+    ) -> None:
+        process = mock.Mock()
+        process.poll.return_value = None
+        process.wait.side_effect = subprocess.TimeoutExpired(["fixture"], 0)
+        with (
+            mock.patch.object(farm.subprocess, "Popen", return_value=process),
+            mock.patch.object(
+                farm.time, "monotonic", side_effect=[100.0, 101.0, 101.0]
+            ),
+            mock.patch.object(farm.os, "killpg") as kill,
+        ):
+            with self.assertRaisesRegex(ValueError, "cleanup deadline"):
+                farm.command(["fixture"], {}, 1)
+        self.assertEqual(
+            process.wait.call_args_list, [mock.call(timeout=0), mock.call(timeout=0)]
+        )
+        self.assertEqual(kill.call_count, 2)
+
+    def testCommand_whenRealProcessCompletes_reapsAndReturnsOutput(self) -> None:
+        self.assertEqual(
+            farm.command([sys.executable, "-c", "print('ready')"], {}, 1), b"ready\n"
+        )
+
+    def testCommand_whenRealProcessTimesOut_returnsWithoutUnboundedWait(self) -> None:
+        start = time.monotonic()
+        with self.assertRaises(ValueError):
+            farm.command([sys.executable, "-c", "import time; time.sleep(20)"], {}, 1)
+        self.assertLess(time.monotonic() - start, 2)
