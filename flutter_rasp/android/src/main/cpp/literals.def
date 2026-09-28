@@ -136,3 +136,7 @@ RASP_LITERAL(JNI_SIG_SEAL, "(Ljava/lang/String;Ljava/lang/String;J)Ljava/lang/St
 
 /* --- build key (design §8; gen-build replaces this value with the per-build key) --- */
 RASP_LITERAL(BUILD_KEY_HEX, "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+
+/* Authenticated resource packages. */
+RASP_LITERAL(ASSET_MAC_DOMAIN, "rasp/assets/mac/v1")
+RASP_LITERAL(ASSET_MAGIC, "RAP1")
