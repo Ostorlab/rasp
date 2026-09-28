@@ -126,7 +126,8 @@ def _wbaes_key(args: argparse.Namespace) -> bytes:
 
 def cmd_gen_wbkey(args: argparse.Namespace) -> int:
     key = _wbaes_key(args)
-    tables = whitebox.generate(key)
+    encoding_seed = hmac.new(key, b"rasp/whitebox-encoding/v1", hashlib.sha256).digest()
+    tables = whitebox.generate(key, encoding_seed=encoding_seed)
     out_path = pathlib.Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(whitebox.render_tables_h(tables))
@@ -137,7 +138,7 @@ def cmd_gen_wbkey(args: argparse.Namespace) -> int:
     ok = all(tables.encrypt_block(p) == aes.encrypt_block(round_keys, p) for p in probes)
     print(f"wbaes tables  {out_path}")
     print(f"self-check    {'ok' if ok else 'FAILED'}")
-    print("note          plain Chow tables: not key-hiding yet (see TODO §8)")
+    print("note          affine encoded tables: no DCA/DFA resistance claim (see TODO §8)")
     return 0 if ok else 1
 
 

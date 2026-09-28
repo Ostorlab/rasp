@@ -25,6 +25,7 @@ import hmac
 from dataclasses import dataclass
 
 from rasp_hardener import aes
+from rasp_hardener import encodings
 
 # AES MixColumns matrix (used to build the Tyi tables).
 MIXCOL = ((2, 3, 1, 1), (1, 2, 3, 1), (1, 1, 2, 3), (3, 1, 1, 2))
@@ -71,8 +72,8 @@ class WhiteBoxTables:
         return bytes(state)
 
 
-def generate(key: bytes) -> WhiteBoxTables:
-    """Generate plain white-box AES-128 tables for `key`."""
+def generate(key: bytes, encoding_seed: bytes | None = None) -> WhiteBoxTables:
+    """Generate AES tables; a 32-byte encoding seed adds nine affine state boundaries."""
     round_keys = aes.key_expansion(key)
     # sk[r] = ShiftRows(k[r]) so that AddRoundKey-before-ShiftRows folds into SubBytes-after-ShiftRows.
     sk = [aes.shift_rows(rk) for rk in round_keys]
@@ -93,6 +94,31 @@ def generate(key: bytes) -> WhiteBoxTables:
         final_key = round_keys[10][p]
         last.append([aes.SBOX[x ^ key_byte] ^ final_key for x in range(256)])
 
+    if encoding_seed is not None:
+        if len(encoding_seed) != 32:
+            raise ValueError("encoding seed must be 32 bytes")
+        boundaries = [[encodings.byte_encoding(encoding_seed, boundary, position) for position in range(16)] for boundary in range(9)]
+        shifted_positions = aes.shift_rows(list(range(16)))
+        for round_index in range(9):
+            for position in range(16):
+                original = type2[round_index][position]
+                inverse = boundaries[round_index - 1][shifted_positions[position]][1] if round_index > 0 else list(range(256))
+                column_start = position // 4 * 4
+                transformed = []
+                for encoded_input in range(256):
+                    contribution = unpack32(original[inverse[encoded_input]])
+                    output = []
+                    for row in range(4):
+                        linear, _, offset = boundaries[round_index][column_start + row]
+                        # XOR is linear: combine four encoded contributions into E(sum).
+                        # Exactly one contribution carries the affine offset.
+                        output.append(linear[contribution[row]] ^ (offset if position % 4 == 0 else 0))
+                    transformed.append(pack32(tuple(output)))
+                type2[round_index][position] = transformed
+        for position in range(16):
+            original = last[position]
+            inverse = boundaries[8][shifted_positions[position]][1]
+            last[position] = [original[inverse[value]] for value in range(256)]
     return WhiteBoxTables(type2=type2, last=last)
 
 
