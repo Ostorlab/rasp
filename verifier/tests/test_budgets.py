@@ -79,3 +79,24 @@ class BudgetTest(unittest.TestCase):
         for limit in [0, -1, float("nan"), float("inf"), True]:
             with self.subTest(limit=limit), self.assertRaises(ValueError):
                 budgets.check_latency("pixel-7", [1.0] * 30, limit)
+
+    def testMain_whenMeasurementsDeeplyNested_returnsConfigurationError(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            metrics = pathlib.Path(directory) / "metrics.json"
+            metrics.write_text("[" * 10000 + "0" + "]" * 10000)
+            output = io.StringIO()
+            with (
+                mock.patch(
+                    "sys.argv",
+                    ["budgets", "latency", str(metrics), "--max-p95-ms", "100"],
+                ),
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(budgets.main(), 2)
+            self.assertEqual(
+                json.loads(output.getvalue()),
+                {
+                    "passed": False,
+                    "error": "invalid budget, artifact, or measurements",
+                },
+            )

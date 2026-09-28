@@ -3,8 +3,10 @@
 Release validation combines an HTTP enforcement checker, artifact-size budgets,
 and a device-latency p95 budget. Core CI runs unit tests, coverage, fatal lint,
 and a 1 MiB host-library size gate. Endpoint probes and device measurements run
-separately with operator-provided fixtures. Packages are proprietary; use local
-path dependencies or an authorized private registry. No workflow publishes them.
+separately with operator-provided fixtures.
+
+Packages are proprietary; use local path dependencies or an authorized private
+registry. No workflow publishes them.
 
 ## What does the core CI gate?
 
@@ -15,8 +17,10 @@ path dependencies or an authorized private registry. No workflow publishes them.
 - Native host tests.
 - A 1 MiB host native-library size gate.
 
-Coverage floors are 80% verifier and 90% hardener, including branches. These are
-regression floors, not claims of complete security coverage. Coverage XML is the
+Coverage.py measures statements and branches. CI gates their combined coverage
+at 80% for the verifier and 90% for the hardener; branch-only percentages are not
+independently gated. These are regression floors, not claims of complete security
+coverage. Coverage XML is the
 only uploaded artifact; generated keys, manifests, white-box tables, and private
 symbol maps must never be public artifacts.
 
@@ -24,6 +28,13 @@ The host-library gate does not measure an APK, iOS framework, or device-specific
 optimized binary. Apply the size command to each artifact with its release budget.
 
 ## How does the enforcement checker work?
+
+The checker sends five probes: missing-token, malformed-token, expired-token,
+valid, and exact-replay. It fails unless every negative returns 401/403 and the
+valid request returns 2xx. It never follows redirects and disables environment
+proxies. Exit codes are 0 for pass, 1 for failure, and 2 for invalid configuration.
+
+### Preparing proof fixtures
 
 Run against authorized staging and an expendable account: the positive control
 executes the protected operation once. Create two real proof fixtures for the
