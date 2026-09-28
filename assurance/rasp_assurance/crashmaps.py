@@ -23,8 +23,9 @@ MAGIC = b"RCM1"
 
 
 def context(tenant: str, app: str, build: str, artifact: pathlib.Path) -> bytes:
+    tenant, app, build = (value.strip() for value in (tenant, app, build))
     values = (tenant, app, build)
-    if any(len(value.strip()) == 0 or len(value) > 200 for value in values):
+    if any(len(value) == 0 or len(value) > 200 for value in values) is True:
         raise ValueError("tenant, application and build identifiers required")
     digest = hashlib.sha256()
     with artifact.open("rb") as source:
@@ -87,7 +88,7 @@ def open_archive(data: bytes, key: bytes, binding: bytes) -> dict[str, str]:
 
 
 def archive(store: pathlib.Path, data: bytes, binding: bytes) -> pathlib.Path:
-    """An immutable 0600 object inside a trusted operator-owned directory."""
+    """Create a private file once inside a trusted operator-owned directory."""
     store.mkdir(mode=0o700, parents=True, exist_ok=True)
     destination = store / (hashlib.sha256(binding).hexdigest() + ".rmap")
     descriptor = os.open(
@@ -135,6 +136,13 @@ def upload(url: str, data: bytes, token: str) -> int:
         or "\n" in token
     ):
         raise ValueError("encrypted archive and upload credential required")
+    binding_length = struct.unpack(">I", data[4:8])[0]
+    if (
+        binding_length == 0
+        or binding_length > 4096
+        or len(data) < 8 + binding_length + 28
+    ):
+        raise ValueError("invalid archive binding length")
     connection = http.client.HTTPSConnection(
         parsed.hostname,
         parsed.port or 443,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import http.client
 import io
 import json
 import pathlib
@@ -75,7 +76,7 @@ class CrashMapTest(unittest.TestCase):
             with self.assertRaises((ValueError, exceptions.InvalidTag)):
                 crashmaps.open_archive(archive, key, binding)
 
-    def testArchive_whenPersisted_privateAndImmutable(self) -> None:
+    def testArchive_whenPersisted_privateAndCreatedOnce(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = crashmaps.archive(pathlib.Path(directory), b"encrypted", b"binding")
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
@@ -93,6 +94,38 @@ class CrashMapTest(unittest.TestCase):
                 first, crashmaps.context("tenant", "app", "build", artifact)
             )
 
+    def testContext_whenIdentifiersHaveSurroundingWhitespace_usesCanonicalBinding(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = pathlib.Path(directory) / "app.so"
+            artifact.write_bytes(b"fixture")
+            identifiers = ("tenant", "app", "build")
+            canonical = crashmaps.context(*identifiers, artifact)
+            key = b"k" * 32
+            symbols = b'{"a":"real"}'
+            for index, name in enumerate(("tenantId", "appId", "buildId")):
+                with self.subTest(identifier=name):
+                    padded = list(identifiers)
+                    padded[index] = " \t" + padded[index] + "\n "
+                    binding = crashmaps.context(
+                        padded[0], padded[1], padded[2], artifact
+                    )
+                    self.assertEqual(binding, canonical)
+                    self.assertEqual(json.loads(binding)[name], identifiers[index])
+                    self.assertEqual(
+                        crashmaps.open_archive(
+                            crashmaps.seal(symbols, key, binding), key, canonical
+                        ),
+                        {"a": "real"},
+                    )
+                    self.assertEqual(
+                        crashmaps.open_archive(
+                            crashmaps.seal(symbols, key, canonical), key, binding
+                        ),
+                        {"a": "real"},
+                    )
+
     def testUpload_whenCleartextUrl_rejectsBeforeSending(self) -> None:
         with self.assertRaises(ValueError):
             crashmaps.upload("http://127.0.0.1/private", b"RCM1", "secret")
@@ -101,9 +134,7 @@ class CrashMapTest(unittest.TestCase):
         for data in (b"RCM1", b"RCM1" + b"x" * 31):
             with (
                 self.subTest(length=len(data)),
-                mock.patch.object(
-                    crashmaps.http.client, "HTTPSConnection"
-                ) as connection,
+                mock.patch.object(http.client, "HTTPSConnection") as connection,
             ):
                 connection.return_value.getresponse.return_value.status = 201
                 with self.assertRaises(ValueError):
@@ -111,6 +142,46 @@ class CrashMapTest(unittest.TestCase):
                         "https://artifacts.example.test/private", data, "fixture-token"
                     )
                 connection.assert_not_called()
+
+    def testUpload_whenBindingLengthInvalid_rejectsBeforeConnecting(self) -> None:
+        for binding_length, payload_length in ((0, 32), (4097, 4125), (100, 32)):
+            data = b"RCM1" + binding_length.to_bytes(4, "big") + b"x" * payload_length
+            with (
+                self.subTest(bindingLength=binding_length, archiveLength=len(data)),
+                mock.patch.object(http.client, "HTTPSConnection") as connection,
+            ):
+                connection.return_value.getresponse.return_value.status = 201
+                with self.assertRaises(ValueError):
+                    crashmaps.upload(
+                        "https://artifacts.example.test/private", data, "fixture-token"
+                    )
+                connection.assert_not_called()
+
+    def testUpload_whenArchiveValid_preservesEncryptedRequest(self) -> None:
+        for binding_length in (1, 4096):
+            data = crashmaps.seal(b'{"a":"real"}', b"k" * 32, b"b" * binding_length)
+            with (
+                self.subTest(bindingLength=binding_length),
+                mock.patch.object(http.client, "HTTPSConnection") as connection,
+            ):
+                client = connection.return_value
+                client.getresponse.return_value.status = 201
+                status = crashmaps.upload(
+                    "https://artifacts.example.test/private?version=1",
+                    data,
+                    "fixture-token",
+                )
+                self.assertEqual(status, 201)
+                arguments, keywords = client.request.call_args
+                self.assertEqual(arguments, ("PUT", "/private?version=1"))
+                self.assertEqual(keywords["body"], data)
+                self.assertEqual(
+                    keywords["headers"]["Authorization"], "Bearer fixture-token"
+                )
+                self.assertEqual(
+                    keywords["headers"]["Content-Type"], "application/octet-stream"
+                )
+                client.close.assert_called_once_with()
 
     def testMain_whenSymbolsJsonExceedsRecursionDepth_returnsSanitizedError(
         self,

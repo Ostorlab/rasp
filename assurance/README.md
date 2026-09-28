@@ -30,7 +30,8 @@ rasp-crashmap symbolize --tenant tenant-a --app com.example.app --build BUILD_ID
 Use that exact path for upload and symbolization; `ARCHIVE_ID` stands for its
 filename stem, derived from the authenticated binding hash.
 
-The key file holds exactly 32 random bytes provisioned by the deployment secret store.
+The key file holds exactly 32 random bytes provisioned by the deployment secret
+store. These bytes are the AES-256-GCM key passed directly to `AESGCM`.
 
 Upload and storage:
 
@@ -38,14 +39,20 @@ Upload and storage:
   and no redirects.
 - Only the AES-256-GCM encrypted archive is uploaded. The configured artifact
   service must authorize the destination's tenant/app scope.
-- Local archive files are immutable and mode 0600.
+- Local archive files are created once using `O_CREAT|O_EXCL|O_NOFOLLOW`, with
+  mode `0600`; an existing path is refused. The tool creates `--store` with mode
+  `0700`; provision existing stores as mode `0700`, operator-owned directories.
+  Files remain owner-writable, so directory contents are trusted.
 
 Binding and key rotation:
 
 - Tenant, application, build, and final binary SHA-256 are authenticated; a map
   for another binary or scope is refused.
-- Store the wrapping-key version identifier beside each archive so rotating the
-  deployment secret does not orphan older maps.
+- Surrounding whitespace in tenant, application, and build identifiers is stripped
+  once before validation and binding, consistently for archiving and symbolization.
+- If the operator's secret store wraps the AES key under a master key, version
+  identifiers are operator-side. Store those identifiers beside each archive so
+  key rotation does not orphan older maps.
 - Retain the matching key securely; the identifier alone cannot decrypt an archive.
 
 Symbolization replaces complete symbol names; address-to-line resolution still
@@ -55,7 +62,8 @@ requires the matching private debug symbols and platform symbolizer.
 
 `rasp-evidence` converts a trust-service report into a redacted evidence export:
 it strips free-text, marks authenticity `not_verified_by_exporter`, and maps
-detector IDs to reviewed OWASP references.
+threat identifiers to reviewed OWASP references. The mapping is keyed on each
+signal's `threat` field; `detector` is retained only as provenance.
 
 ```sh
 rasp-evidence private/verified-report.json --artifact release/app.apk --platform android
@@ -65,7 +73,7 @@ Input is a decoded report with a `signals` array. The exporter deliberately does
 not verify attestation or the report MAC: use the trust service for that before
 export, and retain its evidence separately. Output marks authenticity as
 `not_verified_by_exporter` and compliance as `not_assessed`. It removes free-text
-evidence and maps reported detector/threat identifiers to applicable references.
+evidence and maps reported threat identifiers to applicable references.
 No signals is **not** a passing compliance result.
 
 The [mapping table at revision `7f0941d`](https://github.com/Ostorlab/rasp/blob/7f0941de0541fc30a72c81e06c18b6776b524497/assurance/rasp_assurance/evidence.py)
@@ -99,7 +107,7 @@ operator-supplied preparation/probe/cleanup adapters for local devices or a remo
 
 This is not a process sandbox.
 
-Configuration example (adapter paths are supplied by your lab):
+Configuration example (adapter paths are operator-supplied):
 
 ```json
 {
@@ -117,8 +125,9 @@ Configuration example (adapter paths are supplied by your lab):
 ```
 
 Adapter environments contain only inherited `PATH` and `HOME`, plus
-`RASP_FARM_ARTIFACT` and `RASP_FARM_CONTEXT`. Provision device access through the operator-owned
-adapter; ambient credentials such as `RASP_ARTIFACT_TOKEN` are not forwarded.
+`RASP_FARM_ARTIFACT` and `RASP_FARM_CONTEXT`. Provision device access through the
+operator-supplied adapter; ambient credentials such as `RASP_ARTIFACT_TOKEN` are
+not forwarded.
 
 Each adapter receives `RASP_FARM_ARTIFACT` and `RASP_FARM_CONTEXT` containing
 `runId`, `device`, `artifactSha256`, and `scenario`. The probe returns exactly
@@ -141,15 +150,17 @@ bypass results.
 
 ## How are physical-device performance budgets measured?
 
-The included `verifier/` package provides release size and latency gates. Install
-it with `python -m pip install -e ./verifier` from the repository root, then run
-`python -m rasp_verifier.budgets`. See [validation commands and the measurement
-format](../docs/validation.md#how-do-i-run-the-performance-and-size-gates).
+Physical-device performance is measured by an operator-supplied device adapter
+that records at least 30 real, finite, nonnegative `samplesMs` values per device
+for the actual scan operation, with a `device` identifier. The repository's
+`assurance/` package supplies orchestration and gates; no mobile scan benchmark
+collector is bundled with those tools. Tag emulator samples explicitly and
+evaluate physical reference devices separately. Neither host timing nor mocked
+samples establish physical-device performance. Preserve the artifact SHA-256,
+OS, device model, build mode, warmup method, measurement conditions, and sample
+file with the release evidence.
 
-This branch does not include a mobile scan benchmark collector. Provide a device
-adapter that measures the actual scan operation and emits at least 30 finite,
-nonnegative `samplesMs` values with a `device` identifier. Tag emulator samples
-explicitly and evaluate physical reference devices separately. Neither host
-timing nor mocked samples establish physical-device performance. Preserve the
-artifact SHA-256, OS, device model, build mode, warmup method, measurement
-conditions, and sample file with the release evidence.
+The separately installed `verifier/` package evaluates release size and latency
+budgets. Install it with `python -m pip install -e ./verifier` from the repository
+root, then run `python -m rasp_verifier.budgets`. See [validation commands and the
+measurement format](../docs/validation.md#how-do-i-run-the-performance-and-size-gates).
