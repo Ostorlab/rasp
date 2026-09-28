@@ -19,6 +19,27 @@ Conventions used below:
 
 ---
 
+## Execution record (2026-09-28)
+
+Tasks 1–11 are implemented and locally verified. The original snippets below remain the reviewed plan,
+not an exact copy of the final code. Publishing the PR is reserved for the coordinating agent.
+
+- Task 1: `5d5b951`, reviewed independently before this implementation.
+- Tasks 2–10: `546cb54`, registry/parser, encrypted C decoding, all call-site migrations, private symbol
+  renaming, source/binary gates and complete sealed-envelope parity.
+- Task 11: documentation and verification recorded in the following documentation commit.
+- Correctness refinements: signal records copy decoded detector IDs; comments are stripped without
+  corrupting quoted text; renaming precedes declarations; generated slot order/count is compile-checked;
+  decoder volatile reads prevent LTO constant folding; symbol coverage is checked in unoptimized objects.
+- Android NDK exposed linker-generated global boundary symbols despite hidden visibility. `exports.map`
+  enforces JNI-only exports, and release builds strip local symbols.
+- Verified: 108 hardener tests, 74 verifier tests, native host tests, and NDK r21 arm64/armv7/x86_64
+  hardened libraries with the integrity-enabled JNI path, no registered plaintext and `JNI_OnLoad` only.
+- No device execution claimed. Reversible literal encoding is not key hiding; managed obfuscation and
+  heavier compiler/white-box protections remain separately tracked in `TODO.md`.
+
+---
+
 ## File structure
 
 | File | Responsibility | Task |
