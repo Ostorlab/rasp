@@ -34,6 +34,8 @@ class PatchTest(unittest.TestCase):
     def testSelect_whenUnversionedOrUnknownSink_rejectsConfiguration(self) -> None:
         for purl, sink in [
             ("pkg:pypi/example", "sql"),
+            ("pkg:npm/@scope/example", "sql"),
+            ("pkg:npm/example@#subpath", "sql"),
             ("pkg:pypi/example@1.0", "unknown"),
         ]:
             with self.subTest(purl=purl, sink=sink), self.assertRaises(ValueError):

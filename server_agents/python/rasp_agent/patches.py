@@ -37,10 +37,11 @@ def select(sbom: dict[str, typing.Any], rules: list[dict[str, str]]) -> Selectio
         purl = rule.get("purl", "")
         vulnerability = rule.get("vulnerabilityId", "")
         sink = rule.get("sink", "")
+        name_and_version = purl.split("?", 1)[0].split("#", 1)[0].rsplit("/", 1)[-1]
         if (
             not purl.startswith("pkg:")
-            or "@" not in purl
-            or len(purl.rsplit("@", 1)[1].split("?", 1)[0]) == 0
+            or "@" not in name_and_version
+            or len(name_and_version.rsplit("@", 1)[1]) == 0
         ):
             raise ValueError("patch PURL must specify an exact version")
         if sink not in SINKS or _CVE.fullmatch(vulnerability) is None:
