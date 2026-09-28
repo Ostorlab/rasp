@@ -10,6 +10,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
+import re
 import time
 from dataclasses import dataclass
 
@@ -37,6 +39,8 @@ def b64u_encode(data: bytes) -> str:
 
 
 def b64u_decode(text: str) -> bytes:
+    if not isinstance(text, str) or re.fullmatch(r"[A-Za-z0-9_-]*", text) is None:
+        raise JoseError("bad_encoding")
     padding = "=" * (-len(text) % 4)
     try:
         return base64.urlsafe_b64decode(text + padding)
@@ -149,17 +153,28 @@ def jwks(keys: list[SigningKey]) -> dict:
     return {"keys": [key.public_jwk() for key in keys]}
 
 
-def decode_jwt(token: str, jwks_keys: list[dict], *, now: float | None = None, leeway: float = 5) -> dict:
+def decode_jwt(token: str, jwks_keys: list[dict], *, now: float | None = None, leeway: float = 5,
+               issuer: str = "rasp-trust", audience: str = "rasp-resource") -> dict:
     """Verifies a compact ES256 JWT against a JWKS (public keys) and its `exp`. Returns the claims.
 
     The trust service is the only issuer, so the algorithm is pinned to ES256; a token that names any
     other algorithm, or a `kid` not in the JWKS, is refused rather than trusted.
     """
+    if not isinstance(token, str) or len(token) > 65536:
+        raise JoseError("bad_token")
     try:
         header_b64, payload_b64, sig_b64 = token.split(".")
     except ValueError as e:
         raise JoseError("bad_token", "a JWT has three segments") from e
-    header = json.loads(b64u_decode(header_b64))
+    try:
+        header = json.loads(b64u_decode(header_b64))
+        claims = json.loads(b64u_decode(payload_b64))
+    except (ValueError, UnicodeError) as error:
+        raise JoseError("bad_token") from error
+    if not isinstance(header, dict) or not isinstance(claims, dict):
+        raise JoseError("bad_token")
+    if header.get("typ") != "JWT" or "crit" in header or not isinstance(header.get("kid"), str):
+        raise JoseError("bad_header")
     if header.get("alg") != "ES256":
         raise JoseError("bad_alg", str(header.get("alg")))
     kid = header.get("kid")
@@ -178,10 +193,20 @@ def decode_jwt(token: str, jwks_keys: list[dict], *, now: float | None = None, l
     except InvalidSignature as e:
         raise JoseError("bad_signature") from e
 
-    claims = json.loads(b64u_decode(payload_b64))
+    if claims.get("iss") != issuer:
+        raise JoseError("wrong_issuer")
+    if claims.get("aud") != audience:
+        raise JoseError("wrong_audience")
+    for name in ("exp", "nbf", "iat"):
+        if name == "exp" or name in claims:
+            value = claims.get(name)
+            if type(value) not in (int, float) or not (0 <= value <= 9007199254740991) or not math.isfinite(value):
+                raise JoseError("bad_claim", name)
     now = time.time() if now is None else now
-    if "exp" in claims and now > claims["exp"] + leeway:
+    if now >= claims["exp"] + leeway:
         raise JoseError("expired", f"exp={claims['exp']}")
+    if "iat" in claims and claims["iat"] > now + leeway:
+        raise JoseError("not_yet_valid", "iat")
     if "nbf" in claims and now + leeway < claims["nbf"]:
         raise JoseError("not_yet_valid", f"nbf={claims['nbf']}")
     return claims

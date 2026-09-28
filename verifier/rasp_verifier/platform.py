@@ -1,16 +1,12 @@
 """Platform attestation (Android Play Integrity, iOS App Attest), abstracted behind one interface.
 
-Real Play Integrity verification decrypts and verifies a Google-signed token and needs a Google Cloud
-project and the app's decryption/verification keys; App Attest needs Apple's anonymous attestation CA. Those
-belong to a deployment, not this reference code, so the trust service takes a `PlatformAttestation`
-implementation and ships two:
+Production adapters live in `play_integrity` (Google OAuth decode API) and `app_attest`
+(Apple certificate/authenticator validation plus stateful assertions). Configure their
+application identity and deployment credentials explicitly. App Attest uses separate
+bind/token routes because its key lifecycle cannot be represented by this stateless interface.
 
-- `DisabledPlatformAttestation` (default): no platform verdict. The trust service then runs in the design's
-  degraded mode — hardware Key Attestation plus the sealed report only, with the risk floor raised.
-- `StubPlatformAttestation` (tests, demos): accepts a self-describing JSON token and checks the request
-  hash and package. Never use it in production; it trusts the token's own claims.
-
-A production deployment implements `PlatformAttestation.verify` against Google's / Apple's servers.
+DisabledPlatformAttestation preserves degraded demo mode; StubPlatformAttestation is
+strictly for tests/demos and must never be enabled in a production deployment.
 """
 
 from __future__ import annotations

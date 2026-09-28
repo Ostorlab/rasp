@@ -251,6 +251,10 @@ class ServerTest(unittest.TestCase):
         self.assertEqual((403, "attestation_failed"), (status, body.get("error")))
         self.assertIn("revoked", body["detail"])
 
+    def testIosRoutes_whenNotConfigured_returnUnavailable(self) -> None:
+        self.assertEqual(self.post("/v1/ios/bind", {})[0], 503)
+        self.assertEqual(self.post("/v1/ios/token", {})[0], 400)
+
     def test_jwks_is_served(self):
         request = urllib.request.Request(self.base + "/.well-known/jwks.json")
         with urllib.request.urlopen(request) as response:
