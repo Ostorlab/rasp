@@ -199,3 +199,30 @@ test("desktop overview contains no browser errors", async ({ page }) => {
   });
   expect(errors).toEqual([]);
 });
+
+test("an old mutation's 401 cannot disconnect a replacement session", async ({ page }) => {
+  let pending;
+  await setup(page, async route => {
+    if (route.request().url().endsWith('/keys/rotate')) {
+      pending = route;
+      return true;
+    }
+  });
+  await page.getByRole('link', {name:'Secrets & keys'}).click();
+  await page.getByRole('button', {name:'Rotate token key'}).click();
+  await page.getByRole('button', {name:'Confirm', exact:true}).click();
+  await expect.poll(() => pending !== undefined).toBe(true);
+  await page.getByRole('button', {name:'Disconnect'}).click();
+  await page.getByLabel('Application ID').fill('com.example.app');
+  await page.getByLabel('Console credential').fill('private-test-credential');
+  await page.getByRole('button', {name:'Connect', exact:true}).click();
+  await expect(page.getByRole('heading', {name:'Secrets & keys', exact:true})).toBeVisible();
+  const received = page.waitForResponse(response => response.url().endsWith('/keys/rotate'));
+  await pending.fulfill({status:401,json:{error:'expired'}});
+  await received;
+  // A following request proves the new session is still usable after the old response.
+  await page.getByRole('button', {name:'Refresh'}).click();
+  await expect(page.getByRole('button', {name:'Rotate token key'})).toBeVisible();
+  await expect(page.getByRole('button', {name:'Disconnect'})).toBeVisible();
+  await expect(page.locator('#notice')).toBeHidden();
+});

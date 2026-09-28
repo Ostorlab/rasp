@@ -19,6 +19,7 @@ let credential = "",
   epoch = 0,
   controller,
   draft = null;
+let sessionVersion = 0;
 const content = $("#content");
 const format = (value) =>
   value === null || value === undefined ? "—" : String(value);
@@ -45,6 +46,7 @@ function notify(message, success = false) {
   notice.hidden = false;
 }
 function disconnect() {
+  sessionVersion++;
   credential = "";
   appId = "";
   draft = null;
@@ -69,6 +71,7 @@ const errors = {
   409: "This record changed. Refresh before trying again.",
 };
 async function api(path, body, signal) {
+  const initiatingSession = sessionVersion;
   const response = await fetch(
     `/v1/console/apps/${encodeURIComponent(appId)}${path}`,
     {
@@ -84,6 +87,8 @@ async function api(path, body, signal) {
       signal,
     },
   );
+  if (initiatingSession !== sessionVersion)
+    throw new DOMException("Session replaced", "AbortError");
   if (!response.ok) {
     if (response.status === 401) disconnect();
     throw new Error(
@@ -91,7 +96,10 @@ async function api(path, body, signal) {
         `Request failed (${response.status}). Try again.`,
     );
   }
-  return response.json();
+  const result = await response.json();
+  if (initiatingSession !== sessionVersion)
+    throw new DOMException("Session replaced", "AbortError");
+  return result;
 }
 function showError(error) {
   if (error.name !== "AbortError")
