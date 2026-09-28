@@ -39,6 +39,7 @@ from cryptography import x509
 
 from rasp_verifier import jose
 from rasp_verifier import app_attest
+from rasp_verifier import control_plane
 from rasp_verifier import durable_registry
 from rasp_verifier import play_integrity
 from rasp_verifier import postgres
@@ -255,8 +256,15 @@ def build_services(args, revocations=None):
         require_hardware=not args.allow_software_attestation,
         require_user_auth=not args.allow_no_user_auth,
     )
+    shared_keys = None
+    if args.control_plane_keys is True:
+        if not isinstance(state, postgres.PostgresStore):
+            raise ValueError("control-plane keys require a PostgreSQL store")
+        shared_keys = control_plane.ControlPlane(state, os.environ[args.control_encryption_key_env].encode())
     trust = TrustService(
         signing_key=signing_key,
+        signing_key_provider=None if shared_keys is None else shared_keys.token_signing_key,
+        jwks_provider=None if shared_keys is None else shared_keys.token_jwks,
         state=state,
         apple_verifier=apple,
         package_name=args.package,
@@ -294,7 +302,11 @@ def main() -> None:
     parser.add_argument("--apple-app-id", help="Apple App ID prefix plus bundle ID")
     parser.add_argument("--apple-root-pem", help="trusted Apple App Attest root PEM file")
     parser.add_argument("--apple-development", action="store_true", help="accept development App Attest AAGUID only")
+    parser.add_argument("--control-plane-keys", action="store_true", help="use scoped durable control-plane token signing keys")
+    parser.add_argument("--control-encryption-key-env", default="RASP_CONTROL_ENCRYPTION_KEY")
     args = parser.parse_args()
+    if args.control_plane_keys is True and args.signing_key_pem is not None:
+        parser.error("control-plane keys and static signing PEM are mutually exclusive")
     if args.google_play_integrity is True and args.stub_play_integrity is True:
         parser.error("Google verification and demo stub are mutually exclusive")
 

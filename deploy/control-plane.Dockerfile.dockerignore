@@ -1,0 +1,6 @@
+**
+!verifier/
+!verifier/pyproject.toml
+!verifier/rasp_verifier/
+!verifier/rasp_verifier/**
+verifier/rasp_verifier/**/__pycache__/

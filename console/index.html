@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'"
+    />
+    <title>RASP · Protection console</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <aside class="rail">
+      <a class="brand" href="#overview" aria-label="RASP overview"
+        ><span class="mark" aria-hidden="true">R</span> RASP<span
+          class="edition"
+          >CONTROL</span
+        ></a
+      >
+      <p class="rail-label">APPLICATION SECURITY</p>
+      <nav aria-label="Main navigation" id="navigation"></nav>
+      <div class="rail-foot">
+        <span class="status-dot"></span> Private deployment
+        <p>Runtime protection, in view.</p>
+      </div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <span id="identity">Protection console</span
+        ><button id="disconnect" class="secondary" hidden>Disconnect</button>
+      </header>
+      <main id="main" tabindex="-1">
+        <section id="connection" class="connection">
+          <p class="eyebrow">RUNTIME APPLICATION SELF-PROTECTION</p>
+          <h1>Know what your<br />applications are facing.</h1>
+          <p class="lede">
+            Inspect device signals, control protection policies, and follow
+            every security decision.
+          </p>
+          <form id="connect-form" class="connect-form">
+            <h2>Connect to your application</h2>
+            <label
+              >Application ID<input
+                name="appId"
+                required
+                maxlength="200"
+                autocomplete="off"
+                placeholder="com.example.app"
+            /></label>
+            <label
+              >Console credential<input
+                name="credential"
+                type="password"
+                required
+                autocomplete="off"
+                spellcheck="false"
+            /></label>
+            <p class="hint">
+              Use a credential issued by your administrator. It stays in this
+              tab’s memory.
+            </p>
+            <button class="accent" type="submit">Connect</button>
+          </form>
+        </section>
+        <div id="notice" role="status" aria-live="polite" hidden></div>
+        <section id="content" hidden aria-busy="false"></section>
+      </main>
+      <footer>
+        RASP / CONTROL PLANE <span>Proprietary · Private infrastructure</span>
+      </footer>
+    </div>
+    <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+      <form method="dialog">
+        <h2 id="confirm-title">Confirm action</h2>
+        <p id="confirm-message"></p>
+        <div class="actions">
+          <button value="cancel" class="secondary">Cancel</button
+          ><button value="confirm" id="confirm-button" class="success">
+            Confirm
+          </button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

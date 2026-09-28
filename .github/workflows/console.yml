@@ -1,0 +1,55 @@
+name: Private console
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: local_test
+          POSTGRES_DB: rasp_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RASP_TEST_ADMIN_DSN: postgresql://postgres:local_test@127.0.0.1:5432/rasp_test
+      RASP_TEST_POSTGRES_DSN: postgresql://rasp_runtime:local_runtime@127.0.0.1:5432/rasp_test
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Install private control-plane backend
+        run: python -m pip install -e ../verifier
+      - name: Migrate dedicated PostgreSQL and create restricted fixture role
+        run: |
+          python - <<'PY'
+          import os
+          import psycopg
+          from rasp_verifier import postgres
+          postgres.migrate(os.environ['RASP_TEST_ADMIN_DSN'])
+          with psycopg.connect(os.environ['RASP_TEST_ADMIN_DSN']) as connection:
+              connection.execute("CREATE ROLE rasp_runtime LOGIN PASSWORD 'local_runtime'")
+              connection.execute('GRANT SELECT, INSERT, UPDATE, DELETE ON rasp_records, rasp_challenges, rasp_counters TO rasp_runtime')
+          PY
+      - name: Exercise real backend publication, secret metadata, and audit in browser
+        run: bash ../verifier/scripts/test_console_live.sh

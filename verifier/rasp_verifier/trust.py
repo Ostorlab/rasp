@@ -21,6 +21,7 @@ import json
 import secrets
 import threading
 import time
+import typing
 import uuid
 
 from . import jose
@@ -73,9 +74,15 @@ class TrustService:
         trusted_roots=None,
         state: storage.Store | None = None,
         apple_verifier: app_attest.AppAttestVerifier | None = None,
+        signing_key_provider: typing.Callable[[], jose.SigningKey] | None = None,
+        jwks_provider: typing.Callable[[], dict] | None = None,
     ):
         self.app_attest = apple_verifier
         self.signing_key = signing_key
+        if (signing_key_provider is None) != (jwks_provider is None):
+            raise ValueError("signing key and JWKS providers must be configured together")
+        self.signing_key_provider = signing_key_provider
+        self.jwks_provider = jwks_provider
         self.package_name = package_name
         self.signing_cert_sha256 = signing_cert_sha256
         self.state = storage.MemoryStore() if state is None else state
@@ -93,6 +100,8 @@ class TrustService:
     # --- JWKS -----------------------------------------------------------------------------------------------
 
     def jwks(self) -> dict:
+        if self.jwks_provider is not None:
+            return self.jwks_provider()
         return {"keys": [self.signing_key.public_jwk()]}
 
     # --- challenges -----------------------------------------------------------------------------------------
@@ -322,8 +331,9 @@ class TrustService:
             "exp": now + ttl,
             "jti": uuid.uuid4().hex,
         }
+        signing_key = self.signing_key if self.signing_key_provider is None else self.signing_key_provider()
         return {
-            "token": self.signing_key.sign_jwt(claims),
+            "token": signing_key.sign_jwt(claims),
             "tokenType": "DPoP",
             "expiresIn": ttl,
             "risk": assessment.risk,
