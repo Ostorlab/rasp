@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 /// Threat classes reported by the engine.
 enum ThreatType {
   root,
@@ -60,7 +62,10 @@ enum Reaction {
   secureScreen,
 
   /// Close the app a few seconds after the event is emitted.
-  closeApp;
+  closeApp,
+
+  /// Invalidate session signatures and storage access until a fresh process starts.
+  silentDegrade;
 
   static Reaction? fromName(String name) {
     for (final value in values) {
@@ -82,6 +87,11 @@ class RaspConfig {
     this.sensitiveFlows = const {},
     this.policy = const {},
     this.devMode = false,
+    this.pins = const {},
+    this.policyKeys = const {},
+    this.tenantId,
+    this.wipeOnThreats = const {},
+    this.reactionDelayMillis = 4000,
   });
 
   /// Package name the app must run under. Null skips the check.
@@ -108,18 +118,37 @@ class RaspConfig {
   /// Report only, never react. Use for debug builds.
   final bool devMode;
 
+  /// Exact DNS host -> base64 SHA-256 SPKI pins. HTTPS requests require a match.
+  final Map<String, List<String>> pins;
+
+  /// Trusted policy signing keys, kid -> base64 P-256 SubjectPublicKeyInfo DER.
+  final Map<String, String> policyKeys;
+  final String? tenantId;
+
+  /// Threats that erase secure storage and invalidate session signatures.
+  final Set<ThreatType> wipeOnThreats;
+
+  /// Delay before closeApp/wipe reactions, bounded to 0..60000 milliseconds.
+  final int reactionDelayMillis;
+
   Map<String, Object?> toMap() => {
-        'expectedPackageName': expectedPackageName,
-        'accessibilityAllowlist': accessibilityAllowlist,
-        'expectedSigningCertSha256': expectedSigningCertSha256,
-        'allowedInstallers': allowedInstallers,
-        'checkIntervalSeconds': checkIntervalSeconds,
-        'sensitiveFlows': sensitiveFlows.toList(),
-        'policy': {
-          for (final entry in policy.entries) entry.key.name: entry.value.map((r) => r.name).toList(),
-        },
-        'devMode': devMode,
-      };
+    'expectedPackageName': expectedPackageName,
+    'accessibilityAllowlist': accessibilityAllowlist,
+    'expectedSigningCertSha256': expectedSigningCertSha256,
+    'allowedInstallers': allowedInstallers,
+    'checkIntervalSeconds': checkIntervalSeconds,
+    'sensitiveFlows': sensitiveFlows.toList(),
+    'policy': {
+      for (final entry in policy.entries)
+        entry.key.name: entry.value.map((r) => r.name).toList(),
+    },
+    'devMode': devMode,
+    'pins': pins,
+    'policyKeys': policyKeys,
+    'tenantId': tenantId,
+    'wipeOnThreats': wipeOnThreats.map((t) => t.name).toList(),
+    'reactionDelayMillis': reactionDelayMillis,
+  };
 }
 
 class RaspSignal {
@@ -131,11 +160,11 @@ class RaspSignal {
   });
 
   factory RaspSignal.fromMap(Map<Object?, Object?> map) => RaspSignal(
-        threat: ThreatType.fromName(map['threat']! as String)!,
-        detector: map['detector']! as String,
-        confidence: (map['confidence']! as num).toInt(),
-        evidence: map['evidence']! as String,
-      );
+    threat: ThreatType.fromName(map['threat']! as String)!,
+    detector: map['detector']! as String,
+    confidence: (map['confidence']! as num).toInt(),
+    evidence: map['evidence']! as String,
+  );
 
   final ThreatType threat;
   final String detector;
@@ -152,16 +181,23 @@ class SecurityReport {
   });
 
   factory SecurityReport.fromMap(Map<Object?, Object?> map) => SecurityReport(
-        riskLevel: RiskLevel.values.byName(map['riskLevel']! as String),
-        threats: {
-          for (final threat in (map['threats']! as List).cast<Map<Object?, Object?>>())
-            ThreatType.fromName(threat['type']! as String)!: _reactions(threat['reactions']),
-        },
-        signals: [
-          for (final signal in (map['signals']! as List).cast<Map<Object?, Object?>>()) RaspSignal.fromMap(signal),
-        ],
-        timestamp: DateTime.fromMillisecondsSinceEpoch((map['timestamp']! as num).toInt()),
-      );
+    riskLevel: RiskLevel.values.byName(map['riskLevel']! as String),
+    threats: {
+      for (final threat
+          in (map['threats']! as List).cast<Map<Object?, Object?>>())
+        ThreatType.fromName(threat['type']! as String)!: _reactions(
+          threat['reactions'],
+        ),
+    },
+    signals: [
+      for (final signal
+          in (map['signals']! as List).cast<Map<Object?, Object?>>())
+        RaspSignal.fromMap(signal),
+    ],
+    timestamp: DateTime.fromMillisecondsSinceEpoch(
+      (map['timestamp']! as num).toInt(),
+    ),
+  );
 
   final RiskLevel riskLevel;
 
@@ -183,16 +219,19 @@ class GuardResult {
   });
 
   factory GuardResult.fromMap(Map<Object?, Object?> map) => GuardResult(
-        flow: map['flow']! as String,
-        allowed: map['allowed']! as bool,
-        blockingThreats: [
-          for (final name in (map['blockingThreats']! as List).cast<String>()) ThreatType.fromName(name)!,
-        ],
-        warnings: [
-          for (final name in ((map['warnings'] as List?) ?? const []).cast<String>()) ?ThreatType.fromName(name),
-        ],
-        report: SecurityReport.fromMap(map['report']! as Map<Object?, Object?>),
-      );
+    flow: map['flow']! as String,
+    allowed: map['allowed']! as bool,
+    blockingThreats: [
+      for (final name in (map['blockingThreats']! as List).cast<String>())
+        ThreatType.fromName(name)!,
+    ],
+    warnings: [
+      for (final name
+          in ((map['warnings'] as List?) ?? const []).cast<String>())
+        ?ThreatType.fromName(name),
+    ],
+    report: SecurityReport.fromMap(map['report']! as Map<Object?, Object?>),
+  );
 
   final String flow;
   final bool allowed;
@@ -215,7 +254,8 @@ class DeviceBindingResult {
     required this.certificateChain,
   });
 
-  factory DeviceBindingResult.fromMap(Map<Object?, Object?> map) => DeviceBindingResult(
+  factory DeviceBindingResult.fromMap(Map<Object?, Object?> map) =>
+      DeviceBindingResult(
         installId: map['installId']! as String,
         keyAlias: map['keyAlias']! as String,
         strongBox: map['strongBox']! as bool,
@@ -251,12 +291,14 @@ class TokenAuthorization {
     required this.sealedReport,
   });
 
-  factory TokenAuthorization.fromMap(Map<Object?, Object?> map) => TokenAuthorization(
+  factory TokenAuthorization.fromMap(Map<Object?, Object?> map) =>
+      TokenAuthorization(
         installId: map['installId']! as String,
         proof: map['proof']! as String,
         sessionPublicKey: map['sessionPublicKey']! as String,
         sealedReport: {
-          for (final entry in (map['sealedReport']! as Map).entries) entry.key as String: entry.value as String,
+          for (final entry in (map['sealedReport']! as Map).entries)
+            entry.key as String: entry.value as String,
         },
       );
 
@@ -271,26 +313,34 @@ class TokenAuthorization {
   /// The sealed RASP report: `{"report": <canonical json>, "mac": <hex>}`.
   final Map<String, String> sealedReport;
 
-  Map<String, Object?> toRequest(String nonce, {String? playIntegrityToken}) => {
-        'installId': installId,
-        'nonce': nonce,
-        'proof': proof,
-        'sessionPublicKey': sessionPublicKey,
-        'sealedReport': sealedReport,
-        if (playIntegrityToken != null) 'playIntegrityToken': playIntegrityToken,
-      };
+  Map<String, Object?> toRequest(
+    String nonce, {
+    String? playIntegrityToken,
+  }) => {
+    'installId': installId,
+    'nonce': nonce,
+    'proof': proof,
+    'sessionPublicKey': sessionPublicKey,
+    'sealedReport': sealedReport,
+    'playIntegrityToken': ?playIntegrityToken,
+  };
 }
 
 /// A DPoP proof for one API request, produced by [Rasp.signRequest]. Attach the headers to the request.
 class RequestProof {
-  const RequestProof({required this.key, required this.signature, required this.timestampMs, required this.counter});
+  const RequestProof({
+    required this.key,
+    required this.signature,
+    required this.timestampMs,
+    required this.counter,
+  });
 
   factory RequestProof.fromMap(Map<Object?, Object?> map) => RequestProof(
-        key: map['key']! as String,
-        signature: map['sig']! as String,
-        timestampMs: (map['ts']! as num).toInt(),
-        counter: (map['counter']! as num).toInt(),
-      );
+    key: map['key']! as String,
+    signature: map['sig']! as String,
+    timestampMs: (map['ts']! as num).toInt(),
+    counter: (map['counter']! as num).toInt(),
+  );
 
   /// The session public key (SPKI DER, base64); its thumbprint must match the token's `cnf.jkt`.
   final String key;
@@ -302,12 +352,12 @@ class RequestProof {
 
   /// The `X-Integrity-*` headers to add to the request (the token is added by the caller).
   Map<String, String> headers(String token) => {
-        'X-Integrity-Token': token,
-        'X-Integrity-Key': key,
-        'X-Integrity-Sig': signature,
-        'X-Integrity-Ts': '$timestampMs',
-        'X-Integrity-Counter': '$counter',
-      };
+    'X-Integrity-Token': token,
+    'X-Integrity-Key': key,
+    'X-Integrity-Sig': signature,
+    'X-Integrity-Ts': '$timestampMs',
+    'X-Integrity-Counter': '$counter',
+  };
 }
 
 /// Emitted when threats become active that were not active in the previous scan.
@@ -321,16 +371,21 @@ class ThreatEvent {
   });
 
   factory ThreatEvent.fromMap(Map<Object?, Object?> map) => ThreatEvent(
-        timestamp: DateTime.fromMillisecondsSinceEpoch((map['timestamp']! as num).toInt()),
-        riskLevel: RiskLevel.values.byName(map['riskLevel']! as String),
-        newThreats: [
-          for (final name in (map['newThreats']! as List).cast<String>()) ThreatType.fromName(name)!,
-        ],
-        reactions: _reactions(map['reactions']),
-        signals: [
-          for (final signal in (map['signals']! as List).cast<Map<Object?, Object?>>()) RaspSignal.fromMap(signal),
-        ],
-      );
+    timestamp: DateTime.fromMillisecondsSinceEpoch(
+      (map['timestamp']! as num).toInt(),
+    ),
+    riskLevel: RiskLevel.values.byName(map['riskLevel']! as String),
+    newThreats: [
+      for (final name in (map['newThreats']! as List).cast<String>())
+        ThreatType.fromName(name)!,
+    ],
+    reactions: _reactions(map['reactions']),
+    signals: [
+      for (final signal
+          in (map['signals']! as List).cast<Map<Object?, Object?>>())
+        RaspSignal.fromMap(signal),
+    ],
+  );
 
   final DateTime timestamp;
   final RiskLevel riskLevel;
@@ -338,10 +393,29 @@ class ThreatEvent {
   final Set<Reaction> reactions;
   final List<RaspSignal> signals;
 
-  bool get shouldWarnUser => reactions.contains(Reaction.warnUser) || reactions.contains(Reaction.closeApp);
+  bool get shouldWarnUser =>
+      reactions.contains(Reaction.warnUser) ||
+      reactions.contains(Reaction.closeApp);
   bool get willCloseApp => reactions.contains(Reaction.closeApp);
 }
 
 Set<Reaction> _reactions(Object? names) => {
-      for (final name in (names! as List).cast<String>()) ?Reaction.fromName(name),
-    };
+  for (final name in (names! as List).cast<String>()) ?Reaction.fromName(name),
+};
+
+/// Exact response bytes from the pinned native transport.
+class RaspResponse {
+  const RaspResponse({
+    required this.status,
+    required this.body,
+    required this.headers,
+  });
+  factory RaspResponse.fromMap(Map<Object?, Object?> map) => RaspResponse(
+    status: (map['status']! as num).toInt(),
+    body: map['body']! as Uint8List,
+    headers: (map['headers']! as Map).cast<String, String>(),
+  );
+  final int status;
+  final Uint8List body;
+  final Map<String, String> headers;
+}

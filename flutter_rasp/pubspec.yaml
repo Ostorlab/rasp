@@ -1,7 +1,7 @@
 name: flutter_rasp
 description: "Offline runtime application self-protection (RASP) for Flutter apps on Android."
 version: 0.0.1
-homepage:
+publish_to: none
 
 environment:
   sdk: ^3.13.4

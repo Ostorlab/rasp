@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_rasp/flutter_rasp.dart';
 
@@ -21,6 +23,12 @@ final raspConfig = RaspConfig(
   expectedSigningCertSha256: [if (_certDigest.isNotEmpty) _certDigest],
   allowedInstallers: const ['com.android.vending'],
   checkIntervalSeconds: 15,
+  pins:
+      (jsonDecode(
+        const String.fromEnvironment('RASP_PINS', defaultValue: '{}'),
+      ) as Map<String, dynamic>).map(
+        (host, hashes) => MapEntry(host, (hashes as List).cast<String>()),
+      ),
   sensitiveFlows: const {Flows.transfer, Flows.addPayee},
   policy: {
     if (_e2e) ThreatType.tamper: {Reaction.report},

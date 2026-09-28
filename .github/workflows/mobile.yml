@@ -1,0 +1,35 @@
+name: Private mobile SDK validation
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install pinned Flutter
+        run: |
+          git clone --filter=blob:none https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          git -C "$RUNNER_TEMP/flutter" checkout 6a19cca56475dbfba1478ee68d7bd0c2ef891da1
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cmake;3.22.1'
+      - name: Dart analysis and tests
+        working-directory: flutter_rasp
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+      - name: Android APK and JVM security regressions
+        working-directory: sample_app
+        run: |
+          flutter pub get
+          flutter build apk --debug
+          cd android
+          ./gradlew :flutter_rasp:testDebugUnitTest --console=plain
