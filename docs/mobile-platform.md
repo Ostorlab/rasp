@@ -1,18 +1,36 @@
 # Mobile platform implementation
 
-The mobile platform is a proprietary Android/Flutter RASP client with pinned HTTPS, signed OTA policies, erasable Keystore-backed storage and Play Integrity, plus an iOS App Attest protocol for protecting application operations.
+The mobile platform is a proprietary Android/Flutter RASP client with pinned HTTPS, signed OTA policies, erasable Keystore-backed storage and Play Integrity. The iOS SDK implements App Attest binding and assertions alongside pinned HTTPS and local protections.
 
 All SDK packages are proprietary and intended for private distribution only.
 
-Implementation sequence:
-1. Compile the Android/Flutter baseline with isolated toolchain caches.
-2. Add the shared Android client, pinned HTTPS, Play Integrity, erasable secure storage, signed policy and reaction lifecycle; expose the same operations through Flutter.
-3. Add the iOS core and App Attest protocol, with device and macOS validation tracked separately.
-4. Connect private framework adapters to the native SDKs and validate supported build targets.
+## Implementation sequence
 
-Policy wire contract: `{kid,payload,signature}`. Payload and raw 64-byte ES256 signature are base64url; signature covers exact decoded payload bytes. Payload contains `tenantId`, `appId`, increasing integer `revision`, Unix-second `issuedAt` and `expiresAt`, and `config`. Verification keys are bootstrap P-256 SPKI keys indexed by `kid`.
+1. **Done:** compile the Android/Flutter baseline with isolated toolchain caches.
+2. **Done:** implement the shared Android client, pinned HTTPS, Play Integrity, erasable secure storage, signed policies and reactions; expose the operations through Flutter.
+3. **Done:** implement the iOS core and App Attest protocol, with device and macOS validation tracked separately.
+4. **Planned:** connect additional private framework adapters to the native SDKs and validate their build targets.
 
-App Attest bind: `POST /v1/ios/bind` with `{installId,nonce,keyId,attestationObject}`; clientDataHash is SHA256 of UTF-8 nonce. Token: `POST /v1/ios/token` with `{installId,nonce,keyId,assertion,sealedReport,sessionPublicKey}`; assertion covers SHA256 of `rasp-token-1\n{nonce}\n{sealedReport.mac}\n{sessionJkt}`. `sessionPublicKey` is a base64-encoded P-256 SPKI DER key. `sessionJkt` is its RFC 7638 JWK thumbprint: convert to the EC JWK with base64url 32-byte `x` and `y` coordinates, then base64url-encode SHA256 of the UTF-8 JSON `{"crv":"P-256","kty":"EC","x":"...","y":"..."}` with that member order and no whitespace. Challenge purposes are `ios-bind` and `ios-token`.
+## Policy wire contract
+
+- **Envelope:** `{kid,payload,signature}`.
+- **Encoding:** payload and raw 64-byte ES256 signature use base64url.
+- **Signature coverage:** exact decoded payload bytes.
+- **Payload fields:** `tenantId`, `appId`, increasing integer `revision`, Unix-second `issuedAt` and `expiresAt`, and `config`.
+- **Trust:** bootstrap P-256 SPKI verification keys indexed by `kid`.
+
+## iOS App Attest wire contract
+
+The iOS SDK implements this protocol; live App Attest enrollment requires a provisioned device and server verification.
+
+| Endpoint | Request fields | Attestation coverage | Challenge purpose |
+| --- | --- | --- | --- |
+| `POST /v1/ios/bind` | `{installId,nonce,keyId,attestationObject}` | `clientDataHash` is SHA256 of the UTF-8 nonce | `ios-bind` |
+| `POST /v1/ios/token` | `{installId,nonce,keyId,assertion,sealedReport,sessionPublicKey}` | Assertion covers SHA256 of `rasp-token-1\n{nonce}\n{sealedReport.mac}\n{sessionJkt}` | `ios-token` |
+
+**Session key:** `sessionPublicKey` is a base64-encoded P-256 SPKI DER key.
+
+**Thumbprint:** `sessionJkt` is the RFC 7638 JWK thumbprint of that key. Convert it to an EC JWK with base64url 32-byte `x` and `y` coordinates, then base64url-encode SHA256 of the UTF-8 JSON `{"crv":"P-256","kty":"EC","x":"...","y":"..."}` with that member order and no whitespace.
 
 ## Android build and API
 
@@ -30,25 +48,42 @@ flutter run --dart-define=BANK_SERVER=https://bank.example.com \
 
 A zero/unset project explicitly selects degraded backend mode; a configured project invokes Google and surfaces errors. The project must enable Play Integrity. The request hash is base64url(SHA256(UTF8 nonce)), matching the trust service.
 
-SecureStore uses random AES-256 data keys per value and AES-GCM authenticated encryption. An Android Keystore AES wrapping key protects data keys. Entry names are authenticated, files are atomically replaced, and no plaintext is stored. `secureClear` deletes the wrapping key before deleting files; copied old ciphertext remains unreadable. Hardware backing depends on the device's Keystore implementation; this API does not claim universal StrongBox availability. The store currently does not derive its data keys from the compiled native integrity root.
+**SecureStore** encrypts each value with a random AES-256 data key and AES-GCM; an Android Keystore AES key wraps that data key.
 
-`wipeOnThreats` is explicitly configured; the local risk model remains none/low/medium/high. Detection immediately disables session signatures and storage access, synchronously deletes the wrapping key, then delays ciphertext cleanup by the configured 0–60000ms. `silentDegrade` disables signatures/storage without a UI event reaction. `stop` cancels pending delayed work and discards the session key. A compromised client remains disabled for its lifetime.
+- **Persistence:** entry names are authenticated, files are atomically replaced and no plaintext is stored.
+- **Clear:** `secureClear` deletes the wrapping key before files; copied old ciphertext remains unreadable.
+- **Recovery:** entries that fail authentication after key invalidation or tampering are deleted and read as absent.
+- **No universal StrongBox:** hardware backing depends on the device Keystore.
+- **Integrity boundary:** data keys do not derive from the compiled native integrity root.
 
-Policy signatures cover decoded payload bytes before parsing. Trusted keys and tenant are bootstrap configuration; the running package is the app audience. Accepted envelopes persist atomically in no-backup storage. Revisions must increase, and expired policies fail closed. The signed config replaces bootstrap overrides; omitted fields use bootstrap values. Bootstrap trust keys, app identity and devMode cannot be changed through policy.
+`wipeOnThreats` is explicitly configured; the local risk model is none/low/medium/high.
+
+- **On detection:** disable session signatures and storage; delete the wrapping key synchronously.
+- **Then:** delay ciphertext cleanup by the configured 0–60000ms.
+- **`silentDegrade`:** disable signatures/storage without a UI reaction.
+- **`stop`:** cancel pending delayed work and discard the session key.
+- **Lifetime:** a compromised client remains disabled.
+
+### Signed policy lifecycle
+
+- **Signature coverage:** decoded payload bytes, verified before parsing.
+- **Trusted keys and tenant:** bootstrap configuration; the running package is the app audience.
+- **Persistence:** atomic writes to no-backup storage.
+- **Revision:** monotonic; expired policies fail closed.
+- **Configuration:** signed fields override bootstrap values; omitted fields retain bootstrap values.
+- **Override scope:** bootstrap trust keys, app identity and `devMode` cannot change through policy.
 
 ## Validation boundaries
 
 Live Play Integrity needs a configured project and a suitable enrolled device. Device-farm bypass coverage, performance budgets and App Attest enrollment are separate deployment checks; source/unit validation is not evidence that those checks passed. No public package publication is configured.
 
-Local Android verification: Flutter analyzer clean; 9 Dart tests passed; Kotlin JVM tests included an actual TLS server where invalid leaf pins and hostname mismatch deliver zero HTTP requests (see the regression verification below for the run count); Android debug APK assembled across the configured native ABIs. Device integration status is recorded separately below.
+Current Android validation: **25 JVM tests**, **9 Dart tests** and clean Flutter analysis. JVM regressions cover real TLS pin/hostname rejection before HTTP delivery, monotonic expired-cache recovery, cancellation of queued reactions, real AES-GCM recovery after wiping/tampering, and session invalidation on successful or failed device-key replacement. The rebind regression fails against the prior implementation because the previous session survives. Android debug APK assembly across the configured native ABIs and the API35 emulator checks below have also passed.
 
 API35 emulator verification passed (`flutter test integration_test/mobile_client_test.dart -d emulator-5556`): actual JNI native scan loads, Android Keystore envelope values round-trip including binary bytes, delete/clear work, and cleartext/unconfigured HTTPS requests are rejected. No live Google attestation project was used.
 
 Expired cached envelopes retain their verified revision while the engine initializes from bootstrap configuration. Token signing, storage and general network requests remain blocked until a newer, current policy is applied. `refreshPolicy(url)` fetches only a signed policy over bootstrap-pinned HTTPS and cannot return resource data. Staged deployments must publish a higher recovery revision before a cohort's policy expires; older stable policies are never accepted as rollback. Engine replacement cancels old reaction generations, including UI callbacks already posted.
 
-Review regression verification: 24 JVM tests passed (expired-cache revision recovery, immediate wrapping-key invalidation, pending and already-dispatched reaction cancellation), 9 Dart tests passed, analyzer clean, and 2 API35 emulator cases passed including a real expired signed cache -> blocked guard/storage -> newer signed policy -> successful storage -> rollback rejection sequence.
-
-Secure-store recovery regression: all 24 JVM tests and 9 Dart tests passed again, with clean Flutter analysis. Real AES-GCM tests confirm that leftover ciphertext after wrapping-key invalidation and tampered entries are deleted and read as absent; a new value can then be stored and retrieved. The three recovery assertions fail against the prior implementation with `AEADBadTagException`.
+The two API35 emulator cases include a real expired signed cache -> blocked guard/storage -> newer signed policy -> successful storage -> rollback rejection sequence. Secure-store AES-GCM tests confirm that leftover ciphertext after wrapping-key invalidation and tampered entries are deleted and read as absent; a new value can then be stored and retrieved.
 
 ## iOS build and API
 

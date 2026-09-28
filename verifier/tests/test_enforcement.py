@@ -33,6 +33,10 @@ class EnforcementTest(unittest.TestCase):
                 headers = {name.lower(): value for name, value in self.headers.items()}
                 owner.requests.append(headers)
                 token = headers.get("x-integrity-token", "")
+                if owner.mode == "bad_status":
+                    self.wfile.write(b"invalid HTTP response\r\n\r\n")
+                    self.close_connection = True
+                    return
                 if owner.mode == "unavailable":
                     status = 503
                 elif owner.mode == "redirect":
@@ -98,6 +102,55 @@ class EnforcementTest(unittest.TestCase):
         self.assertTrue(all(result.passed is True for result in results))
         self.assertNotIn("x-integrity-token", self.requests[0])
         self.assertEqual(self.requests[0]["authorization"], "Bearer test-account")
+
+    def testCheck_whenHttpStatusMalformed_reportsEveryProbeFailure(self) -> None:
+        self.mode = "bad_status"
+        results = enforcement.check(
+            self.request, self.expired_headers, allow_loopback_http=True
+        )
+        self.assertEqual(len(self.requests), 5)
+        self.assertEqual(len(results), 5)
+        self.assertTrue(
+            all(result.status == 0 and result.passed is False for result in results)
+        )
+        self.assertTrue(all(result.detail == "connection failed" for result in results))
+
+    def testCheck_whenJwtPayloadDeeplyNested_rejectsBeforeNetwork(self) -> None:
+        payload = (
+            base64.urlsafe_b64encode(("[" * 10000 + "0" + "]" * 10000).encode())
+            .decode()
+            .rstrip("=")
+        )
+        request = enforcement.ProbeRequest(
+            self.request.url,
+            self.request.method,
+            self.request.body,
+            {
+                **self.request.headers,
+                "X-Integrity-Token": f"header.{payload}.signature",
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "invalid fixture JWT payload"):
+            enforcement.check(request, self.expired_headers, allow_loopback_http=True)
+        self.assertEqual(self.requests, [])
+
+    def testMain_whenFixtureDeeplyNested_returnsConfigurationError(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = pathlib.Path(directory) / "fixture.json"
+            fixture.write_text("[" * 10000 + "0" + "]" * 10000)
+            output = io.StringIO()
+            with (
+                mock.patch("sys.argv", ["enforcement", str(fixture)]),
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(enforcement.main(), 2)
+            self.assertEqual(
+                json.loads(output.getvalue()),
+                {
+                    "passed": False,
+                    "error": "invalid or unreadable fixture/configuration",
+                },
+            )
 
     def testCheck_whenEnvironmentProxyConfigured_sendsCredentialsOnlyToTarget(
         self,
