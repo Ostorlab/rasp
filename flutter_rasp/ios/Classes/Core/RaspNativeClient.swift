@@ -82,7 +82,8 @@ private actor IOSCore {
             while !Task.isCancelled {
                 do { try await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000) } catch { break }
                 guard !Task.isCancelled else { break }
-                _ = try? await self?.scan()
+                guard let self else { break }
+                _ = try? await self.scan()
             }
         }
     }
@@ -189,23 +190,22 @@ private actor IOSCore {
         let policy = defaults.merging(config["policy"] as? [String: [String]] ?? [:]) { _, new in new }
         let dev = config["devMode"] as? Bool == true
         let configured = threats.sorted().map { ["type": $0, "reactions": dev ? ["report"] : (policy[$0] ?? ["report"])] as [String: Any] }
-        let reactions = Set(configured.flatMap { $0["reactions"] as? [String] ?? [] })
+        let decision = ScanDecision(signals: signals, configured: configured, previous: lastThreats, sensitive: sensitive)
+        let reactions = decision.reactions
         if !dev {
             if !threats.isDisjoint(with: Set(config["wipeOnThreats"] as? [String] ?? [])) {
                 degraded = true; session = nil; try store.clear()
             }
             if reactions.contains("silentDegrade") || reactions.contains("closeApp") { degraded = true; session = nil }
         }
-        if sensitive || reactions.contains("secureScreen") {
-            await MainActor.run { IOSScreenProtector.shared.setEnabled(true) }
-        }
+        await MainActor.run { IOSScreenProtector.shared.setEnabled(decision.secureScreen) }
         guard epoch == generation else { throw RaspError.invalid("scan superseded") }
         let risk = !threats.isDisjoint(with: ["tamper", "hooking", "debugger", "screenRecording"]) ? "high" : threats.isEmpty ? "none" : "medium"
         let report: [String: Any] = ["riskLevel": risk, "threats": configured, "signals": signals, "timestamp": nowMillis]
-        let newThreats = threats.subtracting(lastThreats)
+        let newThreats = decision.newThreats
         lastThreats = threats
         if !newThreats.isEmpty {
-            let item: [String: Any] = ["riskLevel": risk, "newThreats": newThreats.sorted(), "reactions": reactions.sorted(), "signals": signals, "timestamp": nowMillis]
+            let item: [String: Any] = ["riskLevel": risk, "newThreats": newThreats.sorted(), "reactions": decision.newReactions.sorted(), "signals": decision.newSignals, "timestamp": nowMillis]
             history = Array((history + [item]).suffix(500)); try persistHistory()
             let delay = UInt64((config["reactionDelayMillis"] as? NSNumber)?.int64Value ?? 4000)
             let identifier = UUID()

@@ -50,13 +50,25 @@ Review regression verification: 24 JVM tests passed (expired-cache revision reco
 
 Secure-store recovery regression: all 24 JVM tests and 9 Dart tests passed again, with clean Flutter analysis. Real AES-GCM tests confirm that leftover ciphertext after wrapping-key invalidation and tampered entries are deleted and read as absent; a new value can then be stored and retrieved. The three recovery assertions fail against the prior implementation with `AEADBadTagException`.
 
-## iOS
+## iOS build and API
 
 The private Swift package is `flutter_rasp/ios`, and the CocoaPods Flutter adapter compiles the same core sources. iOS 14+ is required. Core cryptographic contracts are also testable on Linux with Apple's swift-crypto 3.12.3; Apple-only APIs require Xcode and are separately compiled in the macOS CI job.
 
-Enable the App Attest capability for your registered App ID and provision the entitlement `com.apple.developer.devicecheck.appattest-environment` for your intended environment. The SDK checks service support and surfaces Apple errors. Enrollment is explicit: `appAttestBind(nonce)` -> send returned body to `/v1/ios/bind` -> only after success call `confirmAppAttestBinding(keyId)`. `prepareAppAttestToken(nonce)` returns the complete token-route body with the new session key covered by an App Attest assertion. App Attest does not establish per-use biometric authorization; iOS tokens correctly carry `uauth=false`.
+Enable the App Attest capability for your registered App ID and provision the entitlement `com.apple.developer.devicecheck.appattest-environment` for your intended environment. The SDK checks service support and surfaces Apple errors. Enrollment is explicit:
 
-The iOS engine scans jailbreak artifacts, sandbox escape writes, debugger status, loaded instrumentation libraries, environment injection and screen capture status. Signed policies use the Android wire format and monotonic revisions. SecureStore uses device-only, unlocked Keychain storage for the envelope wrapping key. `wipeOnThreats` destroys that key immediately. `silentDegrade` disables signing/storage; `closeApp` on iOS degrades and emits the configured event instead of terminating the process. Public APIs obscure captured and background content; they cannot guarantee screenshot prevention. Android-only fraud signals and Play Integrity are not synthesized on iOS.
+1. Call `appAttestBind(nonce)`.
+2. POST the returned body to `/v1/ios/bind`.
+3. Only after success, call `confirmAppAttestBinding(keyId)`.
+
+`prepareAppAttestToken(nonce)` returns the complete token-route body with the new session key covered by an App Attest assertion. App Attest does not establish per-use biometric authorization; iOS tokens correctly carry `uauth=false`.
+
+- **Detection signals:** jailbreak artifacts, sandbox escape writes, debugger status, loaded instrumentation libraries, environment injection and screen capture status.
+- **Policy:** Android wire format and monotonic revisions.
+- **Storage:** device-only, unlocked Keychain storage for the envelope wrapping key.
+- **Reactions:** `wipeOnThreats` destroys the wrapping key immediately; `silentDegrade` disables signing/storage; `closeApp` degrades and emits the configured event because iOS has no supported force-close API.
+- **Screen capture:** public APIs obscure captured and background content; they cannot guarantee screenshot prevention.
+
+Android-only fraud signals and Play Integrity are not synthesized on iOS.
 
 Build-time self-integrity uses selected bounded file regions, including executable code and resources. After linking, specify regions in a private JSON file, for example `[{"path":"Runner","offset":12345,"length":4096}]`. Choose immutable code/resource sections, excluding the code-signature blob and the manifest itself. Run:
 
@@ -66,8 +78,8 @@ node flutter_rasp/tool/ios_manifest.mjs APP_BUNDLE regions.json APP_BUNDLE/RaspB
 
 Register the private server manifest with `BuildRegistry.register_manifest`, then sign/package the final app. Each runtime measurement derives the report key as `HMAC(buildKey, measuredIntegrityRoot)`; modified protected bytes yield an unregistered key. The client manifest contains build key material and must never be committed. This reference does not claim white-box key hiding or automatic Mach-O section selection. Keychain data keys currently do not incorporate this integrity root.
 
-Local iOS validation: portable Swift signature/policy/integrity tests and Node manifest tests execute on Linux; all Apple-target Swift files undergo parser validation. Full UIKit/DeviceCheck typechecking, Flutter CocoaPods linkage, signed-device App Attest and iOS device detector behavior require the macOS CI/deployment checks and are not claimed as locally tested.
+Earlier portable iOS verification completed: 6 Swift tests passed using real P-256/AES-capable Apple swift-crypto; the Node manifest registration test passed; all Swift files parsed for the arm64 iOS14 target. Flutter analysis and 9 channel/model tests remained green. Swift parser validation is not Apple SDK typechecking. The macOS CI job gates UIKit/DeviceCheck typechecking and Flutter CocoaPods linkage; signed-device App Attest and iOS detector behavior require separate deployment checks.
 
-Portable iOS verification completed: 4 Swift tests passed using real P-256/AES-capable Apple swift-crypto; Node manifest registration test passed; all Swift files parsed for the arm64 iOS14 target. Flutter analysis and 9 channel/model tests remained green. Swift parser validation is not Apple SDK typechecking.
+The lifecycle revision adds two portable scan-decision tests, bringing the Swift suite to 8 tests: secure-screen state clears when its threat disappears, and events exclude persistent threats' signals and reactions. This revision passed the Node manifest test, all 9 Dart tests and Flutter analysis locally. The local host has no Swift or Apple SDK toolchain, so the revised Swift suite and Apple builds await the macOS CI gate.
 
-Reviewed iOS lifecycle behavior: general pinned requests fail while degraded. Enrollment writes are generation-guarded across Apple callbacks; stop/unbind cancel pending enrollment completion. New-threat notifications respect `reactionDelayMillis` (0–60000), are cancelled on stop/policy replacement, and recheck the active generation before delivery. Key deletion and session invalidation occur immediately when a threat is accepted. iOS `closeApp` disables protected operations and reports the reaction; it does not terminate the host application. Suspended attestation-service regression tests exercise stop and unbind before Apple completion.
+Reviewed iOS lifecycle behavior: general pinned requests fail while degraded. Enrollment writes are generation-guarded across Apple callbacks; stop/unbind cancel pending enrollment completion. New-threat notifications respect `reactionDelayMillis` (0–60000), are cancelled on stop/policy replacement, and recheck the active generation before delivery. Key deletion and session invalidation occur immediately when a threat is accepted. Suspended attestation-service regression tests exercise stop and unbind before Apple completion.

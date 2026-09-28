@@ -27,3 +27,4 @@ integrity_regions.h
 .build/
 .swiftpm/
 RaspBuild.json
+private-server-manifest.json

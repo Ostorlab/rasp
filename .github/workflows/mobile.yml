@@ -45,6 +45,7 @@ jobs:
       - name: Core crypto tests and iOS typecheck
         working-directory: flutter_rasp/ios
         run: |
+          node --test ../tool/ios_manifest.test.mjs
           swift test
           xcodebuild -scheme RaspCore -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/rasp-ios-build" CODE_SIGNING_ALLOWED=NO build
       - name: Install pinned Flutter
