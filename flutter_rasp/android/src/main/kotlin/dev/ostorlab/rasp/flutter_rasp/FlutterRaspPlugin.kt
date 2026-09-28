@@ -138,7 +138,4 @@ class FlutterRaspPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
         client.activity = null
     }
 
-    companion object {
-        private const val CLOSE_DELAY_MILLIS = 4000L
-    }
 }

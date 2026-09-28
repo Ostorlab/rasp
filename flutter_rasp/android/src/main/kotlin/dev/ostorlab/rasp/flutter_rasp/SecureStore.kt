@@ -3,6 +3,7 @@ package dev.ostorlab.rasp.flutter_rasp
 import java.io.File
 import java.security.MessageDigest
 import java.security.SecureRandom
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
@@ -42,9 +43,15 @@ class SecureStore(private val directory: File, private val wrappingKey: StoreKey
         val bytes = file.readBytes()
         require(bytes[0] == 1.toByte()) { "unsupported secure entry" }
         val aad = name.toByteArray(Charsets.UTF_8)
-        val dataKey = decrypt(wrappingKey.key(), bytes.copyOfRange(1, 61), aad)
-        return try { decrypt(SecretKeySpec(dataKey, "AES"), bytes.copyOfRange(61, bytes.size), aad) }
-        finally { dataKey.fill(0) }
+        return try {
+            val dataKey = decrypt(wrappingKey.key(), bytes.copyOfRange(1, 61), aad)
+            try { decrypt(SecretKeySpec(dataKey, "AES"), bytes.copyOfRange(61, bytes.size), aad) }
+            finally { dataKey.fill(0) }
+        } catch (_: AEADBadTagException) {
+            // A wiped wrapping key or tampering makes this entry permanently unreadable.
+            check(file.delete()) { "cannot delete invalid secure entry" }
+            null
+        }
     }
 
     @Synchronized fun delete(name: String) {
