@@ -103,6 +103,52 @@ class EnforcementTest(unittest.TestCase):
         self.assertNotIn("x-integrity-token", self.requests[0])
         self.assertEqual(self.requests[0]["authorization"], "Bearer test-account")
 
+    def testCheck_whenHeadersContainIllegalControls_rejectsBeforeNetwork(self) -> None:
+        values = [chr(code) for code in range(32) if code != 9] + [chr(127), chr(256)]
+        for value in values:
+            with self.subTest(code=ord(value)):
+                request = enforcement.ProbeRequest(
+                    self.request.url,
+                    self.request.method,
+                    self.request.body,
+                    {**self.request.headers, "X-Fixture": "before" + value + "after"},
+                )
+                with self.assertRaisesRegex(
+                    ValueError, "invalid or duplicate request header"
+                ):
+                    enforcement.check(
+                        request, self.expired_headers, allow_loopback_http=True
+                    )
+                self.assertEqual(self.requests, [])
+
+    def testCheck_whenHeadersContainTabOrLatinOne_accepts(self) -> None:
+        request = enforcement.ProbeRequest(
+            self.request.url,
+            self.request.method,
+            self.request.body,
+            {**self.request.headers, "X-Fixture": "before\tafter-é"},
+        )
+        expired = {**self.expired_headers, "X-Fixture": "before\tafter-é"}
+        results = enforcement.check(request, expired, allow_loopback_http=True)
+        self.assertTrue(all(result.passed for result in results))
+        self.assertEqual(self.requests[0]["x-fixture"], "before\tafter-é")
+
+    def testCheck_whenPortMalformed_rejectsBeforeOpeningConnection(self) -> None:
+        for authority in ["127.0.0.1:invalid", "127.0.0.1:65536", "127.0.0.1:-1"]:
+            for scheme in ["http", "https"]:
+                with self.subTest(authority=authority, scheme=scheme):
+                    request = enforcement.ProbeRequest(
+                        f"{scheme}://{authority}/",
+                        self.request.method,
+                        self.request.body,
+                        self.request.headers,
+                    )
+                    with self.assertRaisesRegex(ValueError, "invalid endpoint port"):
+                        enforcement.check(
+                            request, self.expired_headers, allow_loopback_http=True
+                        )
+                    self.assertEqual(self.requests, [])
+
     def testCheck_whenHttpStatusMalformed_reportsEveryProbeFailure(self) -> None:
         self.mode = "bad_status"
         results = enforcement.check(
