@@ -22,3 +22,8 @@ build_seed.h
 build_manifest.json
 wbaes_tables.h
 integrity_regions.h
+
+# Swift dependency/build caches and generated per-build iOS key material
+.build/
+.swiftpm/
+RaspBuild.json

@@ -36,6 +36,8 @@ flutter:
       android:
         package: dev.ostorlab.rasp.flutter_rasp
         pluginClass: FlutterRaspPlugin
+      ios:
+        pluginClass: FlutterRaspPlugin
 
   # To add assets to your plugin package, add an assets section, like this:
   # assets:

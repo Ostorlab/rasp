@@ -100,6 +100,24 @@ class Rasp {
   static Future<void> setSensitiveScreen(bool enabled) =>
       _channel.invokeMethod<void>('setSensitiveScreen', {'enabled': enabled});
 
+  /// Generates a real App Attest enrollment object for `/v1/ios/bind` (iOS only).
+  static Future<Map<String, Object?>> appAttestBind(String nonce) async =>
+      (await _channel.invokeMapMethod<String, Object?>('appAttestBind', {
+        'nonce': nonce,
+      }))!;
+
+  /// Call only after the trust service accepts the returned enrollment object.
+  static Future<void> confirmAppAttestBinding(String keyId) =>
+      _channel.invokeMethod<void>('confirmAppAttestBinding', {'keyId': keyId});
+
+  /// Produces the complete `/v1/ios/token` body using an App Attest assertion.
+  static Future<Map<String, Object?>> prepareAppAttestToken(
+    String nonce,
+  ) async => (await _channel.invokeMapMethod<String, Object?>(
+    'prepareAppAttestToken',
+    {'nonce': nonce},
+  ))!;
+
   /// Whether this install already holds a bound device key.
   static Future<bool> isDeviceBound() async =>
       await _channel.invokeMethod<bool>('isDeviceBound') ?? false;

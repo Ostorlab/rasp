@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 
 import 'package:flutter_rasp/flutter_rasp.dart';
@@ -87,6 +88,15 @@ class BankApi {
 
   /// Binds this install to a hardware-backed key attested for the trust service's challenge.
   Future<void> _bind() async {
+    if (Platform.isIOS) {
+      final challenge = await _challenge('ios-bind');
+      final binding = await Rasp.appAttestBind(challenge['nonce']! as String);
+      final (result, _) = await _post('/v1/ios/bind', binding, ok: {201});
+      await Rasp.confirmAppAttestBinding(binding['keyId']! as String);
+      deviceSecurityLevel = result['securityLevel'] as String?;
+      userAuthRequired = false;
+      return;
+    }
     final challenge = await _challenge('bind');
     final binding = await Rasp.bindDevice(
       Uint8List.fromList(base64Decode(challenge['nonce']! as String)),
@@ -99,7 +109,9 @@ class BankApi {
         'nonce': challenge['nonce'],
         'publicKey': binding.publicKey,
         'certificateChain': binding.certificateChain,
-        'playIntegrityToken': ?await _playIntegrityToken(challenge['nonce']! as String),
+        'playIntegrityToken': ?await _playIntegrityToken(
+          challenge['nonce']! as String,
+        ),
       },
       ok: {201},
     );
@@ -109,6 +121,14 @@ class BankApi {
 
   /// Authorizes and fetches a short-lived integrity token. The biometric prompt shows [confirmationText].
   Future<String> _token(String confirmationText) async {
+    if (Platform.isIOS) {
+      final challenge = await _challenge('ios-token');
+      final authorization = await Rasp.prepareAppAttestToken(
+        challenge['nonce']! as String,
+      );
+      final (result, _) = await _post('/v1/ios/token', authorization);
+      return result['token']! as String;
+    }
     final challenge = await _challenge('token');
     final nonce = challenge['nonce']! as String;
     final auth = await Rasp.prepareToken(
