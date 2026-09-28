@@ -5,7 +5,7 @@ Status of the RASP platform against the design document. Legend: **[x]** done, *
 The current scope is Android + a trust service. "Verified" means covered by tests that run in this repo
 (Python + native host); Kotlin/Dart client code is written but not yet compiled or run on-device.
 
-## Done (merged on `main`)
+## Implemented in this PR and its base
 
 ### Trust service (design §3, §7)
 - [x] Single-use challenges bound to an install (`POST /v1/challenge`).
@@ -121,7 +121,7 @@ The current scope is Android + a trust service. "Verified" means covered by test
   with no on-device branch. Cross-language KAT: the native runtime root equals the build-time root over the
   same `.so`, and a flipped byte changes both; the token route accepts a derived seal and refuses a raw one.
   Remaining: run the `dladdr` self-location path on-device (host tests cover the root computation, not the
-  device self-location).
+  device self-location), resource/`libapp.so` hashing, and folding integrity roots into data keys.
 - [~] White-box crypto (build key, no-hardware devices; DCA/DFA countermeasures). Plain white-box AES-128
   (Chow tables) implemented: `aes.py` reference (FIPS-197), `whitebox.py` table generator, native `wbaes.c`
   evaluator; the key is not a contiguous literal, cross-language KAT-verified. **Not key-hiding yet** — the
@@ -131,9 +131,6 @@ The current scope is Android + a trust service. "Verified" means covered by test
   framed `nonce||ciphertext||tag`; `open` verifies the tag in constant time before decrypting. CMAC is
   RFC-4493 KAT-verified and cross-language tested (C == Python; tamper rejected both sides). Missing: key
   wipe-on-critical, and the Kotlin/Dart API surface (JNI binding + method channel).
-- [~] Code-tamper hashing folded into keys. Compiled `.so` code/read-only region hashes are folded into
-  the live report key end-to-end, as described above. Remaining: resource/`libapp.so` hashing and folding
-  integrity roots into data keys.
 
 ### Control plane (design §10)
 - [ ] OTA signed policy delivery (detector params, thresholds, reactions, pins, allowlists) — currently all
@@ -158,9 +155,10 @@ The current scope is Android + a trust service. "Verified" means covered by test
 ### Validation and DX (design §12, §13, §15)
 - [ ] Red-team bypass regression suite on a device farm (Frida forks, hidden root/jailbreak, attestation
   spoofing/relay, static patching).
-- [ ] Enforcement checker (calls endpoints with no/expired/replayed token before go-live).
-- [ ] CI integrations, build gate on coverage/size, crash-mapping upload.
-- [ ] Performance/size budgets measured on reference devices.
+- [x] Enforcement checker with valid positive control and missing/expired/replayed-token probes.
+- [x] Core CI, coverage floors, native compilation and host binary-size gate.
+- [ ] Private crash-mapping upload.
+- [~] Size/latency budget tooling implemented; physical reference-device measurements remain missing.
 
 ### Housekeeping
-- [ ] Choose and add a license (`flutter_rasp/LICENSE` is still a TODO placeholder).
+- [x] Proprietary license notices in the repository and Flutter SDK.
