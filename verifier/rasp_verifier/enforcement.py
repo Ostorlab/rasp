@@ -167,7 +167,7 @@ def check(
         ("valid_request", current),
         ("replayed_request", current),
     ]
-    opener = urllib.request.build_opener(_NoRedirect())
+    opener = urllib.request.build_opener(_NoRedirect(), urllib.request.ProxyHandler({}))
     results: list[ProbeResult] = []
     for name, headers in cases:
         probe = urllib.request.Request(
