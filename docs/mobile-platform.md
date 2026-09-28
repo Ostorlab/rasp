@@ -1,5 +1,7 @@
 # Mobile platform implementation
 
+The mobile platform is a proprietary Android/Flutter RASP client with pinned HTTPS, signed OTA policies, erasable Keystore-backed storage and Play Integrity, plus an iOS App Attest protocol for protecting application operations.
+
 All SDK packages are proprietary and intended for private distribution only.
 
 Implementation sequence:
@@ -10,7 +12,7 @@ Implementation sequence:
 
 Policy wire contract: `{kid,payload,signature}`. Payload and raw 64-byte ES256 signature are base64url; signature covers exact decoded payload bytes. Payload contains `tenantId`, `appId`, increasing integer `revision`, Unix-second `issuedAt` and `expiresAt`, and `config`. Verification keys are bootstrap P-256 SPKI keys indexed by `kid`.
 
-App Attest bind: `POST /v1/ios/bind` with `{installId,nonce,keyId,attestationObject}`; clientDataHash is SHA256 of UTF-8 nonce. Token: `POST /v1/ios/token` with `{installId,nonce,keyId,assertion,sealedReport,sessionPublicKey}`; assertion covers SHA256 of `rasp-token-1\n{nonce}\n{sealedReport.mac}\n{sessionJkt}`. Challenge purposes are `ios-bind` and `ios-token`.
+App Attest bind: `POST /v1/ios/bind` with `{installId,nonce,keyId,attestationObject}`; clientDataHash is SHA256 of UTF-8 nonce. Token: `POST /v1/ios/token` with `{installId,nonce,keyId,assertion,sealedReport,sessionPublicKey}`; assertion covers SHA256 of `rasp-token-1\n{nonce}\n{sealedReport.mac}\n{sessionJkt}`. `sessionPublicKey` is a base64-encoded P-256 SPKI DER key. `sessionJkt` is its RFC 7638 JWK thumbprint: convert to the EC JWK with base64url 32-byte `x` and `y` coordinates, then base64url-encode SHA256 of the UTF-8 JSON `{"crv":"P-256","kty":"EC","x":"...","y":"..."}` with that member order and no whitespace. Challenge purposes are `ios-bind` and `ios-token`.
 
 ## Android build and API
 
@@ -38,10 +40,12 @@ Policy signatures cover decoded payload bytes before parsing. Trusted keys and t
 
 Live Play Integrity needs a configured project and a suitable enrolled device. Device-farm bypass coverage, performance budgets and App Attest enrollment are separate deployment checks; source/unit validation is not evidence that those checks passed. No public package publication is configured.
 
-Local Android verification: Flutter analyzer clean; 9 Dart tests passed; 20 Kotlin JVM tests passed, including an actual TLS server where invalid leaf pins and hostname mismatch deliver zero HTTP requests; Android debug APK assembled across the configured native ABIs. Device integration status is recorded separately below.
+Local Android verification: Flutter analyzer clean; 9 Dart tests passed; Kotlin JVM tests included an actual TLS server where invalid leaf pins and hostname mismatch deliver zero HTTP requests (see the regression verification below for the run count); Android debug APK assembled across the configured native ABIs. Device integration status is recorded separately below.
 
-API35 emulator verification passed (`flutter test integration_test/mobile_client_test.dart -d emulator-5556`): actual JNI native scan loads, Android Keystore envelope values round-trip including binary bytes, delete/clear work, and cleartext/unconfigured HTTPS requests are rejected. Emulator was run read-only; no live Google attestation project was used.
+API35 emulator verification passed (`flutter test integration_test/mobile_client_test.dart -d emulator-5556`): actual JNI native scan loads, Android Keystore envelope values round-trip including binary bytes, delete/clear work, and cleartext/unconfigured HTTPS requests are rejected. No live Google attestation project was used.
 
 Expired cached envelopes retain their verified revision while the engine initializes from bootstrap configuration. Token signing, storage and general network requests remain blocked until a newer, current policy is applied. `refreshPolicy(url)` fetches only a signed policy over bootstrap-pinned HTTPS and cannot return resource data. Staged deployments must publish a higher recovery revision before a cohort's policy expires; older stable policies are never accepted as rollback. Engine replacement cancels old reaction generations, including UI callbacks already posted.
 
 Review regression verification: 24 JVM tests passed (expired-cache revision recovery, immediate wrapping-key invalidation, pending and already-dispatched reaction cancellation), 9 Dart tests passed, analyzer clean, and 2 API35 emulator cases passed including a real expired signed cache -> blocked guard/storage -> newer signed policy -> successful storage -> rollback rejection sequence.
+
+Secure-store recovery regression: all 24 JVM tests and 9 Dart tests passed again, with clean Flutter analysis. Real AES-GCM tests confirm that leftover ciphertext after wrapping-key invalidation and tampered entries are deleted and read as absent; a new value can then be stored and retrieved. The three recovery assertions fail against the prior implementation with `AEADBadTagException`.
