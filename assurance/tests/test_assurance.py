@@ -58,6 +58,11 @@ class CrashMapTest(unittest.TestCase):
 
 
 class EvidenceTest(unittest.TestCase):
+    def testExport_whenReportIsNotObject_rejects(self) -> None:
+        for report in ([], None, "text"):
+            with self.subTest(report=report), self.assertRaises(TypeError):
+                evidence.export(report, "a" * 64, "android")
+
     def testExport_whenSignalPresent_mapsAndRedactsEvidence(self) -> None:
         report = evidence.export(
             {

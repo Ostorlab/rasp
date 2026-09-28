@@ -34,6 +34,8 @@ CONTROLS: dict[str, tuple[str, str, str]] = {
 def export(
     report: dict[str, typing.Any], artifact_sha256: str, platform: str
 ) -> dict[str, typing.Any]:
+    if not isinstance(report, dict):
+        raise TypeError("report must be an object")
     if platform not in {"android", "ios"} or len(artifact_sha256) != 64:
         raise ValueError("platform and SHA-256 required")
     signals = report.get("signals")
