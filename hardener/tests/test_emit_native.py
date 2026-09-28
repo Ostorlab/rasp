@@ -16,9 +16,11 @@ import subprocess
 import tempfile
 import unittest
 
-from rasp_hardener import emit, guardmesh
-from rasp_hardener.emit import DEFAULT_STRINGS
-from rasp_hardener.seed import SEED_LEN, BuildProfile
+from rasp_hardener import emit
+from rasp_hardener import guardmesh
+from rasp_hardener import literals
+from rasp_hardener import strenc
+from rasp_hardener import seed
 
 CPP = pathlib.Path(__file__).resolve().parents[2] / "flutter_rasp" / "android" / "src" / "main" / "cpp"
 
@@ -26,23 +28,17 @@ HARNESS = r"""
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "build_seed.h"
+#include "literals.h"
 #include "strobf.h"
 #include "guard.h"
 #include "sha256.h"
 
-static void decode(const uint8_t *cipher, size_t len, int idx) {
-    char buf[512];
-    rasp_strobf_decode(cipher, len, idx, RASP_STRING_KEY, buf);
-    printf("%s\n", buf);
-}
-
 int main(int argc, char **argv) {
-    decode(RASP_STR_TARGET_CLASS, RASP_STR_TARGET_CLASS_LEN, RASP_STR_TARGET_CLASS_IDX);
-    decode(RASP_STR_M_SCAN, RASP_STR_M_SCAN_LEN, RASP_STR_M_SCAN_IDX);
-    decode(RASP_STR_M_SEAL, RASP_STR_M_SEAL_LEN, RASP_STR_M_SEAL_IDX);
-    decode(RASP_STR_SIG_SCAN, RASP_STR_SIG_SCAN_LEN, RASP_STR_SIG_SCAN_IDX);
-    decode(RASP_STR_SIG_SEAL, RASP_STR_SIG_SEAL_LEN, RASP_STR_SIG_SEAL_IDX);
+    for (int slot = 0; slot < RASP_SLOT_COUNT; slot++) {
+        char buf[RASP_LIT_MAXLEN + 1];
+        rasp_lit_decode(slot, buf);
+        printf("%s\n", buf);
+    }
 
     if (argc > 1) {
         static uint8_t bufs[16][512];
@@ -73,33 +69,34 @@ int main(int argc, char **argv) {
 @unittest.skipUnless(CPP.is_dir(), "native sources not present")
 class EmitNativeInterop(unittest.TestCase):
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         cls.tmp = pathlib.Path(tempfile.mkdtemp())
-        cls.profile = BuildProfile.derive(bytes(range(SEED_LEN)))
-        (cls.tmp / "build_seed.h").write_text(emit.render_build_seed_h(cls.profile))
+        cls.profile = seed.BuildProfile.derive(bytes(range(seed.SEED_LEN)))
+        cls.lits = literals.with_build_key(literals.parse_literals(CPP / "literals.def"), cls.profile.build_key_hex)
+        emit.emit_headers(cls.profile, cls.tmp, cls.lits)
         harness = cls.tmp / "harness.c"
         harness.write_text(HARNESS)
         cls.binary = cls.tmp / "harness"
         compiler = shutil.which("cc") or shutil.which("gcc")
         subprocess.run(
             [compiler, "-I", str(cls.tmp), "-I", str(CPP), str(harness),
-             str(CPP / "strobf.c"), str(CPP / "guard.c"), str(CPP / "sha256.c"), "-o", str(cls.binary)],
+             str(CPP / "strobf.c"), str(CPP / "literals.c"), str(CPP / "guard.c"), str(CPP / "sha256.c"), "-o", str(cls.binary)],
             check=True, capture_output=True,
         )
 
     @classmethod
-    def tearDownClass(cls):
+    def tearDownClass(cls) -> None:
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def run_harness(self, *args):
         result = subprocess.run([str(self.binary), *args], check=True, capture_output=True, text=True)
         return result.stdout.splitlines()
 
-    def test_generated_strings_decode_on_c_side(self):
+    def test_generated_strings_decode_on_c_side(self) -> None:
         lines = self.run_harness()
-        self.assertEqual(lines[: len(DEFAULT_STRINGS)], list(DEFAULT_STRINGS.values()))
+        self.assertEqual(lines, [lit.text.decode("ascii") for lit in self.lits])
 
-    def test_c_guard_mesh_matches_python(self):
+    def test_c_guard_mesh_matches_python(self) -> None:
         region_hex = ["deadbeef", "00", "", "0102030405"]
         lines = self.run_harness(*region_hex)
         guard_line = next(line for line in lines if line.startswith("GUARD "))

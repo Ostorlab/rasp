@@ -1,6 +1,9 @@
 #ifndef RASP_SECURESTORE_H
 #define RASP_SECURESTORE_H
 
+#include "hardening.h"
+#include "literals.h"
+
 #include <stddef.h>
 #include <stdint.h>
 

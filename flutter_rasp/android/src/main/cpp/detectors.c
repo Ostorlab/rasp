@@ -47,11 +47,12 @@ const char *rasp_match_any(const char *haystack, const char *const *needles, siz
 }
 
 int rasp_parse_tracer_pid(const char *status_text) {
-    const char *line = strstr(status_text, "TracerPid:");
+    RASP_LIT(TRACER_LABEL, lit_tracer_label);
+    const char *line = strstr(status_text, lit_tracer_label);
     if (line == NULL) {
         return -1;
     }
-    return atoi(line + strlen("TracerPid:"));
+    return atoi(line + strlen(lit_tracer_label));
 }
 
 /* Reads a small text file fully. Returns bytes read, or -1. */
@@ -92,24 +93,40 @@ static void for_each_line(const char *path, int (*on_line)(const char *line, voi
 }
 
 void rasp_detect_su_binaries(rasp_signal_list_t *list) {
-    static const char *const paths[] = {
-        "/system/bin/su",       "/system/xbin/su",   "/sbin/su",
-        "/su/bin/su",           "/data/local/su",    "/data/local/bin/su",
-        "/data/local/xbin/su",  "/system/sd/xbin/su", "/vendor/bin/su",
-        "/system/app/Superuser.apk",
+    RASP_LIT(SU_PATH_1, lit_su_path_1);
+    RASP_LIT(SU_PATH_2, lit_su_path_2);
+    RASP_LIT(SU_PATH_3, lit_su_path_3);
+    RASP_LIT(SU_PATH_4, lit_su_path_4);
+    RASP_LIT(SU_PATH_5, lit_su_path_5);
+    RASP_LIT(SU_PATH_6, lit_su_path_6);
+    RASP_LIT(SU_PATH_7, lit_su_path_7);
+    RASP_LIT(SU_PATH_8, lit_su_path_8);
+    RASP_LIT(SU_PATH_9, lit_su_path_9);
+    RASP_LIT(SU_PATH_10, lit_su_path_10);
+    RASP_LIT(ROOT_DIR_1, lit_root_dir_1);
+    RASP_LIT(ROOT_DIR_2, lit_root_dir_2);
+    RASP_LIT(ROOT_DIR_3, lit_root_dir_3);
+    RASP_LIT(ROOT_DIR_4, lit_root_dir_4);
+    RASP_LIT(SIG_SU_BIN, lit_sig_su_bin);
+    RASP_LIT(SIG_ROOT_DIR, lit_sig_root_dir);
+    const char *const paths[] = {
+        lit_su_path_1,       lit_su_path_2,   lit_su_path_3,
+        lit_su_path_4,           lit_su_path_5,    lit_su_path_6,
+        lit_su_path_7,  lit_su_path_8, lit_su_path_9,
+        lit_su_path_10,
     };
-    static const char *const root_dirs[] = {
-        "/data/adb/magisk", "/data/adb/ksu", "/data/adb/ap", "/debug_ramdisk/.magisk",
+    const char *const root_dirs[] = {
+        lit_root_dir_1, lit_root_dir_2, lit_root_dir_3, lit_root_dir_4,
     };
     for (size_t i = 0; i < ARRAY_LEN(paths); i++) {
         if (access(paths[i], F_OK) == 0) {
-            rasp_signals_add(list, RASP_THREAT_ROOT, "native.su_binary", 90, paths[i]);
+            rasp_signals_add(list, RASP_THREAT_ROOT, lit_sig_su_bin, 90, paths[i]);
             break;
         }
     }
     for (size_t i = 0; i < ARRAY_LEN(root_dirs); i++) {
         if (access(root_dirs[i], F_OK) == 0) {
-            rasp_signals_add(list, RASP_THREAT_ROOT, "native.root_manager_dir", 90, root_dirs[i]);
+            rasp_signals_add(list, RASP_THREAT_ROOT, lit_sig_root_dir, 90, root_dirs[i]);
             break;
         }
     }
@@ -138,59 +155,98 @@ static int match_line(const char *line, void *ctx_ptr) {
 }
 
 void rasp_detect_root_mounts(rasp_signal_list_t *list) {
-    static const char *const needles[] = {
-        "magisk", "/data/adb", "core/mirror", "KSU", "APatch", "zygisk",
+    RASP_LIT(MNT_MAGISK, lit_mnt_magisk);
+    RASP_LIT(MNT_DATA_ADB, lit_mnt_data_adb);
+    RASP_LIT(MNT_CORE_MIRROR, lit_mnt_core_mirror);
+    RASP_LIT(MNT_KSU, lit_mnt_ksu);
+    RASP_LIT(MNT_APATCH, lit_mnt_apatch);
+    RASP_LIT(NEEDLE_ZYGISK, lit_needle_zygisk);
+    RASP_LIT(SIG_ROOT_MOUNTS, lit_sig_root_mounts);
+    RASP_LIT(PATH_MOUNTS, lit_path_mounts);
+    const char *const needles[] = {
+        lit_mnt_magisk, lit_mnt_data_adb, lit_mnt_core_mirror, lit_mnt_ksu, lit_mnt_apatch, lit_needle_zygisk,
     };
-    line_match_ctx_t ctx = {list, RASP_THREAT_ROOT, "native.root_mounts", 80, needles, ARRAY_LEN(needles)};
-    for_each_line("/proc/self/mounts", match_line, &ctx);
+    line_match_ctx_t ctx = {list, RASP_THREAT_ROOT, lit_sig_root_mounts, 80, needles, ARRAY_LEN(needles)};
+    for_each_line(lit_path_mounts, match_line, &ctx);
 }
 
 void rasp_detect_selinux_permissive(rasp_signal_list_t *list) {
+    RASP_LIT(PATH_SELINUX, lit_path_selinux);
+    RASP_LIT(SIG_SELINUX, lit_sig_selinux);
+    RASP_LIT(EV_SELINUX, lit_ev_selinux);
     char buf[8];
-    if (read_text_file("/sys/fs/selinux/enforce", buf, sizeof(buf)) > 0 && buf[0] == '0') {
-        rasp_signals_add(list, RASP_THREAT_ROOT, "native.selinux_permissive", 60, "enforce=0");
+    if (read_text_file(lit_path_selinux, buf, sizeof(buf)) > 0 && buf[0] == '0') {
+        rasp_signals_add(list, RASP_THREAT_ROOT, lit_sig_selinux, 60, lit_ev_selinux);
     }
 }
 
 void rasp_detect_emulator_files(rasp_signal_list_t *list) {
-    static const char *const paths[] = {
-        "/dev/qemu_pipe",          "/dev/goldfish_pipe",       "/dev/socket/qemud",
-        "/system/bin/qemu-props",  "/sys/qemu_trace",          "/system/lib/libc_malloc_debug_qemu.so",
-        "/dev/goldfish_address_space",
+    RASP_LIT(EMU_PATH_1, lit_emu_path_1);
+    RASP_LIT(EMU_PATH_2, lit_emu_path_2);
+    RASP_LIT(EMU_PATH_3, lit_emu_path_3);
+    RASP_LIT(EMU_PATH_4, lit_emu_path_4);
+    RASP_LIT(EMU_PATH_5, lit_emu_path_5);
+    RASP_LIT(EMU_PATH_6, lit_emu_path_6);
+    RASP_LIT(EMU_PATH_7, lit_emu_path_7);
+    RASP_LIT(SIG_EMU_FILES, lit_sig_emu_files);
+    const char *const paths[] = {
+        lit_emu_path_1,          lit_emu_path_2,       lit_emu_path_3,
+        lit_emu_path_4,  lit_emu_path_5,          lit_emu_path_6,
+        lit_emu_path_7,
     };
     for (size_t i = 0; i < ARRAY_LEN(paths); i++) {
         if (access(paths[i], F_OK) == 0) {
-            rasp_signals_add(list, RASP_THREAT_EMULATOR, "native.emulator_files", 80, paths[i]);
+            rasp_signals_add(list, RASP_THREAT_EMULATOR, lit_sig_emu_files, 80, paths[i]);
             return;
         }
     }
 }
 
 void rasp_detect_tracer(rasp_signal_list_t *list) {
+    RASP_LIT(PATH_STATUS, lit_path_status);
+    RASP_LIT(FMT_TRACER, lit_fmt_tracer);
+    RASP_LIT(SIG_TRACER, lit_sig_tracer);
     char status[4096];
-    if (read_text_file("/proc/self/status", status, sizeof(status)) <= 0) {
+    if (read_text_file(lit_path_status, status, sizeof(status)) <= 0) {
         return;
     }
     int tracer = rasp_parse_tracer_pid(status);
     if (tracer > 0) {
         char evidence[32];
-        snprintf(evidence, sizeof(evidence), "TracerPid=%d", tracer);
-        rasp_signals_add(list, RASP_THREAT_DEBUGGER, "native.tracer_pid", 95, evidence);
+        snprintf(evidence, sizeof(evidence), lit_fmt_tracer, tracer);
+        rasp_signals_add(list, RASP_THREAT_DEBUGGER, lit_sig_tracer, 95, evidence);
     }
 }
 
 void rasp_detect_instrumentation_maps(rasp_signal_list_t *list) {
-    static const char *const needles[] = {
-        "frida", "gadget", "libgum", "xposed", "lsposed", "substrate", "libriru", "zygisk",
+    RASP_LIT(HOOK_FRIDA, lit_hook_frida);
+    RASP_LIT(HOOK_GADGET, lit_hook_gadget);
+    RASP_LIT(HOOK_LIBGUM, lit_hook_libgum);
+    RASP_LIT(HOOK_XPOSED, lit_hook_xposed);
+    RASP_LIT(HOOK_LSPOSED, lit_hook_lsposed);
+    RASP_LIT(HOOK_SUBSTRATE, lit_hook_substrate);
+    RASP_LIT(HOOK_LIBRIRU, lit_hook_libriru);
+    RASP_LIT(NEEDLE_ZYGISK, lit_needle_zygisk);
+    RASP_LIT(SIG_MAPS, lit_sig_maps);
+    RASP_LIT(PATH_MAPS, lit_path_maps);
+    const char *const needles[] = {
+        lit_hook_frida, lit_hook_gadget, lit_hook_libgum, lit_hook_xposed, lit_hook_lsposed, lit_hook_substrate, lit_hook_libriru, lit_needle_zygisk,
     };
-    line_match_ctx_t ctx = {list, RASP_THREAT_HOOKING, "native.instrumentation_maps", 90, needles,
+    line_match_ctx_t ctx = {list, RASP_THREAT_HOOKING, lit_sig_maps, 90, needles,
                             ARRAY_LEN(needles)};
-    for_each_line("/proc/self/maps", match_line, &ctx);
+    for_each_line(lit_path_maps, match_line, &ctx);
 }
 
 void rasp_detect_instrumentation_threads(rasp_signal_list_t *list) {
-    static const char *const needles[] = {"gum-js-loop", "gmain", "gdbus", "pool-frida"};
-    DIR *tasks = opendir("/proc/self/task");
+    RASP_LIT(THREAD_GUM, lit_thread_gum);
+    RASP_LIT(THREAD_GMAIN, lit_thread_gmain);
+    RASP_LIT(THREAD_GDBUS, lit_thread_gdbus);
+    RASP_LIT(THREAD_POOL, lit_thread_pool);
+    RASP_LIT(PATH_TASK, lit_path_task);
+    RASP_LIT(FMT_COMM, lit_fmt_comm);
+    RASP_LIT(SIG_THREADS, lit_sig_threads);
+    const char *const needles[] = {lit_thread_gum, lit_thread_gmain, lit_thread_gdbus, lit_thread_pool};
+    DIR *tasks = opendir(lit_path_task);
     if (tasks == NULL) {
         return;
     }
@@ -201,13 +257,13 @@ void rasp_detect_instrumentation_threads(rasp_signal_list_t *list) {
         }
         char path[288];
         char comm[64];
-        snprintf(path, sizeof(path), "/proc/self/task/%s/comm", entry->d_name);
+        snprintf(path, sizeof(path), lit_fmt_comm, entry->d_name);
         if (read_text_file(path, comm, sizeof(comm)) <= 0) {
             continue;
         }
         const char *hit = rasp_match_any(comm, needles, ARRAY_LEN(needles));
         if (hit != NULL) {
-            rasp_signals_add(list, RASP_THREAT_HOOKING, "native.instrumentation_threads", 85, hit);
+            rasp_signals_add(list, RASP_THREAT_HOOKING, lit_sig_threads, 85, hit);
             break;
         }
     }
@@ -215,6 +271,8 @@ void rasp_detect_instrumentation_threads(rasp_signal_list_t *list) {
 }
 
 void rasp_detect_instrumentation_port(rasp_signal_list_t *list) {
+    RASP_LIT(SIG_PORT, lit_sig_port);
+    RASP_LIT(EV_PORT, lit_ev_port);
     /* frida-server listens on 127.0.0.1:27042 by default. */
     int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (fd < 0) {
@@ -237,7 +295,7 @@ void rasp_detect_instrumentation_port(rasp_signal_list_t *list) {
     }
     close(fd);
     if (connected) {
-        rasp_signals_add(list, RASP_THREAT_HOOKING, "native.instrumentation_port", 70, "127.0.0.1:27042 open");
+        rasp_signals_add(list, RASP_THREAT_HOOKING, lit_sig_port, 70, lit_ev_port);
     }
 }
 
@@ -262,16 +320,26 @@ static int match_exec_suspicious(const char *line, void *ctx_ptr) {
 }
 
 void rasp_detect_maps_exec_suspicious(rasp_signal_list_t *list) {
-    static const char *const needles[] = {"/data/local/tmp", "memfd:", "(deleted)"};
-    line_match_ctx_t ctx = {list, RASP_THREAT_HOOKING, "native.maps_exec_suspicious", 75, needles,
+    RASP_LIT(EXEC_TMP, lit_exec_tmp);
+    RASP_LIT(EXEC_MEMFD, lit_exec_memfd);
+    RASP_LIT(EXEC_DELETED, lit_exec_deleted);
+    RASP_LIT(SIG_EXEC, lit_sig_exec);
+    RASP_LIT(PATH_MAPS, lit_path_maps);
+    const char *const needles[] = {lit_exec_tmp, lit_exec_memfd, lit_exec_deleted};
+    line_match_ctx_t ctx = {list, RASP_THREAT_HOOKING, lit_sig_exec, 75, needles,
                             ARRAY_LEN(needles)};
-    for_each_line("/proc/self/maps", match_exec_suspicious, &ctx);
+    for_each_line(lit_path_maps, match_exec_suspicious, &ctx);
 }
 
 /* --- Emulator: a second and third independent signal beyond the qemu device files ------------------------- */
 
 int rasp_cpuinfo_is_emulator(const char *cpuinfo) {
-    static const char *const needles[] = {"goldfish", "ranchu", "genymotion", "vbox86", "virtualbox"};
+    RASP_LIT(EMUW_GOLDFISH, lit_emuw_goldfish);
+    RASP_LIT(EMUW_RANCHU, lit_emuw_ranchu);
+    RASP_LIT(EMUW_GENY, lit_emuw_geny);
+    RASP_LIT(EMUW_VBOX86, lit_emuw_vbox86);
+    RASP_LIT(EMUW_VBOX, lit_emuw_vbox);
+    const char *const needles[] = {lit_emuw_goldfish, lit_emuw_ranchu, lit_emuw_geny, lit_emuw_vbox86, lit_emuw_vbox};
     for (size_t i = 0; i < ARRAY_LEN(needles); i++) {
         if (ci_contains(cpuinfo, needles[i])) {
             return 1;
@@ -281,29 +349,40 @@ int rasp_cpuinfo_is_emulator(const char *cpuinfo) {
 }
 
 void rasp_detect_cpuinfo_emulator(rasp_signal_list_t *list) {
+    RASP_LIT(PATH_CPUINFO, lit_path_cpuinfo);
+    RASP_LIT(SIG_CPUINFO, lit_sig_cpuinfo);
+    RASP_LIT(EV_CPUINFO, lit_ev_cpuinfo);
     char buf[8192];
-    if (read_text_file("/proc/cpuinfo", buf, sizeof(buf)) > 0 && rasp_cpuinfo_is_emulator(buf)) {
-        rasp_signals_add(list, RASP_THREAT_EMULATOR, "native.cpuinfo_emulator", 70, "cpuinfo hardware");
+    if (read_text_file(lit_path_cpuinfo, buf, sizeof(buf)) > 0 && rasp_cpuinfo_is_emulator(buf)) {
+        rasp_signals_add(list, RASP_THREAT_EMULATOR, lit_sig_cpuinfo, 70, lit_ev_cpuinfo);
     }
 }
 
 int rasp_ttydrivers_is_emulator(const char *drivers) {
+    RASP_LIT(EMUW_GOLDFISH, lit_emuw_goldfish);
     /* The Android emulator exposes a goldfish tty driver in /proc/tty/drivers. */
-    return ci_contains(drivers, "goldfish");
+    return ci_contains(drivers, lit_emuw_goldfish);
 }
 
 void rasp_detect_ttydrivers_emulator(rasp_signal_list_t *list) {
+    RASP_LIT(PATH_TTY, lit_path_tty);
+    RASP_LIT(SIG_TTY, lit_sig_tty);
+    RASP_LIT(EV_TTY, lit_ev_tty);
     char buf[4096];
-    if (read_text_file("/proc/tty/drivers", buf, sizeof(buf)) > 0 && rasp_ttydrivers_is_emulator(buf)) {
-        rasp_signals_add(list, RASP_THREAT_EMULATOR, "native.ttydrivers_emulator", 70, "goldfish tty");
+    if (read_text_file(lit_path_tty, buf, sizeof(buf)) > 0 && rasp_ttydrivers_is_emulator(buf)) {
+        rasp_signals_add(list, RASP_THREAT_EMULATOR, lit_sig_tty, 70, lit_ev_tty);
     }
 }
 
 /* --- Root-hiding side channel: one of our OWN threads parked in a KernelSU/APatch kernel routine ----------- */
 
 int rasp_wchan_is_suspicious(const char *wchan) {
+    RASP_LIT(WCH_KSU, lit_wch_ksu);
+    RASP_LIT(WCH_KSUD, lit_wch_ksud);
+    RASP_LIT(WCH_APATCH, lit_wch_apatch);
+    RASP_LIT(WCH_APD, lit_wch_apd);
     /* Match specific KernelSU/APatch markers; avoid generic "su" which hits legit kernel threads (e.g. sugov). */
-    static const char *const needles[] = {"kernelsu", "ksud", "apatch", "apd_"};
+    const char *const needles[] = {lit_wch_ksu, lit_wch_ksud, lit_wch_apatch, lit_wch_apd};
     for (size_t i = 0; i < ARRAY_LEN(needles); i++) {
         if (ci_contains(wchan, needles[i])) {
             return 1;
@@ -318,7 +397,10 @@ int rasp_wchan_is_suspicious(const char *wchan) {
  * the root manager hooks), which is a cheap in-process side channel. Broader process-tree scanning is out of
  * scope. */
 void rasp_detect_ksu_wchan(rasp_signal_list_t *list) {
-    DIR *tasks = opendir("/proc/self/task");
+    RASP_LIT(PATH_TASK, lit_path_task);
+    RASP_LIT(FMT_WCHAN, lit_fmt_wchan);
+    RASP_LIT(SIG_WCHAN, lit_sig_wchan);
+    DIR *tasks = opendir(lit_path_task);
     if (tasks == NULL) {
         return;
     }
@@ -329,12 +411,12 @@ void rasp_detect_ksu_wchan(rasp_signal_list_t *list) {
         }
         char path[288];
         char wchan[128];
-        snprintf(path, sizeof(path), "/proc/self/task/%s/wchan", entry->d_name);
+        snprintf(path, sizeof(path), lit_fmt_wchan, entry->d_name);
         if (read_text_file(path, wchan, sizeof(wchan)) <= 0) {
             continue;
         }
         if (rasp_wchan_is_suspicious(wchan)) {
-            rasp_signals_add(list, RASP_THREAT_ROOT, "native.ksu_wchan", 75, wchan);
+            rasp_signals_add(list, RASP_THREAT_ROOT, lit_sig_wchan, 75, wchan);
             break;
         }
     }
@@ -350,6 +432,8 @@ int rasp_selfptrace_is_debugged(long traceme_ret) {
 }
 
 void rasp_detect_self_ptrace(rasp_signal_list_t *list) {
+    RASP_LIT(SIG_PTRACE, lit_sig_ptrace);
+    RASP_LIT(EV_PTRACE, lit_ev_ptrace);
     pid_t child = fork();
     if (child == 0) {
         long r = ptrace(PTRACE_TRACEME, 0, 0, 0);
@@ -361,7 +445,7 @@ void rasp_detect_self_ptrace(rasp_signal_list_t *list) {
             /* retry */
         }
         if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
-            rasp_signals_add(list, RASP_THREAT_DEBUGGER, "native.self_ptrace", 85, "PTRACE_TRACEME denied");
+            rasp_signals_add(list, RASP_THREAT_DEBUGGER, lit_sig_ptrace, 85, lit_ev_ptrace);
         }
     }
 }

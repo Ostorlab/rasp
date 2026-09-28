@@ -24,6 +24,9 @@ class CliTest(unittest.TestCase):
             d = pathlib.Path(d)
             cpp = d / "cpp"
             cpp.mkdir()
+            real_cpp = pathlib.Path(__file__).resolve().parents[2] / "flutter_rasp/android/src/main/cpp"
+            for registry in ["literals.def", "symbols.def"]:
+                shutil.copy(real_cpp / registry, cpp / registry)
             (cpp / "report.c").write_text("int x;\n")  # something to hash
             manifest_path = d / "build_manifest.json"
             rc = cli.main(
@@ -37,7 +40,12 @@ class CliTest(unittest.TestCase):
             profile = BuildProfile.derive(bytes.fromhex(SEED_HEX))
             generated = (cpp / "build_generated.h").read_text()
             self.assertIn(profile.build_id, generated)
-            self.assertIn(profile.build_key_hex, generated)
+            self.assertNotIn(profile.build_key_hex, generated)
+            self.assertNotIn(profile.build_key_hex, (cpp / "build_seed.h").read_text())
+            self.assertNotIn("native.", (cpp / "build_seed.h").read_text())
+            mapping = json.loads((cpp / "symbols.map").read_text())
+            self.assertIn("rasp_seal_report", mapping.values())
+            self.assertIn("#define rasp_seal_report ", (cpp / "build_names.h").read_text())
 
             manifest = json.loads(manifest_path.read_text())
             self.assertEqual(manifest["build_id"], profile.build_id)
@@ -104,6 +112,9 @@ class CliTest(unittest.TestCase):
                            check=True, capture_output=True)
             cpp = d / "cpp"
             cpp.mkdir()
+            real_cpp = pathlib.Path(__file__).resolve().parents[2] / "flutter_rasp/android/src/main/cpp"
+            for registry in ["literals.def", "symbols.def"]:
+                shutil.copy(real_cpp / registry, cpp / registry)
             manifest_path = d / "build_manifest.json"
             rc = cli.main(
                 ["gen-build", "--seed", SEED_HEX, "--cpp-dir", str(cpp), "--so", str(lib),

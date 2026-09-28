@@ -1,6 +1,9 @@
 #ifndef RASP_INTEGRITY_H
 #define RASP_INTEGRITY_H
 
+#include "hardening.h"
+#include "literals.h"
+
 #include <stddef.h>
 #include <stdint.h>
 

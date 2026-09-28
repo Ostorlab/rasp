@@ -1,6 +1,9 @@
 #ifndef RASP_REPORT_H
 #define RASP_REPORT_H
 
+#include "hardening.h"
+#include "literals.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
