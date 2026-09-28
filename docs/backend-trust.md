@@ -1,6 +1,6 @@
 # Backend trust foundation
 
-The verifier supports Android Key Attestation plus Google Play Integrity and a separate iOS App Attest lifecycle. The Android challenge/bind/token wire format remains supported. Tokens now include a mandatory `aud: "rasp-resource"`; issuers, audiences and numeric expiry are validated. Older externally minted fixtures without an audience need updating.
+The verifier supports Android Key Attestation plus Google Play Integrity and a separate iOS App Attest lifecycle. The Android challenge/bind/token wire format remains supported. Tokens now include a mandatory `aud: "rasp-resource"`; issuers, audiences, mandatory numeric issuance/expiry and expiry-after-issuance are validated. Older externally minted fixtures without an audience need updating.
 
 ## Implementation plan and validation
 
@@ -10,7 +10,7 @@ The verifier supports Android Key Attestation plus Google Play Integrity and a s
 - [x] Verify bounded Apple CBOR, certificate chain, nonce, RP ID, environment, credential key and assertion counters; expose explicit iOS routes.
 - [x] Exercise negative cases, concurrent replay, full Android flows and state recreation against PostgreSQL.
 
-Local validation: 161 unittest cases pass with PostgreSQL 16 and a non-owner runtime role. Combined branch coverage is 82%, above the unchanged 80% gate. This includes synthetic cryptographic Apple fixtures and controlled Google decode responses. Live Google credentials, Apple device attestations, receipts/fraud-metric assessment and on-device behavior have **not** been validated. App Attest does not establish biometric enforcement; its tokens carry `uauth=false`, `sec="app_attest"`.
+Local validation: 169 unittest cases pass with PostgreSQL 16 and a non-owner runtime role. Combined branch coverage is 82%, above the unchanged 80% gate. This includes synthetic cryptographic Apple fixtures and controlled Google decode responses. Live Google credentials, Apple device attestations, receipts/fraud-metric assessment and on-device behavior have **not** been validated. App Attest does not establish biometric enforcement; its tokens carry `uauth=false`, `sec="app_attest"`.
 
 ## Service and storage boundaries
 
@@ -67,7 +67,7 @@ Apple verification uses explicitly provisioned App Attest roots, never certifica
 ## iOS client contract
 
 1. `POST /v1/challenge {"installId": ..., "purpose": "ios-bind"}` returns the existing random base64 nonce and 120-second TTL.
-2. App Attest `attestKey` uses `clientDataHash = SHA256(UTF8(nonce))`. Send `POST /v1/ios/bind` with `installId`, `nonce`, `keyId` (Apple base64 identifier), and `attestationObject` (standard base64 CBOR). The server checks Apple certificate/authenticator identity and binds the key once. A reservation retained after a failed bind is intentionally fail-closed and requires explicit administrative recovery.
+2. App Attest `attestKey` uses `clientDataHash = SHA256(UTF8(nonce))`. Send `POST /v1/ios/bind` with `installId`, `nonce`, `keyId` (Apple base64 identifier), and `attestationObject` (standard base64 CBOR). The server checks Apple certificate/authenticator identity and binds the install and key reservation atomically; a failed bind leaves neither a new install nor a key reservation.
 3. For tokens, request a challenge with `purpose: "ios-token"`. Seal the report with that nonce and generate the ephemeral session public key.
 4. Form the exact UTF-8 message below, with no trailing newline; `sessionJkt` is the RFC 7638 P-256 thumbprint:
 

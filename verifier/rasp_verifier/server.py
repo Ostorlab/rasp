@@ -189,7 +189,12 @@ def make_handler(trust: TrustService, bank: BankState):
             if route is None:
                 return self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
             try:
-                length = int(self.headers.get("Content-Length", "0"))
+                lengths = self.headers.get_all("Content-Length", [])
+                if len(lengths) != 1 or self.headers.get("Transfer-Encoding") is not None:
+                    raise ValueError("ambiguous request framing")
+                if lengths[0].isascii() is False or lengths[0].isdecimal() is False:
+                    raise ValueError("invalid content length")
+                length = int(lengths[0])
                 if length > 256 * 1024:
                     return self._send(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "body too large"})
                 raw = self.rfile.read(length) or b"{}"

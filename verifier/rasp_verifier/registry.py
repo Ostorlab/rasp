@@ -112,12 +112,17 @@ class InstallRegistry:
         self.scope = scope
         self._lock = threading.Lock()
         self._installs: dict[str, Install] = {}
+        self._app_attest_keys: set[str] = set()
 
     def bind(self, install: Install) -> None:
         with self._lock:
             if install.install_id in self._installs:
                 raise RegistryError("install_exists", install.install_id)
+            if install.app_attest_key_id != "" and install.app_attest_key_id in self._app_attest_keys:
+                raise RegistryError("key_already_bound")
             self._installs[install.install_id] = install
+            if install.app_attest_key_id != "":
+                self._app_attest_keys.add(install.app_attest_key_id)
 
     def get(self, install_id: str) -> Install:
         with self._lock:

@@ -2,6 +2,7 @@
 
 import base64
 import json
+import socket
 import threading
 import unittest
 import urllib.error
@@ -254,6 +255,13 @@ class ServerTest(unittest.TestCase):
     def testIosRoutes_whenNotConfigured_returnUnavailable(self) -> None:
         self.assertEqual(self.post("/v1/ios/bind", {})[0], 503)
         self.assertEqual(self.post("/v1/ios/token", {})[0], 400)
+
+    def testHttp_whenFramingAmbiguous_rejectsWithoutReadingBody(self) -> None:
+        for framing in ("Content-Length: -1\r\n", "Content-Length: 0\r\nContent-Length: 0\r\n",
+                        "Content-Length: 0\r\nTransfer-Encoding: chunked\r\n", "Transfer-Encoding: chunked\r\n"):
+            with self.subTest(framing=framing), socket.create_connection(("127.0.0.1", self.server.server_port), timeout=2) as client:
+                client.sendall(("POST /v1/challenge HTTP/1.1\r\nHost: localhost\r\n" + framing + "\r\n").encode())
+                self.assertIn(b" 400 ", client.recv(1024).split(b"\r\n")[0])
 
     def test_jwks_is_served(self):
         request = urllib.request.Request(self.base + "/.well-known/jwks.json")

@@ -79,3 +79,17 @@ class PostgresStore:
                 "DO UPDATE SET counter=EXCLUDED.counter WHERE rasp_counters.counter < EXCLUDED.counter RETURNING counter",
                 (self.scope.tenant_id, self.scope.app_id, key_id, counter)).fetchone()
             return row is not None
+
+    def bind_install(self, install_id: str, value: dict[str, typing.Any], key_id: str = "") -> None:
+        with self.transaction() as connection:
+            row = connection.execute(
+                "INSERT INTO rasp_records VALUES (%s,%s,'install',%s,%s) ON CONFLICT DO NOTHING RETURNING record_id",
+                (self.scope.tenant_id, self.scope.app_id, install_id, pg_json.Jsonb(value))).fetchone()
+            if row is None:
+                raise storage.ConflictError("install_exists")
+            if key_id != "":
+                row = connection.execute(
+                    "INSERT INTO rasp_records VALUES (%s,%s,'app_attest_binding',%s,%s) ON CONFLICT DO NOTHING RETURNING record_id",
+                    (self.scope.tenant_id, self.scope.app_id, key_id, pg_json.Jsonb({"installId": install_id}))).fetchone()
+                if row is None:
+                    raise storage.ConflictError("key_already_bound")

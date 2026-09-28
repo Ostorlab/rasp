@@ -198,10 +198,12 @@ def decode_jwt(token: str, jwks_keys: list[dict], *, now: float | None = None, l
     if claims.get("aud") != audience:
         raise JoseError("wrong_audience")
     for name in ("exp", "nbf", "iat"):
-        if name == "exp" or name in claims:
+        if name in ("exp", "iat") or name in claims:
             value = claims.get(name)
             if type(value) not in (int, float) or not (0 <= value <= 9007199254740991) or not math.isfinite(value):
                 raise JoseError("bad_claim", name)
+    if claims["exp"] <= claims["iat"]:
+        raise JoseError("bad_claim", "expiry must follow issuance")
     now = time.time() if now is None else now
     if now >= claims["exp"] + leeway:
         raise JoseError("expired", f"exp={claims['exp']}")

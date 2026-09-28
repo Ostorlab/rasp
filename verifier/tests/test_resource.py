@@ -33,7 +33,7 @@ class DpopProofs(unittest.TestCase):
         return self.signing_key.sign_jwt({
             "iss": "rasp-trust", "aud": "rasp-resource", "sub": "install-1", "app": "com.example",
             "risk": risk, "signals": list(signals), "cnf": {"jkt": jkt or self.jkt},
-            "iat": now, "exp": now + exp_in,
+            "iat": min(now, now + exp_in - 1), "exp": now + exp_in,
         })
 
     def request(self, token, *, method="POST", path="/v1/transfers", body=b'{"amountCents":5000}', counter=1,

@@ -10,13 +10,13 @@ from rasp_verifier import jose
 class ClaimsTest(unittest.TestCase):
     def testDecode_whenRequiredClaimsInvalid_rejects(self) -> None:
         key = jose.SigningKey.generate()
-        claims = {"iss": "rasp-trust", "aud": "rasp-resource", "exp": int(time.time()) + 60}
+        claims = {"iss": "rasp-trust", "aud": "rasp-resource", "iat": int(time.time()), "exp": int(time.time()) + 60}
         mutations = [{"exp": None}, {"exp": True}, {"exp": "9999999999"}, {"exp": float("inf")},
-                     {"iss": "attacker"}, {"aud": "other"}, {"nbf": []}, {"iat": True}]
+                     {"iss": "attacker"}, {"aud": "other"}, {"nbf": []}, {"iat": True}, {"iat": int(time.time()) + 100}, {"exp": int(time.time()) - 1}]
         for mutation in mutations:
             with self.subTest(mutation=mutation), self.assertRaises(jose.JoseError):
                 jose.decode_jwt(key.sign_jwt({**claims, **mutation}), [key.public_jwk()])
-        for required in ("iss", "aud", "exp"):
+        for required in ("iss", "aud", "exp", "iat"):
             bad = dict(claims)
             del bad[required]
             with self.subTest(required=required), self.assertRaises(jose.JoseError):
@@ -29,6 +29,6 @@ class ClaimsTest(unittest.TestCase):
 
     def testDecode_whenNumericDateIsHuge_rejectsCleanly(self) -> None:
         key = jose.SigningKey.generate()
-        claims = {"iss": "rasp-trust", "aud": "rasp-resource", "exp": 10 ** 400}
+        claims = {"iss": "rasp-trust", "aud": "rasp-resource", "iat": int(time.time()), "exp": 10 ** 400}
         with self.assertRaises(jose.JoseError):
             jose.decode_jwt(key.sign_jwt(claims), [key.public_jwk()])

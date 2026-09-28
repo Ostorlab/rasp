@@ -46,3 +46,26 @@ class MemoryStorageTest(unittest.TestCase):
         self.assertTrue(self.other.advance_counter("key", 1))
 
 
+
+    def testBind_whenInstallAlreadyExists_doesNotReserveNewKey(self) -> None:
+        self.store.bind_install("first", {"key": "original"}, "original")
+        with self.assertRaises(storage.ConflictError):
+            self.store.bind_install("first", {"key": "new"}, "new")
+        self.store.bind_install("second", {"key": "new"}, "new")
+        self.assertEqual(self.store.get("app_attest_binding", "new"), {"installId": "second"})
+
+    def testBind_whenKeyAlreadyExists_doesNotCreateNewInstall(self) -> None:
+        self.store.bind_install("first", {}, "key")
+        with self.assertRaises(storage.ConflictError):
+            self.store.bind_install("second", {}, "key")
+        self.assertIsNone(self.store.get("install", "second"))
+
+    def testBind_whenSameKeyRaced_acceptsOneInstall(self) -> None:
+        def bind_once(index: int) -> bool:
+            try:
+                self.store.bind_install(str(index), {}, "shared-key")
+                return True
+            except storage.ConflictError:
+                return False
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            self.assertEqual(sum(executor.map(bind_once, range(20))), 1)

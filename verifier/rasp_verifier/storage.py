@@ -30,6 +30,7 @@ class Store(typing.Protocol):
     def put_challenge(self, nonce: str, purpose: str, install_id: str, expires_at: float) -> None: ...
     def consume_challenge(self, nonce: str, purpose: str, install_id: str, now: float) -> bool: ...
     def advance_counter(self, key_id: str, counter: int) -> bool: ...
+    def bind_install(self, install_id: str, value: dict[str, typing.Any], key_id: str = "") -> None: ...
 
 
 @dataclasses.dataclass
@@ -88,3 +89,18 @@ class MemoryStore:
                 return False
             self._data.counters[key] = counter
             return True
+
+    def bind_install(self, install_id: str, value: dict[str, typing.Any], key_id: str = "") -> None:
+        with self._data.lock:
+            install_key = (self.scope, "install", install_id)
+            binding_key = (self.scope, "app_attest_binding", key_id)
+            if install_key in self._data.records:
+                raise ConflictError("install_exists")
+            if key_id != "" and binding_key in self._data.records:
+                raise ConflictError("key_already_bound")
+            # Prepare copies before mutating shared state.
+            install_value = copy.deepcopy(value)
+            binding_value = {"installId": install_id}
+            self._data.records[install_key] = install_value
+            if key_id != "":
+                self._data.records[binding_key] = binding_value

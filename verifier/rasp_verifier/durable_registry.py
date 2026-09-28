@@ -47,9 +47,9 @@ class InstallRegistry:
         data = dataclasses.asdict(install)
         data["public_key_der"] = base64.b64encode(install.public_key_der).decode()
         try:
-            self.store.put("install", install.install_id, data, insert_only=True)
+            self.store.bind_install(install.install_id, data, install.app_attest_key_id)
         except storage.ConflictError as error:
-            raise registry.RegistryError("install_exists", install.install_id) from error
+            raise registry.RegistryError(str(error), install.install_id) from error
 
     def get(self, install_id: str) -> registry.Install:
         data = self.store.get("install", install_id)

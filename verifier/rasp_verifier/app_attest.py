@@ -107,7 +107,7 @@ def _verify_chain(chain: list[x509.Certificate], roots: list[x509.Certificate]) 
                 if certificate.signature_hash_algorithm is None or certificate.signature_hash_algorithm.name not in ("sha256", "sha384", "sha512"):
                     raise platform.PlatformAttestationError("bad_chain")
                 certificate.verify_directly_issued_by(certificates[index + 1])
-    except (x509.ExtensionNotFound, ValueError, TypeError, exceptions.InvalidSignature, exceptions.UnsupportedAlgorithm) as error:
+    except (x509.ExtensionNotFound, x509.DuplicateExtension, ValueError, TypeError, exceptions.InvalidSignature, exceptions.UnsupportedAlgorithm) as error:
         raise platform.PlatformAttestationError("bad_chain") from error
 
 
@@ -162,7 +162,7 @@ class AppAttestVerifier:
             if len(octets) != 1 or octets[0].cls != der.UNIVERSAL or octets[0].tag != der.OCTET_STRING:
                 raise ValueError("bad nonce octet string")
             nonce = octets[0].value
-        except (x509.ExtensionNotFound, ValueError) as error:
+        except (x509.ExtensionNotFound, x509.DuplicateExtension, ValueError) as error:
             raise platform.PlatformAttestationError("bad_nonce_extension") from error
         if hmac.compare_digest(nonce, hashlib.sha256(auth + client_data_hash).digest()) is False:
             raise platform.PlatformAttestationError("nonce_mismatch")

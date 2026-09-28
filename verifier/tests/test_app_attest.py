@@ -32,7 +32,8 @@ def certificate(name: str, issuer: x509.Certificate | None, key: ec.EllipticCurv
     builder = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject if issuer is None else issuer.subject)
                .public_key(key.public_key()).serial_number(x509.random_serial_number())
                .not_valid_before(now - datetime.timedelta(days=2)).not_valid_after(now + datetime.timedelta(days=-1 if expired is True else 1))
-               .add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True))
+               .add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True)
+               .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False))
     if nonce is not None:
         builder = builder.add_extension(x509.UnrecognizedExtension(oid.ObjectIdentifier("1.2.840.113635.100.8.2"),
                                                                   b"\x30\x24\xa1\x22\x04\x20" + nonce), critical=False)
@@ -92,6 +93,13 @@ class AppleVerificationTest(unittest.TestCase):
         self.fixture.object["attStmt"]["x5c"][0] = self.fixture.object["attStmt"]["x5c"][0][:-1] + b"\x00"
         with self.assertRaises(platform.PlatformAttestationError):
             self.verifier.verify_attestation(self.fixture.encoded(), self.fixture.key_id, self.client_hash)
+
+    def testAttestation_whenCertificateHasDuplicateExtensions_rejectsCleanly(self) -> None:
+        encoded = self.fixture.object["attStmt"]["x5c"][0]
+        self.fixture.object["attStmt"]["x5c"][0] = encoded.replace(b"\x06\x03\x55\x1d\x0e", b"\x06\x03\x55\x1d\x13")
+        with self.assertRaises(platform.PlatformAttestationError) as caught:
+            self.verifier.verify_attestation(self.fixture.encoded(), self.fixture.key_id, self.client_hash)
+        self.assertEqual(caught.exception.reason, "bad_chain")
 
     def testAttestation_whenCborMalformedOrOversized_rejects(self) -> None:
         for raw in (b"\xa1", b"\x81" * 100 + b"\x00", cbor2.dumps(self.fixture.object) + b"\x00", b"x" * 70000, b"\xa2\x61a\x01\x61a\x02"):

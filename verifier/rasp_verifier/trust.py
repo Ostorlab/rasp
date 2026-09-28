@@ -185,8 +185,6 @@ class TrustService:
         try:
             result = self.app_attest.verify_attestation(body.get("attestationObject", ""),
                                                        body.get("keyId", ""), request_hash(nonce))
-            # One attested key may not be reassigned to another install, even after unbinding.
-            self.state.put("app_attest_binding", result.key_id, {"installId": install_id}, insert_only=True)
             self.installs.bind(Install(
                 install_id=install_id, public_key_der=result.public_key_der,
                 thumbprint=jose.public_key_thumbprint(jose.load_public_key_der(result.public_key_der)),
@@ -194,8 +192,6 @@ class TrustService:
                 os_patch_level=None, user_auth_required=False, platform="ios", app_attest_key_id=result.key_id))
         except PlatformAttestationError as error:
             raise TrustError("attestation_failed", error.reason) from error
-        except storage.ConflictError as error:
-            raise TrustError("key_already_bound", status=409) from error
         except RegistryError as error:
             raise TrustError(error.reason, status=409) from error
         return {"bound": True, "installId": install_id, "securityLevel": "app_attest", "userAuthRequired": False}
