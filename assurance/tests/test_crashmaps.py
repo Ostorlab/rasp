@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import pathlib
 import stat
 import tempfile
@@ -110,3 +111,40 @@ class CrashMapTest(unittest.TestCase):
                         "https://artifacts.example.test/private", data, "fixture-token"
                     )
                 connection.assert_not_called()
+
+    def testMain_whenSymbolsJsonExceedsRecursionDepth_returnsSanitizedError(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            artifact, symbols, key = root / "app.so", root / "symbols", root / "key"
+            artifact.write_bytes(b"fixture")
+            key.write_bytes(b"k" * 32)
+            symbols.write_text("[" * 10000 + "0" + "]" * 10000)
+            self.assertLess(symbols.stat().st_size, crashmaps.MAX_MAP_BYTES)
+            output = io.StringIO()
+            arguments = [
+                "rasp-crashmap",
+                "archive",
+                "--tenant",
+                "fixture",
+                "--app",
+                "app",
+                "--build",
+                "build",
+                "--artifact",
+                str(artifact),
+                "--symbols",
+                str(symbols),
+                "--key-file",
+                str(key),
+                "--store",
+                str(root / "store"),
+            ]
+            with mock.patch("sys.argv", arguments), contextlib.redirect_stdout(output):
+                status = crashmaps.main()
+            self.assertFalse((root / "store").exists())
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            json.loads(output.getvalue()), {"error": "artifact_operation_failed"}
+        )

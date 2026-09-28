@@ -223,6 +223,7 @@ def main() -> int:
         ValueError,
         OSError,
         KeyError,
+        RecursionError,
         exceptions.InvalidTag,
         http.client.HTTPException,
     ):

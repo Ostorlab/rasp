@@ -157,7 +157,7 @@ def run(configuration: dict[str, typing.Any]) -> dict[str, typing.Any]:
             result["status"] = (
                 "passed" if evaluate(value, expected) is True else "failed"
             )
-        except (ValueError, OSError, TypeError, KeyError):
+        except (ValueError, OSError, TypeError, KeyError, RecursionError):
             result["status"] = "error"
         finally:
             if "cleanup" in case:
@@ -206,7 +206,7 @@ def main() -> int:
             args.junit.write_text(junit(report))
         print(json.dumps(report, indent=2))
         return 0 if report["passed"] is True else 1
-    except (ValueError, OSError, KeyError, TypeError):
+    except (ValueError, OSError, KeyError, TypeError, RecursionError):
         print(json.dumps({"passed": False, "error": "invalid_farm_configuration"}))
         return 2
 

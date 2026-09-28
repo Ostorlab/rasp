@@ -8,10 +8,12 @@ Install locally with `python -m pip install -e ./assurance`. These tools do not
 publish packages. Keep maps, credentials, and device logs in operator-controlled
 storage outside the repository.
 
-## Build-bound crash maps
+## How are crash maps archived against a release build?
 
-The hardener emits `symbols.map` as `{obfuscatedSymbol: originalSymbol}`. Before
-distributing a stripped binary, archive that exact map against the final binary:
+**A build-bound crash map** is an AES-256-GCM-encrypted archive that binds
+`symbols.map` to a specific tenant, app, build, and binary SHA-256. Before
+distributing a stripped binary, archive that exact map against the final binary.
+The hardener emits the map as `{obfuscatedSymbol: originalSymbol}`:
 
 ```sh
 rasp-crashmap archive --tenant tenant-a --app com.example.app --build BUILD_ID \
@@ -28,19 +30,28 @@ rasp-crashmap symbolize --tenant tenant-a --app com.example.app --build BUILD_ID
 Use that exact path for upload and symbolization; `ARCHIVE_ID` stands for its
 filename stem, derived from the authenticated binding hash.
 
-The key file contains exactly 32 random bytes provisioned by the deployment
-secret store. Upload uses `RASP_ARTIFACT_TOKEN`, HTTPS system trust, a bounded
-request timeout, and no redirects. Only the AES-256-GCM encrypted archive is
-uploaded. The configured artifact service must authorize the destination's
-tenant/app scope. Local archive files are immutable and mode 0600. Tenant,
-application, build and final binary SHA-256 are authenticated; a map for another
-binary or scope is refused. Store the wrapping-key version identifier beside
-each archive so rotating the deployment secret does not orphan older maps.
-Retain the matching key securely; the identifier alone cannot decrypt an archive.
+The key file holds exactly 32 random bytes provisioned by the deployment secret store.
+
+Upload and storage:
+
+- Upload uses `RASP_ARTIFACT_TOKEN`, HTTPS system trust, a bounded request timeout,
+  and no redirects.
+- Only the AES-256-GCM encrypted archive is uploaded. The configured artifact
+  service must authorize the destination's tenant/app scope.
+- Local archive files are immutable and mode 0600.
+
+Binding and key rotation:
+
+- Tenant, application, build, and final binary SHA-256 are authenticated; a map
+  for another binary or scope is refused.
+- Store the wrapping-key version identifier beside each archive so rotating the
+  deployment secret does not orphan older maps.
+- Retain the matching key securely; the identifier alone cannot decrypt an archive.
+
 Symbolization replaces complete symbol names; address-to-line resolution still
 requires the matching private debug symbols and platform symbolizer.
 
-## Evidence export
+## What does `rasp-evidence` export for release evidence?
 
 `rasp-evidence` converts a trust-service report into a redacted evidence export:
 it strips free-text, marks authenticity `not_verified_by_exporter`, and maps
@@ -69,20 +80,24 @@ and [debugging detection](https://mas.owasp.org/MASTG/tests/android/MASVS-RESILI
 Where there is no applicable current test, the mapping uses a knowledge article
 or leaves the field null. Deprecated test identifiers are not presented as current.
 
-## Configurable device-farm regression
+## How does the configurable device-farm regression gate run?
 
 `rasp-device-farm private/farm.json --junit private/results.xml` runs trusted
-operator-supplied preparation/probe/cleanup adapters for local devices or a
-remote device farm. Commands are argument arrays, never shell strings. Run the
-runner on Linux/macOS in a dedicated lab; adapters must target your provisioned
-test devices and application. Cleanup runs even when preparation or probing
-fails. The command timeout includes a 100 ms reserve for process-group kill and
-reaping; output is bounded, and raw logs/tokens are not copied into result artifacts.
-The final wait uses only the remaining deadline. If a kernel task cannot be
-reaped after a repeated kill and final nonblocking wait, the case records an
-error rather than waiting indefinitely. Uninterruptible kernel tasks can outlive
-the caller; Python's subprocess cleanup may reap them later, or the operating
-system adopts them when the runner exits. This is not a process sandbox.
+operator-supplied preparation/probe/cleanup adapters for local devices or a remote farm.
+
+- Commands are argument arrays, never shell strings.
+- Run the runner on Linux/macOS in a dedicated lab; adapters must target your
+  provisioned test devices and application.
+- Cleanup runs even when preparation or probing fails.
+- The command timeout includes a 100 ms reserve for process-group kill and reaping.
+  Output is bounded, and raw logs/tokens are not copied into result artifacts.
+- The final wait uses only the remaining deadline. If a kernel task cannot be
+  reaped after a repeated kill and final nonblocking wait, the case records an
+  error rather than waiting indefinitely.
+- Uninterruptible kernel tasks can outlive the caller; Python's subprocess cleanup
+  may reap them later, or the operating system adopts them when the runner exits.
+
+This is not a process sandbox.
 
 Configuration example (adapter paths are supplied by your lab):
 
@@ -101,8 +116,8 @@ Configuration example (adapter paths are supplied by your lab):
 }
 ```
 
-Adapter environments contain only inherited `PATH` and `HOME`, plus the two
-runner-owned variables. Provision device access through the operator-owned
+Adapter environments contain only inherited `PATH` and `HOME`, plus
+`RASP_FARM_ARTIFACT` and `RASP_FARM_CONTEXT`. Provision device access through the operator-owned
 adapter; ambient credentials such as `RASP_ARTIFACT_TOKEN` are not forwarded.
 
 Each adapter receives `RASP_FARM_ARTIFACT` and `RASP_FARM_CONTEXT` containing

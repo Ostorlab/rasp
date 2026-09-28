@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import pathlib
+import tempfile
 import unittest
+from unittest import mock
 
 from rasp_assurance import evidence
 
@@ -45,4 +50,29 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual(
             evidence.export({"signals": []}, digest, "android")["artifactSha256"],
             digest,
+        )
+
+    def testMain_whenReportJsonExceedsRecursionDepth_returnsSanitizedError(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            report, artifact = root / "report", root / "app.apk"
+            artifact.write_bytes(b"fixture")
+            report.write_text("[" * 10000 + "0" + "]" * 10000)
+            self.assertLess(report.stat().st_size, 1024 * 1024)
+            output = io.StringIO()
+            arguments = [
+                "rasp-evidence",
+                str(report),
+                "--artifact",
+                str(artifact),
+                "--platform",
+                "android",
+            ]
+            with mock.patch("sys.argv", arguments), contextlib.redirect_stdout(output):
+                status = evidence.main()
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            json.loads(output.getvalue()), {"error": "invalid_evidence_input"}
         )

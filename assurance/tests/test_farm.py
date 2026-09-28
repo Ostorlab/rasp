@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import pathlib
 import subprocess
 import time
@@ -143,3 +146,61 @@ class FarmTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             farm.command([sys.executable, "-c", "import time; time.sleep(20)"], {}, 1)
         self.assertLess(time.monotonic() - start, 2)
+
+    def testMain_whenConfigurationJsonExceedsRecursionDepth_returnsSanitizedError(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            configuration = pathlib.Path(directory) / "farm.json"
+            configuration.write_text("[" * 10000 + "0" + "]" * 10000)
+            self.assertLess(configuration.stat().st_size, 262144)
+            output = io.StringIO()
+            with (
+                mock.patch("sys.argv", ["rasp-device-farm", str(configuration)]),
+                contextlib.redirect_stdout(output),
+            ):
+                status = farm.main()
+        self.assertEqual(status, 2)
+        self.assertEqual(
+            json.loads(output.getvalue()),
+            {"passed": False, "error": "invalid_farm_configuration"},
+        )
+
+    def testRun_whenProbeJsonExceedsRecursionDepth_recordsErrorAndContinues(
+        self,
+    ) -> None:
+        valid = 'import os,json; x=json.loads(os.environ["RASP_FARM_CONTEXT"]); x.update(fixtureVerified=True,baselineAllowed=True,enforced=True); print(json.dumps(x))'
+        nested = "print('[' * 10000 + '0' + ']' * 10000)"
+        self.assertLess(20002, 262144)
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            artifact, marker = root / "app.apk", root / "cleanup"
+            artifact.write_bytes(b"fixture")
+            cleanup = [
+                sys.executable,
+                "-c",
+                "import pathlib,sys;pathlib.Path(sys.argv[1]).write_text('done')",
+                str(marker),
+            ]
+            report = farm.run(
+                {
+                    "device": "unit",
+                    "platform": "android",
+                    "artifact": str(artifact),
+                    "cases": [
+                        {
+                            "scenario": "baseline",
+                            "probe": [sys.executable, "-c", nested],
+                            "cleanup": cleanup,
+                        },
+                        {
+                            "scenario": "frida-fork",
+                            "probe": [sys.executable, "-c", valid],
+                        },
+                    ],
+                }
+            )
+            self.assertEqual(marker.read_text(), "done")
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["cases"][0]["status"], "error")
+        self.assertEqual(report["cases"][1]["status"], "passed")

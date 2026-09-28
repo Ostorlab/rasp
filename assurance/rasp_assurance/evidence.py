@@ -96,7 +96,7 @@ def main() -> int:
             for chunk in iter(lambda: source.read(1024 * 1024), b""):
                 digest.update(chunk)
         print(json.dumps(export(report, digest.hexdigest(), args.platform), indent=2))
-    except (ValueError, OSError, TypeError):
+    except (ValueError, OSError, TypeError, RecursionError):
         print(json.dumps({"error": "invalid_evidence_input"}))
         return 1
     return 0
