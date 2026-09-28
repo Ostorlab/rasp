@@ -45,6 +45,7 @@ final class AppAttestClient {
     private let directory: URL
     private let lock = NSLock()
     private var generation = 0
+    private var pendingGeneration: Int?
     init(directory: URL, service: AttestationService) { self.directory = directory; self.service = service }
     #if canImport(DeviceCheck) && canImport(UIKit)
     convenience init(directory: URL) { self.init(directory: directory, service: AppleAttestationService()) }
@@ -69,16 +70,26 @@ final class AppAttestClient {
         try synchronized {
             guard epoch == generation else { throw RaspError.invalid("enrollment cancelled") }
             try Data(key.utf8).write(to: pendingFile, options: options)
+            pendingGeneration = epoch
         }
         return ["keyId": key, "attestationObject": attestation.base64EncodedString()]
     }
-    func cancelEnrollment() { synchronized { generation += 1 } }
+    func cancelEnrollment() {
+        synchronized {
+            generation += 1
+            pendingGeneration = nil
+            // Confirmation is revoked even if filesystem cleanup fails.
+            try? FileManager.default.removeItem(at: pendingFile)
+        }
+    }
     func confirm(key: String) throws {
         try synchronized {
+            guard pendingGeneration == generation else { throw RaspError.invalid("enrollment cancelled") }
             guard try String(contentsOf: pendingFile, encoding: .utf8) == key else { throw RaspError.invalid("binding confirmation key mismatch") }
             try Data(key.utf8).write(to: activeFile, options: options)
             try FileManager.default.removeItem(at: pendingFile)
             generation += 1
+            pendingGeneration = nil
         }
     }
     func assertion(key: String, message: Data) async throws -> Data {
@@ -88,6 +99,7 @@ final class AppAttestClient {
     func unbind() throws {
         try synchronized {
             generation += 1
+            pendingGeneration = nil
             for file in [activeFile, pendingFile] where FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
         }
     }

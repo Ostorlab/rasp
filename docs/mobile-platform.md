@@ -87,25 +87,28 @@ The two API35 emulator cases include a real expired signed cache -> blocked guar
 
 ## iOS build and API
 
-The private Swift package is `flutter_rasp/ios`, and the CocoaPods Flutter adapter compiles the same core sources. iOS 14+ is required. Core cryptographic contracts are also testable on Linux with Apple's swift-crypto 3.12.3; Apple-only APIs require Xcode and are separately compiled in the macOS CI job.
+The iOS SDK binds installs to App Attest-backed device keys, seals RASP reports with build-derived integrity, and enforces pinned HTTPS plus jailbreak/debugger/screen-capture detection. It ships as the private Swift package `flutter_rasp/ios`; the CocoaPods Flutter adapter compiles the same core sources. iOS 14+ is required. Core cryptographic contracts are also testable on Linux with Apple's swift-crypto 3.12.3; Apple-only APIs require Xcode and are separately compiled in the macOS CI job.
 
-Enable the App Attest capability for your registered App ID and provision the entitlement `com.apple.developer.devicecheck.appattest-environment` for your intended environment. The SDK checks service support and surfaces Apple errors. Enrollment is explicit:
+Enable the App Attest capability for your registered App ID and provision the entitlement `com.apple.developer.devicecheck.appattest-environment` with the value `development` or `production` to match the App Attest environment. The SDK checks service support and surfaces Apple errors. Enrollment is explicit:
 
 1. Call `appAttestBind(nonce)`.
 2. POST the returned body to `/v1/ios/bind`.
 3. Only after success, call `confirmAppAttestBinding(keyId)`.
 
+Confirmation must occur in the same enrollment generation. Stop/unbind revoke pending confirmation and delete the pending file; after a process restart, repeat enrollment rather than confirming an old pending key. Existing active bindings persist until explicitly unbound.
+
 `prepareAppAttestToken(nonce)` returns the complete token-route body with the new session key covered by an App Attest assertion. App Attest does not establish per-use biometric authorization; iOS tokens correctly carry `uauth=false`.
 
-- **Detection signals:** jailbreak artifacts, sandbox escape writes, debugger status, loaded instrumentation libraries, environment injection and screen capture status.
+- **Detection signals:** jailbreak artifacts, sandbox escape writes, debugger status, loaded instrumentation libraries, environment injection and screen capture status. Concurrent callers share one scan, and only newly detected threats contribute notification signals/reactions.
 - **Policy:** Android wire format and monotonic revisions.
 - **Storage:** device-only, unlocked Keychain storage for the envelope wrapping key.
-- **Reactions:** `wipeOnThreats` destroys the wrapping key immediately; `silentDegrade` disables signing/storage; `closeApp` degrades and emits the configured event because iOS has no supported force-close API.
-- **Screen capture:** public APIs obscure captured and background content; they cannot guarantee screenshot prevention.
+- **Reactions:** `wipeOnThreats` destroys the wrapping key and session immediately; `silentDegrade` disables signing/storage; `closeApp` degrades and emits the configured event because iOS has no supported force-close API. New-threat notifications use `reactionDelayMillis` (0–60000) and are generation-checked and cancelled on stop/policy replacement. General pinned requests fail while degraded.
+- **Screen capture:** public APIs obscure captured and background content; they cannot guarantee screenshot prevention. Desired protection is recomputed per scan, and queued UI work cannot overwrite newer screen state or stop.
+- **Enrollment lifecycle:** generation guards reject stale Apple callbacks and cancelled pending confirmations. Regression tests that stall the Apple attestation callback exercise stop and unbind before Apple completion.
 
 Android-only fraud signals and Play Integrity are not synthesized on iOS.
 
-Build-time self-integrity uses selected bounded file regions, including executable code and resources. After linking, specify regions in a private JSON file, for example `[{"path":"Runner","offset":12345,"length":4096}]`. Choose immutable code/resource sections, excluding the code-signature blob and the manifest itself. Run:
+**Build-time self-integrity** measures selected bounded file regions, including executable code and resources, while excluding the code-signature blob and the manifest itself. After linking, specify immutable regions in a private JSON file, for example `[{"path":"Runner","offset":12345,"length":4096}]`. Run:
 
 ```sh
 node flutter_rasp/tool/ios_manifest.mjs APP_BUNDLE regions.json APP_BUNDLE/RaspBuild.json BUNDLE_ID private-server-manifest.json
@@ -113,8 +116,4 @@ node flutter_rasp/tool/ios_manifest.mjs APP_BUNDLE regions.json APP_BUNDLE/RaspB
 
 Register the private server manifest with `BuildRegistry.register_manifest`, then sign/package the final app. Each runtime measurement derives the report key as `HMAC(buildKey, measuredIntegrityRoot)`; modified protected bytes yield an unregistered key. The client manifest contains build key material and must never be committed. This reference does not claim white-box key hiding or automatic Mach-O section selection. Keychain data keys currently do not incorporate this integrity root.
 
-Earlier portable iOS verification completed: 6 Swift tests passed using real P-256/AES-capable Apple swift-crypto; the Node manifest registration test passed; all Swift files parsed for the arm64 iOS14 target. Flutter analysis and 9 channel/model tests remained green. Swift parser validation is not Apple SDK typechecking. The macOS CI job gates UIKit/DeviceCheck typechecking and Flutter CocoaPods linkage; signed-device App Attest and iOS detector behavior require separate deployment checks.
-
-The lifecycle revision adds two portable scan-decision tests, bringing the Swift suite to 8 tests: secure-screen state clears when its threat disappears, and events exclude persistent threats' signals and reactions. This revision passed the Node manifest test, all 9 Dart tests and Flutter analysis locally. The local host has no Swift or Apple SDK toolchain, so the revised Swift suite and Apple builds await the macOS CI gate.
-
-Reviewed iOS lifecycle behavior: general pinned requests fail while degraded. Enrollment writes are generation-guarded across Apple callbacks; stop/unbind cancel pending enrollment completion. New-threat notifications respect `reactionDelayMillis` (0–60000), are cancelled on stop/policy replacement, and recheck the active generation before delivery. Key deletion and session invalidation occur immediately when a threat is accepted. Suspended attestation-service regression tests exercise stop and unbind before Apple completion.
+Current iOS validation: the macOS CI gate passed the eight-test SDK baseline, iOS typechecking and the Flutter CocoaPods build, alongside the Node manifest test, all nine Dart tests and Flutter analysis. The suite now contains 16 Swift tests covering scan coalescing, cancelled generations, stale screen callbacks, pending-binding cancellation and real AES-GCM version-1 framing; these new lifecycle checks await the macOS gate because the local host has no Swift/Apple toolchain. Live App Attest and physical-device detector behavior remain provisioning-based checks. The version-1 store format retains its fixed AES-256-GCM layout, with named framing lengths and explicit validation rather than a breaking header change.

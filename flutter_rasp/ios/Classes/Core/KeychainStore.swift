@@ -51,25 +51,25 @@ final class KeychainStore {
         return directory.appendingPathComponent(Wire.hex(Wire.hash(Data(name.utf8))))
     }
     func put(_ name: String, value: Data) throws {
-        guard value.count <= 4 * 1024 * 1024 else { throw RaspError.invalid("value too large") }
+        guard value.count <= SecureStoreEnvelope.maximumValueLength else { throw RaspError.invalid("value too large") }
         let aad = Data(name.utf8), dataKey = SymmetricKey(size: .bits256)
         let wrapped = try AES.GCM.seal(dataKey.withUnsafeBytes { Data($0) }, using: master(), authenticating: aad)
         let sealed = try AES.GCM.seal(value, using: dataKey, authenticating: aad)
         guard let wrappedBytes = wrapped.combined, let sealedBytes = sealed.combined else { throw RaspError.invalid("GCM framing failed") }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try (Data([1]) + wrappedBytes + sealedBytes).write(to: entry(name), options: [.atomic, .completeFileProtection])
+        try SecureStoreEnvelope.encode(wrappedKey: wrappedBytes, payload: sealedBytes).write(to: entry(name), options: [.atomic, .completeFileProtection])
     }
     func get(_ name: String) throws -> Data? {
         let file = try entry(name)
         if !FileManager.default.fileExists(atPath: file.path) { return nil }
         let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
-        guard let length = attributes[.size] as? NSNumber, length.intValue >= 89, length.intValue <= 4 * 1024 * 1024 + 89 else { throw RaspError.invalid("invalid store length") }
-        let bytes = try Data(contentsOf: file)
-        guard bytes.first == 1 else { throw RaspError.invalid("invalid store version") }
+        guard let length = attributes[.size] as? NSNumber, length.intValue >= SecureStoreEnvelope.minimumLength, length.intValue <= SecureStoreEnvelope.maximumLength else { throw RaspError.invalid("invalid store length") }
+        let envelope = try SecureStoreEnvelope.decode(Data(contentsOf: file))
         let aad = Data(name.utf8)
-        var rawKey = try AES.GCM.open(AES.GCM.SealedBox(combined: bytes.subdata(in: 1..<61)), using: master(), authenticating: aad)
+        var rawKey = try AES.GCM.open(AES.GCM.SealedBox(combined: envelope.wrappedKey), using: master(), authenticating: aad)
         defer { rawKey.resetBytes(in: 0..<rawKey.count) }
-        return try AES.GCM.open(AES.GCM.SealedBox(combined: bytes.subdata(in: 61..<bytes.count)), using: SymmetricKey(data: rawKey), authenticating: aad)
+        guard rawKey.count == SecureStoreEnvelope.dataKeyLength else { throw RaspError.invalid("invalid data key length") }
+        return try AES.GCM.open(AES.GCM.SealedBox(combined: envelope.payload), using: SymmetricKey(data: rawKey), authenticating: aad)
     }
     func delete(_ name: String) throws {
         let file = try entry(name)
