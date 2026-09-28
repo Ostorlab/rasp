@@ -6,9 +6,10 @@ A single random **build seed** produces everything that must differ build-to-bui
 orderings, detector layout, encrypted literals, guard hashes. Changing the seed changes these artifacts and internal symbol identities; it does not guarantee that
 a bypass cannot transfer between builds. The trust service accepts the build it registered.
 
-This is the Python-implemented portion of the design's build-time hardening. The native LLVM/O-LLVM
-obfuscation passes, the DEX/ASM Gradle plugin, and code virtualization are **not** implemented yet (see the
-repo `TODO.md`); what is here is fully covered by tests that run in this repo.
+The toolchain also includes an opt-in LLVM 18 pass, Gradle ASM plugin, Clang/Xcode wrappers, a bounded
+arithmetic VM, authenticated native resource loading and affine encoded AES tables. Supported inputs,
+required application hooks, commands and remaining limits are documented in
+[Deeper hardening](DEEP_HARDENING.md). These mechanisms do not establish DCA/DFA resistance.
 
 ## What does the hardener do?
 
@@ -76,17 +77,18 @@ remain explicitly allowlisted. This is static-analysis friction, not protection 
 ## White-box crypto & SecureStore (§8)
 
 `aes.py` is a FIPS-197 AES-128 reference used only to expand the key and validate output. `whitebox.py`
-generates plain Chow white-box tables (T-boxes ∘ Tyi MixColumns, and a final table) so the native evaluator
+generates table-driven AES, optionally with seeded affine byte encodings (T-boxes ∘ Tyi MixColumns, and a final table) so the native evaluator
 (`wbaes.c`) encrypts AES-128 without the key appearing as a contiguous literal, and provides AES-CMAC
 (RFC 4493) over the same block. `securestore.c` uses both for authenticated data at rest: CTR for
 confidentiality + AES-CMAC for integrity (encrypt-then-MAC), framed `nonce(12) || ciphertext || tag(16)`;
 `open` verifies the tag in constant time before decrypting.
 
-**Security caveat.** These are the *plain* Chow tables — no internal encodings or mixing bijections yet — so
-they do **not** resist key extraction on their own (an analyst can invert Tyi and the S-box to recover the
-round key). What this slice delivers is the correct, KAT-verified table architecture and the removal of the
-contiguous key literal; the encodings that make white-box AES key-hiding, plus SecureStore key
-wipe-on-critical, are the next steps (see the repo `TODO.md` §8).
+**Security caveat.** `gen-wbkey` enables affine byte mixing bijections at nine state boundaries. The
+plain reference mode remains available in Python. These encodings preserve the existing C ABI and
+AES/CTR/CMAC known-answer tests, but do not implement full nonlinear encoded-XOR networks or establish
+DCA/DFA resistance. Treat embedded keys as extractable by a determined analyst. The authenticated asset
+loader derives independent encryption/authentication keys from a guard root and refuses changed live
+regions before exposing plaintext; see [Deeper hardening](DEEP_HARDENING.md).
 
 `build_config.h` includes `build_generated.h` when present (via `__has_include`) and otherwise falls back to
 the committed dev defaults, so an unhardened build and the host tests keep compiling.
