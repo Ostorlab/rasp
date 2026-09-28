@@ -33,6 +33,9 @@ The checker sends five probes: missing-token, malformed-token, expired-token,
 valid, and exact-replay. It fails unless every negative returns 401/403 and the
 valid request returns 2xx. It never follows redirects and disables environment
 proxies. Exit codes are 0 for pass, 1 for failure, and 2 for invalid configuration.
+Network failures, redirects, 404, 429, and 5xx fail the gate. HTTPS verifies
+certificates and hostnames. `--allow-loopback-http` permits literal loopback
+addresses for local tests only. Output omits supplied credentials and bodies.
 
 ### Preparing proof fixtures
 
@@ -52,20 +55,42 @@ and `expiredHeaders`. Both header objects contain `X-Integrity-Token`,
 `X-Integrity-Key`, `X-Integrity-Sig`, `X-Integrity-Ts`, and `X-Integrity-Counter`,
 plus identical business-account authorization. Never commit this fixture.
 
+Replace every placeholder with real staging values; this redacted example is
+not executable evidence. The body decodes to `{"amount":1}`.
+
+```json
+{
+  "url": "https://staging.bank.example.com/v1/transfers",
+  "method": "POST",
+  "bodyBase64": "eyJhbW91bnQiOjF9",
+  "headers": {
+    "Authorization": "Bearer <EXPENDABLE_ACCOUNT_CREDENTIAL>",
+    "X-Integrity-Token": "<CURRENT_ISSUED_JWT>",
+    "X-Integrity-Key": "<SESSION_PUBLIC_KEY_BASE64>",
+    "X-Integrity-Sig": "<CURRENT_REQUEST_SIGNATURE_BASE64>",
+    "X-Integrity-Ts": "<FRESH_CURRENT_TIMESTAMP>",
+    "X-Integrity-Counter": "<CURRENT_COUNTER>"
+  },
+  "expiredHeaders": {
+    "Authorization": "Bearer <EXPENDABLE_ACCOUNT_CREDENTIAL>",
+    "X-Integrity-Token": "<AUTHENTIC_ISSUED_JWT_EXPIRED_BY_60_SECONDS>",
+    "X-Integrity-Key": "<SESSION_PUBLIC_KEY_BASE64>",
+    "X-Integrity-Sig": "<EXPIRED_TOKEN_REQUEST_SIGNATURE_BASE64>",
+    "X-Integrity-Ts": "<FRESH_EXPIRED_FIXTURE_TIMESTAMP>",
+    "X-Integrity-Counter": "<EXPIRED_FIXTURE_COUNTER>"
+  }
+}
+```
+
+This example uses the same proof key for both tokens: `expiredHeaders` mirrors
+`headers`, changing only the token, timestamp, counter and signature. The expired
+token must be authentically issued, while its request timestamp/proof remain
+fresh. If the issued tokens bind different session keys, use each token’s
+corresponding `X-Integrity-Key`; account and application headers remain identical.
+
 ```sh
 python -m rasp_verifier.enforcement /private/path/request-fixture.json
 ```
-
-The checker sends missing-token, malformed-token, expired-token, valid, and
-exact-replay probes:
-
-- Negative probes must return 401/403; the valid request must return 2xx.
-- Network failures, redirects, 404, 429, and 5xx fail the gate.
-- HTTPS verifies certificates and hostnames. Redirects are never followed.
-- Environment proxies are disabled so fixture credentials go only to the target.
-- `--allow-loopback-http` permits literal loopback addresses for local tests only.
-- Exit codes: 0 passes, 1 fails, 2 invalid configuration.
-- Output lists probe names/statuses and omits supplied credentials and bodies.
 
 Tests exercise deliberately broken endpoints and the reference bank with
 synthetic hardware attestation, valid ES256 tokens, authentic expired tokens,
