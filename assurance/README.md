@@ -1,5 +1,9 @@
 # Private release assurance
 
+Three private release-assurance tools live in `assurance/`: build-bound encrypted
+crash maps, redacted evidence export, and a configurable device-farm regression
+gate. They bind evidence to release artifacts and keep missing evidence explicit.
+
 Install locally with `python -m pip install -e ./assurance`. These tools do not
 publish packages. Keep maps, credentials, and device logs in operator-controlled
 storage outside the repository.
@@ -19,6 +23,10 @@ rasp-crashmap symbolize --tenant tenant-a --app com.example.app --build BUILD_ID
   --artifact release/librasp_core.so --archive /private/crashmaps/ARCHIVE_ID.rmap \
   --key-file /run/secrets/crashmap-key --trace private/crash.txt
 ```
+
+`rasp-crashmap archive` writes to `--store` and prints a JSON `archive` path.
+Use that exact path for upload and symbolization; `ARCHIVE_ID` stands for its
+filename stem, derived from the authenticated binding hash.
 
 The key file contains exactly 32 random bytes provisioned by the deployment
 secret store. Upload uses `RASP_ARTIFACT_TOKEN`, HTTPS system trust, a bounded
@@ -77,6 +85,10 @@ Configuration example (adapter paths are supplied by your lab):
 }
 ```
 
+Adapter environments contain only inherited `PATH` and `HOME`, plus the two
+runner-owned variables. Provision device access through the operator-owned
+adapter; ambient credentials such as `RASP_ARTIFACT_TOKEN` are not forwarded.
+
 Each adapter receives `RASP_FARM_ARTIFACT` and `RASP_FARM_CONTEXT` containing
 `runId`, `device`, `artifactSha256`, and `scenario`. The probe returns exactly
 those binding fields plus `fixtureVerified`, `baselineAllowed`, and `enforced`
@@ -96,11 +108,13 @@ repository supplies the orchestration and gate, not root/jailbreak images or
 live vendor attestation credentials. Unit adapters are never recorded as device
 bypass results.
 
-## Measured budgets
+## How are physical-device performance budgets measured?
 
-Use the verifier's `python -m rasp_verifier.budgets` size and latency gates.
-`sample_app/integration_test/scan_benchmark_test.dart` (mobile adapters branch)
-collects at least 30 actual scan samples. Label emulators as emulators; evaluate
+The `rasp_verifier` package provides release size and latency gates through
+`python -m rasp_verifier.budgets`.
+`sample_app/integration_test/scan_benchmark_test.dart`
+is the benchmark collection path when the mobile
+benchmark integration is installed. Collect at least 30 actual scan samples. Label emulators as emulators; evaluate
 physical reference devices separately. Neither host timing nor mocked samples
 establish physical-device performance. Preserve the artifact SHA, OS, device
 model, build mode and sample file with the release evidence.

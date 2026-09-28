@@ -211,7 +211,7 @@ def main() -> int:
                     read_bounded(args.archive, MAX_ARCHIVE_BYTES), key, binding
                 )
                 print(
-                    symbolize(read_bounded(args.trace, MAX_MAP_BYTES).decode(), mapping)
+                    symbolize(read_bounded(args.trace, MAX_MAP_BYTES).decode(errors="replace"), mapping)
                 )
     except (
         ValueError,

@@ -125,11 +125,11 @@ def run(configuration: dict[str, typing.Any]) -> dict[str, typing.Any]:
             "artifactSha256": digest.hexdigest(),
             "scenario": case["scenario"],
         }
-        environment = dict(
-            os.environ,
-            RASP_FARM_CONTEXT=json.dumps(expected),
-            RASP_FARM_ARTIFACT=str(artifact.resolve()),
-        )
+        environment = {
+            name: os.environ[name] for name in ("PATH", "HOME") if name in os.environ
+        }
+        environment["RASP_FARM_CONTEXT"] = json.dumps(expected)
+        environment["RASP_FARM_ARTIFACT"] = str(artifact.resolve())
         result: dict[str, typing.Any] = {
             "scenario": case["scenario"],
             "status": "error",
