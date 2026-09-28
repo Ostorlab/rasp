@@ -180,7 +180,7 @@ class HygieneGateTest(unittest.TestCase):
             self.skipTest("JDK JNI headers unavailable")
         (self.tmp / "integrity_regions.h").write_text(emit.render_integrity_regions_h([(0, 32)]))
         library = self.tmp / "jni.so"
-        subprocess.run([self.cc, "-shared", "-fPIC", "-fvisibility=hidden", "-O2", "-Wl,--strip-all", "-Wl,--version-script=" + str(CPP / "exports.map"),
+        subprocess.run([self.cc, "-shared", "-fPIC", "-fvisibility=hidden", "-O2", "-Wl,--strip-all", "-Wl,--no-undefined-version", "-Wl,--version-script=" + str(CPP / "exports.map"),
                         "-Wall", "-Wextra", "-Werror", "-I", str(include), "-I", str(include / "linux"),
                         "-I", str(self.tmp), "-I", str(CPP), "-o", str(library)]
                        + [str(CPP / source) for source in SOURCES + ["rasp_jni.c"]], check=True)

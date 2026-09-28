@@ -1,4 +1,4 @@
 {
-    global: JNI_OnLoad; JNI_OnUnload;
+    global: JNI_OnLoad;
     local: *;
 };
