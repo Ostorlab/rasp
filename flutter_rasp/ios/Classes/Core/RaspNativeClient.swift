@@ -213,7 +213,7 @@ private actor IOSCore {
                 do { try await Task.sleep(nanoseconds: delay * 1_000_000) } catch { return }
                 await self?.deliver(item, epoch: epoch, identifier: identifier)
             }
-            reactions[identifier] = task
+            self.reactions[identifier] = task
         }
         return report
     }
