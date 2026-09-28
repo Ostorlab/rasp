@@ -30,6 +30,20 @@ class SecureStoreTest {
             assertFails { store.get("token") }
         } finally { directory.deleteRecursively() }
     }
+    @Test fun deletingWrappingKeyImmediatelyMakesPendingCleanupIrrelevant() {
+        val directory = Files.createTempDirectory("rasp-store").toFile()
+        var key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+        val store = SecureStore(directory, object : StoreKey {
+            override fun key() = key
+            override fun delete() { key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey() }
+        })
+        try {
+            store.put("secret", byteArrayOf(1, 2, 3))
+            store.invalidateKey()
+            // Simulate stop or process death canceling delayed ciphertext cleanup.
+            assertFails { store.get("secret") }
+        } finally { directory.deleteRecursively() }
+    }
     @Test fun entryNamesAreAuthenticated() {
         val directory = Files.createTempDirectory("rasp-store").toFile()
         val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()

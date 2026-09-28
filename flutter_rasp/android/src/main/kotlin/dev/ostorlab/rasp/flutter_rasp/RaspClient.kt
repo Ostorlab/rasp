@@ -10,9 +10,6 @@ import org.json.JSONObject
 import java.io.File
 import java.security.KeyFactory
 import java.security.spec.X509EncodedKeySpec
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
 
 /** Framework-independent Android SDK. Call execute on a worker thread; callbacks may originate on scan threads. */
 class RaspClient(private val context: Context, private val listener: RaspListener) : RaspListener {
@@ -32,9 +29,7 @@ class RaspClient(private val context: Context, private val listener: RaspListene
     private var revision = 0L
     private var policyExpiry = Long.MAX_VALUE
     private val policyFile = AtomicFile(File(context.noBackupFilesDir, "rasp/policy.json"))
-    private val scheduler = Executors.newSingleThreadScheduledExecutor()
-    private val pending = mutableListOf<ScheduledFuture<*>>()
-    @Volatile private var generation = 0L
+    private val reactions = ReactionQueue()
     private val main = Handler(Looper.getMainLooper())
 
     @Synchronized fun execute(method: String, arguments: Map<String, Any?> = emptyMap()): Any? = handle(ClientCall(method, arguments))
@@ -45,14 +40,14 @@ class RaspClient(private val context: Context, private val listener: RaspListene
 
     private fun handle(call: ClientCall): Any? = when (call.method) {
         "start" -> {
-            stopEngine()
+            stop()
             bootstrap = call.arguments
             active = bootstrap
             policyVerifier = makePolicyVerifier()
             loadPolicy()
             val config = RaspConfig.fromMap(active)
             transport = PinnedTransport(PinSet(pins(active)))
-            val started = RaspEngine(context, config, this)
+            val started = createEngine(config)
             engine = started
             val decision = started.scan()
             started.start()
@@ -60,6 +55,7 @@ class RaspClient(private val context: Context, private val listener: RaspListene
         }
         "check" -> requireEngine().scan().toMap()
         "guard" -> {
+            ensureTrusted()
             val flow = call.argument<String>("flow") ?: throw IllegalArgumentException("flow is required")
             val (guard, decision) = requireEngine().guard(flow)
             guardMap(guard, decision)
@@ -147,6 +143,12 @@ class RaspClient(private val context: Context, private val listener: RaspListene
         "secureDelete" -> { secureStore.delete(call.required("key")); null }
         "secureClear" -> { secureStore.clear(); sessionKey = null; null }
         "applyPolicy" -> { applyPolicy(call.required("envelope")); null }
+        "refreshPolicy" -> {
+            val response = PinnedTransport(PinSet(pins(bootstrap))).request(call.required("url"), "GET", emptyMap(), ByteArray(0))
+            require(response["status"] == 200) { "policy refresh failed" }
+            applyPolicy(String(response["body"] as ByteArray, Charsets.UTF_8))
+            null
+        }
         else -> throw IllegalArgumentException("unknown method ${call.method}")
     }
 
@@ -182,8 +184,8 @@ class RaspClient(private val context: Context, private val listener: RaspListene
         if (!policyFile.baseFile.exists()) return
         val verifier = policyVerifier ?: throw IllegalStateException("persisted policy requires bootstrap keys")
         val envelope = policyFile.openRead().use { String(it.readBytes(), Charsets.UTF_8) }
-        val verified = verifier.verify(envelope, revision, System.currentTimeMillis() / 1000, allowCurrent = true)
-        active = bootstrap + jsonMap(verified.config)
+        val verified = verifier.verify(envelope, revision, System.currentTimeMillis() / 1000, allowCurrent = true, allowExpired = true)
+        active = if (verified.expiresAt > System.currentTimeMillis() / 1000) bootstrap + jsonMap(verified.config) else bootstrap
         revision = verified.revision
         policyExpiry = verified.expiresAt
     }
@@ -200,9 +202,9 @@ class RaspClient(private val context: Context, private val listener: RaspListene
         try { output.write(envelope.toByteArray(Charsets.UTF_8)); policyFile.finishWrite(output) }
         catch (error: Exception) { policyFile.failWrite(output); throw error }
         active = updated; revision = verified.revision; policyExpiry = verified.expiresAt
-        stopEngine()
+        stop()
         transport = newTransport
-        engine = RaspEngine(context, config, this)
+        engine = createEngine(config)
         engine!!.start()
     }
 
@@ -217,38 +219,47 @@ class RaspClient(private val context: Context, private val listener: RaspListene
     }
 
     override fun onThreatsDetected(event: Map<String, Any>) { listener.onThreatsDetected(event) }
-    override fun onReactionsChanged(reactions: Set<Reaction>) {
+    override fun onReactionsChanged(activeReactions: Set<Reaction>) {
         val current = engine
         if (current != null && !current.config.devMode) {
-            if (Reaction.SILENT_DEGRADE in reactions) { degraded = true; sessionKey = null }
-            if (Reaction.CLOSE_APP in reactions) {
-                val scheduledGeneration = generation
-                schedule(current.config.reactionDelayMillis) {
-                    main.post { if (scheduledGeneration == generation) activity?.finishAndRemoveTask() }
+            if (Reaction.SILENT_DEGRADE in activeReactions) { degraded = true; sessionKey = null }
+            if (Reaction.CLOSE_APP in activeReactions) {
+                reactions.schedule(current.config.reactionDelayMillis) { epoch ->
+                    main.post { reactions.runIfCurrent(epoch) { activity?.finishAndRemoveTask() } }
                 }
             }
         }
-        listener.onReactionsChanged(reactions)
+        listener.onReactionsChanged(activeReactions)
     }
     /** Called for every scan, including persistent threats after a policy update. */
     override fun onDecision(decision: Decision) {
         val config = engine?.config ?: return
         if (!config.devMode && decision.threats.keys.any { it in config.wipeOnThreats } && !wipeRequested) {
-            wipeRequested = true
             degraded = true; sessionKey = null
-            schedule(config.reactionDelayMillis) { secureStore.clear() }
+            // Irreversible key invalidation precedes delayed/cancelable file cleanup.
+            secureStore.invalidateKey()
+            wipeRequested = true
+            reactions.schedule(config.reactionDelayMillis) { secureStore.deleteCiphertext() }
         }
     }
-    private fun schedule(delay: Long, action: () -> Unit) = synchronized(pending) {
-        pending.removeAll { it.isDone }
-        pending += scheduler.schedule({ synchronized(pending) { action() } }, delay, TimeUnit.MILLISECONDS)
+    private fun createEngine(config: RaspConfig): RaspEngine {
+        val epoch = reactions.current()
+        return RaspEngine(context, config, object : RaspListener {
+            override fun onThreatsDetected(event: Map<String, Any>) = reactions.runIfCurrent(epoch) {
+                this@RaspClient.onThreatsDetected(event)
+            }
+            override fun onReactionsChanged(value: Set<Reaction>) = reactions.runIfCurrent(epoch) {
+                this@RaspClient.onReactionsChanged(value)
+            }
+            override fun onDecision(decision: Decision) = reactions.runIfCurrent(epoch) {
+                this@RaspClient.onDecision(decision)
+            }
+        })
     }
-    private fun stopEngine() { engine?.stop(); engine = null }
     fun stop() {
-        generation++
-        stopEngine(); sessionKey = null
-        synchronized(pending) { pending.forEach { it.cancel(false) }; pending.clear() }
+        reactions.cancel()
+        engine?.stop(); engine = null; sessionKey = null
         main.removeCallbacksAndMessages(null)
     }
-    fun close() { stop(); scheduler.shutdownNow(); activity = null }
+    fun close() { stop(); reactions.close(); activity = null }
 }

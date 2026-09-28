@@ -54,7 +54,13 @@ class SecureStore(private val directory: File, private val wrappingKey: StoreKey
 
     @Synchronized fun clear() {
         // Delete the non-exportable wrapping key first; old files remain unreadable even if deletion fails.
-        wrappingKey.delete()
+        invalidateKey()
+        deleteCiphertext()
+    }
+
+    @Synchronized fun invalidateKey() = wrappingKey.delete()
+
+    @Synchronized fun deleteCiphertext() {
         check(!directory.exists() || directory.deleteRecursively()) { "cannot delete secure store" }
     }
 

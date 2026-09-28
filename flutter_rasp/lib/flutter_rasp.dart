@@ -59,6 +59,10 @@ class Rasp {
   static Future<void> secureClear() =>
       _channel.invokeMethod<void>('secureClear');
 
+  /// Fetches a newer signed policy through bootstrap pins, including when the cached policy expired.
+  static Future<void> refreshPolicy(String url) =>
+      _channel.invokeMethod<void>('refreshPolicy', {'url': url});
+
   /// Installs an authenticated, unexpired policy with a strictly newer revision.
   static Future<void> applyPolicy(String envelope) =>
       _channel.invokeMethod<void>('applyPolicy', {'envelope': envelope});

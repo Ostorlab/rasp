@@ -33,6 +33,13 @@ class SignedPolicyTest {
         assertFailsWith<IllegalArgumentException> { verifier.verify(envelope(expires = 1000), 0, 1000) }
         assertFailsWith<IllegalArgumentException> { verifier.verify(envelope(app = "other"), 0, 1000) }
     }
+    @Test fun expiredCacheRetainsRevisionButCannotAuthorizeFreshOperationsOrRollback() {
+        val cached = verifier.verify(envelope(revision = 7, expires = 1000), 0, 1200, allowExpired = true)
+        assertEquals(7, cached.revision)
+        assertFailsWith<IllegalArgumentException> { verifier.verify(envelope(revision = 6), cached.revision, 1200) }
+        assertEquals(8, verifier.verify(envelope(revision = 8), cached.revision, 1200).revision)
+        assertFailsWith<IllegalArgumentException> { verifier.verify(envelope(revision = 8, expires = 1100), cached.revision, 1200) }
+    }
     @Test fun rejectsChangedPayloadAndUnknownKey() {
         val modified = JSONObject(envelope()).put("payload", Base64.getUrlEncoder().encodeToString("{}".toByteArray()))
         assertFailsWith<IllegalArgumentException> { verifier.verify(modified.toString(), 0, 1000) }

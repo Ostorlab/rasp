@@ -10,7 +10,7 @@ import org.json.JSONObject
 class SignedPolicy(private val keys: Map<String, PublicKey>, private val tenantId: String, private val appId: String) {
     data class Verified(val revision: Long, val expiresAt: Long, val config: JSONObject)
 
-    fun verify(envelope: String, currentRevision: Long, nowSeconds: Long, allowCurrent: Boolean = false): Verified {
+    fun verify(envelope: String, currentRevision: Long, nowSeconds: Long, allowCurrent: Boolean = false, allowExpired: Boolean = false): Verified {
         require(envelope.length <= 131072) { "policy too large" }
         val outer = JSONObject(envelope)
         val key = keys[outer.getString("kid")] as? ECPublicKey ?: throw IllegalArgumentException("unknown policy key")
@@ -28,7 +28,7 @@ class SignedPolicy(private val keys: Map<String, PublicKey>, private val tenantI
         val issuedAt = integer(value, "issuedAt")
         val expiresAt = integer(value, "expiresAt")
         require(revision > 0 && (revision > currentRevision || (allowCurrent && revision == currentRevision))) { "policy rollback" }
-        require(issuedAt <= nowSeconds + 60 && issuedAt >= 0 && expiresAt > nowSeconds && expiresAt > issuedAt) { "policy expired or not yet valid" }
+        require(issuedAt <= nowSeconds + 60 && issuedAt >= 0 && (allowExpired || expiresAt > nowSeconds) && expiresAt > issuedAt) { "policy expired or not yet valid" }
         val config = value.getJSONObject("config")
         val allowed = setOf("policy", "checkIntervalSeconds", "accessibilityAllowlist", "pins", "wipeOnThreats", "reactionDelayMillis")
         require(config.keys().asSequence().all { it in allowed }) { "unsupported policy parameter" }
