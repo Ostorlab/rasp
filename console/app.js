@@ -296,7 +296,7 @@ async function overview(signal, generation) {
   for (const [label, value] of [
     ["Stable revision", data.activePolicyRevision],
     ["Candidate revision", data.candidatePolicyRevision],
-    ["Candidate rollout", `${data.rolloutPercent}%`],
+    ["Candidate rollout", data.rolloutPercent == null ? format(data.rolloutPercent) : `${format(data.rolloutPercent)}%`],
   ]) {
     const row = el("div", undefined, "detail");
     row.append(el("span", label), el("strong", value));
@@ -583,7 +583,12 @@ async function render(cursor = null) {
   });
   try {
     if (key === "timeline") {
-      install = decodeURIComponent(install || "");
+      try {
+        install = decodeURIComponent(install || "");
+      } catch {
+        location.hash = "installs";
+        return;
+      }
       header("installs", "Install timeline", install);
       await list(
         `/installs/${encodeURIComponent(install)}/timeline`,

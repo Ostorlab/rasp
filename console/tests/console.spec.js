@@ -226,3 +226,24 @@ test("an old mutation's 401 cannot disconnect a replacement session", async ({ p
   await expect(page.getByRole('button', {name:'Disconnect'})).toBeVisible();
   await expect(page.locator('#notice')).toBeHidden();
 });
+
+
+test("absent candidate rollout displays an empty value", async ({ page }) => {
+  await setup(page, async route => {
+    if (route.request().url().endsWith("/summary")) {
+      await route.fulfill({ json: { ...summary, candidatePolicyRevision: null, rolloutPercent: null } });
+      return true;
+    }
+  });
+  await expect(page.locator(".detail").filter({ hasText: "Candidate rollout" }).locator("strong")).toHaveText("—");
+  await expect(page.getByText("null%", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("undefined%", { exact: true })).toHaveCount(0);
+});
+
+test("malformed timeline hash falls back to installs", async ({ page }) => {
+  await setup(page);
+  await page.evaluate(() => { location.hash = "timeline/%"; });
+  await expect(page.getByRole("heading", { name: "Installs", exact: true })).toBeVisible();
+  await expect(page.getByText("No records yet")).toBeVisible();
+  await expect(page.getByText("URI malformed", { exact: true })).toHaveCount(0);
+});

@@ -1,32 +1,51 @@
 # Private protection console
 
-A dependency-free browser application for the scoped control-plane API in
-`docs/backend-control-plane.md`. Requires the control-plane backend PR. No SDK or
-console package is published.
+The self-hosted console lets operators publish signed protection policies, watch
+rollouts, restore policies, rotate secrets and signing keys, and inspect scoped
+installs, events, delivery records, and audit history. It ships as static files
+with no external assets. No SDK or console package is published.
 
-Serve these static files and proxy `/v1/console/` to the backend on the **same
-origin**. `Dockerfile` provides nginx on port 8080 with a `trust:8080` upstream.
-Use TLS at the deployment ingress; bind local demonstration ports to loopback.
-Configure server-side console principals and their application/role grants in
-the backend. The UI never accepts a tenant override.
+The backend contract and local deployment instructions are in
+[backend-control-plane.md](../docs/backend-control-plane.md). All reads and
+mutations require a server-configured principal with an application grant.
 
-Credentials live only in tab memory, are sent as a bearer header, and are cleared
-on disconnect or rejected authentication. No browser persistence, query-string
-credential, analytics, third-party assets, or remote scripts are used. The UI
-shows only API responses, including empty/error states; no sample metrics are
-bundled. Policy publication, rollout, rollback, secret changes and key rotation
-have explicit confirmation. Authorization remains enforced on the server.
+## How do I serve and proxy the console?
 
-`npm ci`, `npx playwright install chromium`, then `npm test` run browser contract
-tests against controlled HTTP responses. Screenshots are test artifacts, not
-live fleet evidence. Backend integration is validated separately against the
-configured local trust service. `python3 -m http.server 4173 --bind 127.0.0.1`
-alone serves static assets but does not proxy a backend.
+Serve the files and proxy `/v1/console/` to the control-plane API on the same
+origin. `Dockerfile` provides nginx on port 8080. Its `trust:8080` upstream names
+the control-plane service's Docker hostname; change `nginx.conf` if your backend
+uses another hostname. Configure TLS at ingress and bind demo ports to loopback.
+The UI does not accept a tenant override; the server binds tenant and role grants.
 
-For the live integration test, set `RASP_CONSOLE_LIVE_URL` to a loopback backend,
+## How are credentials handled?
+
+Credentials stay in tab memory, travel as bearer headers, and clear on disconnect
+or rejected authentication. The UI uses no browser persistence, credential URLs,
+analytics, or remote scripts. Mutation confirmations precede policy publication,
+rollout, restoration, secret changes, and key rotation. Authorization is enforced
+by the backend for every request. No sample metrics are bundled.
+
+## How do I run the browser contract tests?
+
+Run from `console/`:
+
+```sh
+npm ci
+npx playwright install chromium
+npm test
+```
+
+Contract tests use controlled HTTP responses, including empty/error states,
+pagination, mutation confirmation, session isolation, and malformed navigation.
+Screenshots are test artifacts. A plain `python3 -m http.server 4173 --bind
+127.0.0.1` serves assets but does not proxy the backend.
+
+## How do I run the live integration test?
+
+Set `RASP_CONSOLE_LIVE_URL` to the loopback backend URL,
 `RASP_CONSOLE_LIVE_APP` to a dedicated test application, and
-`RASP_CONSOLE_LIVE_TOKEN` to its administrator credential. The test publishes a
-policy, creates a secret version and reads the audit trail through real backend
-requests; it intentionally mutates the dedicated test application's state.
-Without those settings, only this integration case is skipped. Local validation
-passed all nine browser cases against the PostgreSQL-backed reference service.
+`RASP_CONSOLE_LIVE_TOKEN` to its administrator credential, then run `npm test`.
+The test publishes a policy, creates a secret version, and reads audit records
+through real backend requests. It mutates that dedicated application's state.
+Without these settings, only the live case is skipped. CI provisions an isolated
+backend and runs this case alongside the contract suite.
