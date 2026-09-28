@@ -138,8 +138,9 @@ public abstract class HardenClasses extends DefaultTask {
                             String selection = owner + "#" + name + descriptor;
                             existing.add(selection);
                             if (requested.contains(selection)) {
-                                if ((access & (Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC)) != (Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC) || name.startsWith("<"))
-                                    throw new IllegalArgumentException("Rename selection must be private static: " + selection);
+                                if ((access & (Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC)) != (Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC) ||
+                                    (access & (Opcodes.ACC_NATIVE | Opcodes.ACC_ABSTRACT)) != 0 || name.startsWith("<"))
+                                    throw new IllegalArgumentException("Rename selection must be private static managed bytecode: " + selection);
                                 renames.put(selection, "r" + Integer.toUnsignedString(mask(getSeed().get() + ":rename:" + selection), 16));
                             }
                             return null;

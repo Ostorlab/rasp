@@ -25,7 +25,7 @@ tasks.named('hardenClasses') {
     seed = providers.gradleProperty('raspSeed').map { Long.parseLong(it) }
     methods = [providers.gradleProperty('raspMethod').getOrElse('demo/Example#compute(II)I')]
     probeOwner = 'demo/Guard'
-    renameMethods = ['demo/Example#hidden(I)I']
+    renameMethods = [providers.gradleProperty('raspRename').getOrElse('demo/Example#hidden(I)I')]
 }
 ''')
             source = root / "src/main/java/demo"
@@ -35,6 +35,7 @@ public final class Guard { public static int probe(int site) { return Boolean.ge
 ''')
             (source / "Example.java").write_text('''package demo;
 public final class Example {
+    private static native int nativeRule(int x);
     private static int hidden(int x) { return x + 123456; }
     public static int compute(int x, int y) { java.util.function.IntUnaryOperator f = Example::hidden; int a = f.applyAsInt(x); if ((x & 1) == 0) a ^= y; else a -= 7; return a; }
     public static void main(String[] args) { for(int x=0;x<100;x++) System.out.println(compute(x, x*17)); }
@@ -64,3 +65,6 @@ public final class Example {
             missing = subprocess.run(command + ["-PraspSeed=456", "-PraspMethod=demo/Example#missing()I"], capture_output=True, text=True, env=environment)
             self.assertNotEqual(missing.returncode, 0)
             self.assertIn("Selected methods not found", missing.stderr)
+            native = subprocess.run(command + ["-PraspSeed=456", "-PraspRename=demo/Example#nativeRule(I)I"], capture_output=True, text=True, env=environment)
+            self.assertNotEqual(native.returncode, 0)
+            self.assertIn("private static managed bytecode", native.stderr)
