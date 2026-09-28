@@ -10,7 +10,7 @@ The verifier supports Android Key Attestation plus Google Play Integrity and a s
 - [x] Verify bounded Apple CBOR, certificate chain, nonce, RP ID, environment, credential key and assertion counters; expose explicit iOS routes.
 - [x] Exercise negative cases, concurrent replay, full Android flows and state recreation against PostgreSQL.
 
-Local validation: 135 unittest cases pass with PostgreSQL 16 and a non-owner runtime role. This includes synthetic cryptographic Apple fixtures and controlled Google decode responses. Live Google credentials, Apple device attestations, receipts/fraud-metric assessment and on-device behavior have **not** been validated. App Attest does not establish biometric enforcement; its tokens carry `uauth=false`, `sec="app_attest"`.
+Local validation: 161 unittest cases pass with PostgreSQL 16 and a non-owner runtime role. Combined branch coverage is 82%, above the unchanged 80% gate. This includes synthetic cryptographic Apple fixtures and controlled Google decode responses. Live Google credentials, Apple device attestations, receipts/fraud-metric assessment and on-device behavior have **not** been validated. App Attest does not establish biometric enforcement; its tokens carry `uauth=false`, `sec="app_attest"`.
 
 ## Service and storage boundaries
 
