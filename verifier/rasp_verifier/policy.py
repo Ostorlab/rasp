@@ -47,6 +47,9 @@ class TokenPolicy:
     # device cannot earn a clean pass on the RASP report alone, so the risk floor is raised to this. Other
     # signals may still push it higher. This is the design's degraded mode ("capped at medium").
     degraded_attestation_floor: str = "medium"
+    # The validated App Attest lifecycle proves app/key origin, not OS integrity.
+    # Keep its policy separate from Android device-integrity verdicts.
+    app_attest_risk_floor: str = "medium"
 
 
 @dataclass
@@ -100,6 +103,9 @@ def assess_risk(
     if not platform_available:
         risk = _max_risk(risk, policy.degraded_attestation_floor)
         reasons.append("degraded:no_platform_attestation")
+    elif platform_verdict == "APP_ATTEST":
+        risk = _max_risk(risk, policy.app_attest_risk_floor)
+        reasons.append("platform:APP_ATTEST")
     elif platform_verdict is not None and platform_verdict not in ("STRONG", "DEVICE"):
         risk = _max_risk(risk, "high")
         reasons.append(f"platform:{platform_verdict}")

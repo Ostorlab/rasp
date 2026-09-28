@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import threading
 import time
+import typing
+
+from rasp_verifier import storage
 from dataclasses import dataclass, field
 
 
@@ -57,7 +60,8 @@ class Build:
 
 
 class BuildRegistry:
-    def __init__(self, builds: list[Build] | None = None):
+    def __init__(self, builds: list[Build] | None = None, *, scope: storage.Scope = storage.Scope()):
+        self.scope = scope
         self._lock = threading.Lock()
         self._builds: dict[str, Build] = {b.build_id: b for b in builds or []}
 
@@ -99,16 +103,26 @@ class Install:
     user_auth_required: bool
     attestation_warnings: list[str] = field(default_factory=list)
     bound_at: float = field(default_factory=time.time)
+    platform: str = "android"
+    app_attest_key_id: str = ""
 
 
 class InstallRegistry:
-    def __init__(self):
+    def __init__(self, *, scope: storage.Scope = storage.Scope()):
+        self.scope = scope
         self._lock = threading.Lock()
         self._installs: dict[str, Install] = {}
+        self._app_attest_keys: set[str] = set()
 
     def bind(self, install: Install) -> None:
         with self._lock:
+            if install.install_id in self._installs:
+                raise RegistryError("install_exists", install.install_id)
+            if install.app_attest_key_id != "" and install.app_attest_key_id in self._app_attest_keys:
+                raise RegistryError("key_already_bound")
             self._installs[install.install_id] = install
+            if install.app_attest_key_id != "":
+                self._app_attest_keys.add(install.app_attest_key_id)
 
     def get(self, install_id: str) -> Install:
         with self._lock:
@@ -120,3 +134,17 @@ class InstallRegistry:
     def unbind(self, install_id: str) -> None:
         with self._lock:
             self._installs.pop(install_id, None)
+
+
+class BuildRepository(typing.Protocol):
+    scope: storage.Scope
+    def register(self, build: Build) -> None: ...
+    def get(self, build_id: str) -> Build: ...
+    def revoke(self, build_id: str) -> None: ...
+
+
+class InstallRepository(typing.Protocol):
+    scope: storage.Scope
+    def bind(self, install: Install) -> None: ...
+    def get(self, install_id: str) -> Install: ...
+    def unbind(self, install_id: str) -> None: ...

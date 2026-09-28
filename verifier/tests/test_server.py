@@ -2,8 +2,10 @@
 
 import base64
 import json
+import socket
 import threading
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -11,6 +13,8 @@ from http.server import ThreadingHTTPServer
 from cryptography.hazmat.primitives import serialization
 
 from rasp_verifier import jose
+from rasp_verifier import postgres
+from rasp_verifier import server as server_module
 from rasp_verifier.platform import StubPlatformAttestation
 from rasp_verifier.policy import TokenPolicy
 from rasp_verifier.registry import Build, BuildRegistry, InstallRegistry
@@ -251,6 +255,17 @@ class ServerTest(unittest.TestCase):
         self.assertEqual((403, "attestation_failed"), (status, body.get("error")))
         self.assertIn("revoked", body["detail"])
 
+    def testIosRoutes_whenNotConfigured_returnUnavailable(self) -> None:
+        self.assertEqual(self.post("/v1/ios/bind", {})[0], 503)
+        self.assertEqual(self.post("/v1/ios/token", {})[0], 400)
+
+    def testHttp_whenFramingAmbiguous_rejectsWithoutReadingBody(self) -> None:
+        for framing in ("Content-Length: -1\r\n", "Content-Length: 0\r\nContent-Length: 0\r\n",
+                        "Content-Length: 0\r\nTransfer-Encoding: chunked\r\n", "Transfer-Encoding: chunked\r\n"):
+            with self.subTest(framing=framing), socket.create_connection(("127.0.0.1", self.server.server_port), timeout=2) as client:
+                client.sendall(("POST /v1/challenge HTTP/1.1\r\nHost: localhost\r\n" + framing + "\r\n").encode())
+                self.assertIn(b" 400 ", client.recv(1024).split(b"\r\n")[0])
+
     def test_jwks_is_served(self):
         request = urllib.request.Request(self.base + "/.well-known/jwks.json")
         with urllib.request.urlopen(request) as response:
@@ -261,3 +276,18 @@ class ServerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ServerLifecycleTest(unittest.TestCase):
+    def testMain_whenServingFails_closesHttpServerAndPostgresStore(self) -> None:
+        store = mock.Mock(spec=postgres.PostgresStore)
+        service = mock.Mock(state=store)
+        arguments = ["rasp-server", "--package", "com.example", "--cert-sha256", "00",
+                     "--build-id", "build", "--build-key-hex", "00", "--no-revocation-check"]
+        with mock.patch("sys.argv", arguments), mock.patch.object(server_module, "build_services", return_value=(service, mock.Mock())), \
+             mock.patch.object(server_module, "ThreadingHTTPServer") as http_server:
+            http_server.return_value.serve_forever.side_effect = RuntimeError("stop serving")
+            with self.assertRaisesRegex(RuntimeError, "stop serving"):
+                server_module.main()
+            http_server.return_value.server_close.assert_called_once_with()
+        store.close.assert_called_once_with()

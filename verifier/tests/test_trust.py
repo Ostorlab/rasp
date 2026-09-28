@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import typing
 import unittest
 
 from rasp_verifier import jose
@@ -39,6 +40,11 @@ def make_service(*, platform=None, require_hardware=True, require_user_auth=True
 
 
 class TrustFlow(unittest.TestCase):
+    def testTrustService_whenResolvingConstructorAnnotations_resolvesSigningKey(self) -> None:
+        annotations = typing.get_type_hints(TrustService.__init__)
+
+        self.assertIs(annotations["signing_key"], jose.SigningKey)
+
     def setUp(self):
         self.trust = make_service()
         self.trust.trusted_roots = None  # set per-bind below
@@ -207,3 +213,31 @@ class TrustFlow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TrustBoundaries(TrustFlow):
+    def testToken_whenBuildBelongsToAnotherApplication_rejects(self) -> None:
+        chain, _ = self._bind()
+        self.trust.builds.register(Build(BUILD_ID, BUILD_KEY, "other.app", [APP_CERT_SHA256]))
+        with self.assertRaises(TrustError) as caught:
+            self._token(chain)
+        self.assertEqual(caught.exception.reason, "wrong_build_identity")
+
+    def testToken_whenBuildSignerDiffers_rejects(self) -> None:
+        chain, _ = self._bind()
+        self.trust.builds.register(Build(BUILD_ID, BUILD_KEY, PACKAGE, ["ab" * 32]))
+        with self.assertRaises(TrustError) as caught:
+            self._token(chain)
+        self.assertEqual(caught.exception.reason, "wrong_build_identity")
+
+    def testBind_whenInstallExists_preservesOriginalKey(self) -> None:
+        chain, _ = self._bind()
+        with self.assertRaises(TrustError) as caught:
+            self._bind()
+        self.assertEqual(caught.exception.reason, "install_exists")
+        self.assertEqual(self.trust.installs.get("install-1").public_key_der, chain.public_key_der())
+
+    def testToken_whenReportIsNotObject_returnsControlledError(self) -> None:
+        chain, _ = self._bind()
+        nonce = self.trust.challenge("install-1", "token")["nonce"]
+        with self.assertRaises(TrustError):
+            self.trust.token({"installId": "install-1", "nonce": nonce, "sealedReport": ["invalid"]})
