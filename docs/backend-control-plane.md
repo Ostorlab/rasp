@@ -130,7 +130,7 @@ The supplied deployment does not automatically emit trust decisions or dispatch 
 
 ## Validation
 
-The verifier suite exercises real HTTP with PostgreSQL 16 and a restricted runtime role: authorization, tenant/application separation, signed scoped policies, revision races, encryption/redaction, token rotation with old-token overlap, cursor tampering, and rollback when audit insertion fails. Fatal Python lint and the unchanged 80% verifier branch-coverage gate run in core CI.
+The verifier suite exercises real HTTP with PostgreSQL 16 and a restricted runtime role: authorization, tenant/application separation, signed scoped policies, revision races, encryption/redaction, token rotation with old-token overlap, cursor tampering, and rollback when audit insertion fails. Fatal Python lint and the unchanged 80% verifier combined statement and branch coverage gate run in core CI; branch-only percentages are not independently gated.
 
 The console CI job also provisions an isolated PostgreSQL service and invokes the real CLI backend for the live Playwright test. Locally, with a migrated dedicated database and restricted test-role DSN:
 
