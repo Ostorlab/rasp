@@ -86,6 +86,7 @@ dependencies {
     implementation("com.google.android.play:integrity:1.6.0")
     implementation("androidx.annotation:annotation:1.9.1")
     testImplementation("org.jetbrains.kotlin:kotlin-test")
-    testImplementation("org.mockito:mockito-core:5.0.0")
+    // Supports the Java 21 runtime used by mobile CI.
+    testImplementation("org.mockito:mockito-core:5.14.2")
     testImplementation("org.json:json:20240303")
 }

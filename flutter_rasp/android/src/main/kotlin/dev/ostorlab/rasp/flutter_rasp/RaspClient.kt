@@ -69,8 +69,11 @@ class RaspClient(private val context: Context, private val listener: RaspListene
         "installId" -> TrustCrypto.installId(context)
         "bindDevice" -> {
             val challenge = call.argument<String>("challenge") ?: throw IllegalArgumentException("challenge is required")
-            deviceBinding.bind(Base64.decode(challenge, Base64.NO_WRAP), call.argument<Boolean>("requireUserAuth") ?: true) +
-                mapOf("installId" to TrustCrypto.installId(context))
+            val decoded = Base64.decode(challenge, Base64.NO_WRAP)
+            // bind deletes the previous installation key before replacement, even if replacement fails.
+            sessionKey = null
+            val binding = deviceBinding.bind(decoded, call.argument<Boolean>("requireUserAuth") ?: true)
+            binding + mapOf("installId" to TrustCrypto.installId(context))
         }
         "unbindDevice" -> {
             deviceBinding.unbind()
