@@ -22,3 +22,11 @@ tests against controlled HTTP responses. Screenshots are test artifacts, not
 live fleet evidence. Backend integration is validated separately against the
 configured local trust service. `python3 -m http.server 4173 --bind 127.0.0.1`
 alone serves static assets but does not proxy a backend.
+
+For the live integration test, set `RASP_CONSOLE_LIVE_URL` to a loopback backend,
+`RASP_CONSOLE_LIVE_APP` to a dedicated test application, and
+`RASP_CONSOLE_LIVE_TOKEN` to its administrator credential. The test publishes a
+policy, creates a secret version and reads the audit trail through real backend
+requests; it intentionally mutates the dedicated test application's state.
+Without those settings, only this integration case is skipped. Local validation
+passed all nine browser cases against the PostgreSQL-backed reference service.
