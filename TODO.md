@@ -70,6 +70,37 @@ The current scope is Android + a trust service. "Verified" means covered by test
   both) verified against the Python reference (byte-exact); the hardener manifest is verified through the
   trust-service build registry, and integrity-derived sealing through the full token route, end-to-end.
 
+### Build-time hardening (design §6) — `hardener/` toolchain started
+- [x] **Native literal and symbol obfuscation.** All protected registry literals (detector IDs, JSON keys,
+  paths, needles, evidence, formats, JNI registration and the build key) are encrypted per build and
+  decoded into scratch buffers at use. Signal records own copied detector names. `symbols.def` generates
+  per-build names and a private `symbols.map`; hidden visibility, an export map and stripped releases
+  leave only JNI entry points. Source and compiled-binary gates enforce this, including optimized LTO.
+- [x] **Results feeding data (keys/offsets) not branches.** Guard-mesh output derives an offset/key
+  (`rasp_guard_offset`, `guardmesh.fold_key`); a single flipped byte changes it, no `if(tampered)` branch.
+- [x] **Guard network (mutually-hashing integrity guards).** `guard.c` ↔ `guardmesh.py`, chained per-region
+  hashing, known-answer + cross-language tests.
+- [x] **Per-build polymorphism (seed → layout/keys/opcodes/detector placement) and build registration.**
+  `seed.py` derives build key/id, string key, VM opcode permutation and detector order from a seed;
+  `manifest.py` + `BuildRegistry.from_manifest` register the build with the trust service end-to-end.
+
+### Crypto and storage (design §8)
+- [x] Integrity-derived keys so tampering fails closed — end-to-end. The hardener hashes the compiled `.so`'s
+  code/read-only regions (`elf.py` + `codehash.so_integrity_root`) into the registered integrity root and
+  emits `integrity_regions.h`. The device reproduces the same root at runtime over its own `.so`
+  (`integrity.c`, located via `dladdr`) and seals the report with `HMAC(build_key, root)` (`rasp_guard_fold_key`
+  in `rasp_jni.c`); the trust service derives the same key from the registered root and wires it into the token
+  route (`TrustService.token` → `verify_sealed_report(integrity_root=...)`), so a patched binary is refused
+  with no on-device branch. Cross-language KAT: the native runtime root equals the build-time root over the
+  same `.so`, and a flipped byte changes both; the token route accepts a derived seal and refuses a raw one.
+
+### Validation and DX (design §12, §13, §15)
+- [x] Enforcement checker with valid positive control and missing/malformed/expired/replayed-token probes.
+- [x] Core CI, coverage floors, native compilation and host binary-size gate.
+
+### Housekeeping
+- [x] Proprietary license notices in the repository and Flutter SDK.
+
 ## Partial
 
 - [~] **Play Integrity / App Attest (design §7).** Pluggable interface + stub only; no real Google/Apple
@@ -89,42 +120,12 @@ The current scope is Android + a trust service. "Verified" means covered by test
 - [~] **Compliance mapping (design §14).** Documented in the design; detectors not yet linked to MASVS/
   MASWE/MASTG ids in code or an exported evidence report.
 
-## Missing
-
-### Platform
-- [ ] **iOS** (SDK, jailbreak/instrumentation detection, App Attest, self-integrity).
-- [ ] React Native, KMP, MAUI, Cordova/Capacitor, Unity wrappers; the existing Flutter plugin needs
-  pub.dev packaging.
-
 ### Build-time hardening (design §6) — `hardener/` toolchain started
 - [~] **Compiler plugins / post-build CLI / SDK-only mode.** `rasp-hardener` CLI (`gen-build`/`show`/
   `register`) is the Python pre-build generator + post-build registration step. LLVM/O-LLVM Clang passes,
   the Xcode toolchain, and the DEX/ASM Gradle plugin are not implemented.
-- [x] **Native literal and symbol obfuscation.** All protected registry literals (detector IDs, JSON keys,
-  paths, needles, evidence, formats, JNI registration and the build key) are encrypted per build and
-  decoded into scratch buffers at use. Signal records own copied detector names. `symbols.def` generates
-  per-build names and a private `symbols.map`; hidden visibility, an export map and stripped releases
-  leave only JNI entry points. Source and compiled-binary gates enforce this, including optimized LTO.
-- [ ] **Remaining obfuscation.** Managed-code name obfuscation, control-flow flattening, MBA, code
-  virtualization, class/asset encryption and anti-disassembly.
-- [x] **Results feeding data (keys/offsets) not branches.** Guard-mesh output derives an offset/key
-  (`rasp_guard_offset`, `guardmesh.fold_key`); a single flipped byte changes it, no `if(tampered)` branch.
-- [ ] **Weave check calls into arbitrary app functions** (vs. only the RASP core) — not automated yet.
-- [x] **Guard network (mutually-hashing integrity guards).** `guard.c` ↔ `guardmesh.py`, chained per-region
-  hashing, known-answer + cross-language tests.
-- [x] **Per-build polymorphism (seed → layout/keys/opcodes/detector placement) and build registration.**
-  `seed.py` derives build key/id, string key, VM opcode permutation and detector order from a seed;
-  `manifest.py` + `BuildRegistry.from_manifest` register the build with the trust service end-to-end.
 
 ### Crypto and storage (design §8)
-- [x] Integrity-derived keys so tampering fails closed — end-to-end. The hardener hashes the compiled `.so`'s
-  code/read-only regions (`elf.py` + `codehash.so_integrity_root`) into the registered integrity root and
-  emits `integrity_regions.h`. The device reproduces the same root at runtime over its own `.so`
-  (`integrity.c`, located via `dladdr`) and seals the report with `HMAC(build_key, root)` (`rasp_guard_fold_key`
-  in `rasp_jni.c`); the trust service derives the same key from the registered root and wires it into the token
-  route (`TrustService.token` → `verify_sealed_report(integrity_root=...)`), so a patched binary is refused
-  with no on-device branch. Cross-language KAT: the native runtime root equals the build-time root over the
-  same `.so`, and a flipped byte changes both; the token route accepts a derived seal and refuses a raw one.
 - [~] **Integrity-derived keys on device:** validate `dladdr` self-location on-device (host tests cover
   root computation), hash resources/`libapp.so`, and fold integrity roots into data keys.
 - [~] White-box crypto (build key, no-hardware devices; DCA/DFA countermeasures). Plain white-box AES-128
@@ -137,6 +138,21 @@ The current scope is Android + a trust service. "Verified" means covered by test
   framed `nonce||ciphertext||tag`; `open` verifies the tag in constant time before decrypting. CMAC is
   RFC-4493 KAT-verified and cross-language tested (C == Python; tamper rejected both sides). Missing: key
   wipe-on-critical, and the Kotlin/Dart API surface (JNI binding + method channel).
+
+### Validation and DX (design §12, §13, §15)
+- [~] Size/latency budget tooling implemented; physical reference-device measurements remain missing.
+
+## Missing
+
+### Platform
+- [ ] **iOS** (SDK, jailbreak/instrumentation detection, App Attest, self-integrity).
+- [ ] React Native, KMP, MAUI, Cordova/Capacitor, Unity wrappers; the existing Flutter plugin needs
+  pub package-format packaging for a private pub registry.
+
+### Build-time hardening (design §6) — `hardener/` toolchain started
+- [ ] **Remaining obfuscation.** Managed-code name obfuscation, control-flow flattening, MBA, code
+  virtualization, class/asset encryption and anti-disassembly.
+- [ ] **Weave check calls into arbitrary app functions** (vs. only the RASP core) — not automated yet.
 
 ### Control plane (design §10)
 - [ ] OTA signed policy delivery (detector params, thresholds, reactions, pins, allowlists) — currently all
@@ -161,10 +177,4 @@ The current scope is Android + a trust service. "Verified" means covered by test
 ### Validation and DX (design §12, §13, §15)
 - [ ] Red-team bypass regression suite on a device farm (Frida forks, hidden root/jailbreak, attestation
   spoofing/relay, static patching).
-- [x] Enforcement checker with valid positive control and missing/malformed/expired/replayed-token probes.
-- [x] Core CI, coverage floors, native compilation and host binary-size gate.
 - [ ] Private crash-mapping upload.
-- [~] Size/latency budget tooling implemented; physical reference-device measurements remain missing.
-
-### Housekeeping
-- [x] Proprietary license notices in the repository and Flutter SDK.

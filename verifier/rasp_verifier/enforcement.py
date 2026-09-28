@@ -72,8 +72,10 @@ def _normalize_headers(headers: dict[str, str]) -> dict[str, str]:
         if (
             key in normalized
             or _HEADER_NAME.fullmatch(key) is None
-            or "\r" in value
-            or "\n" in value
+            or any(
+                (ord(char) < 32 and char != "\t") or ord(char) == 127 or ord(char) > 255
+                for char in value
+            )
         ):
             raise ValueError("invalid or duplicate request header")
         if key in {"host", "content-length", "transfer-encoding", "connection"}:
@@ -105,6 +107,10 @@ def _validate_url(url: str, allow_loopback_http: bool) -> None:
     parsed = urllib.parse.urlsplit(url)
     if parsed.hostname is None or parsed.username is not None or parsed.fragment != "":
         raise ValueError("endpoint must have a host, no user info, and no fragment")
+    try:
+        parsed.port
+    except ValueError as error:
+        raise ValueError("invalid endpoint port") from error
     if parsed.scheme == "https":
         return
     if parsed.scheme == "http" and allow_loopback_http is True:
