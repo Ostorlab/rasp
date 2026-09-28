@@ -169,7 +169,7 @@ def decode_jwt(token: str, jwks_keys: list[dict], *, now: float | None = None, l
     try:
         header = json.loads(b64u_decode(header_b64))
         claims = json.loads(b64u_decode(payload_b64))
-    except (ValueError, UnicodeError) as error:
+    except (ValueError, UnicodeError, RecursionError) as error:
         raise JoseError("bad_token") from error
     if not isinstance(header, dict) or not isinstance(claims, dict):
         raise JoseError("bad_token")
