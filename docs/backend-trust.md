@@ -10,7 +10,7 @@ The verifier persists trust state per tenant and application, so installs, build
 - Verifies bounded Apple CBOR, certificate chain, nonce, RP ID, environment, credential key and assertion counters; exposes explicit iOS routes.
 - Tests negative cases, concurrent replay, full Android flows and state recreation against PostgreSQL.
 
-Validation uses synthetic cryptographic Apple fixtures, controlled Google decode responses, and PostgreSQL 16 with a non-owner runtime role. CI enforces an 80% verifier branch-coverage floor. Live Google credentials, Apple device attestations, receipts/fraud-metric assessment, and on-device behavior have **not** been validated.
+Validation uses synthetic cryptographic Apple fixtures, controlled Google decode responses, and PostgreSQL 16 with a non-owner runtime role. CI gates combined statement and branch coverage at 80% for the verifier; branch-only percentages are not independently gated. Live Google credentials, Apple device attestations, receipts/fraud-metric assessment, and on-device behavior have **not** been validated.
 
 **App Attest does not establish biometric enforcement.** Its tokens carry `uauth=false`, `sec="app_attest"`.
 
