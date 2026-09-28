@@ -105,3 +105,52 @@ int main(void) {
         binary = self.tmp / "woven"
         subprocess.run([str(LLVM / "bin/clang"), str(ir)] + [str(cpp / name) for name in ["weave.c", "guard.c", "sha256.c"]] + ["-o", str(binary)], check=True)
         self.assertEqual(subprocess.run([str(binary)], check=True, capture_output=True, text=True).stdout.strip(), "woven mutation rejected")
+
+    def testCompileWrapper_hostAndAppleObject_build(self) -> None:
+        source = self.tmp / "selected.c"
+        source.write_text("unsigned compute(unsigned x, unsigned y) { if (x & 1) return x + y; return x ^ y; }\n")
+        host = self.tmp / "selected.o"
+        subprocess.run(["python3", str(ROOT / "hardener/compiler/compile.py"), "--llvm-prefix", str(LLVM), "--plugin", str(self.plugin), "--functions", "compute", "--seed", "123", "--input", str(source), "--output", str(host)], check=True)
+        self.assertEqual(host.read_bytes()[:4], b"\x7fELF")
+        apple = self.tmp / "selected-apple.o"
+        environment = dict(os.environ, RASP_PASS_PLUGIN=str(self.plugin), RASP_FUNCTIONS="compute", RASP_SEED="123", RASP_APPLE_TARGET="arm64-apple-ios15.0", SDKROOT=str(self.tmp), INPUT_FILE_PATH=str(source), SCRIPT_OUTPUT_FILE_0=str(apple))
+        subprocess.run([str(ROOT / "hardener/integrations/xcode-compile.sh")], check=True, env=environment)
+        self.assertEqual(apple.read_bytes()[:4], b"\xcf\xfa\xed\xfe")
+
+    def testTransform_inferredPurityAndReturnedAttributes_removed(self) -> None:
+        source = self.tmp / "pure.ll"
+        source.write_text('define i32 @compute(i32 returned %x) memory(none) nounwind willreturn { ret i32 %x }\n')
+        result = self.transform(source)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("returned", result.stdout)
+        self.assertNotIn("memory(none)", result.stdout)
+        self.assertNotIn("willreturn", result.stdout)
+
+    def testTransform_ssaPhi_verifiedAndExecutable(self) -> None:
+        source = self.tmp / "ssa.ll"
+        source.write_text(r"""
+define i64 @rasp_guard_probe(i64 %site) { ret i64 0 }
+define i32 @compute(i32 %x) {
+entry: br label %loop
+loop:
+  %n = phi i32 [ 0, %entry ], [ %next, %loop ]
+  %sum = phi i32 [ 0, %entry ], [ %added, %loop ]
+  %added = add i32 %sum, %n
+  %next = add i32 %n, 1
+  %more = icmp ult i32 %next, %x
+  br i1 %more, label %loop, label %done
+done: ret i32 %added
+}
+define i32 @main() {
+  %result = call i32 @compute(i32 10)
+  %ok = icmp eq i32 %result, 45
+  %code = select i1 %ok, i32 0, i32 1
+  ret i32 %code
+}
+""")
+        result = self.transform(source)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        source.write_text(result.stdout)
+        binary = self.tmp / "ssa"
+        subprocess.run([str(LLVM / "bin/clang"), str(source), "-o", str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)

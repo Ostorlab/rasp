@@ -20,7 +20,7 @@ uint32_t next(uint32_t &state) {
 }
 void validate(Function &function) {
     if (function.isDeclaration() || !function.getReturnType()->isIntegerTy() ||
-        function.getReturnType()->getIntegerBitWidth() > 64 || function.isVarArg())
+        function.getReturnType()->getIntegerBitWidth() > 64 || function.isVarArg() || function.hasFnAttribute(Attribute::Naked))
         report_fatal_error("rasp: selected function requires an integer return <=64 bits and fixed arguments");
     for (BasicBlock &block : function) {
         if (block.hasAddressTaken() || block.isEHPad()) report_fatal_error("rasp: unsupported block address or EH");
@@ -63,6 +63,20 @@ void mba(Function &function) {
     }
 }
 void harden(Function &function, uint32_t &seed) {
+    // The probe introduces observable effects and may change any return value.
+    // Keeping inferred purity/returned attributes would let later passes erase it.
+    for (auto attribute : {Attribute::Memory, Attribute::NoSync, Attribute::NoFree,
+                           Attribute::WillReturn, Attribute::Speculatable, Attribute::NoRecurse,
+                           Attribute::NoUnwind, Attribute::NoCallback, Attribute::MustProgress})
+        function.removeFnAttr(attribute);
+    for (Argument &argument : function.args()) argument.removeAttr(Attribute::Returned);
+    for (User *user : function.users()) if (auto *call = dyn_cast<CallBase>(user)) {
+        for (auto attribute : {Attribute::Memory, Attribute::NoSync, Attribute::NoFree,
+                               Attribute::WillReturn, Attribute::Speculatable, Attribute::NoRecurse,
+                               Attribute::NoUnwind, Attribute::NoCallback, Attribute::MustProgress})
+            call->removeFnAttr(attribute);
+        for (unsigned index = 0; index < call->arg_size(); index++) call->removeParamAttr(index, Attribute::Returned);
+    }
     mba(function);
     BasicBlock &entry = function.getEntryBlock();
     // Keep original static allocas in the entry so they dominate every dispatcher case.
@@ -132,6 +146,12 @@ struct RaspPass : PassInfoMixin<RaspPass> {
         if (!selection || !*selection || !seedText || !*seedText) report_fatal_error("rasp: RASP_FUNCTIONS and RASP_SEED required");
         uint32_t seed;
         if (StringRef(seedText).getAsInteger(10, seed) || seed == 0) report_fatal_error("rasp: seed must be a nonzero uint32");
+        const char *probeName = std::getenv("RASP_PROBE_SYMBOL");
+        if (!probeName || !*probeName) probeName = "rasp_guard_probe";
+        if (Function *probe = module.getFunction(probeName)) {
+            auto *expected = FunctionType::get(Type::getInt64Ty(module.getContext()), {Type::getInt64Ty(module.getContext())}, false);
+            if (probe->getFunctionType() != expected) report_fatal_error("rasp: probe signature must be i64(i64)");
+        }
         SmallVector<StringRef, 8> selected;
         StringRef(selection).split(selected, ',', -1, false);
         SmallVector<Function *, 8> functions;
@@ -140,7 +160,7 @@ struct RaspPass : PassInfoMixin<RaspPass> {
             if (!seen.insert(name.str()).second) report_fatal_error("rasp: duplicate selected function");
             Function *function = module.getFunction(name);
             if (!function) report_fatal_error("rasp: selected function not found");
-            if (name == "rasp_guard_probe") report_fatal_error("rasp: cannot weave the probe itself");
+            if (name == probeName) report_fatal_error("rasp: cannot weave the probe itself");
             validate(*function); functions.push_back(function);
         }
         for (Function *function : functions) harden(*function, seed);
