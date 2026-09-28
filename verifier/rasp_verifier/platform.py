@@ -25,8 +25,8 @@ class PlatformAttestationError(Exception):
 
 @dataclass
 class PlatformVerdict:
-    # Android device-integrity tier (MEETS_STRONG_INTEGRITY -> STRONG, ...) or an iOS equivalent.
-    verdict: str  # "STRONG" | "DEVICE" | "BASIC" | "NONE"
+    # Android device-integrity tier or distinct iOS app/key origin evidence.
+    verdict: str  # "STRONG" | "DEVICE" | "BASIC" | "NONE" | "APP_ATTEST"
     app_recognized: bool
     raw: dict
 

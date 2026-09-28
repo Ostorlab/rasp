@@ -4,8 +4,10 @@ from __future__ import annotations
 import contextlib
 import importlib.resources
 import typing
+import types
 
 import psycopg
+import psycopg_pool
 from psycopg.types import json as pg_json
 
 from rasp_verifier import storage
@@ -22,13 +24,25 @@ class PostgresStore:
     def __init__(self, dsn: str, scope: storage.Scope) -> None:
         self.dsn = dsn
         self.scope = scope
+        self.pool = psycopg_pool.ConnectionPool(dsn, min_size=0, max_size=8, open=True)
+
+    def close(self) -> None:
+        """Close this scoped store's owned pool after all callers have stopped."""
+        self.pool.close()
+
+    def __enter__(self) -> PostgresStore:
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None,
+                 traceback: types.TracebackType | None) -> None:
+        self.close()
 
     def scoped(self, scope: storage.Scope) -> PostgresStore:
         return PostgresStore(self.dsn, scope)
 
     @contextlib.contextmanager
     def transaction(self) -> typing.Iterator[psycopg.Connection]:
-        with psycopg.connect(self.dsn) as connection:
+        with self.pool.connection() as connection:
             connection.execute("SELECT set_config('rasp.tenant_id', %s, true), set_config('rasp.app_id', %s, true)",
                                (self.scope.tenant_id, self.scope.app_id))
             yield connection

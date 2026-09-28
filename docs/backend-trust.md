@@ -1,16 +1,20 @@
 # Backend trust foundation
 
-The verifier supports Android Key Attestation plus Google Play Integrity and a separate iOS App Attest lifecycle. The Android challenge/bind/token wire format remains supported. Tokens now include a mandatory `aud: "rasp-resource"`; issuers, audiences, mandatory numeric issuance/expiry and expiry-after-issuance are validated. Older externally minted fixtures without an audience need updating.
+The verifier persists trust state per tenant and application, so installs, builds, and assertion counters survive restarts and remain isolated across scopes. Three attestation paths feed that scoped registry: Android Key Attestation, Google Play Integrity, and the Apple App Attest lifecycle. Tokens require `aud: "rasp-resource"`; issuers, audiences, numeric issuance/expiry bounds, and expiry-after-issuance are enforced. Older externally minted fixtures without an audience need updating.
 
-## Implementation plan and validation
+## What the verifier enforces
 
-- [x] Reject wrong application/build signer identity, install replacement, malformed JWT claims and report shapes.
-- [x] Add scoped memory/PostgreSQL repositories and atomic challenge/counter operations.
-- [x] Verify Google-decoded request/application/device verdicts using an OAuth-backed production adapter.
-- [x] Verify bounded Apple CBOR, certificate chain, nonce, RP ID, environment, credential key and assertion counters; expose explicit iOS routes.
-- [x] Exercise negative cases, concurrent replay, full Android flows and state recreation against PostgreSQL.
+- Rejects wrong application/build signer identity, install replacement, malformed JWT claims and report shapes.
+- Provides scoped memory/PostgreSQL repositories and atomic challenge/counter operations.
+- Verifies Google-decoded request/application/device verdicts using an OAuth-backed production adapter.
+- Verifies bounded Apple CBOR, certificate chain, nonce, RP ID, environment, credential key and assertion counters; exposes explicit iOS routes.
+- Tests negative cases, concurrent replay, full Android flows and state recreation against PostgreSQL.
 
-Local validation: 169 unittest cases pass with PostgreSQL 16 and a non-owner runtime role. Combined branch coverage is 82%, above the unchanged 80% gate. This includes synthetic cryptographic Apple fixtures and controlled Google decode responses. Live Google credentials, Apple device attestations, receipts/fraud-metric assessment and on-device behavior have **not** been validated. App Attest does not establish biometric enforcement; its tokens carry `uauth=false`, `sec="app_attest"`.
+Validation uses synthetic cryptographic Apple fixtures, controlled Google decode responses, and PostgreSQL 16 with a non-owner runtime role. CI enforces an 80% verifier branch-coverage floor. Live Google credentials, Apple device attestations, receipts/fraud-metric assessment, and on-device behavior have **not** been validated.
+
+**App Attest does not establish biometric enforcement.** Its tokens carry `uauth=false`, `sec="app_attest"`.
+
+**This App Attest verifier does not establish operating system integrity.** Successful assertions yield the distinct `APP_ATTEST` verdict rather than Android’s `DEVICE` verdict. `TokenPolicy.app_attest_risk_floor` defaults to `medium` (120-second tokens) and can be configured explicitly by the deployment; higher report risks still take precedence. A valid assertion alone cannot earn the default clean-device risk level.
 
 ## Service and storage boundaries
 
@@ -30,11 +34,23 @@ Local validation: 169 unittest cases pass with PostgreSQL 16 and a non-owner run
 
 `storage.Scope(tenant_id, app_id)` is immutable. `app_id` is the package or bundle identifier in the reference server. Repository scope comes from trusted deployment configuration; no client header selects a tenant.
 
-`storage.Store` provides `get`, `put`, `delete`, `put_challenge`, `consume_challenge`, and `advance_counter`. `MemoryStore.scoped(scope)` shares one locked backing store; `PostgresStore.scoped(scope)` creates a scope-bound connection adapter. `registry.BuildRepository` and `InstallRepository` preserve the existing registry API; `durable_registry` implements them on a Store. `TrustService(..., state=store)` requires all repository scopes to agree.
+`storage.Store` provides `get`, `put`, `delete`, `put_challenge`, `consume_challenge`, and `advance_counter`. `MemoryStore.scoped(scope)` shares one locked backing store; `PostgresStore.scoped(scope)` creates a separate scope-bound connection pool. Each store owns one bounded `psycopg_pool.ConnectionPool`; operations borrow a connection and commit or roll back before returning it, clearing transaction-local scope settings. Call `PostgresStore.close()` when the owning service shuts down, or use the store as a context manager. The reference HTTP server closes its store on exit. `registry.BuildRepository` and `InstallRepository` preserve the existing registry API; `durable_registry` implements them on a Store. `TrustService(..., state=store)` requires all repository scopes to agree.
 
-Challenges are consumed once using `DELETE ... RETURNING`; counters advance with a conditional PostgreSQL upsert. Row-level policies protect all three tables using transaction-local tenant/application settings. Every normal statement also has explicit scope predicates. Use a non-owner role without `BYPASSRLS`; migrations require a separate schema-owner connection. Build revocation is a monotonic separate record, so registering a build again cannot erase revocation. Install binding is insert-only. Recovery/re-enrollment needs an explicitly authorized administrative flow; overwriting a key is not a recovery API.
+- Challenge consumption is single-use via `DELETE ... RETURNING`.
+- Counters advance through a conditional PostgreSQL upsert; both stores accept only integer counters in the range `1..9223372036854775807`.
+- Row-level policies protect all three tables using transaction-local tenant/application settings.
+- Every normal statement carries explicit scope predicates.
+- Runtime access uses a non-owner role without `BYPASSRLS`; migrations use a separate schema-owner connection.
+- Build revocation is a monotonic separate record, so re-registering a build cannot erase revocation.
+- Install binding is insert-only and atomically reserves App Attest keys.
+- Recovery requires an explicitly authorized administrative flow; overwriting a key is not a recovery API.
 
-`resource.verify_request(..., replay_store=store)` validates the signed scope and atomically advances the session-key counter after signature verification. Production consumers must supply this store; omitting it retains the caller-managed legacy `last_counter` contract. Request counter rows deliberately do not expire, so a reused session key cannot reset replay state. Add bounded retention only together with a proven token-lifetime/key-reuse policy. Challenge expiry prevents reuse; expired rows can be deleted by an operational cleanup job. The in-memory implementation remains for demonstrations/tests.
+`resource.verify_request(..., replay_store=store)` validates the signed scope and atomically advances the session-key counter after signature verification.
+
+- **Production consumers must supply the replay store.** Omitting it retains the caller-managed legacy `last_counter` contract.
+- **Request counter rows deliberately never expire.** Add bounded retention only alongside a proven token-lifetime/key-reuse policy, so reusing a session key cannot reset replay state.
+
+Challenge expiry prevents reuse; an operational cleanup job can delete expired rows. The in-memory implementation remains for demonstrations/tests.
 
 The reference bank retains in-memory customer sessions/PIN state and is not a durable banking application. The HTTP process is a reference adapter; deploy behind TLS and authentication/rate-limiting appropriate to the application. PostgreSQL stores build key material; restrict its role, storage, backups and database access accordingly. Encryption/key-management integration is a separate control-plane task.
 
@@ -60,9 +76,18 @@ Existing server flags remain. Additional flags:
 | `--apple-root-pem PATH` | Explicit trusted Apple App Attest root certificate(s). |
 | `--apple-development` | Accept development AAGUID only. Default is production only. |
 
-Google setup needs an enabled Play Integrity API in the linked Cloud project and authorized ADC credentials. The adapter requests `https://www.googleapis.com/auth/playintegrity`, calls the fixed Google HTTPS decode endpoint, disables redirects, bounds response size, and applies connection/refresh timeouts. It checks request/package/hash/time, app recognition, exact signer digest set and licensing; an optional `versions` set restricts versions when constructing `GooglePlayIntegrityAttestation` directly. Unknown/missing device verdicts yield `NONE`, never a clean verdict. Configured API failures fail closed. The legacy request hash is SHA-256 of the UTF-8 base64 nonce text; standard-base64 and unpadded-base64url digest encodings are accepted. This legacy hash is not a general defense against clean-device attestation relay.
+Google setup needs an enabled Play Integrity API in the linked Cloud project and authorized ADC credentials.
 
-Apple verification uses explicitly provisioned App Attest roots, never certificates supplied as trust anchors by the client. Development and production states must use separate deployment scopes. The App ID prefix is not assumed to equal the Team ID. App Attest receipts returned by verification are opaque; this implementation does not validate or redeem them as fraud evidence.
+- The adapter requests the `https://www.googleapis.com/auth/playintegrity` OAuth scope and calls the fixed Google HTTPS decode endpoint.
+- Redirects are disabled; response size and connection/refresh timeouts are bounded.
+- Validation checks request/package/hash/time, app recognition, exact signer digest set, and licensing.
+- An optional `versions` set restricts versions when constructing `GooglePlayIntegrityAttestation` directly.
+- **Unknown or missing device verdicts yield `NONE`. Configured API failures fail closed.**
+- The legacy request hash is SHA-256 of the UTF-8 base64 nonce text; standard-base64 and unpadded-base64url digest encodings are accepted.
+
+This legacy hash is not a general defense against clean-device attestation relay.
+
+Apple verification uses explicitly provisioned App Attest roots, never certificates supplied as trust anchors by the client. Development and production states must use separate deployment scopes. The App ID prefix is not assumed to equal the Team ID. This implementation discards App Attest receipts; it does not retain, validate, or redeem them for fraud assessment.
 
 ## iOS client contract
 
@@ -80,7 +105,7 @@ rasp-token-1
 
 5. App Attest `generateAssertion` uses `clientDataHash = SHA256(message)`. Send `POST /v1/ios/token` with `installId`, `nonce`, `keyId`, `assertion` (standard base64 CBOR), `sealedReport`, and `sessionPublicKey` (base64 SPKI DER).
 
-Successful tokens use the existing resource proof format. Assertions bind both report MAC and session key, verify the RP hash/signature, and require an atomically increasing counter. Android and iOS install records cannot enter the other platform's proof route. iOS must still supply a genuine registered-build sealed report; App Attest alone does not bypass that requirement.
+Successful tokens use the existing resource proof format. Assertions bind both report MAC and session key, verify the RP hash and ECDSA/SHA-256 signature over `nonce = SHA256(authenticatorData || clientDataHash)`, and require an atomically increasing counter. Android and iOS install records cannot enter the other platform's proof route. iOS must still supply a genuine registered-build sealed report; App Attest alone does not bypass that requirement.
 
 ## Tests
 

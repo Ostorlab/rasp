@@ -274,7 +274,7 @@ class TrustService:
             raise TrustError("bad_report", f"{e.reason}: {e}", status=403) from e
 
         # Platform attestation (Play Integrity / App Attest) for this nonce.
-        platform_verdict = "DEVICE" if ios is True else None
+        platform_verdict = "APP_ATTEST" if ios is True else None
         platform_available = ios is True or self.platform.available
         if platform_available and ios is False:
             token_str = body.get("playIntegrityToken")

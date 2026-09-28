@@ -3,7 +3,7 @@ name = "rasp-verifier"
 version = "0.1.0"
 description = "Trust service and reference resource server for flutter_rasp: Key Attestation, sealed reports, integrity tokens (JWKS) and DPoP request proofs."
 requires-python = ">=3.10"
-dependencies = ["cryptography>=42", "cbor2>=6.1.4", "google-auth[requests]>=2.35", "psycopg[binary]>=3.2"]
+dependencies = ["cryptography>=42", "cbor2>=6.1.4", "google-auth[requests]>=2.35", "psycopg[binary]>=3.2", "psycopg_pool>=3.2"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]

@@ -47,6 +47,14 @@ class MemoryStorageTest(unittest.TestCase):
 
 
 
+    def testCounter_whenOutsideBigintRange_rejectsWithoutPoisoningState(self) -> None:
+        for counter in (0, -1, True, 1.0, 9223372036854775808):
+            with self.subTest(counter=counter):
+                self.assertFalse(self.store.advance_counter("bounded", counter))
+        self.assertTrue(self.store.advance_counter("bounded", 1))
+        self.assertTrue(self.store.advance_counter("bounded", 9223372036854775807))
+        self.assertFalse(self.store.advance_counter("bounded", 9223372036854775807))
+
     def testBind_whenInstallAlreadyExists_doesNotReserveNewKey(self) -> None:
         self.store.bind_install("first", {"key": "original"}, "original")
         with self.assertRaises(storage.ConflictError):

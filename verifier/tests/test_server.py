@@ -5,6 +5,7 @@ import json
 import socket
 import threading
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -12,6 +13,8 @@ from http.server import ThreadingHTTPServer
 from cryptography.hazmat.primitives import serialization
 
 from rasp_verifier import jose
+from rasp_verifier import postgres
+from rasp_verifier import server as server_module
 from rasp_verifier.platform import StubPlatformAttestation
 from rasp_verifier.policy import TokenPolicy
 from rasp_verifier.registry import Build, BuildRegistry, InstallRegistry
@@ -273,3 +276,18 @@ class ServerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ServerLifecycleTest(unittest.TestCase):
+    def testMain_whenServingFails_closesHttpServerAndPostgresStore(self) -> None:
+        store = mock.Mock(spec=postgres.PostgresStore)
+        service = mock.Mock(state=store)
+        arguments = ["rasp-server", "--package", "com.example", "--cert-sha256", "00",
+                     "--build-id", "build", "--build-key-hex", "00", "--no-revocation-check"]
+        with mock.patch("sys.argv", arguments), mock.patch.object(server_module, "build_services", return_value=(service, mock.Mock())), \
+             mock.patch.object(server_module, "ThreadingHTTPServer") as http_server:
+            http_server.return_value.serve_forever.side_effect = RuntimeError("stop serving")
+            with self.assertRaisesRegex(RuntimeError, "stop serving"):
+                server_module.main()
+            http_server.return_value.server_close.assert_called_once_with()
+        store.close.assert_called_once_with()

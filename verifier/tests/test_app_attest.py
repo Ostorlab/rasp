@@ -16,6 +16,7 @@ from cryptography.x509 import oid
 
 from rasp_verifier import app_attest
 from rasp_verifier import platform
+from rasp_verifier import policy
 from rasp_verifier import storage
 from rasp_verifier import trust
 from rasp_verifier import registry
@@ -62,7 +63,7 @@ class AppleFixture:
 
     def assertion(self, client_hash: bytes, counter: int = 1, app_id: str = APP_ID) -> str:
         auth = hashlib.sha256(app_id.encode()).digest() + b"\x00" + counter.to_bytes(4, "big")
-        signature = self.key.sign(auth + client_hash, ec.ECDSA(hashes.SHA256()))
+        signature = self.key.sign(hashlib.sha256(auth + client_hash).digest(), ec.ECDSA(hashes.SHA256()))
         return base64.b64encode(cbor2.dumps({"signature": signature, "authenticatorData": auth})).decode()
 
 
@@ -105,6 +106,18 @@ class AppleVerificationTest(unittest.TestCase):
         for raw in (b"\xa1", b"\x81" * 100 + b"\x00", cbor2.dumps(self.fixture.object) + b"\x00", b"x" * 70000, b"\xa2\x61a\x01\x61a\x02"):
             with self.subTest(length=len(raw)), self.assertRaises(platform.PlatformAttestationError):
                 self.verifier.verify_attestation(base64.b64encode(raw).decode(), self.fixture.key_id, self.client_hash)
+
+    def testAssertion_whenConcatenationSignedInsteadOfNonce_rejectsWithoutAdvancingCounter(self) -> None:
+        attested = self.verifier.verify_attestation(self.fixture.encoded(), self.fixture.key_id, self.client_hash)
+        auth = hashlib.sha256(APP_ID.encode()).digest() + b"\x00" + (1).to_bytes(4, "big")
+        signature = self.fixture.key.sign(auth + self.client_hash, ec.ECDSA(hashes.SHA256()))
+        assertion = base64.b64encode(cbor2.dumps({"signature": signature, "authenticatorData": auth})).decode()
+        state = storage.MemoryStore()
+        with self.assertRaises(platform.PlatformAttestationError) as caught:
+            self.verifier.verify_assertion(assertion, attested.public_key_der, self.fixture.key_id, self.client_hash, state)
+        self.assertEqual(caught.exception.reason, "bad_signature")
+        self.assertEqual(self.verifier.verify_assertion(self.fixture.assertion(self.client_hash), attested.public_key_der,
+                         self.fixture.key_id, self.client_hash, state), 1)
 
     def testAssertion_whenReplayedOrSubstituted_rejects(self) -> None:
         attested = self.verifier.verify_attestation(self.fixture.encoded(), self.fixture.key_id, self.client_hash)
@@ -160,10 +173,28 @@ class IosTrustTest(unittest.TestCase):
         claims = jose.decode_jwt(issued["token"], service.jwks()["keys"])
         self.assertFalse(claims["uauth"])
         self.assertEqual(claims["sec"], "app_attest")
-        self.assertEqual(claims["risk"], "none")
+        self.assertEqual(claims["risk"], "medium")
+        self.assertIn("platform:APP_ATTEST", issued["reasons"])
         with self.assertRaises(trust.TrustError):
             service.token_ios(body)
         # App Attest installs must not enter the Android proof flow.
         android_nonce = service.challenge("ios-install", "token")["nonce"]
         with self.assertRaises(trust.TrustError):
             service.token({**body, "nonce": android_nonce})
+
+
+class AppAttestPolicyTest(unittest.TestCase):
+    def testRisk_whenAppAttestValidated_usesConfigurableOperatingSystemIntegrityFloor(self) -> None:
+        for floor in ("none", "medium", "high"):
+            with self.subTest(floor=floor):
+                assessment = policy.assess_risk(report_threats=set(), attestation_security_level="app_attest",
+                    device_locked=None, verified_boot_state=None, platform_verdict="APP_ATTEST", platform_available=True,
+                    policy=policy.TokenPolicy(app_attest_risk_floor=floor))
+                self.assertEqual(assessment.risk, floor)
+                self.assertIn("platform:APP_ATTEST", assessment.reasons)
+
+    def testRisk_whenAppAttestAndCompromisedReport_preservesHigherRisk(self) -> None:
+        assessment = policy.assess_risk(report_threats={"hooking"}, attestation_security_level="app_attest",
+            device_locked=None, verified_boot_state=None, platform_verdict="APP_ATTEST", platform_available=True,
+            policy=policy.TokenPolicy())
+        self.assertEqual(assessment.risk, "critical")

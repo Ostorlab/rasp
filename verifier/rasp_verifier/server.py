@@ -305,11 +305,18 @@ def main() -> None:
             print("[server] revocation list not loaded yet; binding is refused until it is", flush=True)
         revocations.start_background_refresh()
     trust, bank = build_services(args, revocations=revocations)
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(trust, bank))
-    print(f"[server] listening on {args.host}:{args.port} (hardware: {trust.policy.require_hardware}, "
-          f"user auth: {trust.policy.require_user_auth}, revocation: {revocations is not None}, "
-          f"platform attestation: {trust.platform.available})", flush=True)
-    server.serve_forever()
+    try:
+        server = ThreadingHTTPServer((args.host, args.port), make_handler(trust, bank))
+        try:
+            print(f"[server] listening on {args.host}:{args.port} (hardware: {trust.policy.require_hardware}, "
+                  f"user auth: {trust.policy.require_user_auth}, revocation: {revocations is not None}, "
+                  f"platform attestation: {trust.platform.available})", flush=True)
+            server.serve_forever()
+        finally:
+            server.server_close()
+    finally:
+        if isinstance(trust.state, postgres.PostgresStore):
+            trust.state.close()
 
 
 if __name__ == "__main__":

@@ -81,7 +81,7 @@ class MemoryStore:
             return True
 
     def advance_counter(self, key_id: str, counter: int) -> bool:
-        if type(counter) is not int or counter <= 0:
+        if type(counter) is not int or counter <= 0 or counter > 9223372036854775807:
             return False
         with self._data.lock:
             key = (self.scope, key_id)

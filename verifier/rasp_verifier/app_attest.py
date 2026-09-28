@@ -1,7 +1,7 @@
 """Apple App Attest attestation and assertion verification.
 
 The configured App ID prefix can differ from the Team ID. Trust roots are deployment-owned,
-never accepted from a client. Receipts are retained as opaque evidence, not a fraud verdict.
+never accepted from a client. Receipts are discarded; fraud-metric retrieval and assessment are outside this verifier.
 """
 from __future__ import annotations
 
@@ -34,7 +34,6 @@ MAX_OBJECT_BYTES = 65536
 class AttestedKey:
     public_key_der: bytes
     key_id: str
-    receipt: bytes
 
 
 def _cbor(raw: bytes) -> typing.Any:
@@ -167,7 +166,7 @@ class AppAttestVerifier:
         if hmac.compare_digest(nonce, hashlib.sha256(auth + client_data_hash).digest()) is False:
             raise platform.PlatformAttestationError("nonce_mismatch")
         return AttestedKey(public_key_der=key.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo),
-                           key_id=base64.b64encode(identifier).decode(), receipt=_bytes(statement.get("receipt")))
+                           key_id=base64.b64encode(identifier).decode())
 
     def verify_assertion(self, encoded: str, public_key_der: bytes, key_id: str, client_data_hash: bytes,
                          state: storage.Store) -> int:
@@ -181,7 +180,8 @@ class AppAttestVerifier:
         if hashlib.sha256(public_bytes).digest() != _key_id(key_id):
             raise platform.PlatformAttestationError("key_mismatch")
         try:
-            key.verify(signature, auth + client_data_hash, ec.ECDSA(hashes.SHA256()))
+            nonce = hashlib.sha256(auth + client_data_hash).digest()
+            key.verify(signature, nonce, ec.ECDSA(hashes.SHA256()))
         except (exceptions.InvalidSignature, ValueError) as error:
             raise platform.PlatformAttestationError("bad_signature") from error
         counter = int.from_bytes(auth[33:37], "big")
