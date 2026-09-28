@@ -39,7 +39,8 @@ enum class Reaction(val wireName: String) {
     WARN_USER("warnUser"),
     BLOCK_SENSITIVE("blockSensitive"),
     SECURE_SCREEN("secureScreen"),
-    CLOSE_APP("closeApp");
+    CLOSE_APP("closeApp"),
+    SILENT_DEGRADE("silentDegrade");
 
     companion object {
         fun fromWire(name: String): Reaction? = entries.firstOrNull { it.wireName == name }
@@ -71,6 +72,9 @@ data class RaspConfig(
     val sensitiveFlows: Set<String>,
     val policy: Map<ThreatType, Set<Reaction>>,
     val devMode: Boolean,
+    val wipeOnThreats: Set<ThreatType> = emptySet(),
+    val reactionDelayMillis: Long = 4000,
+
 ) {
     companion object {
         val DEFAULT_POLICY: Map<ThreatType, Set<Reaction>> = mapOf(
@@ -134,6 +138,12 @@ data class RaspConfig(
                 sensitiveFlows = (map["sensitiveFlows"] as? List<String>).orEmpty().toSet(),
                 policy = DEFAULT_POLICY + policy.orEmpty(),
                 devMode = map["devMode"] as? Boolean ?: false,
+                wipeOnThreats = (map["wipeOnThreats"] as? List<String>).orEmpty().map {
+                    requireNotNull(ThreatType.fromWire(it)) { "unknown wipe threat" }
+                }.toSet(),
+                reactionDelayMillis = ((map["reactionDelayMillis"] as? Number)?.toLong() ?: 4000L).also {
+                    require(it in 0..60000) { "reaction delay must be 0..60000ms" }
+                },
             )
         }
 

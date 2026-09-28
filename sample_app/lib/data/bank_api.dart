@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_rasp/flutter_rasp.dart';
@@ -38,8 +37,6 @@ class BankApi {
   String? deviceSecurityLevel;
   bool userAuthRequired = false;
 
-  final _http = HttpClient()..connectionTimeout = const Duration(seconds: 10);
-
   /// POSTs [body] as JSON and returns the decoded response, adding any [headers]. Returns the exact bytes
   /// sent too, so a caller can sign them.
   Future<(Map<String, Object?>, Uint8List)> _post(
@@ -48,27 +45,36 @@ class BankApi {
     Map<String, String> headers = const {},
     Set<int> ok = const {200, 201},
   }) async {
-    final request = await _http.postUrl(Uri.parse('$bankServer$path'));
-    request.headers.contentType = ContentType.json;
-    headers.forEach(request.headers.set);
     final bytes = Uint8List.fromList(utf8.encode(jsonEncode(body)));
-    request.contentLength = bytes.length;
-    request.add(bytes);
-    final response = await request.close();
-    final decoded = jsonDecode(await response.transform(utf8.decoder).join()) as Map<String, Object?>;
-    if (!ok.contains(response.statusCode)) {
-      throw BankApiException('${response.statusCode}: ${decoded['reason'] ?? decoded['error']}');
+    final response = await Rasp.request(
+      url: '$bankServer$path',
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', ...headers},
+      body: bytes,
+    );
+    final decoded =
+        jsonDecode(utf8.decode(response.body)) as Map<String, Object?>;
+    if (!ok.contains(response.status)) {
+      throw BankApiException(
+        '${response.status}: ${decoded['reason'] ?? decoded['error']}',
+      );
     }
     return (decoded, bytes);
   }
 
   Future<Map<String, Object?>> _challenge(String purpose) async {
-    final (body, _) = await _post('/v1/challenge', {'installId': installId, 'purpose': purpose});
+    final (body, _) = await _post('/v1/challenge', {
+      'installId': installId,
+      'purpose': purpose,
+    });
     return body;
   }
 
   Future<void> login({required String customerId, required String pin}) async {
-    final (result, _) = await _post('/v1/sessions', {'customerId': customerId, 'pin': pin});
+    final (result, _) = await _post('/v1/sessions', {
+      'customerId': customerId,
+      'pin': pin,
+    });
     sessionToken = result['sessionToken']! as String;
     installId = await Rasp.installId();
     if (!await Rasp.isDeviceBound()) {
@@ -76,20 +82,27 @@ class BankApi {
     }
   }
 
-  String get _session => sessionToken ?? (throw BankApiException('not logged in'));
+  String get _session =>
+      sessionToken ?? (throw BankApiException('not logged in'));
 
   /// Binds this install to a hardware-backed key attested for the trust service's challenge.
   Future<void> _bind() async {
     final challenge = await _challenge('bind');
-    final binding = await Rasp.bindDevice(Uint8List.fromList(base64Decode(challenge['nonce']! as String)));
+    final binding = await Rasp.bindDevice(
+      Uint8List.fromList(base64Decode(challenge['nonce']! as String)),
+    );
     installId = binding.installId;
-    final (result, _) = await _post('/v1/bind', {
-      'installId': binding.installId,
-      'nonce': challenge['nonce'],
-      'publicKey': binding.publicKey,
-      'certificateChain': binding.certificateChain,
-      if (await _playIntegrityToken(challenge['nonce']! as String) case final token?) 'playIntegrityToken': token,
-    }, ok: {201});
+    final (result, _) = await _post(
+      '/v1/bind',
+      {
+        'installId': binding.installId,
+        'nonce': challenge['nonce'],
+        'publicKey': binding.publicKey,
+        'certificateChain': binding.certificateChain,
+        'playIntegrityToken': ?await _playIntegrityToken(challenge['nonce']! as String),
+      },
+      ok: {201},
+    );
     deviceSecurityLevel = result['securityLevel'] as String?;
     userAuthRequired = result['userAuthRequired'] == true;
   }
@@ -98,45 +111,75 @@ class BankApi {
   Future<String> _token(String confirmationText) async {
     final challenge = await _challenge('token');
     final nonce = challenge['nonce']! as String;
-    final auth = await Rasp.prepareToken(nonce: nonce, confirmationTitle: 'Confirm', confirmationText: confirmationText);
+    final auth = await Rasp.prepareToken(
+      nonce: nonce,
+      confirmationTitle: 'Confirm',
+      confirmationText: confirmationText,
+    );
     final (result, _) = await _post(
       '/v1/token',
-      auth.toRequest(nonce, playIntegrityToken: await _playIntegrityToken(nonce)),
+      auth.toRequest(
+        nonce,
+        playIntegrityToken: await _playIntegrityToken(nonce),
+      ),
     );
     return result['token']! as String;
   }
 
   /// Signs the transfer with the session key and attaches the integrity token; the server decides.
-  Future<TransferResult> transfer({required String payee, required int amountCents}) async {
+  Future<TransferResult> transfer({
+    required String payee,
+    required int amountCents,
+  }) async {
     final token = await _token('Send ${_dollars(amountCents)} to $payee');
-    final body = {'sessionToken': _session, 'payee': payee, 'amountCents': amountCents, 'currency': 'USD'};
+    final body = {
+      'sessionToken': _session,
+      'payee': payee,
+      'amountCents': amountCents,
+      'currency': 'USD',
+    };
     final raw = Uint8List.fromList(utf8.encode(jsonEncode(body)));
-    final proof = await Rasp.signRequest(method: 'POST', path: '/v1/transfers', body: raw);
+    final proof = await Rasp.signRequest(
+      method: 'POST',
+      path: '/v1/transfers',
+      body: raw,
+    );
 
     // Send the exact signed bytes with the proof headers.
-    final request = await _http.postUrl(Uri.parse('$bankServer/v1/transfers'));
-    request.headers.contentType = ContentType.json;
-    proof.headers(token).forEach(request.headers.set);
-    request.contentLength = raw.length;
-    request.add(raw);
-    final response = await request.close();
-    final result = jsonDecode(await response.transform(utf8.decoder).join()) as Map<String, Object?>;
-    if (response.statusCode != 200 && response.statusCode != 403) {
-      throw BankApiException('${response.statusCode}: ${result['reason'] ?? result['error']}');
+    final response = await Rasp.request(
+      url: '$bankServer/v1/transfers',
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', ...proof.headers(token)},
+      body: raw,
+    );
+    final result =
+        jsonDecode(utf8.decode(response.body)) as Map<String, Object?>;
+    if (response.status != 200 && response.status != 403) {
+      throw BankApiException(
+        '${response.status}: ${result['reason'] ?? result['error']}',
+      );
     }
     final decision = switch (result['decision']) {
       'allow' => ServerDecision.allow,
       'step_up' => ServerDecision.stepUp,
       'deny' => ServerDecision.deny,
-      _ => throw BankApiException('rejected: ${result['reason'] ?? result['error']}'),
+      _ => throw BankApiException(
+        'rejected: ${result['reason'] ?? result['error']}',
+      ),
     };
-    return TransferResult(decision, ((result['reasons'] as List?) ?? const []).cast<String>());
+    return TransferResult(
+      decision,
+      ((result['reasons'] as List?) ?? const []).cast<String>(),
+    );
   }
 
-  /// A real build requests a Play Integrity token (Android) or an App Attest assertion (iOS) bound to the
-  /// nonce via requestHash. The demo runs in the trust service's degraded mode (no platform attestation), so
-  /// this returns null and the risk floor is raised to medium. See the design, section 7.
-  Future<String?> _playIntegrityToken(String nonce) async => null;
+  /// Zero explicitly selects the backend's degraded mode for local demos.
+  Future<String?> _playIntegrityToken(String nonce) async {
+    const project = int.fromEnvironment('PLAY_INTEGRITY_PROJECT');
+    return project == 0
+        ? null
+        : Rasp.playIntegrityToken(nonce: nonce, cloudProjectNumber: project);
+  }
 
   String _dollars(int cents) => '\$${(cents / 100).toStringAsFixed(2)}';
 }

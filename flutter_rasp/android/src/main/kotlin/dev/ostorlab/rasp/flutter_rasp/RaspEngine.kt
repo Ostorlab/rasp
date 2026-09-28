@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit
 interface RaspListener {
     fun onThreatsDetected(event: Map<String, Any>)
     fun onReactionsChanged(reactions: Set<Reaction>)
+    fun onDecision(decision: Decision) {}
 }
 
 /**
@@ -50,6 +51,7 @@ class RaspEngine(
     fun scan(): Decision {
         val signals = NativeDetectors.scan() + platformDetectors.scan() + fraudDetectors.scan()
         val decision = policy.evaluate(signals, System.currentTimeMillis())
+        listener.onDecision(decision)
         val previous = lastDecision
         lastDecision = decision
 
