@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import jose
+from rasp_verifier import storage
 from .policy import RISK_ORDER
 
 MAX_PROOF_SKEW_SECONDS = 300
@@ -61,21 +62,40 @@ def verify_request(
     jwks_keys: list[dict],
     now: float | None = None,
     last_counter: int | None = None,
+    replay_store: storage.Store | None = None,
 ) -> VerifiedRequest:
     """Verifies the token, that the request is bound to the token's install key, and freshness.
 
     `last_counter`, when given, is the highest counter already seen for this install; the proof must exceed
     it, which stops a captured proof being replayed. The caller persists the returned counter.
     """
-    claims = jose.decode_jwt(token, jwks_keys, now=now)
-    jkt = (claims.get("cnf") or {}).get("jkt")
-    if not jkt:
+    try:
+        claims = jose.decode_jwt(token, jwks_keys, now=now)
+    except jose.JoseError as error:
+        raise ResourceError(error.reason) from error
+    if replay_store is not None and (claims.get("tenant") != replay_store.scope.tenant_id or
+                                     claims.get("appId") != replay_store.scope.app_id):
+        raise ResourceError("wrong_scope")
+    if type(counter) is not int or counter <= 0:
+        raise ResourceError("bad_counter")
+    cnf = claims.get("cnf")
+    if not isinstance(cnf, dict):
+        raise ResourceError("no_cnf")
+    jkt = cnf.get("jkt")
+    if not isinstance(jkt, str) or jkt == "":
         raise ResourceError("no_cnf", "token has no bound-key confirmation")
 
-    public_key = jose.load_public_key_der(base64.b64decode(install_key_der_b64))
+    try:
+        public_key = jose.load_public_key_der(base64.b64decode(install_key_der_b64, validate=True))
+    except (jose.JoseError, ValueError) as error:
+        raise ResourceError("bad_key") from error
     if jose.public_key_thumbprint(public_key) != jkt:
         raise ResourceError("key_mismatch", "presented key is not the token's bound key")
 
+    if not isinstance(claims.get("sub"), str) or claims["sub"] == "" or claims.get("risk") not in RISK_ORDER:
+        raise ResourceError("bad_claim")
+    if not isinstance(claims.get("signals"), list) or any(not isinstance(item, str) for item in claims["signals"]):
+        raise ResourceError("bad_claim")
     now = time.time() if now is None else now
     if abs(now - ts_ms / 1000) > MAX_PROOF_SKEW_SECONDS:
         raise ResourceError("stale_proof", f"ts {ts_ms}")
@@ -87,6 +107,9 @@ def verify_request(
         jose.verify_proof(public_key, message, signature_b64)
     except jose.JoseError as e:
         raise ResourceError("bad_proof", e.reason) from e
+
+    if replay_store is not None and replay_store.advance_counter("request:" + jkt, counter) is False:
+        raise ResourceError("replayed_proof")
 
     return VerifiedRequest(
         claims=claims,

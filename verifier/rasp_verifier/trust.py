@@ -16,6 +16,7 @@ Flow:
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import secrets
 import threading
@@ -23,6 +24,10 @@ import time
 import uuid
 
 from . import jose
+from rasp_verifier import storage
+from rasp_verifier import app_attest
+from rasp_verifier import registry
+from rasp_verifier import durable_registry
 from .attestation import AttestationError, verify_key_attestation
 from .platform import DisabledPlatformAttestation, PlatformAttestation, PlatformAttestationError, request_hash
 from .policy import TokenPolicy, assess_risk, token_ttl
@@ -60,24 +65,30 @@ class TrustService:
         signing_key: jose.SigningKey,
         package_name: str,
         signing_cert_sha256: list[str],
-        builds: BuildRegistry,
-        installs: InstallRegistry | None = None,
+        builds: registry.BuildRepository,
+        installs: registry.InstallRepository | None = None,
         platform_attestation: PlatformAttestation | None = None,
         policy: TokenPolicy | None = None,
         revocations=None,
         trusted_roots=None,
+        state: storage.Store | None = None,
+        apple_verifier: app_attest.AppAttestVerifier | None = None,
     ):
+        self.app_attest = apple_verifier
         self.signing_key = signing_key
         self.package_name = package_name
         self.signing_cert_sha256 = signing_cert_sha256
+        self.state = storage.MemoryStore() if state is None else state
         self.builds = builds
-        self.installs = installs or InstallRegistry()
+        self.installs = installs if installs is not None else durable_registry.InstallRegistry(self.state)
+        if self.builds.scope != self.state.scope or self.installs.scope != self.state.scope:
+            raise ValueError("all repositories must share the trust application scope")
+        if apple_verifier is not None and apple_verifier.app_id.endswith("." + package_name) is False:
+            raise ValueError("App Attest bundle ID must match trust application")
         self.platform = platform_attestation or DisabledPlatformAttestation()
         self.policy = policy or TokenPolicy()
         self.revocations = revocations
         self.trusted_roots = trusted_roots
-        self._lock = threading.Lock()
-        self._challenges: dict[str, tuple[str, str, float]] = {}  # nonce -> (purpose, install_id, issued_at)
 
     # --- JWKS -----------------------------------------------------------------------------------------------
 
@@ -87,25 +98,16 @@ class TrustService:
     # --- challenges -----------------------------------------------------------------------------------------
 
     def challenge(self, install_id: str, purpose: str) -> dict:
-        if purpose not in ("bind", "token"):
+        if purpose not in ("bind", "token", "ios-bind", "ios-token"):
             raise TrustError("bad_purpose", purpose, status=400)
         if not install_id:
             raise TrustError("no_install", status=400)
         nonce = base64.b64encode(secrets.token_bytes(32)).decode()
-        with self._lock:
-            self._challenges[nonce] = (purpose, install_id, time.time())
+        self.state.put_challenge(nonce, purpose, install_id, time.time() + CHALLENGE_TTL_SECONDS)
         return {"nonce": nonce, "expiresIn": CHALLENGE_TTL_SECONDS}
 
     def _consume(self, nonce: str, purpose: str, install_id: str) -> bool:
-        with self._lock:
-            entry = self._challenges.pop(nonce, None)
-        if entry is None:
-            return False
-        issued_purpose, issued_install, issued_at = entry
-        return (
-            (issued_purpose, issued_install) == (purpose, install_id)
-            and time.time() - issued_at <= CHALLENGE_TTL_SECONDS
-        )
+        return self.state.consume_challenge(nonce, purpose, install_id, time.time())
 
     def _current_revocations(self):
         if self.revocations is None:
@@ -160,7 +162,10 @@ class TrustService:
             user_auth_required=result.user_auth_required,
             attestation_warnings=result.warnings,
         )
-        self.installs.bind(install)
+        try:
+            self.installs.bind(install)
+        except RegistryError as error:
+            raise TrustError(error.reason, status=409) from error
         return {
             "bound": True,
             "installId": install_id,
@@ -171,19 +176,49 @@ class TrustService:
             "warnings": result.warnings,
         }
 
+    def bind_ios(self, body: dict) -> dict:
+        if self.app_attest is None:
+            raise TrustError("app_attest_unavailable", status=503)
+        install_id, nonce = str(body.get("installId", "")), str(body.get("nonce", ""))
+        if self._consume(nonce, "ios-bind", install_id) is False:
+            raise TrustError("bad_challenge", status=400)
+        try:
+            result = self.app_attest.verify_attestation(body.get("attestationObject", ""),
+                                                       body.get("keyId", ""), request_hash(nonce))
+            self.installs.bind(Install(
+                install_id=install_id, public_key_der=result.public_key_der,
+                thumbprint=jose.public_key_thumbprint(jose.load_public_key_der(result.public_key_der)),
+                security_level="app_attest", verified_boot_state=None, device_locked=None,
+                os_patch_level=None, user_auth_required=False, platform="ios", app_attest_key_id=result.key_id))
+        except PlatformAttestationError as error:
+            raise TrustError("attestation_failed", error.reason) from error
+        except RegistryError as error:
+            raise TrustError(error.reason, status=409) from error
+        return {"bound": True, "installId": install_id, "securityLevel": "app_attest", "userAuthRequired": False}
+
+    def token_ios(self, body: dict) -> dict:
+        return self._token(body, ios=True)
+
     # --- token ----------------------------------------------------------------------------------------------
 
     def token(self, body: dict) -> dict:
+        return self._token(body, ios=False)
+
+    def _token(self, body: dict, *, ios: bool) -> dict:
         install_id = str(body.get("installId", ""))
         nonce = str(body.get("nonce", ""))
-        if not self._consume(nonce, "token", install_id):
+        if not self._consume(nonce, "ios-token" if ios is True else "token", install_id):
             raise TrustError("bad_challenge", "unknown, used or expired", status=400)
         try:
             install = self.installs.get(install_id)
         except RegistryError as e:
             raise TrustError("unknown_install", str(e), status=403) from e
 
-        envelope = body.get("sealedReport") or {}
+        if install.platform != ("ios" if ios is True else "android"):
+            raise TrustError("wrong_platform")
+        envelope = body.get("sealedReport")
+        if not isinstance(envelope, dict):
+            raise TrustError("bad_report", status=400)
         mac = envelope.get("mac")
         if not isinstance(envelope.get("report"), str) or not isinstance(mac, str):
             raise TrustError("bad_report", "sealedReport.report and .mac are required", status=400)
@@ -195,14 +230,22 @@ class TrustService:
             raise TrustError("bad_session_key", str(e), status=400) from e
         session_jkt = jose.public_key_thumbprint(session_key)
 
-        # Proof of possession by the user-auth install key, binding this challenge, report and session key.
-        install_key = jose.load_public_key_der(install.public_key_der)
-        try:
-            jose.verify_proof(
-                install_key, token_proof_message(nonce, mac, session_jkt), str(body.get("proof", ""))
-            )
-        except jose.JoseError as e:
-            raise TrustError("bad_proof", e.reason, status=403) from e
+        if ios is True:
+            if self.app_attest is None:
+                raise TrustError("app_attest_unavailable", status=503)
+            if body.get("keyId") != install.app_attest_key_id:
+                raise TrustError("key_mismatch")
+            try:
+                self.app_attest.verify_assertion(body.get("assertion", ""), install.public_key_der,
+                    install.app_attest_key_id, hashlib.sha256(token_proof_message(nonce, mac, session_jkt)).digest(), self.state)
+            except PlatformAttestationError as error:
+                raise TrustError("platform_failed", error.reason) from error
+        else:
+            install_key = jose.load_public_key_der(install.public_key_der)
+            try:
+                jose.verify_proof(install_key, token_proof_message(nonce, mac, session_jkt), str(body.get("proof", "")))
+            except jose.JoseError as error:
+                raise TrustError("bad_proof", error.reason, status=403) from error
 
         # Select the build key by the buildId inside the report (unverified peek), then authenticate the
         # report with that key's MAC.
@@ -214,6 +257,9 @@ class TrustService:
             build = self.builds.get(build_id)
         except RegistryError as e:
             raise TrustError(e.reason, str(e), status=403) from e
+        if (build.package_name != self.package_name or
+                set(build.signing_cert_sha256) != set(self.signing_cert_sha256)):
+            raise TrustError("wrong_build_identity", status=403)
         try:
             # Integrity-derived sealing (design §8): a build registered with a non-empty integrity root is
             # verified with HMAC(build_key, root), which the device reproduces by hashing its own `.so`
@@ -228,9 +274,9 @@ class TrustService:
             raise TrustError("bad_report", f"{e.reason}: {e}", status=403) from e
 
         # Platform attestation (Play Integrity / App Attest) for this nonce.
-        platform_verdict = None
-        platform_available = self.platform.available
-        if platform_available:
+        platform_verdict = "APP_ATTEST" if ios is True else None
+        platform_available = ios is True or self.platform.available
+        if platform_available and ios is False:
             token_str = body.get("playIntegrityToken")
             if not token_str:
                 raise TrustError("platform_required", "platform attestation is configured", status=403)
@@ -258,6 +304,9 @@ class TrustService:
         ttl = token_ttl(assessment.risk)
         claims = {
             "iss": ISSUER,
+            "aud": "rasp-resource",
+            "tenant": self.state.scope.tenant_id,
+            "appId": self.state.scope.app_id,
             "sub": install_id,
             "app": self.package_name,
             "build": build_id,

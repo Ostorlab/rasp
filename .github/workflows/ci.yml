@@ -16,6 +16,21 @@ jobs:
   python-and-native:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: local_test
+          POSTGRES_DB: rasp_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RASP_TEST_ADMIN_DSN: postgresql://postgres:local_test@127.0.0.1:5432/rasp_test
+      RASP_TEST_POSTGRES_DSN: postgresql://rasp_runtime:local_runtime@127.0.0.1:5432/rasp_test
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -27,6 +42,17 @@ jobs:
         run: python -m pip install -e ./verifier -e ./hardener coverage==7.16.2 ruff==0.16.9
       - name: Reject Python syntax and undefined-name errors
         run: ruff check --isolated --select E9,F63,F7,F82 verifier hardener
+      - name: Migrate isolated PostgreSQL and create restricted runtime role
+        run: |
+          python - <<'PY'
+          import os
+          import psycopg
+          from rasp_verifier import postgres
+          postgres.migrate(os.environ["RASP_TEST_ADMIN_DSN"])
+          with psycopg.connect(os.environ["RASP_TEST_ADMIN_DSN"]) as connection:
+              connection.execute("CREATE ROLE rasp_runtime LOGIN PASSWORD 'local_runtime'")
+              connection.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON rasp_records, rasp_challenges, rasp_counters TO rasp_runtime")
+          PY
       - name: Verifier tests and measured coverage floor
         working-directory: verifier
         run: |

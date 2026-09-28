@@ -213,3 +213,31 @@ class TrustFlow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TrustBoundaries(TrustFlow):
+    def testToken_whenBuildBelongsToAnotherApplication_rejects(self) -> None:
+        chain, _ = self._bind()
+        self.trust.builds.register(Build(BUILD_ID, BUILD_KEY, "other.app", [APP_CERT_SHA256]))
+        with self.assertRaises(TrustError) as caught:
+            self._token(chain)
+        self.assertEqual(caught.exception.reason, "wrong_build_identity")
+
+    def testToken_whenBuildSignerDiffers_rejects(self) -> None:
+        chain, _ = self._bind()
+        self.trust.builds.register(Build(BUILD_ID, BUILD_KEY, PACKAGE, ["ab" * 32]))
+        with self.assertRaises(TrustError) as caught:
+            self._token(chain)
+        self.assertEqual(caught.exception.reason, "wrong_build_identity")
+
+    def testBind_whenInstallExists_preservesOriginalKey(self) -> None:
+        chain, _ = self._bind()
+        with self.assertRaises(TrustError) as caught:
+            self._bind()
+        self.assertEqual(caught.exception.reason, "install_exists")
+        self.assertEqual(self.trust.installs.get("install-1").public_key_der, chain.public_key_der())
+
+    def testToken_whenReportIsNotObject_returnsControlledError(self) -> None:
+        chain, _ = self._bind()
+        nonce = self.trust.challenge("install-1", "token")["nonce"]
+        with self.assertRaises(TrustError):
+            self.trust.token({"installId": "install-1", "nonce": nonce, "sealedReport": ["invalid"]})
