@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import typing
 import unittest
 
 from rasp_verifier import jose
@@ -39,6 +40,11 @@ def make_service(*, platform=None, require_hardware=True, require_user_auth=True
 
 
 class TrustFlow(unittest.TestCase):
+    def testTrustService_whenResolvingConstructorAnnotations_resolvesSigningKey(self) -> None:
+        annotations = typing.get_type_hints(TrustService.__init__)
+
+        self.assertIs(annotations["signing_key"], jose.SigningKey)
+
     def setUp(self):
         self.trust = make_service()
         self.trust.trusted_roots = None  # set per-bind below

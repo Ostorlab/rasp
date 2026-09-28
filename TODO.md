@@ -5,7 +5,7 @@ Status of the RASP platform against the design document. Legend: **[x]** done, *
 The current scope is Android + a trust service. "Verified" means covered by tests that run in this repo
 (Python + native host); Kotlin/Dart client code is written but not yet compiled or run on-device.
 
-## Done (this branch: `feat/trust-service`)
+## Done (merged on `main`)
 
 ### Trust service (design §3, §7)
 - [x] Single-use challenges bound to an install (`POST /v1/challenge`).
@@ -90,7 +90,8 @@ The current scope is Android + a trust service. "Verified" means covered by test
 
 ### Platform
 - [ ] **iOS** (SDK, jailbreak/instrumentation detection, App Attest, self-integrity).
-- [ ] React Native, Flutter (pub.dev packaging), KMP, MAUI, Cordova/Capacitor, Unity wrappers.
+- [ ] React Native, KMP, MAUI, Cordova/Capacitor, Unity wrappers; the existing Flutter plugin needs
+  pub.dev packaging.
 
 ### Build-time hardening (design §6) — `hardener/` toolchain started
 - [~] **Compiler plugins / post-build CLI / SDK-only mode.** `rasp-hardener` CLI (`gen-build`/`show`/
@@ -130,9 +131,9 @@ The current scope is Android + a trust service. "Verified" means covered by test
   framed `nonce||ciphertext||tag`; `open` verifies the tag in constant time before decrypting. CMAC is
   RFC-4493 KAT-verified and cross-language tested (C == Python; tamper rejected both sides). Missing: key
   wipe-on-critical, and the Kotlin/Dart API surface (JNI binding + method channel).
-- [~] Code-tamper hashing folded into keys. `codehash.py` hashes the native sources + signer digest into a
-  guard-mesh integrity root recorded in the build manifest; hashing `.so` `.text`/resources/`libapp.so`
-  regions and folding the root into the live report/data keys at runtime is not wired yet.
+- [~] Code-tamper hashing folded into keys. Compiled `.so` code/read-only region hashes are folded into
+  the live report key end-to-end, as described above. Remaining: resource/`libapp.so` hashing and folding
+  integrity roots into data keys.
 
 ### Control plane (design §10)
 - [ ] OTA signed policy delivery (detector params, thresholds, reactions, pins, allowlists) — currently all

@@ -57,7 +57,7 @@ class TrustService:
     def __init__(
         self,
         *,
-        signing_key: SigningKey,
+        signing_key: jose.SigningKey,
         package_name: str,
         signing_cert_sha256: list[str],
         builds: BuildRegistry,
