@@ -134,8 +134,8 @@ The current scope is Android + a trust service. "Verified" means covered by test
   route (`TrustService.token` → `verify_sealed_report(integrity_root=...)`), so a patched binary is refused
   with no on-device branch. Cross-language KAT: the native runtime root equals the build-time root over the
   same `.so`, and a flipped byte changes both; the token route accepts a derived seal and refuses a raw one.
-  Remaining: run the `dladdr` self-location path on-device (host tests cover the root computation, not the
-  device self-location), resource/`libapp.so` hashing, and folding integrity roots into data keys.
+- [~] **Integrity-derived keys on device:** validate `dladdr` self-location on-device (host tests cover
+  root computation), hash resources/`libapp.so`, and fold integrity roots into remaining data-key flows.
 - [~] White-box crypto (build key, no-hardware devices; DCA/DFA countermeasures). Seeded invertible
   affine byte encodings at nine AES boundaries are absorbed into tables and preserve C/Python AES,
   CTR and CMAC KATs. These are byte-local mixing bijections, not complete nonlinear encoded-XOR networks
@@ -171,7 +171,7 @@ The current scope is Android + a trust service. "Verified" means covered by test
 ### Validation and DX (design §12, §13, §15)
 - [ ] Red-team bypass regression suite on a device farm (Frida forks, hidden root/jailbreak, attestation
   spoofing/relay, static patching).
-- [x] Enforcement checker with valid positive control and missing/expired/replayed-token probes.
+- [x] Enforcement checker with valid positive control and missing/malformed/expired/replayed-token probes.
 - [x] Core CI, coverage floors, native compilation and host binary-size gate.
 - [ ] Private crash-mapping upload.
 - [~] Size/latency budget tooling implemented; physical reference-device measurements remain missing.
