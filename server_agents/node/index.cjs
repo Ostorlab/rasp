@@ -13,7 +13,8 @@ const lstat = fs.lstatSync.bind(fs);
 const readlink = fs.readlinkSync.bind(fs);
 const readdir = fs.readdirSync.bind(fs);
 const connect = net.Socket.prototype.connect;
-const originalLookup = dns.lookup.bind(dns);
+const nativeLookup = dns.lookup;
+const originalLookup = nativeLookup.bind(dns);
 let installed = false;
 const sqlClients = new WeakSet();
 const restricted = new net.BlockList();
@@ -157,7 +158,8 @@ function preflightCopy(source, destination, options, ancestors = new Set()) {
   const metadata = lstat(source);
   if (metadata.isSymbolicLink()) {
     const target = readlink(source);
-    checkPath(path.isAbsolute(target) ? target : path.dirname(destination) + path.sep + target);
+    const parent = path.dirname(options?.dereference ? source : destination);
+    checkPath(path.isAbsolute(target) ? target : parent + path.sep + target);
     if (!options?.dereference) return;
     source = canonical(source);
   }
@@ -248,13 +250,41 @@ function install() {
     if (net.isIP(host)) checkAddress(scope, host);
     else {
       const lookup = options.lookup || originalLookup;
-      options.lookup = (hostname, lookupOptions, callback) => lookup(hostname, lookupOptions, (error, addresses, family) => {
-        if (error) { callback(error); return; }
-        try {
-          for (const address of Array.isArray(addresses) ? addresses.map(item => item.address) : [addresses]) checkAddress(scope, address);
-        } catch (denied) { callback(denied); return; }
-        callback(null, addresses, family);
-      });
+      if (typeof lookup !== 'function') block(scope, 'network', 'unsupported_lookup_form');
+      options.lookup = (hostname, lookupOptions, callback) => {
+        let resolverReturned = false;
+        let firstCallback;
+        let completed = false;
+        const checked = (error, addresses, family) => {
+          if (completed) return;
+          if (!resolverReturned) {
+            if (firstCallback === undefined) firstCallback = [error, addresses, family];
+            return;
+          }
+          completed = true;
+          if (error) { callback(error); return; }
+          try {
+            if (Array.isArray(addresses) && addresses.length === 0) block(scope, 'network', 'unsupported_lookup_form');
+            for (const address of Array.isArray(addresses) ? addresses.map(item => item.address) : [addresses]) checkAddress(scope, address);
+          } catch (denied) { callback(denied); return; }
+          callback(null, addresses, family);
+        };
+        const pending = lookup(hostname, lookupOptions, checked);
+        const isPromise = pending !== null && typeof pending?.then === 'function';
+        // Native dns.lookup returns an opaque request handle; custom callbacks return undefined.
+        if (pending !== undefined && !isPromise && lookup !== nativeLookup && lookup !== originalLookup) {
+          block(scope, 'network', 'unsupported_lookup_form');
+        }
+        resolverReturned = true;
+        if (firstCallback !== undefined) checked(...firstCallback);
+        if (isPromise) {
+          return pending.then(result => {
+            if (Array.isArray(result)) checked(null, result);
+            else checked(null, result?.address, result?.family);
+          }, checked);
+        }
+        return pending;
+      };
     }
     const callback = typeof args.at(-1) === 'function' ? args.at(-1) : undefined;
     return callback ? connect.call(this, options, callback) : connect.call(this, options);

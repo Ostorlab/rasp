@@ -18,19 +18,88 @@ class ReviewTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         agent.install()
 
+    def testPolicy_whenDeniedSinkMisspelled_raisesValueError(self) -> None:
+        with self.assertRaisesRegex(ValueError, "supported sink"):
+            agent.Policy(denied_sinks=frozenset({"deserialisation"}))
+
+    def testSqlite_whenSubclassReturnsStockCursor_rejectsFactoryBeforeSql(self) -> None:
+        class BypassConnection(agent.Connection):
+            def cursor(self, factory: type[sqlite3.Cursor] = sqlite3.Cursor) -> sqlite3.Cursor:
+                return sqlite3.Connection.cursor(self, factory)
+
+        with (
+            agent.request_scope("tenant", "sqlite-factory", (), agent.Policy(denied_sinks=frozenset({"sql"}))),
+            self.assertRaisesRegex(ValueError, "custom connection factories"),
+        ):
+            database = sqlite3.connect(":memory:", factory=BypassConnection)
+            try:
+                database.cursor().execute("create table forbidden (name text)")
+            finally:
+                database.close()
+
+    def testSqlite_whenDefaultFactoryAndSqlDenied_blocksBeforeMutation(self) -> None:
+        with sqlite3.connect(":memory:") as database:
+            with (
+                agent.request_scope("tenant", "sqlite-default", (), agent.Policy(denied_sinks=frozenset({"sql"}))),
+                self.assertRaises(agent.Blocked),
+            ):
+                database.cursor().execute("create table forbidden (name text)")
+            self.assertEqual(database.execute("select name from sqlite_master where name='forbidden'").fetchall(), [])
+
+    def testSqlite_whenCursorSubclassOverridesExecute_rejectsFactoryBeforeSql(self) -> None:
+        class BypassCursor(agent.Cursor):
+            def execute(self, sql: str, parameters: tuple[object, ...] = ()) -> sqlite3.Cursor:
+                return sqlite3.Cursor.execute(self, sql, parameters)
+
+        with (
+            sqlite3.connect(":memory:") as database,
+            agent.request_scope("tenant", "sqlite-cursor", (), agent.Policy(denied_sinks=frozenset({"sql"}))),
+            self.assertRaisesRegex(ValueError, "custom cursor factories"),
+        ):
+            database.cursor(factory=BypassCursor).execute("create table forbidden (name text)")
+
+    def testSqlite_whenExactConnectionFactoryGiven_preservesDefaultInterception(self) -> None:
+        for factory in (sqlite3.Connection, agent.Connection):
+            with self.subTest(factory=factory), sqlite3.connect(":memory:", factory=factory) as database:
+                self.assertEqual(database.execute("select ?", (7,)).fetchone(), (7,))
+                with (
+                    agent.request_scope("tenant", "exact-factory", (), agent.Policy(denied_sinks=frozenset({"sql"}))),
+                    self.assertRaises(agent.Blocked),
+                ):
+                    database.execute("create table forbidden (name text)")
+
+    def testSqlite_whenPositionalFactoryGiven_enforcesExactFactoryContract(self) -> None:
+        class CustomConnection(agent.Connection):
+            """Custom subclasses cannot be trusted to preserve interception."""
+
+        for factory in (sqlite3.Connection, agent.Connection):
+            with self.subTest(factory=factory), sqlite3.connect(":memory:", 5.0, 0, "DEFERRED", True, factory) as database:
+                self.assertEqual(database.execute("select ?", (7,)).fetchone(), (7,))
+                with (
+                    agent.request_scope("tenant", "positional-factory", (), agent.Policy(denied_sinks=frozenset({"sql"}))),
+                    self.assertRaises(agent.Blocked),
+                ):
+                    database.cursor().execute("create table forbidden (name text)")
+        with self.assertRaisesRegex(ValueError, "custom connection factories"):
+            sqlite3.connect(":memory:", 5.0, 0, "DEFERRED", True, CustomConnection)
+
     def testProcess_whenShellAllowlisted_stillDeniesShellTrue(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             marker = pathlib.Path(directory) / "marker"
-            with agent.request_scope("tenant", "shell", (), agent.Policy(allowed_executables=("/bin/sh",))):
-                with self.assertRaises(agent.Blocked) as denied:
-                    subprocess.run(f"touch {marker}", shell=True, check=True)
+            with (
+                agent.request_scope("tenant", "shell", (), agent.Policy(allowed_executables=("/bin/sh",))),
+                self.assertRaises(agent.Blocked) as denied,
+            ):
+                subprocess.run(f"touch {marker}", shell=True, check=True)
             self.assertEqual(denied.exception.event.reason, "shell_execution")
             self.assertFalse(marker.exists())
 
     def testSql_whenShortSourcesOrLiteralMatch_allowsParameterizedQuery(self) -> None:
-        with sqlite3.connect(":memory:") as database:
-            with agent.request_scope("tenant", "sql", ("1", "id", "alice", "user"), agent.Policy()):
-                self.assertEqual(database.execute("select ? as user_name, 'alice' limit 10", ("1",)).fetchone(), ("1", "alice"))
+        with (
+            sqlite3.connect(":memory:") as database,
+            agent.request_scope("tenant", "sql", ("1", "id", "alice", "user"), agent.Policy()),
+        ):
+            self.assertEqual(database.execute("select ? as user_name, 'alice' limit 10", ("1",)).fetchone(), ("1", "alice"))
 
     def testImport_whenLazyStdlibRead_allowsButDirectReadDenied(self) -> None:
         module = importlib.import_module("colorsys")
@@ -49,9 +118,11 @@ class ReviewTest(unittest.TestCase):
             (allowed / "link").symlink_to(root / "outside" / "sub")
             path = str(allowed / "link") + "/../secret"
             self.assertEqual(os.path.realpath(path), str(root / "outside" / "secret"))
-            with agent.request_scope("tenant", "traversal", (), agent.Policy(allowed_roots=(str(allowed),))):
-                with self.assertRaises(agent.Blocked):
-                    pathlib.Path(path).read_text()
+            with (
+                agent.request_scope("tenant", "traversal", (), agent.Policy(allowed_roots=(str(allowed),))),
+                self.assertRaises(agent.Blocked),
+            ):
+                pathlib.Path(path).read_text()
 
     def testFile_whenMetadataOperationsEscape_deniesBeforeMutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

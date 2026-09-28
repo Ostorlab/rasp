@@ -14,9 +14,9 @@ import contextvars
 import dataclasses
 import functools
 import importlib._bootstrap
-import ipaddress
 import importlib._bootstrap_external
 import inspect
+import ipaddress
 import os
 import pathlib
 import re
@@ -28,6 +28,8 @@ import sys
 import threading
 import typing
 
+from rasp_agent import patches
+
 
 @dataclasses.dataclass(frozen=True)
 class Policy:
@@ -38,6 +40,8 @@ class Policy:
     denied_sinks: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
+        if self.denied_sinks.issubset(patches.SINKS) is False:
+            raise ValueError("denied_sinks must contain only a supported sink")
         for path in (*self.allowed_roots, *self.allowed_executables):
             if os.path.isabs(path) is False:
                 raise ValueError("policy paths must be absolute")
@@ -315,8 +319,8 @@ class Cursor(sqlite3.Cursor):
 
 class Connection(sqlite3.Connection):
     def cursor(self, factory: type[Cursor] = Cursor) -> Cursor:
-        if issubclass(factory, Cursor) is False:
-            raise ValueError("custom cursors must preserve RASP interception")
+        if factory is not Cursor:
+            raise ValueError("custom cursor factories are not supported")
         return super().cursor(factory)
 
     def execute(self, sql: str, parameters: typing.Any = ()) -> Cursor:
@@ -333,19 +337,14 @@ def _connect(*args: typing.Any, **kwargs: typing.Any) -> Connection:
     positional = list(args)
     if len(positional) > 5:
         factory = positional[5]
-        if (
-            factory is not sqlite3.Connection
-            and issubclass(factory, Connection) is False
-        ):
-            raise ValueError("custom connections must preserve RASP interception")
-        positional[5] = Connection if factory is sqlite3.Connection else factory
+        if factory is not sqlite3.Connection and factory is not Connection:
+            raise ValueError("custom connection factories are not supported")
+        positional[5] = Connection
     else:
         factory = kwargs.get("factory", Connection)
-        if factory is sqlite3.Connection:
-            factory = Connection
-        if issubclass(factory, Connection) is False:
-            raise ValueError("custom connections must preserve RASP interception")
-        kwargs["factory"] = factory
+        if factory is not sqlite3.Connection and factory is not Connection:
+            raise ValueError("custom connection factories are not supported")
+        kwargs["factory"] = Connection
     return _sqlite_connect(*positional, **kwargs)
 
 
