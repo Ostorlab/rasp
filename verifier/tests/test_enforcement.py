@@ -99,6 +99,21 @@ class EnforcementTest(unittest.TestCase):
         self.assertNotIn("x-integrity-token", self.requests[0])
         self.assertEqual(self.requests[0]["authorization"], "Bearer test-account")
 
+    def testCheck_whenEnvironmentProxyConfigured_sendsCredentialsOnlyToTarget(
+        self,
+    ) -> None:
+        with (
+            mock.patch(
+                "urllib.request.getproxies", return_value={"http": "http://127.0.0.1:1"}
+            ),
+            mock.patch("urllib.request.proxy_bypass", return_value=False),
+        ):
+            results = enforcement.check(
+                self.request, self.expired_headers, allow_loopback_http=True
+            )
+        self.assertTrue(all(result.passed is True for result in results))
+        self.assertEqual(len(self.requests), 5)
+
     def testCheck_whenEndpointIgnoresIntegrity_rejects(self) -> None:
         self.mode = "open"
         results = enforcement.check(

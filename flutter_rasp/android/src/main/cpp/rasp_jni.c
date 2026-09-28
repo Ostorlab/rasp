@@ -48,6 +48,12 @@ static int hex_to_bytes(const char *hex, uint8_t *out, size_t out_len) {
     return 0;
 }
 
+/* Volatile stores keep the compiler from eliminating cleanup after the last use. */
+static void wipe_secret(void *buffer, size_t length) {
+    volatile unsigned char *bytes = buffer;
+    while (length-- > 0) *bytes++ = 0;
+}
+
 static jstring native_scan(JNIEnv *env, jclass clazz) {
     (void)clazz;
     rasp_signal_list_t list = {.count = 0};
@@ -73,6 +79,8 @@ static jstring native_seal(JNIEnv *env, jclass clazz, jstring managed, jstring n
     RASP_LIT(BUILD_KEY_HEX, key_hex);
     uint8_t build_key[32];
     if (hex_to_bytes(key_hex, build_key, sizeof(build_key)) != 0) {
+        wipe_secret(key_hex, sizeof(key_hex));
+        wipe_secret(build_key, sizeof(build_key));
         return (*env)->NewStringUTF(env, "{}");
     }
 
@@ -105,6 +113,11 @@ static jstring native_seal(JNIEnv *env, jclass clazz, jstring managed, jstring n
         result = (*env)->NewStringUTF(env, "{}");
     }
 
+    wipe_secret(key_hex, sizeof(key_hex));
+    wipe_secret(build_key, sizeof(build_key));
+#ifdef RASP_INTEGRITY
+    wipe_secret(derived_key, sizeof(derived_key));
+#endif
     free(out);
     if (managed_utf) {
         (*env)->ReleaseStringUTFChars(env, managed, managed_utf);

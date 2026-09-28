@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import time
 from dataclasses import dataclass
 
@@ -159,7 +160,12 @@ def decode_jwt(token: str, jwks_keys: list[dict], *, now: float | None = None, l
         header_b64, payload_b64, sig_b64 = token.split(".")
     except ValueError as e:
         raise JoseError("bad_token", "a JWT has three segments") from e
-    header = json.loads(b64u_decode(header_b64))
+    try:
+        header = json.loads(b64u_decode(header_b64))
+    except (ValueError, UnicodeError, RecursionError) as error:
+        raise JoseError("bad_token") from error
+    if not isinstance(header, dict):
+        raise JoseError("bad_token")
     if header.get("alg") != "ES256":
         raise JoseError("bad_alg", str(header.get("alg")))
     kid = header.get("kid")
@@ -178,9 +184,19 @@ def decode_jwt(token: str, jwks_keys: list[dict], *, now: float | None = None, l
     except InvalidSignature as e:
         raise JoseError("bad_signature") from e
 
-    claims = json.loads(b64u_decode(payload_b64))
+    try:
+        claims = json.loads(b64u_decode(payload_b64))
+    except (ValueError, UnicodeError, RecursionError) as error:
+        raise JoseError("bad_token") from error
+    if not isinstance(claims, dict):
+        raise JoseError("bad_token")
+    for name in ("exp", "nbf"):
+        if name in claims:
+            value = claims[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or (isinstance(value, float) and math.isfinite(value) is False):
+                raise JoseError("bad_token")
     now = time.time() if now is None else now
-    if "exp" in claims and now > claims["exp"] + leeway:
+    if "exp" in claims and now - leeway > claims["exp"]:
         raise JoseError("expired", f"exp={claims['exp']}")
     if "nbf" in claims and now + leeway < claims["nbf"]:
         raise JoseError("not_yet_valid", f"nbf={claims['nbf']}")

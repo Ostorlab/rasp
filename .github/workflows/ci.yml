@@ -33,6 +33,16 @@ jobs:
           coverage run --branch --source=rasp_verifier -m unittest discover -s tests -t .
           coverage report --fail-under=80
           coverage xml -o coverage.xml
+      - name: Prepare pinned Gradle and private JVM dependencies
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/gradle.zip" https://services.gradle.org/distributions/gradle-7.3.3-bin.zip
+          echo "b586e04868a22fd817c8971330fec37e298f3242eb85c374181b12d637f80302  $RUNNER_TEMP/gradle.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "GRADLE_HOME=$RUNNER_TEMP/gradle-7.3.3" >> "$GITHUB_ENV"
+          echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-cache" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          JAVA_HOME="$JAVA_HOME_17_X64" GRADLE_USER_HOME="$RUNNER_TEMP/gradle-cache" "$RUNNER_TEMP/gradle-7.3.3/bin/gradle" -p hardener/gradle-plugin --no-daemon build
       - name: Hardener tests and measured coverage floor
         working-directory: hardener
         run: |

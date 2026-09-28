@@ -1,63 +1,77 @@
 # Validation and release gates
 
-The source and SDK packages are proprietary. No workflow publishes packages.
-Use local/path dependencies or an authorized private package registry.
+Release validation combines an HTTP enforcement checker, artifact-size budgets,
+and a device-latency p95 budget. Core CI runs unit tests, coverage, fatal lint,
+and a 1 MiB host-library size gate. Endpoint probes and device measurements run
+separately with operator-provided fixtures. Packages are proprietary; use local
+path dependencies or an authorized private registry. No workflow publishes them.
 
-## Core CI
+## What does the core CI gate?
 
-`.github/workflows/ci.yml` runs the verifier and hardener suites, fatal Python
-lint, native host tests, and a 1 MiB host native-library size gate. Coverage gates
-are 80% for the existing verifier and 90% for the hardener, including branches;
-they are regression floors, not claims of complete security coverage. Coverage
-XML is the only uploaded artifact. Generated build keys, manifests, white-box
-tables, and private symbol maps must never be public artifacts.
+`.github/workflows/ci.yml` runs:
 
-The host library size gate is an early regression signal. It does not measure
-an APK, iOS framework, or device-specific optimized binary. Run the same size
-command on each release artifact with its approved release budget.
+- Verifier and hardener suites.
+- Fatal Python lint.
+- Native host tests.
+- A 1 MiB host native-library size gate.
 
-## Enforcement checker
+Coverage floors are 80% verifier and 90% hardener, including branches. These are
+regression floors, not claims of complete security coverage. Coverage XML is the
+only uploaded artifact; generated keys, manifests, white-box tables, and private
+symbol maps must never be public artifacts.
 
-Run only against an authorized staging environment and expendable account: the
-positive control executes the protected operation once. Create two real proof
-fixtures for the exact same method, path, body, and account credentials. One
-uses a currently valid integrity token; the other uses an authentically issued
-token expired by at least 60 seconds. Keep the expired request proof itself
-fresh so the test isolates token expiry. The checker cannot establish fixture
-signature provenance; obtain both from the actual trust service.
+The host-library gate does not measure an APK, iOS framework, or device-specific
+optimized binary. Apply the size command to each artifact with its release budget.
 
-Save a private JSON file containing `url`, uppercase `method`, `bodyBase64`,
-`headers`, and `expiredHeaders`. The two header objects contain the complete
-`X-Integrity-Token`, `-Key`, `-Sig`, `-Ts`, and `-Counter` headers and identical
-business-account authorization. Never commit this credential-bearing fixture.
+## How does the enforcement checker work?
+
+Run against authorized staging and an expendable account: the positive control
+executes the protected operation once. Create two real proof fixtures for the
+same method, path, body, and account credentials:
+
+- **Valid fixture:** a currently valid integrity token.
+- **Expired fixture:** an authentically issued token expired by at least 60
+  seconds. Keep the request proof fresh to isolate token expiry.
+
+The checker cannot establish fixture signature provenance. Obtain both tokens
+from the actual trust service.
+
+Save a private JSON file with `url`, uppercase `method`, `bodyBase64`, `headers`,
+and `expiredHeaders`. Both header objects contain `X-Integrity-Token`,
+`X-Integrity-Key`, `X-Integrity-Sig`, `X-Integrity-Ts`, and `X-Integrity-Counter`,
+plus identical business-account authorization. Never commit this fixture.
 
 ```sh
 python -m rasp_verifier.enforcement /private/path/request-fixture.json
 ```
 
 The checker sends missing-token, malformed-token, expired-token, valid, and
-exact-replay requests. Every negative probe must return 401/403, and the valid
-request must return 2xx. Network failures, redirects, 404, 429, and 5xx fail the
-gate. HTTPS uses default certificate and hostname verification; redirects are
-never followed. `--allow-loopback-http` permits literal loopback addresses for
-local tests only. Exit codes: 0 passes, 1 fails, 2 invalid configuration. Output
-contains probe names/statuses and never prints supplied credentials or bodies.
+exact-replay probes:
 
-The automated suite tests the checker against intentionally broken HTTP
-endpoints and the real reference bank with synthetic hardware attestation,
-valid ES256 tokens, an authentically signed expired token, and request replay.
+- Negative probes must return 401/403; the valid request must return 2xx.
+- Network failures, redirects, 404, 429, and 5xx fail the gate.
+- HTTPS verifies certificates and hostnames. Redirects are never followed.
+- Environment proxies are disabled so fixture credentials go only to the target.
+- `--allow-loopback-http` permits literal loopback addresses for local tests only.
+- Exit codes: 0 passes, 1 fails, 2 invalid configuration.
+- Output lists probe names/statuses and omits supplied credentials and bodies.
 
-## Performance and size evidence
+Tests exercise deliberately broken endpoints and the reference bank with
+synthetic hardware attestation, valid ES256 tokens, authentic expired tokens,
+and replayed proofs.
+
+## How do I run the performance and size gates?
 
 ```sh
 python -m rasp_verifier.budgets size path/to/librasp_core.so --max-bytes 1048576
 python -m rasp_verifier.budgets latency measurements.json --max-p95-ms 100
 ```
 
-Latency input is `{"device":"reference-device-name","samplesMs":[...]}` with at
-least 30 finite nonnegative measurements. The gate uses nearest-rank p95. Record
-the device model, OS/build, APK/build ID, measured operation, warmup method, and
-measurement conditions alongside the samples. The sample threshold of 100 ms
-above is an invocation example, not a measured performance claim or approved
-product SLA. Physical-device benchmarks and bypass regression evidence remain
-required before claiming device-farm validation.
+- **Input:** `{"device":"reference-device-name","samplesMs":[...]}` with at least
+  30 finite nonnegative measurements.
+- **Gate:** nearest-rank p95.
+- **Record:** device model, OS/build, APK/build ID, measured operation, warmup,
+  and measurement conditions alongside samples.
+- The 100 ms threshold is an invocation example, not a measured claim or SLA.
+- Physical-device benchmarks and bypass evidence are required before claiming
+  device-farm validation.
