@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -10,9 +11,12 @@ import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 GRADLE = pathlib.Path(os.environ.get("GRADLE_HOME", "/nonexistent")) / "bin/gradle"
+JAVA_HOME = os.environ.get("JAVA_HOME")
+JAVA = str(pathlib.Path(JAVA_HOME) / "bin/java") if JAVA_HOME is not None else shutil.which("java")
 
 
-@unittest.skipUnless(GRADLE.is_file(), "GRADLE_HOME required for JVM integration")
+@unittest.skipUnless(GRADLE.is_file() and os.access(GRADLE, os.X_OK), "executable Gradle in GRADLE_HOME required for JVM integration")
+@unittest.skipUnless(JAVA is not None and pathlib.Path(JAVA).is_file() and os.access(JAVA, os.X_OK), "executable Java in JAVA_HOME or PATH required for JVM integration")
 class GradlePluginTest(unittest.TestCase):
     def testPlugin_hardenedArtifact_reproducibleAndExecutable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -52,11 +56,10 @@ public final class Example {
             mapping = (root / "build/rasp/private-methods.map").read_text()
             self.assertIn("demo/Example#hidden(I)I\t", mapping)
             self.assertNotIn(b"hidden", (root / "build/rasp/classes/demo/Example.class").read_bytes())
-            java = pathlib.Path(os.environ["JAVA_HOME"]) / "bin/java"
-            plain = subprocess.run([str(java), "-Xverify:all", "-cp", str(root / "build/classes/java/main"), "demo.Example"], check=True, capture_output=True).stdout
-            hardened = subprocess.run([str(java), "-Xverify:all", "-cp", str(jar), "demo.Example"], check=True, capture_output=True).stdout
+            plain = subprocess.run([str(JAVA), "-Xverify:all", "-cp", str(root / "build/classes/java/main"), "demo.Example"], check=True, capture_output=True).stdout
+            hardened = subprocess.run([str(JAVA), "-Xverify:all", "-cp", str(jar), "demo.Example"], check=True, capture_output=True).stdout
             self.assertEqual(plain, hardened)
-            tampered = subprocess.run([str(java), "-Xverify:all", "-Drasp.test.tamper=true", "-cp", str(jar), "demo.Example"], check=True, capture_output=True).stdout
+            tampered = subprocess.run([str(JAVA), "-Xverify:all", "-Drasp.test.tamper=true", "-cp", str(jar), "demo.Example"], check=True, capture_output=True).stdout
             self.assertNotEqual(tampered, hardened)
             subprocess.run(command + ["-PraspSeed=123", "--rerun-tasks"], check=True, capture_output=True, env=environment)
             self.assertEqual(first, jar.read_bytes())

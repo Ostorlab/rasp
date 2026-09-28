@@ -35,7 +35,7 @@ the transformation. It produces objects, not a complete app. Link the object wit
 and the extra dispatcher/probe work has application-dependent runtime cost.
 
 Configure `rasp_weave_configure(regions, count, expected_root)` before application threads start. The
-expected root must come from the trusted build manifest. Do not establish it by trusting the current
+expected guard root must come from trusted build metadata for those live regions. Do not establish it by trusting the current
 possibly modified bytes. Descriptors are copied, but the region memory must remain readable for the
 process lifetime. An unconfigured probe returns a nonzero result. Changed protected bytes perturb
 returns; there is no guarantee that this defeats an attacker who can patch the probe or callers.
@@ -69,30 +69,37 @@ explicit budget of at most 1,000,000 steps. LOAD is immediate loading, MOV copie
 equality, and JMP branches when the destination register is nonzero. There is no native memory access,
 syscall bridge, or implementation of STORE/HASH/SVC. This is not an arbitrary native-code translator.
 
-## Authenticated resources and integrity-derived data keys
+## Authenticated resources and guard-derived data keys
+
+**Guard root:** the 32-byte digest that `guardmesh.guard_root` / `rasp_guard_root` computes over the
+ordered guarded live regions. It binds resource keys and integrity probes to those regions. It is distinct
+from the `.so` integrity root recorded in the report manifest and used to derive the report-sealing key;
+each root binds its own configured inputs and must not be substituted for the other.
 
 `assets.py` derives separate AES-128 encryption and HMAC-SHA256 authentication keys from a 32-byte base key
-and the expected 32-byte guard root, with distinct domain labels. Packages use random 96-bit nonces and
+and the expected guard root, exposed as the Python `guard_root` parameter and CLI `--guard-root` flag,
+with distinct domain labels. Packages use random 96-bit nonces and
 authenticate the version, nonce, SHA256 resource identity and ciphertext. The format is
 `RAP1 || nonce[12] || identity_hash[32] || ciphertext || HMAC[32]`. Size is bounded to 16 MiB plaintext.
+Identities are nonempty UTF-8 strings without embedded NULs, matching native C-string hashing.
 Never reuse a nonce under the same key. The CLI always generates a fresh nonce.
 
 ```sh
 rasp-hardener pack-asset --key-file /private/base-key.bin \
-  --integrity-root "$EXPECTED_ROOT_HEX" --identity rules.vm \
+  --guard-root "$GUARD_ROOT_HEX" --identity rules.vm \
   --input /private/build/rules.vm --out /private/build/rules.rap \
   --tables /private/build/asset_tables.h
 rasp-hardener open-asset --key-file /private/base-key.bin \
-  --integrity-root "$EXPECTED_ROOT_HEX" --identity rules.vm \
+  --guard-root "$GUARD_ROOT_HEX" --identity rules.vm \
   --input /private/build/rules.rap --out /private/build/opened.vm
 ```
 
-`rasp_asset_open` computes the live root from caller-provided regions, derives the authentication key,
+`rasp_asset_open` computes the guard root from caller-provided live regions, derives the authentication key,
 checks tag and identity, then decrypts through the generated encoded AES tables. Any failure leaves
 output untouched. `rasp_asset_vm_run` composes authenticated opening with the bounded interpreter and
 wipes its temporary program buffer. Tests prove wrong live bytes never reach VM execution.
 
-Choose stable, readable integrity regions and finalize their expected root before packaging. Do not
+Choose stable, readable guarded live regions and finalize their expected guard root before packaging. Do not
 include tables/packages derived from that root in the root's own inputs: that creates a circular build
 configuration. The API does not automatically discover application regions or solve self-referential
 `.so` layouts. Guarding additional generated tables requires a separately registered expected digest.
@@ -102,7 +109,8 @@ SecureStore state migration and hardware-backed key provisioning remain separate
 
 ## Encoded AES tables
 
-`whitebox.generate(key, encoding_seed=seed32)` absorbs independently seeded invertible affine GF(2)
+`whitebox.generate(key, encoding_seed=encoding_seed)` takes an encoding seed of exactly 32 bytes,
+not a uint32 layout seed. It absorbs independently seeded invertible affine GF(2)
 byte mappings at nine state boundaries into adjacent lookup tables. Linear mappings preserve the XOR
 composition; one contribution carries each affine offset, and the following round consumes the inverse.
 The final table removes the last encoding. `gen-wbkey` enables deterministic key-derived encodings by
@@ -186,21 +194,31 @@ opening DEX bytes. The helper compiles against Android API35, but ART/device exe
 AGP packaging are release-validation requirements. The DEX plaintext remains available to ART in
 memory; no runtime extraction-resistance claim is made.
 
-## Verification
+## What does verification establish?
 
 ```sh
 cd hardener
 LLVM_HOME=/path/to/llvm-18 JAVA_HOME=/path/to/jdk-17 \
 GRADLE_HOME=/path/to/gradle-7.3.3 GRADLE_USER_HOME=/private/gradle-cache \
+ANDROID_JAR=/path/to/android-sdk/platforms/android-35/android.jar \
 python3 -m unittest discover -s tests -t .
 ```
 
 Resolve the Gradle plugin once with `gradle -p hardener/gradle-plugin build`; its smoke test then runs
 offline. The dedicated hardening CI job installs matching LLVM and a checksum-pinned Gradle distribution
-so toolchain tests run rather than skip. Tests execute flattened branch/loop/PHI functions, reject
-unsupported IR, check real guard mutation, compare Python/C VM and AES, authenticate native packages,
-execute seed-diverse JARs with JVM `-Xverify:all`, load authenticated JVM classes, and measure 32/32 detection of the specified single-table fault model. Core CI still enforces the 90% Python hardener
-coverage floor and native binary hygiene/size gates.
+so LLVM and Gradle tests run. Android helper compilation additionally requires `ANDROID_JAR`; Java
+may come from `JAVA_HOME` or `PATH`. The suite discovers 136 tests. With a C compiler and JDK available
+but `LLVM_HOME`, `GRADLE_HOME` and `ANDROID_JAR` unset, nine tests skip: seven LLVM tests, one Gradle
+test and one Android compilation test. Available tests establish:
+
+- LLVM branch/loop/PHI execution parity, unsupported-IR rejection and live guard mutation effects.
+- Python/C VM and AES parity, plus direct affine-map bijection, inverse and seed-diversity contracts.
+- Native package authentication, guard-root and identity binding, embedded-NUL rejection and UTF-8 parity.
+- Seed-diverse Gradle JAR execution with JVM `-Xverify:all` and authenticated JVM class loading.
+- Android API35 helper compilation; no on-device DEX/ART execution has been verified.
+- Detection of 32/32 injected faults in the specified exercised single-table fault model.
+
+Core CI also enforces the 90% Python hardener coverage floor and native binary hygiene/size gates.
 
 Implementation references: [LLVM new pass manager](https://llvm.org/docs/WritingAnLLVMNewPMPass.html),
 [LLVM IR semantics](https://llvm.org/docs/LangRef.html), and

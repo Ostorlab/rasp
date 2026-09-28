@@ -7,7 +7,7 @@ orderings, detector layout, encrypted literals, guard hashes. Changing the seed 
 a bypass cannot transfer between builds. The trust service accepts the build it registered.
 
 The toolchain also includes an opt-in LLVM 18 pass, Gradle ASM plugin, Clang/Xcode wrappers, a bounded
-arithmetic VM, authenticated native resource loading and affine encoded AES tables. Supported inputs,
+arithmetic VM, authenticated native resource loading, authenticated JVM/Android class loading and affine encoded AES tables. Supported inputs,
 required application hooks, commands and remaining limits are documented in
 [Deeper hardening](DEEP_HARDENING.md). These mechanisms do not establish DCA/DFA resistance.
 
@@ -25,7 +25,11 @@ required application hooks, commands and remaining limits are documented in
 | Header generation the native build consumes | `emit.py` → `build_generated.h`, `build_seed.h` | §6 pre-build generator |
 | Build-registration manifest the trust service loads | `manifest.py` → `BuildRegistry.from_manifest` | §6 build registration, §7 build registry |
 | White-box AES-128 table generation (SecureStore data key) | `aes.py`, `whitebox.py` → `wbaes_tables.h` ↔ `wbaes.c`, `securestore.c` | §8 white-box crypto, SecureStore |
-| CLI (`gen-build` / `show` / `register` / `gen-wbkey`) | `cli.py` | §6 post-build CLI, SDK-only mode |
+| LLVM transformations and live integrity probes | `compiler/`, `weave.c`, `weave.h` | Selected integer functions; LLVM 18 |
+| Bounded arithmetic VM and authenticated native resources | `vm.py`, `assets.py` ↔ `vm.c`, `assets.c` | Arithmetic bytecode; guard-root-bound packages |
+| Gradle ASM transformations and private static method renaming | `gradle-plugin/` | Explicit JVM method allowlists |
+| Authenticated JVM/Android class loading | `java-runtime/`, `android-runtime/` | JVM loading executes in tests; Android API35 compilation only, no on-device DEX/ART verification |
+| CLI (`gen-build` / `show` / `register` / `gen-wbkey` / `compile-vm` / `pack-asset` / `open-asset`) | `cli.py` | Build generation and authenticated resources |
 
 The derivation is deterministic in the seed (HMAC-SHA256 as a PRF with distinct labels per output), so a build
 is reproducible for debugging and re-registration, while the outputs stay independent — leaking the public
@@ -115,6 +119,13 @@ Coverage:
 - AES-128 against FIPS-197, white-box AES vs the reference, AES-CMAC against RFC 4493, and SecureStore
   round trips with tamper rejection;
 - ELF `.so` section selection and the integrity root (native runtime root == build-time root, tamper flips both).
+- LLVM integer CFG execution and rejected inputs, bounded Python/C VM parity, authenticated native resources,
+  affine AES encoding contracts and fault detection, Gradle ASM artifacts, and authenticated JVM loading;
+- Android API35 helper compilation, with on-device DEX/ART execution still unverified.
+
+The suite now discovers 136 tests, including direct encoding and embedded-NUL identity regressions.
+Compiler, Gradle and Android compilation cases require their configured toolchains; the C compiler/JDK
+environment with `LLVM_HOME`, `GRADLE_HOME` and `ANDROID_JAR` unset skips nine tests.
 
 Cross-language tests compile the generated headers and the native primitives with a C compiler and assert the
 C side agrees byte-for-byte with the Python reference (string decode, guard root, white-box block, SecureStore

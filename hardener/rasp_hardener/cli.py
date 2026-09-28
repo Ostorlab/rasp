@@ -154,7 +154,7 @@ def cmd_compile_vm(args: argparse.Namespace) -> int:
 
 def cmd_asset(args: argparse.Namespace) -> int:
     key = pathlib.Path(args.key_file).read_bytes()
-    root = bytes.fromhex(args.integrity_root)
+    root = bytes.fromhex(args.guard_root)
     data = pathlib.Path(args.input).read_bytes()
     if args.command == "pack-asset":
         output = assets.seal(data, args.identity, key, root)
@@ -204,9 +204,9 @@ def build_parser() -> argparse.ArgumentParser:
     virtual.add_argument("--out", required=True)
     virtual.set_defaults(func=cmd_compile_vm)
     for command in ["pack-asset", "open-asset"]:
-        resource = sub.add_parser(command, help="authenticated resource package bound to code root and identity")
+        resource = sub.add_parser(command, help="authenticated resource package bound to guard root and identity")
         resource.add_argument("--key-file", required=True, help="private file containing exactly 32 raw key bytes")
-        resource.add_argument("--integrity-root", required=True, help="expected 32-byte guard root in hex")
+        resource.add_argument("--guard-root", required=True, help="expected 32-byte digest of guarded live regions in hex")
         resource.add_argument("--identity", required=True)
         resource.add_argument("--input", required=True)
         resource.add_argument("--out", required=True)
