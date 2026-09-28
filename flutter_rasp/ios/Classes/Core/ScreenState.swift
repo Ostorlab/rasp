@@ -1,5 +1,13 @@
 import Foundation
 
+struct ScreenPreferences {
+    var secure = false
+    var sensitive = false
+    var policySecure = false
+    var appEnabled: Bool { secure || sensitive }
+    var enabled: Bool { appEnabled || policySecure }
+}
+
 /// Validates queued UI work against the latest desired state, including stop.
 final class ScreenState {
     private let lock = NSLock()

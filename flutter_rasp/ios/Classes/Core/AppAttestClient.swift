@@ -46,7 +46,11 @@ final class AppAttestClient {
     private let lock = NSLock()
     private var generation = 0
     private var pendingGeneration: Int?
-    init(directory: URL, service: AttestationService) { self.directory = directory; self.service = service }
+    private let cleanupPending: (URL) throws -> Void
+    init(directory: URL, service: AttestationService,
+         cleanupPending: @escaping (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }) {
+        self.directory = directory; self.service = service; self.cleanupPending = cleanupPending
+    }
     #if canImport(DeviceCheck) && canImport(UIKit)
     convenience init(directory: URL) { self.init(directory: directory, service: AppleAttestationService()) }
     #endif
@@ -79,7 +83,7 @@ final class AppAttestClient {
             generation += 1
             pendingGeneration = nil
             // Confirmation is revoked even if filesystem cleanup fails.
-            try? FileManager.default.removeItem(at: pendingFile)
+            try? cleanupPending(pendingFile)
         }
     }
     func confirm(key: String) throws {
@@ -87,9 +91,10 @@ final class AppAttestClient {
             guard pendingGeneration == generation else { throw RaspError.invalid("enrollment cancelled") }
             guard try String(contentsOf: pendingFile, encoding: .utf8) == key else { throw RaspError.invalid("binding confirmation key mismatch") }
             try Data(key.utf8).write(to: activeFile, options: options)
-            try FileManager.default.removeItem(at: pendingFile)
             generation += 1
             pendingGeneration = nil
+            // The active key is committed; orphan cleanup must not contradict success.
+            try? cleanupPending(pendingFile)
         }
     }
     func assertion(key: String, message: Data) async throws -> Data {

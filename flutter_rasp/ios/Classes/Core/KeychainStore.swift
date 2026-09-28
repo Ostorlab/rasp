@@ -60,16 +60,7 @@ final class KeychainStore {
         try SecureStoreEnvelope.encode(wrappedKey: wrappedBytes, payload: sealedBytes).write(to: entry(name), options: [.atomic, .completeFileProtection])
     }
     func get(_ name: String) throws -> Data? {
-        let file = try entry(name)
-        if !FileManager.default.fileExists(atPath: file.path) { return nil }
-        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
-        guard let length = attributes[.size] as? NSNumber, length.intValue >= SecureStoreEnvelope.minimumLength, length.intValue <= SecureStoreEnvelope.maximumLength else { throw RaspError.invalid("invalid store length") }
-        let envelope = try SecureStoreEnvelope.decode(Data(contentsOf: file))
-        let aad = Data(name.utf8)
-        var rawKey = try AES.GCM.open(AES.GCM.SealedBox(combined: envelope.wrappedKey), using: master(), authenticating: aad)
-        defer { rawKey.resetBytes(in: 0..<rawKey.count) }
-        guard rawKey.count == SecureStoreEnvelope.dataKeyLength else { throw RaspError.invalid("invalid data key length") }
-        return try AES.GCM.open(AES.GCM.SealedBox(combined: envelope.payload), using: SymmetricKey(data: rawKey), authenticating: aad)
+        try SecureStoreCipher.read(entry(name), master: master, aad: Data(name.utf8))
     }
     func delete(_ name: String) throws {
         let file = try entry(name)

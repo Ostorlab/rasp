@@ -101,7 +101,7 @@ Confirmation must occur in the same enrollment generation. Stop/unbind revoke pe
 
 - **Detection signals:** jailbreak artifacts, sandbox escape writes, debugger status, loaded instrumentation libraries, environment injection and screen capture status. Concurrent callers share one scan, and only newly detected threats contribute notification signals/reactions.
 - **Policy:** Android wire format and monotonic revisions.
-- **Storage:** device-only, unlocked Keychain storage for the envelope wrapping key.
+- **Storage:** the envelope wrapping key lives in Keychain with `WhenUnlockedThisDeviceOnly` accessibility: device-only, no cross-device migration, and unavailable while locked. Entries that fail AES-GCM authentication are deleted and read as absent; Keychain, filesystem and framing errors propagate.
 - **Reactions:** `wipeOnThreats` destroys the wrapping key and session immediately; `silentDegrade` disables signing/storage; `closeApp` degrades and emits the configured event because iOS has no supported force-close API. New-threat notifications use `reactionDelayMillis` (0–60000) and are generation-checked and cancelled on stop/policy replacement. General pinned requests fail while degraded.
 - **Screen capture:** public APIs obscure captured and background content; they cannot guarantee screenshot prevention. Desired protection is recomputed per scan, and queued UI work cannot overwrite newer screen state or stop.
 - **Enrollment lifecycle:** generation guards reject stale Apple callbacks and cancelled pending confirmations. Regression tests that stall the Apple attestation callback exercise stop and unbind before Apple completion.
@@ -111,9 +111,16 @@ Android-only fraud signals and Play Integrity are not synthesized on iOS.
 **Build-time self-integrity** measures selected bounded file regions, including executable code and resources, while excluding the code-signature blob and the manifest itself. After linking, specify immutable regions in a private JSON file, for example `[{"path":"Runner","offset":12345,"length":4096}]`. Run:
 
 ```sh
-node flutter_rasp/tool/ios_manifest.mjs APP_BUNDLE regions.json APP_BUNDLE/RaspBuild.json BUNDLE_ID private-server-manifest.json
+node flutter_rasp/tool/ios_manifest.mjs \
+  build/ios/iphoneos/Runner.app private/regions.json \
+  build/ios/iphoneos/Runner.app/RaspBuild.json com.example.bank \
+  private/private-server-manifest.json
 ```
+
+Arguments, in order: application bundle path, protected-region JSON, client-manifest output, bundle identifier, private server-manifest output.
 
 Register the private server manifest with `BuildRegistry.register_manifest`, then sign/package the final app. Each runtime measurement derives the report key as `HMAC(buildKey, measuredIntegrityRoot)`; modified protected bytes yield an unregistered key. The client manifest contains build key material and must never be committed. This reference does not claim white-box key hiding or automatic Mach-O section selection. Keychain data keys currently do not incorporate this integrity root.
 
-Current iOS validation uses the macOS CI gate for Swift unit tests, iOS typechecking and the Flutter CocoaPods build. The tests cover scan coalescing, cancelled generations, stale screen callbacks, pending-binding cancellation and real AES-GCM version-1 framing. The Node manifest test, all nine Dart tests and Flutter analysis passed locally. Live App Attest and physical-device detector behavior remain provisioning-based checks. The version-1 store format retains its fixed AES-256-GCM layout, with named framing lengths and explicit validation rather than a breaking header change.
+### iOS validation
+
+Current iOS validation uses the macOS CI gate for Swift unit tests, iOS typechecking and the Flutter CocoaPods build. The tests cover independent screen flags, startup rollback, scan coalescing, cancelled generations, stale screen callbacks, pending-binding cancellation/cleanup and real AES-GCM version-1 framing/recovery. The Node manifest test, all nine Dart tests and Flutter analysis passed locally. Live App Attest and physical-device detector behavior remain provisioning-based checks. The version-1 store format retains its fixed AES-256-GCM layout, with named framing lengths and explicit validation rather than a breaking header change.

@@ -30,7 +30,8 @@ private actor IOSCore {
     private let event: ([String: Any]) -> Void
     private var bootstrap: [String: Any] = [:]
     private var config: [String: Any] = [:]
-    private var started = false
+    private var startup = StartupState()
+    private var started: Bool { startup.started }
     private var degraded = false
     private var session: SessionProof?
     private var timer: Task<Void, Never>?
@@ -40,11 +41,10 @@ private actor IOSCore {
     private var revision: Int64 = 0
     private var expiry = Int64.max
     private var generation = 0
-    private var sensitive = false
+    private var screenPreferences = ScreenPreferences()
     private var authorizing = false
     private let scans = ScanFlight<[String: Any]>()
     private let screenState = ScreenState()
-    private var policySecure = false
 
     init(event: @escaping ([String: Any]) -> Void) throws {
         var root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("rasp", isDirectory: true)
@@ -82,8 +82,8 @@ private actor IOSCore {
         timer?.cancel(); timer = nil
         scans.cancel()
         reactions.values.forEach { $0.cancel() }; reactions = [:]
-        attest.cancelEnrollment(); generation += 1; session = nil; started = false
-        policySecure = false
+        attest.cancelEnrollment(); generation += 1; session = nil; startup.stop()
+        screenPreferences.policySecure = false
         let token = screenState.update(false)
         let state = screenState
         Task { @MainActor in state.apply(token) { IOSScreenProtector.shared.setEnabled($0) } }
@@ -111,8 +111,19 @@ private actor IOSCore {
                 revision = cached.revision; expiry = cached.expiresAt
                 if expiry > nowSeconds { config.merge(cached.config) { _, new in new } }
             }
-            try validate(config); started = true
-            let report = try await scan(); startTimer(); return report
+            try validate(config)
+            let epoch = generation
+            startup.begin(epoch)
+            do {
+                let report = try await scan()
+                guard epoch == generation, startup.complete(epoch) else { throw RaspError.invalid("startup superseded") }
+                startTimer()
+                return report
+            } catch {
+                // An old failure must not stop a newer start/policy generation.
+                if epoch == generation, startup.fail(epoch) { stop() }
+                throw error
+            }
         case "stop": stop(); return nil
         case "check": guard started else { throw RaspError.invalid("not started") }; return try await scan()
         case "guard":
@@ -125,8 +136,10 @@ private actor IOSCore {
             let warnings = threats.filter { ($0["reactions"] as? [String] ?? []).contains("warnUser") }.compactMap { $0["type"] as? String }
             return ["flow": flow, "allowed": blocking.isEmpty, "blockingThreats": blocking, "warnings": warnings, "report": report]
         case "setSecureScreen", "setSensitiveScreen":
-            sensitive = args["enabled"] as? Bool ?? false
-            let token = screenState.update(sensitive || policySecure)
+            let enabled = args["enabled"] as? Bool ?? false
+            if method == "setSecureScreen" { screenPreferences.secure = enabled }
+            else { screenPreferences.sensitive = enabled }
+            let token = screenState.update(screenPreferences.enabled)
             let state = screenState
             await MainActor.run { state.apply(token) { IOSScreenProtector.shared.setEnabled($0) } }
             return nil
@@ -182,7 +195,7 @@ private actor IOSCore {
         let updated = bootstrap.merging(verified.config) { _, new in new }
         try validate(updated)
         try Data(text.utf8).write(to: directory.appendingPathComponent("policy.json"), options: [.atomic, .completeFileProtection])
-        stop(); revision = verified.revision; expiry = verified.expiresAt; config = updated; started = true; startTimer()
+        stop(); revision = verified.revision; expiry = verified.expiresAt; config = updated; startup.activate(); startTimer()
     }
 
     private func scan() async throws -> [String: Any] {
@@ -194,7 +207,7 @@ private actor IOSCore {
     }
 
     private func performScan(epoch: Int) async throws -> [String: Any] {
-        guard epoch == generation, started else { throw RaspError.invalid("scan superseded") }
+        guard epoch == generation, startup.scanningAllowed else { throw RaspError.invalid("scan superseded") }
         let captured = await MainActor.run { UIScreen.main.isCaptured }
         guard epoch == generation else { throw RaspError.invalid("scan superseded") }
         var signals = IOSDetectors.scan(expectedBundle: config["expectedPackageName"] as? String)
@@ -211,7 +224,7 @@ private actor IOSCore {
         let policy = defaults.merging(config["policy"] as? [String: [String]] ?? [:]) { _, new in new }
         let dev = config["devMode"] as? Bool == true
         let configured = threats.sorted().map { ["type": $0, "reactions": dev ? ["report"] : (policy[$0] ?? ["report"])] as [String: Any] }
-        let decision = ScanDecision(signals: signals, configured: configured, previous: lastThreats, sensitive: sensitive)
+        let decision = ScanDecision(signals: signals, configured: configured, previous: lastThreats, sensitive: screenPreferences.appEnabled)
         let reactions = decision.reactions
         if !dev {
             if !threats.isDisjoint(with: Set(config["wipeOnThreats"] as? [String] ?? [])) {
@@ -222,10 +235,11 @@ private actor IOSCore {
         let risk = !threats.isDisjoint(with: ["tamper", "hooking", "debugger", "screenRecording"]) ? "high" : threats.isEmpty ? "none" : "medium"
         let report: [String: Any] = ["riskLevel": risk, "threats": configured, "signals": signals, "timestamp": nowMillis]
         let newThreats = decision.newThreats
-        lastThreats = threats
         if !newThreats.isEmpty {
             let item: [String: Any] = ["riskLevel": risk, "newThreats": newThreats.sorted(), "reactions": decision.newReactions.sorted(), "signals": decision.newSignals, "timestamp": nowMillis]
-            history = Array((history + [item]).suffix(500)); try persistHistory()
+            let updatedHistory = Array((history + [item]).suffix(500))
+            try persistHistory(updatedHistory)
+            history = updatedHistory
             let delay = UInt64((config["reactionDelayMillis"] as? NSNumber)?.int64Value ?? 4000)
             let identifier = UUID()
             let task = Task { [weak self] in
@@ -235,7 +249,8 @@ private actor IOSCore {
             self.reactions[identifier] = task
         }
         // Commit threat/history/reaction state before suspending for the UI.
-        policySecure = configured.contains { ($0["reactions"] as? [String] ?? []).contains("secureScreen") }
+        lastThreats = threats
+        screenPreferences.policySecure = configured.contains { ($0["reactions"] as? [String] ?? []).contains("secureScreen") }
         let token = screenState.update(decision.secureScreen)
         let state = screenState
         await MainActor.run { state.apply(token) { IOSScreenProtector.shared.setEnabled($0) } }
@@ -245,11 +260,11 @@ private actor IOSCore {
 
     private func deliver(_ item: [String: Any], epoch: Int, identifier: UUID) {
         reactions.removeValue(forKey: identifier)
-        guard epoch == generation, started else { return }
+        guard epoch == generation, startup.scanningAllowed else { return }
         event(item)
     }
 
-    private func persistHistory() throws { try JSONSerialization.data(withJSONObject: history).write(to: directory.appendingPathComponent("events.json"), options: [.atomic, .completeFileProtection]) }
+    private func persistHistory(_ items: [[String: Any]]? = nil) throws { try JSONSerialization.data(withJSONObject: items ?? history).write(to: directory.appendingPathComponent("events.json"), options: [.atomic, .completeFileProtection]) }
     private struct BuildManifest: Decodable { let buildId: String; let buildKey: String; let regions: [IntegrityRegion] }
     private func buildManifest() throws -> BuildManifest {
         guard let url = Bundle.main.url(forResource: "RaspBuild", withExtension: "json") else { throw RaspError.invalid("RaspBuild.json required") }

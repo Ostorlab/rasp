@@ -18,6 +18,27 @@ private final class PausedScan {
 }
 
 final class ScanLifecycleTests: XCTestCase {
+    func testSecureScreenDisableDoesNotClearSensitiveProtectionOrScanState() {
+        var preferences = ScreenPreferences()
+        preferences.secure = true; preferences.sensitive = true
+        preferences.secure = false
+        XCTAssertTrue(preferences.enabled)
+        let scan = ScanDecision(signals: [], configured: [], previous: [], sensitive: preferences.appEnabled)
+        XCTAssertTrue(scan.secureScreen)
+        preferences.sensitive = false
+        XCTAssertFalse(preferences.enabled)
+    }
+    func testSensitiveScreenDisableDoesNotClearSecureOrPolicyProtection() {
+        var preferences = ScreenPreferences()
+        preferences.secure = true; preferences.sensitive = true
+        preferences.sensitive = false
+        XCTAssertTrue(preferences.enabled)
+        XCTAssertTrue(ScanDecision(signals: [], configured: [], previous: [], sensitive: preferences.appEnabled).secureScreen)
+        preferences.secure = false; preferences.policySecure = true
+        XCTAssertTrue(preferences.enabled)
+        let policy = [["type": "hooking", "reactions": ["secureScreen"]]] as [[String: Any]]
+        XCTAssertTrue(ScanDecision(signals: [], configured: policy, previous: [], sensitive: preferences.appEnabled).secureScreen)
+    }
     func testOverlappingScansShareOneOperationAcrossSuspension() async throws {
         let flight = ScanFlight<Int>(), paused = PausedScan()
         let reached = expectation(description: "first scan paused")
