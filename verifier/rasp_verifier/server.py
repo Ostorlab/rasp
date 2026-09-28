@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from rasp_verifier import jose
+
 from .jose import SigningKey
 from .platform import DisabledPlatformAttestation, StubPlatformAttestation
 from .policy import TokenPolicy
@@ -107,9 +109,10 @@ class BankState:
                 body=ctx.body,
                 jwks_keys=self.jwks_provider()["keys"],
             )
-        except (ResourceError, ValueError) as e:
-            reason = e.reason if isinstance(e, ResourceError) else "bad_headers"
-            return HTTPStatus.UNAUTHORIZED, {"error": "integrity_failed", "reason": reason}
+        except (ResourceError, jose.JoseError) as error:
+            return HTTPStatus.UNAUTHORIZED, {"error": "integrity_failed", "reason": error.reason}
+        except ValueError:
+            return HTTPStatus.UNAUTHORIZED, {"error": "integrity_failed", "reason": "bad_headers"}
 
         if verified.claims.get("app") != self.package_name:
             return HTTPStatus.FORBIDDEN, {"error": "integrity_failed", "reason": "wrong_app"}

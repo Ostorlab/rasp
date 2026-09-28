@@ -9,6 +9,9 @@ local.properties
 .flutter-plugins-dependencies
 __pycache__/
 *.pyc
+.coverage
+coverage.xml
+htmlcov/
 
 # Local Python venv for the verifier
 .venv/
