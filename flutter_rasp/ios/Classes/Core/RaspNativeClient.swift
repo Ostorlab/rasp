@@ -38,7 +38,8 @@ private actor IOSCore {
     private var reactions: [UUID: Task<Void, Never>] = [:]
     private var lastThreats = Set<String>()
     private var history: [[String: Any]] = []
-    private var revision: Int64 = 0
+    private var policies: PolicyCache?
+    private var policyRecovery = false
     private var expiry = Int64.max
     private var generation = 0
     private var screenPreferences = ScreenPreferences()
@@ -83,6 +84,7 @@ private actor IOSCore {
         scans.cancel()
         reactions.values.forEach { $0.cancel() }; reactions = [:]
         attest.cancelEnrollment(); generation += 1; session = nil; startup.stop()
+        policyRecovery = false
         screenPreferences.policySecure = false
         let token = screenState.update(false)
         let state = screenState
@@ -104,26 +106,20 @@ private actor IOSCore {
         switch method {
         case "start":
             stop(); bootstrap = args; config = args
+            policies = nil
             let file = directory.appendingPathComponent("policy.json")
-            if FileManager.default.fileExists(atPath: file.path) {
-                guard let envelope = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any] else { throw RaspError.invalid("invalid cached policy") }
-                let cached = try verifier.verify(envelope, revision: revision, now: nowSeconds, cached: true)
-                revision = cached.revision; expiry = cached.expiresAt
+            let cache = try PolicyCache(file: file, storage: KeychainPolicyRevisions(),
+                                        tenant: bootstrap["tenantId"] as? String ?? "", app: Bundle.main.bundleIdentifier ?? "")
+            policies = cache
+            policyRecovery = !cache.bootstrapAllowed
+            // Missing cache after a floor commit permits recovery, never bootstrap trust.
+            expiry = cache.bootstrapAllowed ? Int64.max : 0
+            if let cached = try cache.load(verifier: verifier, now: nowSeconds, validate: { try validate(bootstrap.merging($0) { _, new in new }) }) {
+                expiry = cached.expiresAt
                 if expiry > nowSeconds { config.merge(cached.config) { _, new in new } }
             }
             try validate(config)
-            let epoch = generation
-            startup.begin(epoch)
-            do {
-                let report = try await scan()
-                guard epoch == generation, startup.complete(epoch) else { throw RaspError.invalid("startup superseded") }
-                startTimer()
-                return report
-            } catch {
-                // An old failure must not stop a newer start/policy generation.
-                if epoch == generation, startup.fail(epoch) { stop() }
-                throw error
-            }
+            return try await completeStartup()
         case "stop": stop(); return nil
         case "check": guard started else { throw RaspError.invalid("not started") }; return try await scan()
         case "guard":
@@ -180,27 +176,52 @@ private actor IOSCore {
         case "secureClear": try store.clear(); session = nil; return nil
         case "eventLog": return history
         case "clearEventLog": history = []; try persistHistory(); return nil
-        case "applyPolicy": try applyPolicy(required(args, "envelope")); return nil
+        case "applyPolicy": try await applyPolicy(required(args, "envelope")); return nil
         case "refreshPolicy":
             let response = try await PinnedTransport(pins: pins(bootstrap)).request(url: required(args, "url"), method: "GET", headers: [:], body: Data())
             guard response["status"] as? Int == 200, let body = response["body"] as? Data, let envelope = String(data: body, encoding: .utf8) else { throw RaspError.invalid("policy refresh failed") }
-            try applyPolicy(envelope); return nil
+            try await applyPolicy(envelope); return nil
         default: throw RaspError.invalid("unsupported iOS operation: \(method)")
         }
     }
 
-    private func applyPolicy(_ text: String) throws {
-        guard started, text.utf8.count <= 131072, let envelope = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { throw RaspError.invalid("invalid policy envelope") }
-        let verified = try verifier.verify(envelope, revision: revision, now: nowSeconds)
-        let updated = bootstrap.merging(verified.config) { _, new in new }
-        try validate(updated)
-        try Data(text.utf8).write(to: directory.appendingPathComponent("policy.json"), options: [.atomic, .completeFileProtection])
-        stop(); revision = verified.revision; expiry = verified.expiresAt; config = updated; startup.activate(); startTimer()
+    private func completeStartup() async throws -> [String: Any] {
+        let epoch = generation
+        startup.begin(epoch)
+        do {
+            let report = try await scan()
+            guard epoch == generation, startup.complete(epoch) else { throw RaspError.invalid("startup superseded") }
+            policyRecovery = false
+            startTimer()
+            return report
+        } catch {
+            // An old failure must not stop a newer start/policy generation.
+            if epoch == generation, startup.fail(epoch) { stop() }
+            throw error
+        }
+    }
+
+    private func applyPolicy(_ text: String) async throws {
+        guard started || policyRecovery, !startup.scanningAllowed || started,
+              let cache = policies else { throw RaspError.invalid("protection not started") }
+        let initialScanRequired = !started
+        let verified: PolicyVerifier.Verified
+        do {
+            verified = try cache.accept(text, verifier: verifier, now: nowSeconds, validate: { try validate(bootstrap.merging($0) { _, new in new }) })
+        } catch PolicyCacheFailure.persistence(let error) {
+            // The durable floor may already exceed the old configuration; discard old trust.
+            stop()
+            policyRecovery = !cache.bootstrapAllowed
+            throw error
+        }
+        stop(); expiry = verified.expiresAt; config = bootstrap.merging(verified.config) { _, new in new }
+        if initialScanRequired { _ = try await completeStartup() }
+        else { startup.activate(); startTimer() }
     }
 
     private func scan() async throws -> [String: Any] {
         let epoch = generation
-        return try await scans.task { [weak self] in
+        return try await scans.task(generation: epoch) { [weak self] in
             guard let self else { throw RaspError.invalid("scan cancelled") }
             return try await self.performScan(epoch: epoch)
         }.value

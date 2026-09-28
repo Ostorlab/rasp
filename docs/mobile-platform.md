@@ -1,6 +1,6 @@
 # Mobile platform implementation
 
-The mobile platform is a proprietary Android/Flutter RASP client with pinned HTTPS, signed OTA policies, erasable Keystore-backed storage and Play Integrity. The iOS SDK implements App Attest binding and assertions alongside pinned HTTPS and local protections.
+The mobile platform ships a proprietary Android/Flutter RASP client with pinned HTTPS, signed OTA policies, erasable Keystore-backed storage and Play Integrity, and an iOS SDK with App Attest binding and assertions, pinned HTTPS and local protections.
 
 All SDK packages are proprietary and intended for private distribution only.
 
@@ -100,7 +100,7 @@ Confirmation must occur in the same enrollment generation. Stop/unbind revoke pe
 `prepareAppAttestToken(nonce)` returns the complete token-route body with the new session key covered by an App Attest assertion. App Attest does not establish per-use biometric authorization; iOS tokens correctly carry `uauth=false`.
 
 - **Detection signals:** jailbreak artifacts, sandbox escape writes, debugger status, loaded instrumentation libraries, environment injection and screen capture status. Concurrent callers share one scan, and only newly detected threats contribute notification signals/reactions.
-- **Policy:** Android wire format and monotonic revisions.
+- **Policy:** Android wire format and monotonic revisions. A separate tenant/app-scoped Keychain item retains the accepted revision across process restarts; secret wipes do not reset it. Verified cached policies may equal the floor, but older cache revisions and repeated network revisions are rejected. The floor persists before the cache; interrupted updates block old trust and require a newer recovery revision. A missing cache with an existing floor permits policy refresh while protected operations remain blocked. If a stale/corrupt cache rejects startup after loading a positive floor, `refreshPolicy` can recover with a strictly newer signed policy over bootstrap-pinned HTTPS; protection activates only after its initial scan succeeds. Explicit stop cancels recovery. Keychain errors fail closed. This relies on Keychain protection, rather than a hardware monotonic counter; existing installs seed the floor from their first verified policy after upgrading.
 - **Storage:** the envelope wrapping key lives in Keychain with `WhenUnlockedThisDeviceOnly` accessibility: device-only, no cross-device migration, and unavailable while locked. Entries that fail AES-GCM authentication are deleted and read as absent; Keychain, filesystem and framing errors propagate.
 - **Reactions:** `wipeOnThreats` destroys the wrapping key and session immediately; `silentDegrade` disables signing/storage; `closeApp` degrades and emits the configured event because iOS has no supported force-close API. New-threat notifications use `reactionDelayMillis` (0–60000) and are generation-checked and cancelled on stop/policy replacement. General pinned requests fail while degraded.
 - **Screen capture:** public APIs obscure captured and background content; they cannot guarantee screenshot prevention. Desired protection is recomputed per scan, and queued UI work cannot overwrite newer screen state or stop.

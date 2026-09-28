@@ -18,6 +18,21 @@ private final class PausedScan {
 }
 
 final class ScanLifecycleTests: XCTestCase {
+    func testNewBindingGenerationDetachesOldScanWithoutExplicitStop() async throws {
+        let flight = ScanFlight<Int>(), old = PausedScan(), replacement = PausedScan()
+        let oldReached = expectation(description: "old binding scan paused")
+        let oldTask = flight.task(generation: 1) { await old.run(oldReached) }
+        await fulfillment(of: [oldReached], timeout: 2)
+        let newReached = expectation(description: "new binding scan paused")
+        let newTask = flight.task(generation: 2) { await replacement.run(newReached) }
+        await fulfillment(of: [newReached], timeout: 2)
+        old.finish(1)
+        _ = try await oldTask.value
+        let joining = flight.task(generation: 2) { XCTFail("old binding completion detached current scan"); return 3 }
+        replacement.finish(2)
+        let value = try await newTask.value, joined = try await joining.value
+        XCTAssertEqual(value, 2); XCTAssertEqual(joined, 2)
+    }
     func testSecureScreenDisableDoesNotClearSensitiveProtectionOrScanState() {
         var preferences = ScreenPreferences()
         preferences.secure = true; preferences.sensitive = true
