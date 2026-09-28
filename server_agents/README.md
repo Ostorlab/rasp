@@ -27,8 +27,12 @@ Python protected file operations require absolute paths, including calls using
 Relative symlink targets are resolved against the link's parent and both link
 and target must stay within allowed roots. Node checks callback, sync, and promise
 forms of deletion, rename, copy, linking, directory listing, opens and streams.
-Read-only Python import-loader reads of the exact module file are permitted;
-ordinary reads of module files and writes still require an allowed root.
+Python import discovery can list the current module directory, and actual module
+loading can read only its source and derived bytecode paths. These exceptions are
+active only inside the import machinery; direct loader/resource reads and normal
+directory listing still require an allowed root. Protected imports skip bytecode
+cache writes. Import hooks use CPython's import machinery and are instrumentation,
+not a sandbox against code that replaces runtime hooks.
 
 SQL checks use token boundaries to correlate decoded request values with statement
 structure. Values shorter than three characters, identifier substrings, and

@@ -12,6 +12,8 @@ import collections.abc
 import contextlib
 import contextvars
 import dataclasses
+import functools
+import importlib._bootstrap
 import ipaddress
 import importlib._bootstrap_external
 import inspect
@@ -76,8 +78,11 @@ _installed = False
 _sqlite_connect = sqlite3.connect
 _popen_init = subprocess.Popen.__init__
 _popen_signature = inspect.signature(_popen_init)
-_loader_read = importlib._bootstrap_external.FileLoader.get_data
-_module_read: contextvars.ContextVar[str | None] = contextvars.ContextVar("rasp_module_read", default=None)
+_import_name: contextvars.ContextVar[str | None] = contextvars.ContextVar("rasp_import_name", default=None)
+_module_paths: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar("rasp_module_paths", default=())
+_import_directory: contextvars.ContextVar[str | None] = contextvars.ContextVar("rasp_import_directory", default=None)
+_finder_spec = importlib._bootstrap_external.FileFinder.find_spec
+_loader_write = importlib._bootstrap_external.SourceFileLoader.set_data
 _sql_tokens = re.compile(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`(?:``|[^`])*`|\[(?:[^\]])*\]|--[^\n]*|/\*[\s\S]*?\*/|[\w$]+|[^\s]", re.UNICODE)
 
 
@@ -146,12 +151,48 @@ def _source_changes_sql(query: str, source: str) -> bool:
     return False
 
 
-def _read_module(loader: typing.Any, path: str) -> bytes:
-    token = _module_read.set(os.path.realpath(path))
+def _import_hook(original: collections.abc.Callable[..., typing.Any], *, specification: bool = False) -> collections.abc.Callable[..., typing.Any]:
+    @functools.wraps(original)
+    def import_operation(module: typing.Any, *args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+        token = _import_name.set(module.name if specification is True else module)
+        try:
+            return original(module, *args, **kwargs)
+        finally:
+            _import_name.reset(token)
+    return import_operation
+
+
+def _find_module(finder: typing.Any, fullname: str, target: typing.Any = None) -> typing.Any:
+    if _import_name.get() != fullname:
+        return _finder_spec(finder, fullname, target)
+    token = _import_directory.set(os.path.realpath(finder.path))
     try:
-        return _loader_read(loader, path)
+        return _finder_spec(finder, fullname, target)
     finally:
-        _module_read.reset(token)
+        _import_directory.reset(token)
+
+
+def _code_hook(original: collections.abc.Callable[..., typing.Any]) -> collections.abc.Callable[..., typing.Any]:
+    @functools.wraps(original)
+    def module_code(loader: typing.Any, fullname: str) -> typing.Any:
+        if _import_name.get() != fullname:
+            return original(loader, fullname)
+        source = loader.get_filename(fullname)
+        paths = [os.path.realpath(source)]
+        if isinstance(loader, importlib._bootstrap_external.SourceFileLoader) is True:
+            paths.append(os.path.realpath(importlib._bootstrap_external.cache_from_source(source)))
+        token = _module_paths.set(tuple(paths))
+        try:
+            return original(loader, fullname)
+        finally:
+            _module_paths.reset(token)
+    return module_code
+
+
+def _cache_module(loader: typing.Any, path: str, data: bytes, **kwargs: typing.Any) -> None:
+    if _scope.get() is not None and loader.name == _import_name.get() and os.path.realpath(path) in _module_paths.get():
+        return  # Imports read code; they do not acquire permission to write cache files.
+    _loader_write(loader, path, data, **kwargs)
 
 
 def _init_process(process: subprocess.Popen[typing.Any], *args: typing.Any, **kwargs: typing.Any) -> None:
@@ -221,13 +262,16 @@ def _audit(event: str, args: tuple[typing.Any, ...]) -> None:
         return
     if event == "open":
         _enforce_patch(scope, "file")
-        module_path = _module_read.get()
+        module_paths = _module_paths.get()
         flags = args[2]
         is_read_only = flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND) == 0
-        if module_path is not None and isinstance(args[0], (str, bytes)) and is_read_only is True and os.path.realpath(os.fsdecode(args[0])) == module_path:
+        if isinstance(args[0], (str, bytes)) and is_read_only is True and os.path.realpath(os.fsdecode(args[0])) in module_paths:
             return  # Only the loader's exact read, never arbitrary reads under sys.path.
         _check_path(scope, args[0])
     elif event in {"os.remove", "os.rmdir", "os.mkdir", "os.listdir", "os.scandir", "os.chmod", "os.chown", "os.utime", "os.truncate"}:
+        _enforce_patch(scope, "file")
+        if event == "os.listdir" and isinstance(args[0], (str, bytes)) and os.path.realpath(os.fsdecode(args[0])) == _import_directory.get():
+            return  # Only the current FileFinder's import discovery, never application listing.
         _check_path(scope, args[0])
     elif event in {"os.rename", "os.link", "shutil.copyfile", "shutil.copytree"}:
         _check_path(scope, args[0])
@@ -313,7 +357,13 @@ def install() -> None:
             return
         sys.addaudithook(_audit)
         subprocess.Popen.__init__ = _init_process
-        importlib._bootstrap_external.FileLoader.get_data = _read_module
+        importlib._bootstrap._find_and_load = _import_hook(importlib._bootstrap._find_and_load)
+        importlib._bootstrap._find_spec = _import_hook(importlib._bootstrap._find_spec)
+        importlib._bootstrap._exec = _import_hook(importlib._bootstrap._exec, specification=True)
+        importlib._bootstrap_external.FileFinder.find_spec = _find_module
+        importlib._bootstrap_external.SourceFileLoader.get_code = _code_hook(importlib._bootstrap_external.SourceFileLoader.get_code)
+        importlib._bootstrap_external.SourcelessFileLoader.get_code = _code_hook(importlib._bootstrap_external.SourcelessFileLoader.get_code)
+        importlib._bootstrap_external.SourceFileLoader.set_data = _cache_module
         sqlite3.connect = _connect
         sqlite3.dbapi2.connect = _connect
         _installed = True

@@ -2,9 +2,11 @@
 import importlib
 import os
 import pathlib
+import pkgutil
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -115,3 +117,43 @@ class ReviewTest(unittest.TestCase):
                     agent.check_sql("select attack")
         self.assertEqual(len(scope.events), 100)
         self.assertEqual(set(vars(scope.events[0])), {"tenant_id", "request_id", "sink", "reason"})
+
+    def testImport_whenColdModuleOutsideRoots_allowsOnlyImportReads(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "rasp_cold_probe.py").write_text("VALUE = 123\n")
+            sys.path.insert(0, directory)
+            try:
+                with agent.request_scope("tenant", "cold-import", (), agent.Policy()) as scope:
+                    module = importlib.import_module("rasp_cold_probe")
+                    self.assertEqual(module.VALUE, 123)
+                    self.assertEqual(len(scope.events), 0)
+                    with self.assertRaises(agent.Blocked):
+                        os.listdir(directory)
+                self.assertFalse((root / "__pycache__").exists())
+            finally:
+                sys.path.remove(directory)
+                sys.modules.pop("rasp_cold_probe", None)
+
+    def testImport_whenLoaderReadsResourceOrTraversal_stillEnforcesRoots(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            package = root / "rasp_resource_probe"
+            package.mkdir()
+            (package / "__init__.py").write_text("VALUE = 123\n")
+            (root / "secret").write_text("private-content")
+            sys.path.insert(0, directory)
+            try:
+                module = importlib.import_module("rasp_resource_probe")
+                with agent.request_scope("tenant", "resource", (), agent.Policy()) as scope:
+                    with self.assertRaises(agent.Blocked):
+                        pkgutil.get_data("rasp_resource_probe", "../secret")
+                    with self.assertRaises(agent.Blocked):
+                        module.__loader__.get_data(module.__file__)
+                    with self.assertRaises(agent.Blocked):
+                        module.__loader__.get_code("rasp_resource_probe")
+                self.assertGreaterEqual(len(scope.events), 3)
+                self.assertTrue(all(event.sink == "file" for event in scope.events))
+            finally:
+                sys.path.remove(directory)
+                sys.modules.pop("rasp_resource_probe", None)
