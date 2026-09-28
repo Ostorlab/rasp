@@ -77,6 +77,7 @@ RASP_SYMBOL(ct_equal)
 /* rasp_jni.c (statics) */
 RASP_SYMBOL(native_scan)
 RASP_SYMBOL(native_seal)
+RASP_SYMBOL(wipe_secret)
 RASP_SYMBOL(hex_to_bytes)
 
 /* Remaining private crypto and generated-integrity data symbols. */
