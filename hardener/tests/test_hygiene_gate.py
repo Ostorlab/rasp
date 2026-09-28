@@ -28,7 +28,7 @@ from rasp_hardener import seed
 
 CPP = pathlib.Path(__file__).resolve().parents[2] / "flutter_rasp" / "android" / "src" / "main" / "cpp"
 SOURCES = ["detectors.c", "signals.c", "sha256.c", "report.c", "guard.c", "strobf.c", "literals.c",
-           "integrity.c", "wbaes.c", "securestore.c"]
+           "integrity.c", "wbaes.c", "securestore.c", "weave.c"]
 
 SMOKE = r"""
 #include <stdio.h>
