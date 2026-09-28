@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 import dataclasses
+import http.client
 import ipaddress
 import json
 import math
@@ -91,7 +92,7 @@ def _expiry(token: str) -> int:
         payload = json.loads(
             base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
         )
-    except (ValueError, UnicodeError) as error:
+    except (ValueError, UnicodeError, RecursionError) as error:
         raise ValueError("invalid fixture JWT payload") from error
     if not isinstance(payload, dict) or type(payload.get("exp")) is not int:
         raise ValueError("fixture JWT must contain integer exp")
@@ -179,7 +180,12 @@ def check(
         except urllib.error.HTTPError as error:
             status = error.code
             error.close()
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            OSError,
+            http.client.HTTPException,
+        ):
             results.append(ProbeResult(name, 0, False, "connection failed"))
             continue
         expected = (
@@ -220,7 +226,7 @@ def main() -> int:
             timeout=args.timeout,
             allow_loopback_http=args.allow_loopback_http,
         )
-    except (ValueError, KeyError, TypeError, OSError):
+    except (ValueError, KeyError, TypeError, OSError, RecursionError):
         print(
             json.dumps(
                 {

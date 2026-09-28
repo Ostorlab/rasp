@@ -72,7 +72,7 @@ def main() -> int:
             result = check_latency(
                 metrics["device"], metrics["samplesMs"], args.max_p95_ms
             )
-    except (ValueError, TypeError, KeyError, OSError):
+    except (ValueError, TypeError, KeyError, OSError, RecursionError):
         print(
             json.dumps(
                 {"passed": False, "error": "invalid budget, artifact, or measurements"}

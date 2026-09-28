@@ -2,20 +2,20 @@
 
 Scope confirmed: all remaining items in `TODO.md`, configurable external
 integrations with local infrastructure, proprietary packages, no public
-publication. PRs stay open for human review and merge.
+release. PRs stay open for human review and merge.
 
 Delivery order and acceptance boundaries:
 
-| Workstream | Implementation and acceptance |
+| Workstream | Deliverables in scope |
 | --- | --- |
 | Validation foundation | Core CI, enforcement checker with positive control, size/latency evidence gates, proprietary notice |
-| Native binary hygiene | Literal registry, encrypted constants, symbol renaming, source/binary gates, hardened/dev wire parity, Android ABI builds |
-| Trust foundation | Strict claims/build identity/rebinding rules, tenant-scoped Postgres persistence, atomic challenges/counters, Google decode integration, Apple attestation/assertions |
+| Native binary hygiene | Literal registry, encrypted constants, symbol renaming, source/binary gates, identical network behavior between hardened and development builds, Android ABI builds |
+| Trust foundation | Strict claims/build identity/rebinding rules, tenant-scoped Postgres persistence, atomic challenges/counters, Play Integrity verdict decoding, Apple attestation/assertions |
 | Mobile protection | Compiled Android/Dart trust flow, Play Integrity, pinned transport, erasable SecureStore, signed-policy consumption, delayed/silent reactions |
 | Apple and adapters | iOS detections/App Attest/integrity/Keychain plus private native wrappers and platform compile checks |
-| Control plane | Policy signing, staged rollout/rollback, persistent signing rotation, entitled risk-scoped secrets, telemetry/outbox/SIEM, risk-model tooling |
+| Control plane | Policy signing, staged rollout/rollback, persistent signing rotation, entitlement-gated risk-scoped secrets, telemetry/outbox/SIEM, risk-model tooling |
 | Console | Authenticated scoped dashboards, install timeline, bypass watch, policy editor and rollout controls |
-| Deep hardening | Compiler and Gradle integration, call weaving, control-flow/MBA/virtualization, class/assets, encoded white-box tables and integrity-bound data |
+| Deep hardening | Compiler and Gradle integration, call weaving, control-flow/MBA/virtualization, class/asset encryption, encoded white-box tables and integrity-bound data |
 | Server protection | Java/.NET/Node/Python/Go/PHP sink instrumentation, SCA-selected virtual patches, optional eBPF observation |
 | Device evidence | Bypass regression matrix, tuned detectors, coverage/size budgets, measured reference devices, private crash mapping |
 
