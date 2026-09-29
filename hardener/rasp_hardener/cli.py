@@ -23,7 +23,11 @@ import pathlib
 import sys
 
 from rasp_hardener import aes
+from rasp_hardener import assets
+from rasp_hardener import vm
 from rasp_hardener import emit
+from rasp_hardener import literals
+from rasp_hardener import names
 from rasp_hardener import whitebox
 from rasp_hardener.manifest import build_manifest
 from rasp_hardener.seed import SEED_LEN, BuildProfile
@@ -31,7 +35,7 @@ from rasp_hardener.seed import SEED_LEN, BuildProfile
 WBAES_KEY_LEN = 16
 
 # The native sources whose bytes define the build, hashed into the integrity root.
-NATIVE_SOURCES = ["detectors.c", "signals.c", "sha256.c", "report.c", "rasp_jni.c", "guard.c", "strobf.c"]
+NATIVE_SOURCES = ["detectors.c", "signals.c", "sha256.c", "report.c", "rasp_jni.c", "guard.c", "strobf.c", "literals.c", "literals.def", "symbols.def", "integrity.c", "wbaes.c", "securestore.c", "weave.c", "vm.c", "assets.c"]
 
 
 def _profile_from_arg(seed_hex: str | None) -> BuildProfile:
@@ -50,7 +54,14 @@ def _code_paths(cpp_dir: pathlib.Path) -> list[pathlib.Path]:
 def cmd_gen_build(args: argparse.Namespace) -> int:
     profile = _profile_from_arg(args.seed)
     cpp_dir = pathlib.Path(args.cpp_dir)
-    written = emit.emit_headers(profile, cpp_dir)
+    lits = literals.with_build_key(literals.parse_literals(cpp_dir / "literals.def"), profile.build_key_hex)
+    symbols = names.parse_symbols(cpp_dir / "symbols.def")
+    written = emit.emit_headers(profile, cpp_dir, lits)
+    names_header = cpp_dir / "build_names.h"
+    names_header.write_text(emit.render_build_names_h(profile, symbols))
+    symbols_map = cpp_dir / "symbols.map"
+    symbols_map.write_text(json.dumps(emit.render_symbols_map(profile, symbols), indent=2, sort_keys=True) + "\n")
+    written += [names_header, symbols_map]
     manifest = build_manifest(
         profile,
         package_name=args.package,
@@ -117,7 +128,8 @@ def _wbaes_key(args: argparse.Namespace) -> bytes:
 
 def cmd_gen_wbkey(args: argparse.Namespace) -> int:
     key = _wbaes_key(args)
-    tables = whitebox.generate(key)
+    encoding_seed = hmac.new(key, b"rasp/whitebox-encoding/v1", hashlib.sha256).digest()
+    tables = whitebox.generate(key, encoding_seed=encoding_seed)
     out_path = pathlib.Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(whitebox.render_tables_h(tables))
@@ -128,9 +140,30 @@ def cmd_gen_wbkey(args: argparse.Namespace) -> int:
     ok = all(tables.encrypt_block(p) == aes.encrypt_block(round_keys, p) for p in probes)
     print(f"wbaes tables  {out_path}")
     print(f"self-check    {'ok' if ok else 'FAILED'}")
-    print("note          plain Chow tables: not key-hiding yet (see TODO §8)")
+    print("note          affine encoded tables: no DCA/DFA resistance claim (see TODO §8)")
     return 0 if ok else 1
 
+
+
+def cmd_compile_vm(args: argparse.Namespace) -> int:
+    profile = _profile_from_arg(args.seed)
+    code = vm.compile_expression(args.expression, profile)
+    pathlib.Path(args.out).write_bytes(vm.opcode_bytes(profile) + code)
+    return 0
+
+
+def cmd_asset(args: argparse.Namespace) -> int:
+    key = pathlib.Path(args.key_file).read_bytes()
+    root = bytes.fromhex(args.guard_root)
+    data = pathlib.Path(args.input).read_bytes()
+    if args.command == "pack-asset":
+        output = assets.seal(data, args.identity, key, root)
+        if args.tables is not None:
+            pathlib.Path(args.tables).write_text(whitebox.render_tables_h(assets.tables(key, root)))
+    else:
+        output = assets.open_package(data, args.identity, key, root)
+    pathlib.Path(args.out).write_bytes(output)
+    return 0
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rasp-hardener", description=__doc__.splitlines()[0])
@@ -165,6 +198,20 @@ def build_parser() -> argparse.ArgumentParser:
     wb.add_argument("--out", default=default_cpp + "/wbaes_tables.h", help="output header path")
     wb.set_defaults(func=cmd_gen_wbkey)
 
+    virtual = sub.add_parser("compile-vm", help="compile arithmetic expression; output = 16-byte opcode table || bytecode")
+    virtual.add_argument("--seed", required=True)
+    virtual.add_argument("--expression", required=True)
+    virtual.add_argument("--out", required=True)
+    virtual.set_defaults(func=cmd_compile_vm)
+    for command in ["pack-asset", "open-asset"]:
+        resource = sub.add_parser(command, help="authenticated resource package bound to guard root and identity")
+        resource.add_argument("--key-file", required=True, help="private file containing exactly 32 raw key bytes")
+        resource.add_argument("--guard-root", required=True, help="expected 32-byte digest of guarded live regions in hex")
+        resource.add_argument("--identity", required=True)
+        resource.add_argument("--input", required=True)
+        resource.add_argument("--out", required=True)
+        resource.add_argument("--tables", help="pack only: private encoded AES header for the native loader")
+        resource.set_defaults(func=cmd_asset)
     return parser
 
 

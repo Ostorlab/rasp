@@ -1,0 +1,142 @@
+/* Protected string literals (design §6 obfuscation). Entries are C string source text; escapes are
+ * limited to \\ \" \n \t \r. Single source of truth for the dev build, the hardened table and the
+ * source-scan gate. Order fixes each entry's slot index. */
+
+/* --- detectors.c: search tokens and formats --- */
+RASP_LITERAL(TRACER_LABEL, "TracerPid:")
+RASP_LITERAL(FMT_TRACER, "TracerPid=%d")
+RASP_LITERAL(FMT_COMM, "/proc/self/task/%s/comm")
+RASP_LITERAL(FMT_WCHAN, "/proc/self/task/%s/wchan")
+
+/* --- detectors.c: su binary paths --- */
+RASP_LITERAL(SU_PATH_1, "/system/bin/su")
+RASP_LITERAL(SU_PATH_2, "/system/xbin/su")
+RASP_LITERAL(SU_PATH_3, "/sbin/su")
+RASP_LITERAL(SU_PATH_4, "/su/bin/su")
+RASP_LITERAL(SU_PATH_5, "/data/local/su")
+RASP_LITERAL(SU_PATH_6, "/data/local/bin/su")
+RASP_LITERAL(SU_PATH_7, "/data/local/xbin/su")
+RASP_LITERAL(SU_PATH_8, "/system/sd/xbin/su")
+RASP_LITERAL(SU_PATH_9, "/vendor/bin/su")
+RASP_LITERAL(SU_PATH_10, "/system/app/Superuser.apk")
+
+/* --- detectors.c: root manager dirs --- */
+RASP_LITERAL(ROOT_DIR_1, "/data/adb/magisk")
+RASP_LITERAL(ROOT_DIR_2, "/data/adb/ksu")
+RASP_LITERAL(ROOT_DIR_3, "/data/adb/ap")
+RASP_LITERAL(ROOT_DIR_4, "/debug_ramdisk/.magisk")
+
+/* --- detectors.c: mount needles --- */
+RASP_LITERAL(MNT_MAGISK, "magisk")
+RASP_LITERAL(MNT_DATA_ADB, "/data/adb")
+RASP_LITERAL(MNT_CORE_MIRROR, "core/mirror")
+RASP_LITERAL(MNT_KSU, "KSU")
+RASP_LITERAL(MNT_APATCH, "APatch")
+RASP_LITERAL(NEEDLE_ZYGISK, "zygisk")
+
+/* --- detectors.c: emulator device files --- */
+RASP_LITERAL(EMU_PATH_1, "/dev/qemu_pipe")
+RASP_LITERAL(EMU_PATH_2, "/dev/goldfish_pipe")
+RASP_LITERAL(EMU_PATH_3, "/dev/socket/qemud")
+RASP_LITERAL(EMU_PATH_4, "/system/bin/qemu-props")
+RASP_LITERAL(EMU_PATH_5, "/sys/qemu_trace")
+RASP_LITERAL(EMU_PATH_6, "/system/lib/libc_malloc_debug_qemu.so")
+RASP_LITERAL(EMU_PATH_7, "/dev/goldfish_address_space")
+
+/* --- detectors.c: hooking needles --- */
+RASP_LITERAL(HOOK_FRIDA, "frida")
+RASP_LITERAL(HOOK_GADGET, "gadget")
+RASP_LITERAL(HOOK_LIBGUM, "libgum")
+RASP_LITERAL(HOOK_XPOSED, "xposed")
+RASP_LITERAL(HOOK_LSPOSED, "lsposed")
+RASP_LITERAL(HOOK_SUBSTRATE, "substrate")
+RASP_LITERAL(HOOK_LIBRIRU, "libriru")
+
+/* --- detectors.c: Frida thread names --- */
+RASP_LITERAL(THREAD_GUM, "gum-js-loop")
+RASP_LITERAL(THREAD_GMAIN, "gmain")
+RASP_LITERAL(THREAD_GDBUS, "gdbus")
+RASP_LITERAL(THREAD_POOL, "pool-frida")
+
+/* --- detectors.c: exec-mapping needles --- */
+RASP_LITERAL(EXEC_TMP, "/data/local/tmp")
+RASP_LITERAL(EXEC_MEMFD, "memfd:")
+RASP_LITERAL(EXEC_DELETED, "(deleted)")
+
+/* --- detectors.c: emulator build needles --- */
+RASP_LITERAL(EMUW_GOLDFISH, "goldfish")
+RASP_LITERAL(EMUW_RANCHU, "ranchu")
+RASP_LITERAL(EMUW_GENY, "genymotion")
+RASP_LITERAL(EMUW_VBOX86, "vbox86")
+RASP_LITERAL(EMUW_VBOX, "virtualbox")
+
+/* --- detectors.c: wchan needles --- */
+RASP_LITERAL(WCH_KSU, "kernelsu")
+RASP_LITERAL(WCH_KSUD, "ksud")
+RASP_LITERAL(WCH_APATCH, "apatch")
+RASP_LITERAL(WCH_APD, "apd_")
+
+/* --- detectors.c: proc/sys paths --- */
+RASP_LITERAL(PATH_MOUNTS, "/proc/self/mounts")
+RASP_LITERAL(PATH_SELINUX, "/sys/fs/selinux/enforce")
+RASP_LITERAL(PATH_STATUS, "/proc/self/status")
+RASP_LITERAL(PATH_MAPS, "/proc/self/maps")
+RASP_LITERAL(PATH_TASK, "/proc/self/task")
+RASP_LITERAL(PATH_CPUINFO, "/proc/cpuinfo")
+RASP_LITERAL(PATH_TTY, "/proc/tty/drivers")
+
+/* --- detectors.c: detector ids --- */
+RASP_LITERAL(SIG_SU_BIN, "native.su_binary")
+RASP_LITERAL(SIG_ROOT_DIR, "native.root_manager_dir")
+RASP_LITERAL(SIG_ROOT_MOUNTS, "native.root_mounts")
+RASP_LITERAL(SIG_SELINUX, "native.selinux_permissive")
+RASP_LITERAL(SIG_EMU_FILES, "native.emulator_files")
+RASP_LITERAL(SIG_TRACER, "native.tracer_pid")
+RASP_LITERAL(SIG_MAPS, "native.instrumentation_maps")
+RASP_LITERAL(SIG_THREADS, "native.instrumentation_threads")
+RASP_LITERAL(SIG_PORT, "native.instrumentation_port")
+RASP_LITERAL(SIG_EXEC, "native.maps_exec_suspicious")
+RASP_LITERAL(SIG_CPUINFO, "native.cpuinfo_emulator")
+RASP_LITERAL(SIG_TTY, "native.ttydrivers_emulator")
+RASP_LITERAL(SIG_WCHAN, "native.ksu_wchan")
+RASP_LITERAL(SIG_PTRACE, "native.self_ptrace")
+
+/* --- detectors.c: evidence strings --- */
+RASP_LITERAL(EV_SELINUX, "enforce=0")
+RASP_LITERAL(EV_PORT, "127.0.0.1:27042 open")
+RASP_LITERAL(EV_CPUINFO, "cpuinfo hardware")
+RASP_LITERAL(EV_TTY, "goldfish tty")
+RASP_LITERAL(EV_PTRACE, "PTRACE_TRACEME denied")
+
+/* --- signals.c: threat labels (rasp_threat_name) --- */
+RASP_LITERAL(THREAT_ROOT, "root")
+RASP_LITERAL(THREAT_EMU, "emulator")
+RASP_LITERAL(THREAT_DBG, "debugger")
+RASP_LITERAL(THREAT_HOOK, "hooking")
+RASP_LITERAL(THREAT_UNKNOWN, "unknown")
+
+/* --- signals.c / report.c: report JSON wire format --- */
+RASP_LITERAL(FMT_SIGNAL_NUM, "{\"threat\":%d,\"confidence\":%d,")
+RASP_LITERAL(JSON_SIG_FMT, "{\"threat\":\"%s\",\"confidence\":%d,\"detector\":\"")
+RASP_LITERAL(JSON_HDR_FMT, "{\"v\":\"%s\",\"buildId\":\"")
+RASP_LITERAL(JSON_NONCE, "\",\"nonce\":\"")
+RASP_LITERAL(JSON_TS, "\",\"ts\":")
+RASP_LITERAL(JSON_SIGNALS, ",\"signals\":[")
+RASP_LITERAL(JSON_ENVELOPE, "{\"report\":\"")
+RASP_LITERAL(JSON_MAC, "\",\"mac\":\"")
+RASP_LITERAL(JSON_DET_KEY, "\"detector\":\"")
+RASP_LITERAL(JSON_EV_KEY, "\",\"evidence\":\"")
+
+/* --- rasp_jni.c: JNI registration literals --- */
+RASP_LITERAL(JNI_CLASS, "dev/ostorlab/rasp/flutter_rasp/NativeDetectors")
+RASP_LITERAL(JNI_M_SCAN, "nativeScan")
+RASP_LITERAL(JNI_M_SEAL, "nativeSeal")
+RASP_LITERAL(JNI_SIG_SCAN, "()Ljava/lang/String;")
+RASP_LITERAL(JNI_SIG_SEAL, "(Ljava/lang/String;Ljava/lang/String;J)Ljava/lang/String;")
+
+/* --- build key (design §8; gen-build replaces this value with the per-build key) --- */
+RASP_LITERAL(BUILD_KEY_HEX, "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+
+/* Authenticated resource packages. */
+RASP_LITERAL(ASSET_MAC_DOMAIN, "rasp/assets/mac/v1")
+RASP_LITERAL(ASSET_MAGIC, "RAP1")

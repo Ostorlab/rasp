@@ -121,3 +121,18 @@ void rasp_wbaes_cmac(const uint32_t *type2, const uint8_t *last, const uint8_t *
     wbaes_xor16(x, last_block, tmp);
     rasp_wbaes_encrypt_block(type2, last, tmp, tag);
 }
+
+int rasp_wbaes_encrypt_block_checked(const uint32_t *type2_a, const uint8_t *last_a,
+                                    const uint32_t *type2_b, const uint8_t *last_b,
+                                    const uint8_t in[16], uint8_t out[16]) {
+    if (!type2_a || !last_a || !type2_b || !last_b || !in || !out) return -1;
+    uint8_t first[16], second[16];
+    rasp_wbaes_encrypt_block(type2_a, last_a, in, first);
+    rasp_wbaes_encrypt_block(type2_b, last_b, in, second);
+    uint8_t difference = 0;
+    for (size_t i = 0; i < 16; i++) difference |= first[i] ^ second[i];
+    if (difference == 0) memcpy(out, first, 16);
+    volatile uint8_t *wipe_first = first, *wipe_second = second;
+    for (size_t i = 0; i < 16; i++) { wipe_first[i] = 0; wipe_second[i] = 0; }
+    return difference == 0 ? 0 : -1;
+}

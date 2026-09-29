@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from rasp_verifier import jose
+from rasp_verifier import storage
 from rasp_verifier.resource import ResourceError, canonical_request, decide, verify_request
 
 from .helpers import raw_es256
@@ -30,9 +31,9 @@ class DpopProofs(unittest.TestCase):
     def token(self, *, risk="none", signals=(), jkt=None, exp_in=120):
         now = int(time.time())
         return self.signing_key.sign_jwt({
-            "iss": "rasp-trust", "sub": "install-1", "app": "com.example",
+            "iss": "rasp-trust", "aud": "rasp-resource", "sub": "install-1", "app": "com.example",
             "risk": risk, "signals": list(signals), "cnf": {"jkt": jkt or self.jkt},
-            "iat": now, "exp": now + exp_in,
+            "iat": min(now, now + exp_in - 1), "exp": now + exp_in,
         })
 
     def request(self, token, *, method="POST", path="/v1/transfers", body=b'{"amountCents":5000}', counter=1,
@@ -80,7 +81,7 @@ class DpopProofs(unittest.TestCase):
         self.assertEqual(cm.exception.reason, "stale_proof")
 
     def test_expired_token_is_rejected(self):
-        with self.assertRaises(jose.JoseError) as cm:
+        with self.assertRaises(ResourceError) as cm:
             verify_request(**self.request(self.token(exp_in=-3600)))
         self.assertEqual(cm.exception.reason, "expired")
 
@@ -89,6 +90,27 @@ class DpopProofs(unittest.TestCase):
         with self.assertRaises(ResourceError) as cm:
             verify_request(**self.request(self.token(jkt="not-our-key")))
         self.assertEqual(cm.exception.reason, "key_mismatch")
+
+    def testRequest_whenScopeDiffers_rejectsBeforeCounterUpdate(self) -> None:
+        claims = jose.decode_jwt(self.token(), self.jwks)
+        claims.update({"tenant": "owner", "appId": "com.example"})
+        token = self.signing_key.sign_jwt(claims)
+        state = storage.MemoryStore(storage.Scope("other", "com.example"))
+        with self.assertRaises(ResourceError) as caught:
+            verify_request(**self.request(token), replay_store=state)
+        self.assertEqual(caught.exception.reason, "wrong_scope")
+        self.assertTrue(state.advance_counter("request:" + self.jkt, 1))
+
+    def testRequest_whenSharedStoreSeesReplay_rejects(self) -> None:
+        claims = jose.decode_jwt(self.token(), self.jwks)
+        claims.update({"tenant": "owner", "appId": "com.example"})
+        token = self.signing_key.sign_jwt(claims)
+        state = storage.MemoryStore(storage.Scope("owner", "com.example"))
+        request = self.request(token)
+        verify_request(**request, replay_store=state)
+        with self.assertRaises(ResourceError) as caught:
+            verify_request(**request, replay_store=state.scoped(state.scope))
+        self.assertEqual(caught.exception.reason, "replayed_proof")
 
 
 class RiskMapping(unittest.TestCase):

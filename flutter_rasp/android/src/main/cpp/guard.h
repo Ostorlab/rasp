@@ -1,6 +1,9 @@
 #ifndef RASP_GUARD_H
 #define RASP_GUARD_H
 
+#include "hardening.h"
+#include "literals.h"
+
 #include <stddef.h>
 #include <stdint.h>
 

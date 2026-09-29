@@ -104,3 +104,20 @@ class WhiteBoxTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EncodedTablesTest(unittest.TestCase):
+    def testEncodedTables_knownAndVariedBlocks_matchAes(self) -> None:
+        key = bytes(range(16))
+        first = whitebox.generate(key, encoding_seed=b"a" * 32)
+        second = whitebox.generate(key, encoding_seed=b"b" * 32)
+        self.assertNotEqual(first.type2, second.type2)
+        self.assertEqual(first.type2, whitebox.generate(key, encoding_seed=b"a" * 32).type2)
+        for counter in range(32):
+            block = bytes((position * 19 + counter * 7) % 256 for position in range(16))
+            self.assertEqual(first.encrypt_block(block), aes.encrypt_block_key(key, block))
+            self.assertEqual(second.encrypt_block(block), aes.encrypt_block_key(key, block))
+
+    def testEncodedTables_invalidSeed_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            whitebox.generate(bytes(16), encoding_seed=b"short")

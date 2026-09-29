@@ -24,6 +24,9 @@ class CliTest(unittest.TestCase):
             d = pathlib.Path(d)
             cpp = d / "cpp"
             cpp.mkdir()
+            real_cpp = pathlib.Path(__file__).resolve().parents[2] / "flutter_rasp/android/src/main/cpp"
+            for registry in ["literals.def", "symbols.def"]:
+                shutil.copy(real_cpp / registry, cpp / registry)
             (cpp / "report.c").write_text("int x;\n")  # something to hash
             manifest_path = d / "build_manifest.json"
             rc = cli.main(
@@ -37,7 +40,12 @@ class CliTest(unittest.TestCase):
             profile = BuildProfile.derive(bytes.fromhex(SEED_HEX))
             generated = (cpp / "build_generated.h").read_text()
             self.assertIn(profile.build_id, generated)
-            self.assertIn(profile.build_key_hex, generated)
+            self.assertNotIn(profile.build_key_hex, generated)
+            self.assertNotIn(profile.build_key_hex, (cpp / "build_seed.h").read_text())
+            self.assertNotIn("native.", (cpp / "build_seed.h").read_text())
+            mapping = json.loads((cpp / "symbols.map").read_text())
+            self.assertIn("rasp_seal_report", mapping.values())
+            self.assertIn("#define rasp_seal_report ", (cpp / "build_names.h").read_text())
 
             manifest = json.loads(manifest_path.read_text())
             self.assertEqual(manifest["build_id"], profile.build_id)
@@ -104,6 +112,9 @@ class CliTest(unittest.TestCase):
                            check=True, capture_output=True)
             cpp = d / "cpp"
             cpp.mkdir()
+            real_cpp = pathlib.Path(__file__).resolve().parents[2] / "flutter_rasp/android/src/main/cpp"
+            for registry in ["literals.def", "symbols.def"]:
+                shutil.copy(real_cpp / registry, cpp / registry)
             manifest_path = d / "build_manifest.json"
             rc = cli.main(
                 ["gen-build", "--seed", SEED_HEX, "--cpp-dir", str(cpp), "--so", str(lib),
@@ -119,6 +130,22 @@ class CliTest(unittest.TestCase):
             self.assertEqual(manifest["integrity_root"], expected_root)
             self.assertEqual(len(manifest["integrity_regions"]), len(expected_regions))
             self.assertEqual(header.count("ULL, "), len(expected_regions))
+
+
+class ResourceCliTest(unittest.TestCase):
+    def testResourceAndVm_roundTrip_outputsLoadableArtifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = pathlib.Path(directory)
+            key, plain, package, opened = [tmp / name for name in ["key", "plain", "package", "opened"]]
+            key.write_bytes(bytes(range(32)))
+            plain.write_bytes(b"private asset")
+            common = ["--key-file", str(key), "--guard-root", "ab" * 32, "--identity", "asset.bin"]
+            self.assertEqual(cli.main(["pack-asset", *common, "--input", str(plain), "--out", str(package), "--tables", str(tmp / "tables.h")]), 0)
+            self.assertEqual(cli.main(["open-asset", *common, "--input", str(package), "--out", str(opened)]), 0)
+            self.assertEqual(opened.read_bytes(), plain.read_bytes())
+            self.assertTrue((tmp / "tables.h").read_text().startswith("/* Generated"))
+            self.assertEqual(cli.main(["compile-vm", "--seed", SEED_HEX, "--expression", "r0 + r1", "--out", str(tmp / "vm")]), 0)
+            self.assertEqual(len((tmp / "vm").read_bytes()), 32)
 
 
 if __name__ == "__main__":

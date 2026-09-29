@@ -3,26 +3,33 @@
 Build-time hardening toolchain for `flutter_rasp` (design §6), run in CI around the app build.
 
 A single random **build seed** produces everything that must differ build-to-build: keys, ids, opcode
-orderings, detector layout, encrypted literals, guard hashes. Change the seed and a bypass developed against
-one build does not carry to the next — and the trust service accepts exactly the build it registered.
+orderings, detector layout, encrypted literals, guard hashes. Changing the seed changes these artifacts and internal symbol identities; it does not guarantee that
+a bypass cannot transfer between builds. The trust service accepts the build it registered.
 
-This is the Python-implemented portion of the design's build-time hardening. The native LLVM/O-LLVM
-obfuscation passes, the DEX/ASM Gradle plugin, and code virtualization are **not** implemented yet (see the
-repo `TODO.md`); what is here is fully covered by tests that run in this repo.
+The toolchain also includes an opt-in LLVM 18 pass, Gradle ASM plugin, Clang/Xcode wrappers, a bounded
+arithmetic VM, authenticated native resource loading, authenticated JVM/Android class loading and affine encoded AES tables. Supported inputs,
+required application hooks, commands and remaining limits are documented in
+[Deeper hardening](DEEP_HARDENING.md). These mechanisms do not establish DCA/DFA resistance.
 
 ## What does the hardener do?
 
 | Piece | Module | Design |
 | :--- | :--- | :--- |
 | Per-build polymorphism: seed → build key, build id, string key, VM opcode permutation, detector order | `seed.py` | §6 per-build polymorphism |
-| Compile-time encryption of the JNI class/method/signature literals (kept out of `.rodata`) | `strenc.py` ↔ `strobf.c` | §6 obfuscation, §2 consteval strings |
+| Protected literal registry and strict ASCII/C-escape parser | `literals.def`, `literals.py` | §6 obfuscation |
+| Per-build literal encryption and scratch-buffer decoding | `strenc.py` ↔ `strobf.c`, `literals.c` | §6 obfuscation, §2 consteval strings |
+| Per-build internal symbol names and private crash mapping | `names.py`, `symbols.def` → `build_names.h`, `symbols.map` | §6 name obfuscation |
 | Guard mesh: mutually-hashing integrity guards; result feeds data (keys/offsets), not branches | `guardmesh.py` ↔ `guard.c` | §6 guard network, check weaving |
 | Code-tamper hashing folded into an integrity root | `codehash.py` | §6 check weaving, §8 code-tamper hashing |
 | `.so` code/read-only region hashing → device-reproducible integrity root (fail-closed sealing) | `elf.py`, `codehash.py` → `integrity_regions.h` ↔ `integrity.c` | §8 integrity-derived keys |
 | Header generation the native build consumes | `emit.py` → `build_generated.h`, `build_seed.h` | §6 pre-build generator |
 | Build-registration manifest the trust service loads | `manifest.py` → `BuildRegistry.from_manifest` | §6 build registration, §7 build registry |
 | White-box AES-128 table generation (SecureStore data key) | `aes.py`, `whitebox.py` → `wbaes_tables.h` ↔ `wbaes.c`, `securestore.c` | §8 white-box crypto, SecureStore |
-| CLI (`gen-build` / `show` / `register` / `gen-wbkey`) | `cli.py` | §6 post-build CLI, SDK-only mode |
+| LLVM transformations and live integrity probes | `compiler/`, `weave.c`, `weave.h` | Selected integer functions; LLVM 18 |
+| Bounded arithmetic VM and authenticated native resources | `vm.py`, `assets.py` ↔ `vm.c`, `assets.c` | Arithmetic bytecode; guard-root-bound packages |
+| Gradle ASM transformations and private static method renaming | `gradle-plugin/` | Explicit JVM method allowlists |
+| Authenticated JVM/Android class loading | `java-runtime/`, `android-runtime/` | JVM loading executes in tests; Android API35 compilation only, no on-device DEX/ART verification |
+| CLI (`gen-build` / `show` / `register` / `gen-wbkey` / `compile-vm` / `pack-asset` / `open-asset`) | `cli.py` | Build generation and authenticated resources |
 
 The derivation is deterministic in the seed (HMAC-SHA256 as a PRF with distinct labels per output), so a build
 is reproducible for debugging and re-registration, while the outputs stay independent — leaking the public
@@ -57,27 +64,43 @@ rasp-hardener register --seed <hex> --cert <sha256>
 rasp-hardener gen-wbkey --seed <hex> --out flutter_rasp/android/src/main/cpp/wbaes_tables.h
 ```
 
+`gen-build` consumes `literals.def` and `symbols.def` beside the native sources. It also writes
+`build_names.h` and `symbols.map`; retain the latter privately for crash symbolication and never package
+it with the app. `build_generated.h` contains only the public build ID; the build key is replaced in the
+`BUILD_KEY_HEX` encrypted slot. Detector order stays in the manifest, not in a plaintext native table.
+
+`literals.def` is the single source of truth for protected native strings: detector IDs, JSON fragments,
+paths, needles, evidence, formats, JNI registration and the build key. Dev builds expand it as plaintext;
+hardened builds decode it into caller-owned scratch buffers. Only printable ASCII and C escapes
+`\\`, `\"`, `\n`, `\r`, `\t` are accepted. The source gate rejects raw protected literals outside the
+registry, and the binary gate checks registered values of at least four bytes, since shorter byte
+sequences can occur incidentally in machine code. The cipher and stream use volatile reads to prevent
+LTO from reconstructing plaintext constants. Protocol constants, numeric formats and the hex alphabet
+remain explicitly allowlisted. This is static-analysis friction, not protection against runtime extraction.
+
 ## White-box crypto & SecureStore (§8)
 
 `aes.py` is a FIPS-197 AES-128 reference used only to expand the key and validate output. `whitebox.py`
-generates plain Chow white-box tables (T-boxes ∘ Tyi MixColumns, and a final table) so the native evaluator
+generates table-driven AES, optionally with seeded affine byte encodings (T-boxes ∘ Tyi MixColumns, and a final table) so the native evaluator
 (`wbaes.c`) encrypts AES-128 without the key appearing as a contiguous literal, and provides AES-CMAC
 (RFC 4493) over the same block. `securestore.c` uses both for authenticated data at rest: CTR for
 confidentiality + AES-CMAC for integrity (encrypt-then-MAC), framed `nonce(12) || ciphertext || tag(16)`;
 `open` verifies the tag in constant time before decrypting.
 
-**Security caveat.** These are the *plain* Chow tables — no internal encodings or mixing bijections yet — so
-they do **not** resist key extraction on their own (an analyst can invert Tyi and the S-box to recover the
-round key). What this slice delivers is the correct, KAT-verified table architecture and the removal of the
-contiguous key literal; the encodings that make white-box AES key-hiding, plus SecureStore key
-wipe-on-critical, are the next steps (see the repo `TODO.md` §8).
+**Security caveat.** `gen-wbkey` enables affine byte mixing bijections at nine state boundaries. The
+plain reference mode remains available in Python. These encodings preserve the existing C ABI and
+AES/CTR/CMAC known-answer tests, but do not implement full nonlinear encoded-XOR networks or establish
+DCA/DFA resistance. Treat embedded keys as extractable by a determined analyst. The authenticated asset
+loader derives independent encryption/authentication keys from a guard root and refuses changed live
+regions before exposing plaintext; see [Deeper hardening](DEEP_HARDENING.md).
 
 `build_config.h` includes `build_generated.h` when present (via `__has_include`) and otherwise falls back to
 the committed dev defaults, so an unhardened build and the host tests keep compiling.
 
-**The generated headers and the manifest are secret** — `build_generated.h` and the manifest carry the build
-key. They are git-ignored; deliver the manifest to the trust service over a trusted channel (a CI secret),
-never commit it.
+**Keep generated build artifacts private.** The manifest carries the plaintext build key, and
+`build_seed.h` carries its reversible encoding and decoder stream. `build_names.h` and `symbols.map`
+reveal symbol identities; `build_generated.h` contains only the public ID. All are gitignored. Deliver
+the manifest to the trust service through a trusted channel and retain maps only in private build storage.
 
 ## Tests
 
@@ -88,12 +111,21 @@ cd hardener && python3 -m unittest discover -s tests -t .
 Coverage:
 
 - seed determinism, output independence, and build diversity;
-- string-encryption round trip with no cleartext leakage;
+- every protected registry entry round-trips through C, with no registered plaintext in hardened artifacts;
+- robust source scan, static/global symbol coverage, release JNI export checks and optimized LTO hygiene;
+- dev/hardened JSON and full sealed-envelope parity, independently checked with Python HMAC;
 - guard-mesh known answers, order and tamper sensitivity, and key folding;
 - manifest contents and JSON round trip, and the CLI (including that `show`/`gen-build` never print the seed);
 - AES-128 against FIPS-197, white-box AES vs the reference, AES-CMAC against RFC 4493, and SecureStore
   round trips with tamper rejection;
 - ELF `.so` section selection and the integrity root (native runtime root == build-time root, tamper flips both).
+- LLVM integer CFG execution and rejected inputs, bounded Python/C VM parity, authenticated native resources,
+  affine AES encoding contracts and fault detection, Gradle ASM artifacts, and authenticated JVM loading;
+- Android API35 helper compilation, with on-device DEX/ART execution still unverified.
+
+The suite now discovers 136 tests, including direct encoding and embedded-NUL identity regressions.
+Compiler, Gradle and Android compilation cases require their configured toolchains; the C compiler/JDK
+environment with `LLVM_HOME`, `GRADLE_HOME` and `ANDROID_JAR` unset skips nine tests.
 
 Cross-language tests compile the generated headers and the native primitives with a C compiler and assert the
 C side agrees byte-for-byte with the Python reference (string decode, guard root, white-box block, SecureStore

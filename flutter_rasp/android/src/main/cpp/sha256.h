@@ -1,6 +1,9 @@
 #ifndef RASP_SHA256_H
 #define RASP_SHA256_H
 
+#include "hardening.h"
+#include "literals.h"
+
 #include <stddef.h>
 #include <stdint.h>
 

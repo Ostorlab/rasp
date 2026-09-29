@@ -13,15 +13,7 @@
 #include "report.h"
 #include "sha256.h"
 
-/* When the hardener has generated build_seed.h (see hardener/emit.py), the class and method-name strings are
- * kept encrypted in the binary and decrypted at registration time (RASP_HARDENED path in JNI_OnLoad). Without
- * it, the cleartext literals below are used, so an unhardened build and the host tests still work. */
 #if defined(__has_include)
-#if __has_include("build_seed.h")
-#include "build_seed.h"
-#include "strobf.h"
-#define RASP_HARDENED 1
-#endif
 /* When the hardener has generated integrity_regions.h, the report is sealed with the integrity-derived key
  * HMAC(build_key, guard_root(own .so regions)) instead of the raw build key (design §8). A tampered binary
  * derives a different key and the trust service refuses the report. */
@@ -56,6 +48,12 @@ static int hex_to_bytes(const char *hex, uint8_t *out, size_t out_len) {
     return 0;
 }
 
+/* Volatile stores keep the compiler from eliminating cleanup after the last use. */
+static void wipe_secret(void *buffer, size_t length) {
+    volatile unsigned char *bytes = buffer;
+    while (length-- > 0) *bytes++ = 0;
+}
+
 static jstring native_scan(JNIEnv *env, jclass clazz) {
     (void)clazz;
     rasp_signal_list_t list = {.count = 0};
@@ -78,8 +76,11 @@ static jstring native_seal(JNIEnv *env, jclass clazz, jstring managed, jstring n
     if (nonce == NULL) {
         return (*env)->NewStringUTF(env, "{}");
     }
+    RASP_LIT(BUILD_KEY_HEX, key_hex);
     uint8_t build_key[32];
-    if (hex_to_bytes(RASP_BUILD_KEY_HEX, build_key, sizeof(build_key)) != 0) {
+    if (hex_to_bytes(key_hex, build_key, sizeof(build_key)) != 0) {
+        wipe_secret(key_hex, sizeof(key_hex));
+        wipe_secret(build_key, sizeof(build_key));
         return (*env)->NewStringUTF(env, "{}");
     }
 
@@ -112,6 +113,11 @@ static jstring native_seal(JNIEnv *env, jclass clazz, jstring managed, jstring n
         result = (*env)->NewStringUTF(env, "{}");
     }
 
+    wipe_secret(key_hex, sizeof(key_hex));
+    wipe_secret(build_key, sizeof(build_key));
+#ifdef RASP_INTEGRITY
+    wipe_secret(derived_key, sizeof(derived_key));
+#endif
     free(out);
     if (managed_utf) {
         (*env)->ReleaseStringUTFChars(env, managed, managed_utf);
@@ -127,31 +133,17 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
         return JNI_ERR;
     }
 
-#ifdef RASP_HARDENED
-    /* Decrypt the class and method strings into stack buffers only for the duration of registration. */
-    char cls[RASP_STR_TARGET_CLASS_LEN + 1];
-    char m_scan[RASP_STR_M_SCAN_LEN + 1];
-    char sig_scan[RASP_STR_SIG_SCAN_LEN + 1];
-    char m_seal[RASP_STR_M_SEAL_LEN + 1];
-    char sig_seal[RASP_STR_SIG_SEAL_LEN + 1];
-    rasp_strobf_decode(RASP_STR_TARGET_CLASS, RASP_STR_TARGET_CLASS_LEN, RASP_STR_TARGET_CLASS_IDX,
-                       RASP_STRING_KEY, cls);
-    rasp_strobf_decode(RASP_STR_M_SCAN, RASP_STR_M_SCAN_LEN, RASP_STR_M_SCAN_IDX, RASP_STRING_KEY, m_scan);
-    rasp_strobf_decode(RASP_STR_SIG_SCAN, RASP_STR_SIG_SCAN_LEN, RASP_STR_SIG_SCAN_IDX, RASP_STRING_KEY, sig_scan);
-    rasp_strobf_decode(RASP_STR_M_SEAL, RASP_STR_M_SEAL_LEN, RASP_STR_M_SEAL_IDX, RASP_STRING_KEY, m_seal);
-    rasp_strobf_decode(RASP_STR_SIG_SEAL, RASP_STR_SIG_SEAL_LEN, RASP_STR_SIG_SEAL_IDX, RASP_STRING_KEY, sig_seal);
+    RASP_LIT(JNI_CLASS, cls);
+    RASP_LIT(JNI_M_SCAN, m_scan);
+    RASP_LIT(JNI_SIG_SCAN, sig_scan);
+    RASP_LIT(JNI_M_SEAL, m_seal);
+    RASP_LIT(JNI_SIG_SEAL, sig_seal);
     const char *class_name = cls;
     JNINativeMethod methods[] = {
         {m_scan, sig_scan, (void *)native_scan},
         {m_seal, sig_seal, (void *)native_seal},
     };
-#else
-    const char *class_name = "dev/ostorlab/rasp/flutter_rasp/NativeDetectors";
-    JNINativeMethod methods[] = {
-        {"nativeScan", "()Ljava/lang/String;", (void *)native_scan},
-        {"nativeSeal", "(Ljava/lang/String;Ljava/lang/String;J)Ljava/lang/String;", (void *)native_seal},
-    };
-#endif
+
 
     jclass clazz = (*env)->FindClass(env, class_name);
     if (clazz == NULL) {

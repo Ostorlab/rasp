@@ -28,3 +28,7 @@ integrity_regions.h
 .swiftpm/
 RaspBuild.json
 private-server-manifest.json
+
+# Private per-build native symbol identities.
+build_names.h
+symbols.map

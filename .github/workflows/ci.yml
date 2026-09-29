@@ -16,6 +16,21 @@ jobs:
   python-and-native:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: local_test
+          POSTGRES_DB: rasp_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RASP_TEST_ADMIN_DSN: postgresql://postgres:local_test@127.0.0.1:5432/rasp_test
+      RASP_TEST_POSTGRES_DSN: postgresql://rasp_runtime:local_runtime@127.0.0.1:5432/rasp_test
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -27,12 +42,33 @@ jobs:
         run: python -m pip install -e ./verifier -e ./hardener coverage==7.16.2 ruff==0.16.9
       - name: Reject Python syntax and undefined-name errors
         run: ruff check --isolated --select E9,F63,F7,F82 verifier hardener
+      - name: Migrate isolated PostgreSQL and create restricted runtime role
+        run: |
+          python - <<'PY'
+          import os
+          import psycopg
+          from rasp_verifier import postgres
+          postgres.migrate(os.environ["RASP_TEST_ADMIN_DSN"])
+          with psycopg.connect(os.environ["RASP_TEST_ADMIN_DSN"]) as connection:
+              connection.execute("CREATE ROLE rasp_runtime LOGIN PASSWORD 'local_runtime'")
+              connection.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON rasp_records, rasp_challenges, rasp_counters TO rasp_runtime")
+          PY
       - name: Verifier tests and measured coverage floor
         working-directory: verifier
         run: |
           coverage run --branch --source=rasp_verifier -m unittest discover -s tests -t .
           coverage report --fail-under=80
           coverage xml -o coverage.xml
+      - name: Prepare pinned Gradle and private JVM dependencies
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/gradle.zip" https://services.gradle.org/distributions/gradle-7.3.3-bin.zip
+          echo "b586e04868a22fd817c8971330fec37e298f3242eb85c374181b12d637f80302  $RUNNER_TEMP/gradle.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "GRADLE_HOME=$RUNNER_TEMP/gradle-7.3.3" >> "$GITHUB_ENV"
+          echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-cache" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          JAVA_HOME="$JAVA_HOME_17_X64" GRADLE_USER_HOME="$RUNNER_TEMP/gradle-cache" "$RUNNER_TEMP/gradle-7.3.3/bin/gradle" -p hardener/gradle-plugin --no-daemon build
       - name: Hardener tests and measured coverage floor
         working-directory: hardener
         run: |

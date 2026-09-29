@@ -1,0 +1,14 @@
+plugins { id 'java-gradle-plugin' }
+group = 'dev.ostorlab.rasp'
+version = '0.1.0'
+repositories { mavenCentral() }
+dependencies { implementation 'org.ow2.asm:asm:9.1' }
+java { sourceCompatibility = JavaVersion.VERSION_11; targetCompatibility = JavaVersion.VERSION_11 }
+gradlePlugin {
+    plugins {
+        raspHardening {
+            id = 'dev.ostorlab.rasp.hardening'
+            implementationClass = 'dev.ostorlab.rasp.HardeningPlugin'
+        }
+    }
+}

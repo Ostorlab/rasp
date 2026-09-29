@@ -79,7 +79,7 @@ class WbAesInterop(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = pathlib.Path(tempfile.mkdtemp())
-        cls.tables = whitebox.generate(KEY)
+        cls.tables = whitebox.generate(KEY, encoding_seed=b"e" * 32)
         (cls.tmp / "wbaes_tables.h").write_text(whitebox.render_tables_h(cls.tables))
         harness = cls.tmp / "harness.c"
         harness.write_text(HARNESS)
