@@ -47,7 +47,7 @@ class NativeSealInterop(unittest.TestCase):
         cls.binary = pathlib.Path(cls.tmp) / "harness"
         compiler = shutil.which("cc") or shutil.which("gcc")
         subprocess.run(
-            [compiler, "-I", str(CPP), str(harness), str(CPP / "report.c"), str(CPP / "signals.c"),
+            [compiler, "-I", str(CPP), str(harness), str(CPP / "report.c"), str(CPP / "signals.c"), str(CPP / "literals.c"), str(CPP / "strobf.c"),
              str(CPP / "detectors.c"), str(CPP / "sha256.c"), "-o", str(cls.binary)],
             check=True, capture_output=True,
         )

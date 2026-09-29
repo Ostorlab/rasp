@@ -1,6 +1,9 @@
 #ifndef RASP_DETECTORS_H
 #define RASP_DETECTORS_H
 
+#include "hardening.h"
+#include "literals.h"
+
 #include "signals.h"
 
 /* Each detector appends zero or more signals to `list`. None of them modify process state. */

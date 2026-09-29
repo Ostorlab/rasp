@@ -194,7 +194,25 @@ static void test_run_all_on_host(void) {
     }
 }
 
+static void test_literal_lifetime(void) {
+    char detector[RASP_LIT_MAXLEN + 1];
+    rasp_signal_list_t list = {.count = 0};
+    rasp_lit_decode(RASP_SLOT_SIG_SU_BIN, detector);
+    rasp_signals_add(&list, RASP_THREAT_ROOT, detector, 90, "evidence");
+    memset(detector, 'x', sizeof(detector));
+    assert(strcmp(list.items[0].detector, "native.su_binary") == 0);
+    rasp_lit_decode(-1, detector);
+    assert(detector[0] == '\0');
+    rasp_lit_decode(RASP_SLOT_COUNT, detector);
+    assert(detector[0] == '\0');
+    rasp_threat_name(RASP_THREAT_ROOT, detector);
+    assert(strcmp(detector, "root") == 0);
+    rasp_threat_name((rasp_threat_t)99, detector);
+    assert(strcmp(detector, "unknown") == 0);
+}
+
 int main(void) {
+    test_literal_lifetime();
     test_parse_tracer_pid();
     test_match_any();
     test_signals_dedupe_and_json();

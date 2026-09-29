@@ -8,12 +8,16 @@
 
 /* Appends one signal as {"threat":"name","confidence":N,"detector":"d","evidence":"e"}. */
 static int append_signal(char *out, size_t out_len, size_t *pos, const rasp_signal_t *s) {
+    RASP_LIT(JSON_SIG_FMT, lit_json_sig_fmt);
+    RASP_LIT(JSON_EV_KEY, lit_json_ev_key);
     char number[96];
-    snprintf(number, sizeof(number), "{\"threat\":\"%s\",\"confidence\":%d,\"detector\":\"",
-             rasp_threat_name(s->threat), s->confidence);
+    char threat[RASP_LIT_MAXLEN + 1];
+    rasp_threat_name(s->threat, threat);
+    snprintf(number, sizeof(number), lit_json_sig_fmt,
+             threat, s->confidence);
     return rasp_json_append_raw(out, out_len, pos, number) < 0 ||
                    rasp_json_append_escaped(out, out_len, pos, s->detector) < 0 ||
-                   rasp_json_append_raw(out, out_len, pos, "\",\"evidence\":\"") < 0 ||
+                   rasp_json_append_raw(out, out_len, pos, lit_json_ev_key) < 0 ||
                    rasp_json_append_escaped(out, out_len, pos, s->evidence) < 0 ||
                    rasp_json_append_raw(out, out_len, pos, "\"}") < 0
                ? -1
@@ -76,6 +80,12 @@ const char *rasp_json_array_inner(const char *array_json, size_t *len) {
 int rasp_seal_report(const char *managed_signals_json, const char *nonce, int64_t ts_millis,
                      const char *build_id, const uint8_t *build_key, size_t build_key_len,
                      char *out, size_t out_len) {
+    RASP_LIT(JSON_HDR_FMT, lit_json_hdr_fmt);
+    RASP_LIT(JSON_NONCE, lit_json_nonce);
+    RASP_LIT(JSON_TS, lit_json_ts);
+    RASP_LIT(JSON_SIGNALS, lit_json_signals);
+    RASP_LIT(JSON_ENVELOPE, lit_json_envelope);
+    RASP_LIT(JSON_MAC, lit_json_mac);
     if (nonce == NULL || build_id == NULL || build_key == NULL) {
         return -1;
     }
@@ -87,18 +97,18 @@ int rasp_seal_report(const char *managed_signals_json, const char *nonce, int64_
     char report[RASP_MAX_SIGNALS * (RASP_EVIDENCE_LEN * 2 + 96) + 256];
     size_t pos = 0;
     char header[128];
-    snprintf(header, sizeof(header), "{\"v\":\"%s\",\"buildId\":\"", RASP_REPORT_VERSION);
+    snprintf(header, sizeof(header), lit_json_hdr_fmt, RASP_REPORT_VERSION);
     if (rasp_json_append_raw(report, sizeof(report), &pos, header) < 0 ||
         rasp_json_append_escaped(report, sizeof(report), &pos, build_id) < 0 ||
-        rasp_json_append_raw(report, sizeof(report), &pos, "\",\"nonce\":\"") < 0 ||
+        rasp_json_append_raw(report, sizeof(report), &pos, lit_json_nonce) < 0 ||
         rasp_json_append_escaped(report, sizeof(report), &pos, nonce) < 0 ||
-        rasp_json_append_raw(report, sizeof(report), &pos, "\",\"ts\":") < 0) {
+        rasp_json_append_raw(report, sizeof(report), &pos, lit_json_ts) < 0) {
         return -1;
     }
     char ts[32];
     snprintf(ts, sizeof(ts), "%lld", (long long)ts_millis);
     if (rasp_json_append_raw(report, sizeof(report), &pos, ts) < 0 ||
-        rasp_json_append_raw(report, sizeof(report), &pos, ",\"signals\":[") < 0) {
+        rasp_json_append_raw(report, sizeof(report), &pos, lit_json_signals) < 0) {
         return -1;
     }
 
@@ -134,9 +144,9 @@ int rasp_seal_report(const char *managed_signals_json, const char *nonce, int64_
     rasp_hex_encode(mac, sizeof(mac), mac_hex);
 
     size_t out_pos = 0;
-    if (rasp_json_append_raw(out, out_len, &out_pos, "{\"report\":\"") < 0 ||
+    if (rasp_json_append_raw(out, out_len, &out_pos, lit_json_envelope) < 0 ||
         rasp_json_append_escaped(out, out_len, &out_pos, report) < 0 ||
-        rasp_json_append_raw(out, out_len, &out_pos, "\",\"mac\":\"") < 0 ||
+        rasp_json_append_raw(out, out_len, &out_pos, lit_json_mac) < 0 ||
         rasp_json_append_raw(out, out_len, &out_pos, mac_hex) < 0 ||
         rasp_json_append_raw(out, out_len, &out_pos, "\"}") < 0) {
         return -1;

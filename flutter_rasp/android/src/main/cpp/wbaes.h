@@ -1,6 +1,9 @@
 #ifndef RASP_WBAES_H
 #define RASP_WBAES_H
 
+#include "hardening.h"
+#include "literals.h"
+
 #include <stddef.h>
 #include <stdint.h>
 

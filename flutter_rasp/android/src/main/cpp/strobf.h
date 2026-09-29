@@ -1,6 +1,9 @@
 #ifndef RASP_STROBF_H
 #define RASP_STROBF_H
 
+#include "hardening.h"
+#include "literals.h"
+
 #include <stddef.h>
 #include <stdint.h>
 

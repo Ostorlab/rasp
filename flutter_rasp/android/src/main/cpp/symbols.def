@@ -1,0 +1,88 @@
+/* Every internal symbol the hardened build renames (design §6). JNI_OnLoad/JNI_OnUnload stay: the VM finds
+ * them by name. X-macro list consumed by hardener/rasp_hardener/names.py; a test proves it covers every
+ * function declared in the core headers. */
+
+/* detectors.c */
+RASP_SYMBOL(rasp_detect_su_binaries)
+RASP_SYMBOL(rasp_detect_root_mounts)
+RASP_SYMBOL(rasp_detect_selinux_permissive)
+RASP_SYMBOL(rasp_detect_emulator_files)
+RASP_SYMBOL(rasp_detect_tracer)
+RASP_SYMBOL(rasp_detect_instrumentation_maps)
+RASP_SYMBOL(rasp_detect_instrumentation_threads)
+RASP_SYMBOL(rasp_detect_instrumentation_port)
+RASP_SYMBOL(rasp_detect_maps_exec_suspicious)
+RASP_SYMBOL(rasp_detect_cpuinfo_emulator)
+RASP_SYMBOL(rasp_detect_ttydrivers_emulator)
+RASP_SYMBOL(rasp_detect_ksu_wchan)
+RASP_SYMBOL(rasp_detect_self_ptrace)
+RASP_SYMBOL(rasp_run_all)
+RASP_SYMBOL(rasp_parse_tracer_pid)
+RASP_SYMBOL(rasp_match_any)
+RASP_SYMBOL(rasp_cpuinfo_is_emulator)
+RASP_SYMBOL(rasp_ttydrivers_is_emulator)
+RASP_SYMBOL(rasp_wchan_is_suspicious)
+RASP_SYMBOL(rasp_selfptrace_is_debugged)
+RASP_SYMBOL(read_text_file)
+RASP_SYMBOL(for_each_line)
+RASP_SYMBOL(match_line)
+RASP_SYMBOL(match_exec_suspicious)
+RASP_SYMBOL(ci_contains)
+
+/* guard.c / integrity.c */
+RASP_SYMBOL(rasp_guard_root)
+RASP_SYMBOL(rasp_guard_offset)
+RASP_SYMBOL(rasp_guard_fold_key)
+RASP_SYMBOL(rasp_integrity_root_from_file)
+RASP_SYMBOL(hash_region)
+RASP_SYMBOL(MESH_SEED)
+
+/* report.c */
+RASP_SYMBOL(rasp_seal_report)
+RASP_SYMBOL(rasp_signals_to_report_json)
+RASP_SYMBOL(rasp_json_array_inner)
+RASP_SYMBOL(append_signal)
+
+/* signals.c */
+RASP_SYMBOL(rasp_signals_add)
+RASP_SYMBOL(rasp_signals_to_json)
+RASP_SYMBOL(rasp_threat_name)
+RASP_SYMBOL(rasp_json_append_raw)
+RASP_SYMBOL(rasp_json_append_escaped)
+RASP_SYMBOL(append_raw)
+RASP_SYMBOL(append_escaped)
+
+/* sha256.c */
+RASP_SYMBOL(rasp_sha256_init)
+RASP_SYMBOL(rasp_sha256_update)
+RASP_SYMBOL(rasp_sha256_final)
+RASP_SYMBOL(rasp_sha256)
+RASP_SYMBOL(rasp_hmac_sha256)
+RASP_SYMBOL(rasp_hex_encode)
+
+/* strobf.c / literals.c */
+RASP_SYMBOL(rasp_strobf_decode)
+RASP_SYMBOL(rasp_lit_decode)
+
+/* wbaes.c / securestore.c */
+RASP_SYMBOL(rasp_wbaes_encrypt_block)
+RASP_SYMBOL(rasp_wbaes_ctr)
+RASP_SYMBOL(rasp_wbaes_cmac)
+RASP_SYMBOL(rasp_secure_store_seal)
+RASP_SYMBOL(rasp_secure_store_open)
+RASP_SYMBOL(wbaes_shl1)
+RASP_SYMBOL(wbaes_xor16)
+RASP_SYMBOL(ct_equal)
+
+/* rasp_jni.c (statics) */
+RASP_SYMBOL(native_scan)
+RASP_SYMBOL(native_seal)
+RASP_SYMBOL(wipe_secret)
+RASP_SYMBOL(hex_to_bytes)
+
+/* Remaining private crypto and generated-integrity data symbols. */
+RASP_SYMBOL(sha256_transform)
+RASP_SYMBOL(shift_rows)
+RASP_SYMBOL(K)
+RASP_SYMBOL(hex)
+RASP_SYMBOL(RASP_INTEGRITY_REGIONS)

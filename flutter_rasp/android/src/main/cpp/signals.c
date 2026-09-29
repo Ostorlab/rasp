@@ -17,23 +17,27 @@ void rasp_signals_add(rasp_signal_list_t *list, rasp_threat_t threat,
     }
     rasp_signal_t *signal = &list->items[list->count++];
     signal->threat = threat;
-    signal->detector = detector;
+    snprintf(signal->detector, sizeof(signal->detector), "%s", detector);
     signal->confidence = confidence;
     snprintf(signal->evidence, sizeof(signal->evidence), "%s", evidence ? evidence : "");
 }
 
-const char *rasp_threat_name(rasp_threat_t threat) {
+void rasp_threat_name(rasp_threat_t threat, char *out) {
     switch (threat) {
         case RASP_THREAT_ROOT:
-            return "root";
+            rasp_lit_decode(RASP_SLOT_THREAT_ROOT, out);
+            return;
         case RASP_THREAT_EMULATOR:
-            return "emulator";
+            rasp_lit_decode(RASP_SLOT_THREAT_EMU, out);
+            return;
         case RASP_THREAT_DEBUGGER:
-            return "debugger";
+            rasp_lit_decode(RASP_SLOT_THREAT_DBG, out);
+            return;
         case RASP_THREAT_HOOKING:
-            return "hooking";
+            rasp_lit_decode(RASP_SLOT_THREAT_HOOK, out);
+            return;
     }
-    return "unknown";
+    rasp_lit_decode(RASP_SLOT_THREAT_UNKNOWN, out);
 }
 
 /* Writes `value` as a JSON string body, escaping quotes, backslashes and control characters. */
@@ -70,6 +74,9 @@ static int append_raw(char *out, size_t out_len, size_t *pos, const char *value)
 }
 
 int rasp_signals_to_json(const rasp_signal_list_t *list, char *out, size_t out_len) {
+    RASP_LIT(FMT_SIGNAL_NUM, lit_fmt_signal_num);
+    RASP_LIT(JSON_DET_KEY, lit_json_det_key);
+    RASP_LIT(JSON_EV_KEY, lit_json_ev_key);
     size_t pos = 0;
     char number[48];
 
@@ -78,13 +85,13 @@ int rasp_signals_to_json(const rasp_signal_list_t *list, char *out, size_t out_l
     }
     for (size_t i = 0; i < list->count; i++) {
         const rasp_signal_t *signal = &list->items[i];
-        snprintf(number, sizeof(number), "{\"threat\":%d,\"confidence\":%d,", signal->threat,
+        snprintf(number, sizeof(number), lit_fmt_signal_num, signal->threat,
                  signal->confidence);
         if ((i > 0 && append_raw(out, out_len, &pos, ",") < 0) ||
             append_raw(out, out_len, &pos, number) < 0 ||
-            append_raw(out, out_len, &pos, "\"detector\":\"") < 0 ||
+            append_raw(out, out_len, &pos, lit_json_det_key) < 0 ||
             append_escaped(out, out_len, &pos, signal->detector) < 0 ||
-            append_raw(out, out_len, &pos, "\",\"evidence\":\"") < 0 ||
+            append_raw(out, out_len, &pos, lit_json_ev_key) < 0 ||
             append_escaped(out, out_len, &pos, signal->evidence) < 0 ||
             append_raw(out, out_len, &pos, "\"}") < 0) {
             return -1;

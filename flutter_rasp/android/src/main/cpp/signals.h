@@ -1,6 +1,9 @@
 #ifndef RASP_SIGNALS_H
 #define RASP_SIGNALS_H
 
+#include "hardening.h"
+#include "literals.h"
+
 #include <stddef.h>
 
 #define RASP_MAX_SIGNALS 64
@@ -16,7 +19,7 @@ typedef enum {
 
 typedef struct {
     rasp_threat_t threat;
-    const char *detector;
+    char detector[RASP_LIT_MAXLEN + 1];
     int confidence; /* 0-100 */
     char evidence[RASP_EVIDENCE_LEN];
 } rasp_signal_t;
@@ -35,7 +38,7 @@ void rasp_signals_add(rasp_signal_list_t *list, rasp_threat_t threat,
 int rasp_signals_to_json(const rasp_signal_list_t *list, char *out, size_t out_len);
 
 /* Wire name of a threat, shared with ThreatType.wireName and the sealed report. */
-const char *rasp_threat_name(rasp_threat_t threat);
+void rasp_threat_name(rasp_threat_t threat, char *out);
 
 /* JSON building blocks, shared with report.c. Each returns 0, or -1 if `out` would overflow. `*pos` is the
  * current write offset and is advanced. */

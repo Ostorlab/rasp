@@ -56,10 +56,13 @@ The current scope is Android + a trust service. "Verified" means covered by test
 - [x] Password managers no longer flagged as accessibility abuse.
 
 ### Tests
+- [x] Source literal gate; compiled native plaintext/symbol hygiene; JNI-only release exports; every
+  registry entry round-trips through C; dev/hardened report JSON and full sealed envelopes match.
+  Android NDK arm64, armv7 and x86_64 compile and scan successfully (not an on-device execution test).
 - [x] Python: trust flow, DPoP proofs, risk mapping, HTTP server, attestation, revocation, build-manifest
-  ingestion, integrity-derived-key sealing (73 tests).
+  ingestion, integrity-derived-key sealing (74 tests).
 - [x] Hardener: per-build polymorphism, string encryption, guard mesh, code hashing, manifest, CLI, AES-128
-  reference, white-box AES, CTR/SecureStore AEAD (CMAC), ELF/.so integrity hashing (71 tests).
+  reference, white-box AES, CTR/SecureStore AEAD (CMAC), ELF/.so integrity hashing (108 tests).
 - [x] Native host: parsers, new detector helpers (cpuinfo/tty/wchan/self-ptrace), SHA-256/HMAC vectors,
   report sealing, guard mesh + integrity-derived key, string decode.
 - [x] Cross-language: native seal, string decode, guard root and fold-key, white-box AES block and
@@ -68,6 +71,11 @@ The current scope is Android + a trust service. "Verified" means covered by test
   trust-service build registry, and integrity-derived sealing through the full token route, end-to-end.
 
 ### Build-time hardening (design §6) — `hardener/` toolchain started
+- [x] **Native literal and symbol obfuscation.** All protected registry literals (detector IDs, JSON keys,
+  paths, needles, evidence, formats, JNI registration and the build key) are encrypted per build and
+  decoded into scratch buffers at use. Signal records own copied detector names. `symbols.def` generates
+  per-build names and a private `symbols.map`; hidden visibility, an export map and stripped releases
+  leave only JNI entry points. Source and compiled-binary gates enforce this, including optimized LTO.
 - [x] **Results feeding data (keys/offsets) not branches.** Guard-mesh output derives an offset/key
   (`rasp_guard_offset`, `guardmesh.fold_key`); a single flipped byte changes it, no `if(tampered)` branch.
 - [x] **Guard network (mutually-hashing integrity guards).** `guard.c` ↔ `guardmesh.py`, chained per-region
@@ -116,11 +124,6 @@ The current scope is Android + a trust service. "Verified" means covered by test
 - [~] **Compiler plugins / post-build CLI / SDK-only mode.** `rasp-hardener` CLI (`gen-build`/`show`/
   `register`) is the Python pre-build generator + post-build registration step. LLVM/O-LLVM Clang passes,
   the Xcode toolchain, and the DEX/ASM Gradle plugin are not implemented.
-- [~] **Obfuscation.** String/constant encryption done for the five JNI registration literals (the class name,
-  `nativeScan`/`nativeSeal`, and their two signatures): XOR-encrypted per build (`strenc.py`) and decrypted
-  natively on use (`strobf.c`), cross-language verified. Detector IDs, JSON keys, and file paths remain
-  cleartext; name obfuscation, control-flow flattening, MBA, code virtualization, class/asset encryption, and
-  anti-disassembly are not done.
 
 ### Crypto and storage (design §8)
 - [~] **Integrity-derived keys on device:** validate `dladdr` self-location on-device (host tests cover
@@ -128,7 +131,8 @@ The current scope is Android + a trust service. "Verified" means covered by test
 - [~] White-box crypto (build key, no-hardware devices; DCA/DFA countermeasures). Plain white-box AES-128
   (Chow tables) implemented: `aes.py` reference (FIPS-197), `whitebox.py` table generator, native `wbaes.c`
   evaluator; the key is not a contiguous literal, cross-language KAT-verified. **Not key-hiding yet** — the
-  internal encodings / mixing bijections and DCA/DFA countermeasures are the next step.
+  internal encodings / mixing bijections and DCA/DFA countermeasures are the next step. The report build
+  key is also encrypted in `BUILD_KEY_HEX`, but reversible XOR does not provide key hiding.
 - [~] `SecureStore` API; data keys; wipe on critical. Native `securestore.c` provides authenticated
   data-at-rest under white-box AES-128: CTR for confidentiality + AES-CMAC for integrity, encrypt-then-MAC,
   framed `nonce||ciphertext||tag`; `open` verifies the tag in constant time before decrypting. CMAC is
@@ -146,6 +150,8 @@ The current scope is Android + a trust service. "Verified" means covered by test
   pub package-format packaging for a private pub registry.
 
 ### Build-time hardening (design §6) — `hardener/` toolchain started
+- [ ] **Remaining obfuscation.** Managed-code name obfuscation, control-flow flattening, MBA, code
+  virtualization, class/asset encryption and anti-disassembly.
 - [ ] **Weave check calls into arbitrary app functions** (vs. only the RASP core) — not automated yet.
 
 ### Control plane (design §10)

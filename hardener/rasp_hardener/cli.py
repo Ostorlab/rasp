@@ -24,6 +24,8 @@ import sys
 
 from rasp_hardener import aes
 from rasp_hardener import emit
+from rasp_hardener import literals
+from rasp_hardener import names
 from rasp_hardener import whitebox
 from rasp_hardener.manifest import build_manifest
 from rasp_hardener.seed import SEED_LEN, BuildProfile
@@ -31,7 +33,7 @@ from rasp_hardener.seed import SEED_LEN, BuildProfile
 WBAES_KEY_LEN = 16
 
 # The native sources whose bytes define the build, hashed into the integrity root.
-NATIVE_SOURCES = ["detectors.c", "signals.c", "sha256.c", "report.c", "rasp_jni.c", "guard.c", "strobf.c"]
+NATIVE_SOURCES = ["detectors.c", "signals.c", "sha256.c", "report.c", "rasp_jni.c", "guard.c", "strobf.c", "literals.c", "literals.def", "symbols.def", "integrity.c", "wbaes.c", "securestore.c"]
 
 
 def _profile_from_arg(seed_hex: str | None) -> BuildProfile:
@@ -50,7 +52,14 @@ def _code_paths(cpp_dir: pathlib.Path) -> list[pathlib.Path]:
 def cmd_gen_build(args: argparse.Namespace) -> int:
     profile = _profile_from_arg(args.seed)
     cpp_dir = pathlib.Path(args.cpp_dir)
-    written = emit.emit_headers(profile, cpp_dir)
+    lits = literals.with_build_key(literals.parse_literals(cpp_dir / "literals.def"), profile.build_key_hex)
+    symbols = names.parse_symbols(cpp_dir / "symbols.def")
+    written = emit.emit_headers(profile, cpp_dir, lits)
+    names_header = cpp_dir / "build_names.h"
+    names_header.write_text(emit.render_build_names_h(profile, symbols))
+    symbols_map = cpp_dir / "symbols.map"
+    symbols_map.write_text(json.dumps(emit.render_symbols_map(profile, symbols), indent=2, sort_keys=True) + "\n")
+    written += [names_header, symbols_map]
     manifest = build_manifest(
         profile,
         package_name=args.package,

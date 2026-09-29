@@ -22,3 +22,7 @@ build_seed.h
 build_manifest.json
 wbaes_tables.h
 integrity_regions.h
+
+# Private per-build native symbol identities.
+build_names.h
+symbols.map
