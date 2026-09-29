@@ -1,4 +1,4 @@
-"""White-box AES-128 table generation (Chow et al. 2002), plain / unencoded.
+"""White-box AES-128 table generation with optional seeded affine state encodings.
 
 Turns a 16-byte AES key into lookup tables that a table-driven evaluator (native ``wbaes.c``) uses to encrypt
 AES-128 blocks **without the key appearing as a contiguous literal** in the binary. This is the structural
@@ -12,11 +12,11 @@ Each ``TypeII`` entry folds, for one byte position, the previous round's AddRoun
 SubBytes S-box, and one column of MixColumns (the "Tyi" tables). The initial AddRoundKey(k0) is folded into
 round 1; the final AddRoundKey(k10) into the last table.
 
-SECURITY CAVEAT: these are the *plain* Chow tables, with no internal encodings or mixing bijections. On their
-own they do NOT resist key extraction — an analyst can invert Tyi and the S-box to recover the round key. The
-encodings that give white-box AES its security are the deliberate next step (see the repo TODO §8). What this
-module buys today is the correct, KAT-verified table architecture and the removal of the contiguous key
-literal, which the encodings then build on. Do not treat the current output as key-hiding.
+An optional 32-byte encoding seed absorbs invertible affine byte encodings across
+nine state boundaries. These preserve the evaluator ABI and AES behavior. They are
+not full nonlinear encoded-XOR networks or demonstrated DCA/DFA countermeasures;
+embedded keys remain extractable by a determined analyst. Without an encoding seed,
+the original plain reference tables are generated.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ import hmac
 from dataclasses import dataclass
 
 from rasp_hardener import aes
+from rasp_hardener import encodings
 
 # AES MixColumns matrix (used to build the Tyi tables).
 MIXCOL = ((2, 3, 1, 1), (1, 2, 3, 1), (1, 1, 2, 3), (3, 1, 1, 2))
@@ -71,8 +72,21 @@ class WhiteBoxTables:
         return bytes(state)
 
 
-def generate(key: bytes) -> WhiteBoxTables:
-    """Generate plain white-box AES-128 tables for `key`."""
+    def encrypt_block_checked(self, other: WhiteBoxTables, plaintext: bytes) -> bytes:
+        """Reject divergent results from independently encoded same-key tables.
+
+        This detects the measured single-table faults, not common-mode faults or DCA.
+        Callers must opt in; existing CTR/CMAC APIs retain their original evaluator.
+        """
+        first = self.encrypt_block(plaintext)
+        second = other.encrypt_block(plaintext)
+        if hmac.compare_digest(first, second) is False:
+            raise ValueError("redundant AES evaluation mismatch")
+        return first
+
+
+def generate(key: bytes, encoding_seed: bytes | None = None) -> WhiteBoxTables:
+    """Generate AES tables; a 32-byte encoding seed adds nine affine state boundaries."""
     round_keys = aes.key_expansion(key)
     # sk[r] = ShiftRows(k[r]) so that AddRoundKey-before-ShiftRows folds into SubBytes-after-ShiftRows.
     sk = [aes.shift_rows(rk) for rk in round_keys]
@@ -93,6 +107,31 @@ def generate(key: bytes) -> WhiteBoxTables:
         final_key = round_keys[10][p]
         last.append([aes.SBOX[x ^ key_byte] ^ final_key for x in range(256)])
 
+    if encoding_seed is not None:
+        if len(encoding_seed) != 32:
+            raise ValueError("encoding seed must be 32 bytes")
+        boundaries = [[encodings.byte_encoding(encoding_seed, boundary, position) for position in range(16)] for boundary in range(9)]
+        shifted_positions = aes.shift_rows(list(range(16)))
+        for round_index in range(9):
+            for position in range(16):
+                original = type2[round_index][position]
+                inverse = boundaries[round_index - 1][shifted_positions[position]][1] if round_index > 0 else list(range(256))
+                column_start = position // 4 * 4
+                transformed = []
+                for encoded_input in range(256):
+                    contribution = unpack32(original[inverse[encoded_input]])
+                    output = []
+                    for row in range(4):
+                        linear, _, offset = boundaries[round_index][column_start + row]
+                        # XOR is linear: combine four encoded contributions into E(sum).
+                        # Exactly one contribution carries the affine offset.
+                        output.append(linear[contribution[row]] ^ (offset if position % 4 == 0 else 0))
+                    transformed.append(pack32(tuple(output)))
+                type2[round_index][position] = transformed
+        for position in range(16):
+            original = last[position]
+            inverse = boundaries[8][shifted_positions[position]][1]
+            last[position] = [original[inverse[value]] for value in range(256)]
     return WhiteBoxTables(type2=type2, last=last)
 
 

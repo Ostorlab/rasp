@@ -60,9 +60,9 @@ The current scope is Android + a trust service. "Verified" means covered by test
   registry entry round-trips through C; dev/hardened report JSON and full sealed envelopes match.
   Android NDK arm64, armv7 and x86_64 compile and scan successfully (not an on-device execution test).
 - [x] Python: trust flow, DPoP proofs, risk mapping, HTTP server, attestation, revocation, build-manifest
-  ingestion, integrity-derived-key sealing (74 tests).
+  ingestion, integrity-derived-key sealing (97 tests).
 - [x] Hardener: per-build polymorphism, string encryption, guard mesh, code hashing, manifest, CLI, AES-128
-  reference, white-box AES, CTR/SecureStore AEAD (CMAC), ELF/.so integrity hashing (108 tests).
+  reference, white-box AES, CTR/SecureStore AEAD (CMAC), ELF/.so integrity hashing (126 tests).
 - [x] Native host: parsers, new detector helpers (cpuinfo/tty/wchan/self-ptrace), SHA-256/HMAC vectors,
   report sealing, guard mesh + integrity-derived key, string decode.
 - [x] Cross-language: native seal, string decode, guard root and fold-key, white-box AES block and
@@ -121,18 +121,31 @@ The current scope is Android + a trust service. "Verified" means covered by test
   MASWE/MASTG ids in code or an exported evidence report.
 
 ### Build-time hardening (design §6) — `hardener/` toolchain started
-- [~] **Compiler plugins / post-build CLI / SDK-only mode.** `rasp-hardener` CLI (`gen-build`/`show`/
-  `register`) is the Python pre-build generator + post-build registration step. LLVM/O-LLVM Clang passes,
-  the Xcode toolchain, and the DEX/ASM Gradle plugin are not implemented.
+- [~] **Compiler plugins / post-build CLI / SDK-only mode.** LLVM 18 plugin and explicit Clang pipeline
+  now flatten supported selected integer-return functions, substitute ADD/XOR MBA identities and weave
+  integrity probes. Unsupported IR fails. Xcode custom-rule integration produces arm64 Mach-O smoke
+  objects; actual Xcode archives/device runs remain. The Gradle ASM plugin emits reproducible hardened
+  JVM JARs with allowlisted private static method renaming and private maps. Authenticated JVM class
+  loading executes in tests; an API26+ InMemoryDexClassLoader helper compiles. Automatic AGP variant/DEX
+  packaging and ART/device execution remain. See `hardener/DEEP_HARDENING.md`.
+- [~] **Deeper obfuscation.** Bounded seeded uint32 VM, expression compiler and authenticated native
+  package-to-VM execution are implemented. Assets/class bytes can be encrypted and authenticated, but
+  Android ART/device class-loading validation, managed public-name/string obfuscation, arbitrary native virtualization, broader
+  compiler coverage and anti-disassembly remain.
+- [~] **Weave check calls into app functions.** LLVM and ASM allowlists insert probes into supported
+  native/JVM functions, with executable tests. Native probes hash configured live regions; applications
+  must supply trusted expected roots/region lifetimes and wire the JVM hook. Whole-app automatic region
+  discovery and unsupported function kinds remain.
 
 ### Crypto and storage (design §8)
 - [~] **Integrity-derived keys on device:** validate `dladdr` self-location on-device (host tests cover
-  root computation), hash resources/`libapp.so`, and fold integrity roots into data keys.
-- [~] White-box crypto (build key, no-hardware devices; DCA/DFA countermeasures). Plain white-box AES-128
-  (Chow tables) implemented: `aes.py` reference (FIPS-197), `whitebox.py` table generator, native `wbaes.c`
-  evaluator; the key is not a contiguous literal, cross-language KAT-verified. **Not key-hiding yet** — the
-  internal encodings / mixing bijections and DCA/DFA countermeasures are the next step. The report build
-  key is also encrypted in `BUILD_KEY_HEX`, but reversible XOR does not provide key hiding.
+  root computation), hash resources/`libapp.so`, and fold integrity roots into remaining data-key flows.
+- [~] White-box crypto (build key, no-hardware devices; DCA/DFA countermeasures). Seeded invertible
+  affine byte encodings at nine AES boundaries are absorbed into tables and preserve C/Python AES,
+  CTR and CMAC KATs. These are byte-local mixing bijections, not complete nonlinear encoded-XOR networks
+  or proven DCA resistance. Opt-in independent-table evaluation detects 32/32 injected exercised
+  single-table faults; common-mode and comparison/control-flow faults remain outside that evidence. Asset encryption/authentication keys are separately derived from the
+  expected/live guard root. The report build key still uses reversible literal encoding.
 - [~] `SecureStore` API; data keys; wipe on critical. Native `securestore.c` provides authenticated
   data-at-rest under white-box AES-128: CTR for confidentiality + AES-CMAC for integrity, encrypt-then-MAC,
   framed `nonce||ciphertext||tag`; `open` verifies the tag in constant time before decrypting. CMAC is
@@ -148,11 +161,6 @@ The current scope is Android + a trust service. "Verified" means covered by test
 - [ ] **iOS** (SDK, jailbreak/instrumentation detection, App Attest, self-integrity).
 - [ ] React Native, KMP, MAUI, Cordova/Capacitor, Unity wrappers; the existing Flutter plugin needs
   pub package-format packaging for a private pub registry.
-
-### Build-time hardening (design §6) — `hardener/` toolchain started
-- [ ] **Remaining obfuscation.** Managed-code name obfuscation, control-flow flattening, MBA, code
-  virtualization, class/asset encryption and anti-disassembly.
-- [ ] **Weave check calls into arbitrary app functions** (vs. only the RASP core) — not automated yet.
 
 ### Control plane (design §10)
 - [ ] OTA signed policy delivery (detector params, thresholds, reactions, pins, allowlists) — currently all

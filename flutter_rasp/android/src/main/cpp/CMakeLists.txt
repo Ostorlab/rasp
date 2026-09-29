@@ -7,6 +7,9 @@ add_library(rasp_core SHARED
     signals.c
     sha256.c
     report.c
+    assets.c
+    vm.c
+    weave.c
     guard.c
     literals.c
     strobf.c

@@ -39,4 +39,10 @@ void rasp_wbaes_ctr(const uint32_t *type2, const uint8_t *last, const uint8_t no
 void rasp_wbaes_cmac(const uint32_t *type2, const uint8_t *last, const uint8_t *msg, size_t len,
                      uint8_t tag[16]);
 
+/* Opt-in redundant evaluation with independently encoded tables for the same key.
+ * Detects divergent evaluations; leaves out untouched on failure. This is not a
+ * claim of DCA resistance or protection against common-mode/control-flow faults. */
+int rasp_wbaes_encrypt_block_checked(const uint32_t *type2_a, const uint8_t *last_a,
+                                    const uint32_t *type2_b, const uint8_t *last_b,
+                                    const uint8_t in[16], uint8_t out[16]);
 #endif

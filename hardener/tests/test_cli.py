@@ -132,5 +132,21 @@ class CliTest(unittest.TestCase):
             self.assertEqual(header.count("ULL, "), len(expected_regions))
 
 
+class ResourceCliTest(unittest.TestCase):
+    def testResourceAndVm_roundTrip_outputsLoadableArtifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = pathlib.Path(directory)
+            key, plain, package, opened = [tmp / name for name in ["key", "plain", "package", "opened"]]
+            key.write_bytes(bytes(range(32)))
+            plain.write_bytes(b"private asset")
+            common = ["--key-file", str(key), "--guard-root", "ab" * 32, "--identity", "asset.bin"]
+            self.assertEqual(cli.main(["pack-asset", *common, "--input", str(plain), "--out", str(package), "--tables", str(tmp / "tables.h")]), 0)
+            self.assertEqual(cli.main(["open-asset", *common, "--input", str(package), "--out", str(opened)]), 0)
+            self.assertEqual(opened.read_bytes(), plain.read_bytes())
+            self.assertTrue((tmp / "tables.h").read_text().startswith("/* Generated"))
+            self.assertEqual(cli.main(["compile-vm", "--seed", SEED_HEX, "--expression", "r0 + r1", "--out", str(tmp / "vm")]), 0)
+            self.assertEqual(len((tmp / "vm").read_bytes()), 32)
+
+
 if __name__ == "__main__":
     unittest.main()

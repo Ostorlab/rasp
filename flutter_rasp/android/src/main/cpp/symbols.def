@@ -86,3 +86,22 @@ RASP_SYMBOL(shift_rows)
 RASP_SYMBOL(K)
 RASP_SYMBOL(hex)
 RASP_SYMBOL(RASP_INTEGRITY_REGIONS)
+
+/* Compiler-woven integrity probes. */
+RASP_SYMBOL(rasp_weave_configure)
+RASP_SYMBOL(rasp_guard_probe)
+RASP_SYMBOL(weave_regions)
+RASP_SYMBOL(weave_count)
+RASP_SYMBOL(weave_expected)
+
+/* Constrained arithmetic VM. */
+RASP_SYMBOL(rasp_vm_run)
+RASP_SYMBOL(vm_decode)
+RASP_SYMBOL(vm_immediate)
+
+/* Authenticated resource loader. */
+RASP_SYMBOL(rasp_asset_open)
+RASP_SYMBOL(asset_wipe)
+RASP_SYMBOL(asset_equal)
+RASP_SYMBOL(rasp_asset_vm_run)
+RASP_SYMBOL(rasp_wbaes_encrypt_block_checked)
