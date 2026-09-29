@@ -1,12 +1,20 @@
-# RASP for banking apps
+# RASP binary protection and banking demo
 
-This repo holds three things:
+The **[ELF prototype](elf/README.md)** packs an existing Linux executable, injects continuous runtime checks and TCP instrumentation, and supports signed backend authorization. See the [verification report](elf/VERIFICATION.md) for tested behavior, limits and the Android handoff. Android APK packing is the next platform stage.
+
+The existing banking integration and supporting tools remain available:
+
+- **`elf/`**: ELF packer, native runtime, reusable backend authorizer, CLI, and end-to-end tests.
 
 - **`flutter_rasp/`**: a Flutter plugin (Android) for runtime self-protection. Detection and local reactions run on the device and work offline; for server-enforced trust it seals a report and drives the trust-service flow below.
 - **`verifier/`**: the **trust service** and a reference **bank resource server**. The trust service issues single-use challenges, binds an install with Android Key Attestation, and mints short-lived integrity tokens from a sealed RASP report, the hardware attestation and a platform (Play Integrity) verdict. The bank verifies those tokens and decides allow, step-up or deny.
 - **`sample_app/`**: *Demo Bank*, a Flutter banking app used as the protection target.
 
 See `rasp-research.md` for background and the design document for the full platform.
+
+## Banking integration
+
+The trust flow below describes the existing Android banking integration. The ELF prototype uses software keys; its signed evidence is not independent hardware attestation.
 
 **Core decision: the device detects and reports; the server decides and enforces.** No client-side verdict is trusted on its own. A device that is rooted, hooked or repackaged still cannot turn a bypass into an accepted payment, because the backend acts only on a trust-service token, and that token is bound to a request-signing key held by a genuine, attested install.
 
