@@ -25,6 +25,12 @@
 * The accessibility allowlist now includes the major password managers (their autofill uses an accessibility
   service), so they are no longer flagged as abuse.
 
+### Platform SDK additions
+
+* Android shared client, pinned native HTTPS, genuine Play Integrity tokens, signed policy updates and erasable authenticated storage.
+* iOS App Attest enrollment/assertions, request signatures, Keychain envelope storage, integrity manifests, pinned HTTPS and Flutter adapter.
+* Packages remain proprietary; public publication is disabled. Platform-specific validation requirements are documented in `docs/mobile-platform.md`.
+
 ## 0.0.1
 
 * Initial on-device release: root/emulator/debugger/hooking/tamper/installer detection, local policy and

@@ -37,3 +37,25 @@ jobs:
           flutter build apk --debug
           cd android
           ./gradlew :flutter_rasp:testDebugUnitTest --console=plain
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Core crypto tests and iOS typecheck
+        working-directory: flutter_rasp/ios
+        run: |
+          node --test ../tool/ios_manifest.test.mjs
+          swift test
+          xcodebuild -scheme RaspCore -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/rasp-ios-build" CODE_SIGNING_ALLOWED=NO build
+      - name: Install pinned Flutter
+        run: |
+          git clone --filter=blob:none https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          git -C "$RUNNER_TEMP/flutter" checkout 6a19cca56475dbfba1478ee68d7bd0c2ef891da1
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Compile the private Flutter iOS adapter
+        run: |
+          flutter create --platforms=ios --org dev.ostorlab --empty "$RUNNER_TEMP/rasp_ios_smoke"
+          cd "$RUNNER_TEMP/rasp_ios_smoke"
+          flutter pub add flutter_rasp --path "$GITHUB_WORKSPACE/flutter_rasp"
+          flutter build ios --simulator --no-codesign

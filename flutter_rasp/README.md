@@ -1,4 +1,4 @@
-# flutter_rasp: Android/Flutter runtime application self-protection
+# flutter_rasp: Android/iOS runtime application self-protection for Flutter
 
 Proprietary Flutter plugin for runtime application self-protection. Consume through an authorized private Git checkout or local path; public package publication is disabled.
 
@@ -49,6 +49,17 @@ if (!guard.allowed) return;
 - **Request proofs:** ephemeral per-request signatures.
 
 The server-side [trust service](../verifier) evaluates attestation and risk; resource servers enforce final allow/deny decisions.
+
+## What protections are available on iOS?
+
+- **Attestation:** App Attest install binding and assertions.
+- **Transport:** pinned HTTPS.
+- **Detection:** jailbreak, debugger, instrumentation and screen-capture checks.
+- **Storage:** Keychain-wrapped secrets.
+- **Policy:** signed local updates.
+- **Screen capture:** public screen APIs obscure captured/background content; they cannot guarantee screenshot prevention.
+
+The SDK requires iOS 14+. Android-only fraud signals and Play Integrity are unavailable on iOS. See the [iOS enrollment and validation contract](../docs/mobile-platform.md#ios-build-and-api) for entitlement configuration and explicit server-confirmed enrollment.
 
 ## Which APIs enforce these protections?
 

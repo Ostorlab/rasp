@@ -23,6 +23,12 @@ build_manifest.json
 wbaes_tables.h
 integrity_regions.h
 
+# Swift dependency/build caches and generated per-build iOS key material
+.build/
+.swiftpm/
+RaspBuild.json
+private-server-manifest.json
+
 # Private per-build native symbol identities.
 build_names.h
 symbols.map
