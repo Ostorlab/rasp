@@ -39,9 +39,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install private packages and validation tools
-        run: python -m pip install -e ./verifier -e ./hardener coverage==7.16.2 ruff==0.16.9
+        run: python -m pip install -e ./poc/verifier -e ./poc/hardener coverage==7.16.2 ruff==0.16.9
       - name: Reject Python syntax and undefined-name errors
-        run: ruff check --isolated --select E9,F63,F7,F82 verifier hardener
+        run: ruff check --isolated --select E9,F63,F7,F82 poc/verifier poc/hardener
       - name: Migrate isolated PostgreSQL and create restricted runtime role
         run: |
           python - <<'PY'
@@ -54,13 +54,13 @@ jobs:
               connection.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON rasp_records, rasp_challenges, rasp_counters TO rasp_runtime")
           PY
       - name: Verifier tests and measured coverage floor
-        working-directory: verifier
+        working-directory: poc/verifier
         run: |
           coverage run --branch --source=rasp_verifier -m unittest discover -s tests -t .
           coverage report --fail-under=80
           coverage xml -o coverage.xml
       - name: Hardener tests and measured coverage floor
-        working-directory: hardener
+        working-directory: poc/hardener
         run: |
           coverage run --branch --source=rasp_hardener -m unittest discover -s tests -t .
           coverage report --fail-under=90
@@ -72,6 +72,6 @@ jobs:
         with:
           name: coverage
           path: |
-            verifier/coverage.xml
-            hardener/coverage.xml
+            poc/verifier/coverage.xml
+            poc/hardener/coverage.xml
           retention-days: 7
