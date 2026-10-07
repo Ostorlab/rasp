@@ -45,5 +45,4 @@ jobs:
           binary=build/ios/ios/RaspRuntime.framework/RaspRuntime
           file "$binary" | grep -q "Mach-O 64-bit dynamically linked shared library arm64"
           test "$(otool -D "$binary" | tail -n 1)" = "@rpath/RaspRuntime.framework/RaspRuntime"
-          # The runtime runs from a constructor; it must not export any symbol into the app.
           test -z "$(nm -gU "$binary")"
