@@ -18,8 +18,8 @@ jobs:
         with:
           node-version: '22'
       - name: Python real-sink tests
-        working-directory: server_agents/python
+        working-directory: poc/server_agents/python
         run: python -m unittest discover -s tests -t . -v
       - name: Node real-sink tests
-        working-directory: server_agents/node
+        working-directory: poc/server_agents/node
         run: npm test
