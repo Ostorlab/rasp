@@ -1,11 +1,8 @@
-# RaspRuntime.framework: the runtime the packer adds to an iOS app.
 add_library(RaspRuntime SHARED src/entry.cpp)
 target_link_libraries(RaspRuntime PRIVATE rasp_core)
 
 set_target_properties(RaspRuntime PROPERTIES
   FRAMEWORK TRUE
-  # The packer adds a load command for @rpath/RaspRuntime.framework/RaspRuntime, resolved through
-  # the app's @executable_path/Frameworks.
   INSTALL_NAME_DIR "@rpath"
   BUILD_WITH_INSTALL_NAME_DIR ON
   MACOSX_FRAMEWORK_IDENTIFIER co.ostorlab.rasp.runtime

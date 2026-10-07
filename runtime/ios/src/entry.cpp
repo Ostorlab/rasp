@@ -1,6 +1,3 @@
-// Entry point of the runtime on iOS. dyld runs the constructor below when the app loads the
-// framework, before the app's main.
-
 #include <os/log.h>
 
 #include <string>
