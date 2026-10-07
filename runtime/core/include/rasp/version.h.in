@@ -1,0 +1,14 @@
+#ifndef RASP_VERSION_H
+#define RASP_VERSION_H
+
+#include <string_view>
+
+namespace rasp {
+
+// Version of the runtime, sent to the ADR server as the build's sdkVersion. Set from the CMake
+// project version.
+inline constexpr std::string_view kRuntimeVersion = "@PROJECT_VERSION@";
+
+}  // namespace rasp
+
+#endif  // RASP_VERSION_H

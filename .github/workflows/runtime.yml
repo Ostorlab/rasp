@@ -1,0 +1,49 @@
+name: Runtime
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: runtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure
+        run: cmake --preset host
+      - name: Build
+        run: cmake --build --preset host --parallel
+      - name: Tests
+        run: ctest --preset host
+
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: runtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure
+        run: cmake --preset ios
+      - name: Build
+        run: cmake --build --preset ios --parallel
+      - name: Check the framework
+        run: |
+          binary=build/ios/ios/RaspRuntime.framework/RaspRuntime
+          file "$binary" | grep -q "Mach-O 64-bit dynamically linked shared library arm64"
+          test "$(otool -D "$binary" | tail -n 1)" = "@rpath/RaspRuntime.framework/RaspRuntime"
+          # The runtime runs from a constructor; it must not export any symbol into the app.
+          test -z "$(nm -gU "$binary")"
