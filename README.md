@@ -2,7 +2,7 @@
 
 Production source of Ostorlab Mobile RASP: the **packer**, and the **runtime libraries** it puts inside a customer's app.
 
-- **The packer** (Python) takes a customer's built app, an APK or an IPA, adds the runtime to it, and signs it again. The customer gets back a protected app that they ship as usual.
+- **The packer** (Python) takes a customer's built app, an APK or an IPA, and adds the runtime to it. It returns the protected app unsigned, and the customer signs it before shipping it.
 - **The runtime libraries** (C++) run inside the protected app, on Android and on iOS. They run the checks (debugger, hooking, jailbreak and root, tampering, and others) and report what they observe to the ADR server.
 
 The ADR server, which receives the reports and decides, is not in this repository.
@@ -10,10 +10,10 @@ The ADR server, which receives the reports and decides, is not in this repositor
 ## Layout
 
 ```
-packer/                 Python packer
-  rasp_packer/
-    android/            APK: add the runtime library, sign again
-    ios/                IPA: add the runtime framework, sign again
+packer/                 Python packer: a library, with the `rasp` command line as its client
+  src/rasp_packer/
+    android/            APK: add the runtime library
+    ios/                IPA: add the runtime framework
   tests/
 runtime/                C++ runtime libraries, built with CMake
   core/                 code shared by both platforms: observations, batches, sending them to the ADR server
