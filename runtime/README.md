@@ -6,8 +6,10 @@ Before you change anything here, read [CONTRIBUTING.md](CONTRIBUTING.md): it lis
 
 ## Layout
 
-- `core/`: code shared by every platform. It uses no platform API.
-- `ios/`: `RaspRuntime.framework`, the runtime for iOS, and its entry point.
+- `core/`: code shared by every platform. It uses no platform API: the runtime version, and `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`).
+- `checks/`: the checks. Each one reports observations, never a verdict.
+  - `src/ios/jailbreak.cpp`: `jb.fs_paths` (read through `access` and through `stat`), `jb.sandbox_escape` and `jb.fork_ok`. Off a physical iOS device, every one is reported as unsupported.
+- `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it runs the checks.
 - `tests/`: tests that run on a development machine, with GoogleTest.
 
 ## Build
@@ -55,6 +57,20 @@ The framework is written to `build/ios/ios/RaspRuntime.framework`. Its install n
 
 The framework supports iOS 12.0 and later. It doesn't use the libc++ that comes with iOS, which only supports iOS 15 and later. Instead it links a static libc++ built from LLVM 23.1.3 for the same minimum iOS version, with all its symbols hidden. That library is built once and committed under `third_party/libcxx/`, and `cmake/libcxx.cmake` checks its hash and links it. The build steps, the one-line source change it needs, and the CI job that proves the committed library matches the source are described in `third_party/libcxx/README.md`.
 
+## Logs
+
+Only development builds write logs. A release build writes nothing to any log, so a protected app leaves no trace of the runtime in the device's log.
+
+The `RASP_LOGGING` option turns logging on. CMake refuses it in a Release build. On iOS, the development build writes each line to the system log with `os_log`, and the `ios-dev` preset builds it:
+
+```
+cd runtime
+cmake --preset ios-dev
+cmake --build --preset ios-dev
+```
+
+The framework is written to `build/ios-dev/ios/RaspRuntime.framework`. Code writes a log line with `rasp::log` (`core/include/rasp/logging.h`), and only inside `if constexpr (rasp::kLoggingEnabled)`. In a release build that block is not compiled into the binary, so neither the call nor its text is in the framework.
+
 ## Format and check
 
 The style is in `.clang-format` and the checks are in `.clang-tidy`.
@@ -66,4 +82,4 @@ cmake --preset host
 run-clang-tidy -quiet -p build/host "^$PWD/(?!build/).*\.cpp$"
 ```
 
-CI runs the format and tidy checks, the three host builds and the iOS build (`.github/workflows/runtime.yml`). It also checks that the iOS framework exports no symbols and calls none of the functions `.clang-tidy` forbids.
+CI runs the format and tidy checks, the three host builds, and the iOS release and development builds (`.github/workflows/runtime.yml`). It checks that the release framework exports no symbols, calls none of the functions `.clang-tidy` forbids, and does not use `os_log`.

@@ -33,10 +33,11 @@ ctest --preset host
 | `host-asan` | the same, with AddressSanitizer, LeakSanitizer and UndefinedBehaviorSanitizer |
 | `host-tsan` | the same, with ThreadSanitizer |
 | `ios` | the release framework, the one that ships |
+| `ios-dev` | a development framework that writes logs |
 
 The tests must pass under `host-asan` and `host-tsan`, not only `host`. A memory error or a data race often doesn't fail a test. It corrupts something and crashes later, somewhere else. In a customer's app, that shows up as a random crash nobody can trace back to us. The sanitizers turn these bugs into test failures.
 
-Before pushing, run what CI runs (`.github/workflows/runtime.yml`): clang-format, clang-tidy, the three host presets, and on a Mac, `ios`.
+Before pushing, run what CI runs (`.github/workflows/runtime.yml`): clang-format, clang-tidy, the three host presets, and on a Mac, `ios` and `ios-dev`.
 
 ```
 git ls-files -z -- '*.h' '*.cpp' '*.h.in' | xargs -0 clang-format --dry-run --Werror
@@ -107,6 +108,12 @@ On a protected app, the attacker controls the device. They can read our binary, 
 ### Observations, not verdicts
 
 A check reports what it saw (`signal`, `source`, `status`, `value`) and never decides whether the device is compromised. The ADR server makes that decision. If the decision were in the app, an attacker could find it in the binary and patch it. On the server, they can't see it, and we can change it without shipping a new runtime.
+
+### No logs in release builds
+
+Anyone with the device and a computer can read its system log, without a jailbreak. If we logged what we check and what we find, an attacker would get exact feedback on every attempt to get around a check. CI checks that the release framework doesn't log and contains no log text.
+
+During development, write log lines only with `rasp::log`, and only inside `if constexpr (rasp::kLoggingEnabled)`. In a release build, that block isn't compiled at all, so neither the call nor its text ends up in the binary. Never call `os_log`, `printf` or another log function directly.
 
 ### Other rules
 

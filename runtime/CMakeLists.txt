@@ -34,8 +34,14 @@ add_library(rasp_language INTERFACE)
 target_compile_options(rasp_language INTERFACE -fno-exceptions -fno-rtti)
 
 option(RASP_BUILD_TESTS "Build the tests that run on a development machine" OFF)
+option(RASP_LOGGING "Write development logs" OFF)
+
+if(RASP_LOGGING AND CMAKE_BUILD_TYPE STREQUAL "Release")
+  message(FATAL_ERROR "RASP_LOGGING is for development builds only: a Release build must not write any log")
+endif()
 
 add_subdirectory(core)
+add_subdirectory(checks)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   include(cmake/libcxx.cmake)

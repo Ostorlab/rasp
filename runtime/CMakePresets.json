@@ -46,13 +46,24 @@
         "CMAKE_OSX_ARCHITECTURES": "arm64",
         "CMAKE_OSX_DEPLOYMENT_TARGET": "12.0"
       }
+    },
+    {
+      "name": "ios-dev",
+      "displayName": "iOS device (arm64), development build that writes logs",
+      "inherits": "ios",
+      "binaryDir": "${sourceDir}/build/ios-dev",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "RASP_LOGGING": "ON"
+      }
     }
   ],
   "buildPresets": [
     {"name": "host", "configurePreset": "host"},
     {"name": "host-asan", "configurePreset": "host-asan"},
     {"name": "host-tsan", "configurePreset": "host-tsan"},
-    {"name": "ios", "configurePreset": "ios"}
+    {"name": "ios", "configurePreset": "ios"},
+    {"name": "ios-dev", "configurePreset": "ios-dev"}
   ],
   "testPresets": [
     {"name": "host", "configurePreset": "host", "output": {"outputOnFailure": true}},
