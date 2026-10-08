@@ -8,9 +8,35 @@ on:
 permissions:
   contents: read
 
+env:
+  LLVM_VERSION: "23"
+  CMAKE_VERSION: "4.4.4"
+
 jobs:
-  host:
-    runs-on: ubuntu-latest
+  format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: runtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install LLVM
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "clang-format-${LLVM_VERSION}"
+          echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Check the formatting
+        run: |
+          clang-format --version
+          git ls-files -z -- '*.h' '*.cpp' '*.h.in' | xargs -0 clang-format --dry-run --Werror
+
+  tidy:
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -19,16 +45,28 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install LLVM
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "clang-tidy-${LLVM_VERSION}"
+          echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Install CMake
+        run: |
+          python3 -m venv "$RUNNER_TEMP/build-tools"
+          "$RUNNER_TEMP/build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
+          echo "$RUNNER_TEMP/build-tools/bin" >> "$GITHUB_PATH"
       - name: Configure
         run: cmake --preset host
-      - name: Build
-        run: cmake --build --preset host --parallel
-      - name: Tests
-        run: ctest --preset host
+      - name: Check the code
+        run: |
+          clang-tidy --version
+          run-clang-tidy -quiet -p build/host "^$PWD/(?!build/).*\.cpp$"
 
-  ios:
-    runs-on: macos-latest
-    timeout-minutes: 20
+  host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: runtime
@@ -36,6 +74,102 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install LLVM
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}"
+          echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Install CMake
+        run: |
+          python3 -m venv "$RUNNER_TEMP/build-tools"
+          "$RUNNER_TEMP/build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
+          echo "$RUNNER_TEMP/build-tools/bin" >> "$GITHUB_PATH"
+      - name: Configure
+        run: cmake --preset host
+      - name: Build
+        run: cmake --build --preset host --parallel
+      - name: Tests
+        run: ctest --preset host
+
+  host-asan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: runtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install LLVM
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "libclang-rt-${LLVM_VERSION}-dev" "llvm-${LLVM_VERSION}"
+          echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Install CMake
+        run: |
+          python3 -m venv "$RUNNER_TEMP/build-tools"
+          "$RUNNER_TEMP/build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
+          echo "$RUNNER_TEMP/build-tools/bin" >> "$GITHUB_PATH"
+      - name: Configure
+        run: cmake --preset host-asan
+      - name: Build
+        run: cmake --build --preset host-asan --parallel
+      - name: Tests
+        run: ctest --preset host-asan
+
+  host-tsan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: runtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install LLVM
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "libclang-rt-${LLVM_VERSION}-dev" "llvm-${LLVM_VERSION}"
+          echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Install CMake
+        run: |
+          python3 -m venv "$RUNNER_TEMP/build-tools"
+          "$RUNNER_TEMP/build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
+          echo "$RUNNER_TEMP/build-tools/bin" >> "$GITHUB_PATH"
+      - name: Configure
+        run: cmake --preset host-tsan
+      - name: Build
+        run: cmake --build --preset host-tsan --parallel
+      - name: Tests
+        run: ctest --preset host-tsan
+
+  ios:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: runtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select Xcode
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_27.0.app
+          xcodebuild -version
+      - name: Install CMake
+        run: |
+          python3 -m venv "$RUNNER_TEMP/build-tools"
+          "$RUNNER_TEMP/build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
+          echo "$RUNNER_TEMP/build-tools/bin" >> "$GITHUB_PATH"
       - name: Configure
         run: cmake --preset ios
       - name: Build
@@ -46,3 +180,11 @@ jobs:
           file "$binary" | grep -q "Mach-O 64-bit dynamically linked shared library arm64"
           test "$(otool -D "$binary" | tail -n 1)" = "@rpath/RaspRuntime.framework/RaspRuntime"
           test -z "$(nm -gU "$binary")"
+          xcrun vtool -show-build "$binary" | grep -qxE ' *minos 12\.0'
+          test -z "$(otool -L "$binary" | grep 'libc++')"
+      - name: Check the framework calls no forbidden function
+        run: |
+          binary=build/ios/ios/RaspRuntime.framework/RaspRuntime
+          imports="$(nm -u "$binary")"
+          test -n "$imports"
+          test -z "$(grep -xE '_(exit|_Exit|quick_exit|signal|sigaction|sigprocmask|pthread_sigmask|setenv|putenv|unsetenv|setlocale|setrlimit)' <<< "$imports")"

@@ -1,22 +1,44 @@
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 4.4)
 
 project(rasp_runtime VERSION 0.1.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-add_compile_options(-Wall -Wextra -Werror)
+add_library(rasp_warnings INTERFACE)
+target_compile_options(rasp_warnings INTERFACE
+  -Wall
+  -Wextra
+  -Werror
+  -Wpedantic
+  -Wshadow
+  -Wconversion
+  -Wsign-conversion
+  -Wold-style-cast
+  -Wnon-virtual-dtor
+  -Wunguarded-availability)
+
+add_library(rasp_shipped INTERFACE)
+target_compile_options(rasp_shipped INTERFACE
+  -Wglobal-constructors
+  -Wexit-time-destructors
+  -Wframe-larger-than=4096)
+
+add_library(rasp_language INTERFACE)
+target_compile_options(rasp_language INTERFACE -fno-exceptions -fno-rtti)
 
 option(RASP_BUILD_TESTS "Build the tests that run on a development machine" OFF)
 
 add_subdirectory(core)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  include(cmake/libcxx.cmake)
   add_subdirectory(ios)
 endif()
 

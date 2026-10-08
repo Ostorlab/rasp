@@ -1,5 +1,4 @@
 #include <os/log.h>
-
 #include <string>
 
 #include "rasp/version.h"
