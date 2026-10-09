@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Adds the RASP runtime to a built Android or iOS app"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "lief==1.0.0",
+]
 
 [project.scripts]
 rasp = "rasp_packer.cli:main"
