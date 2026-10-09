@@ -1,0 +1,11 @@
+--- a/libcxx/src/include/aligned_alloc.h
++++ b/libcxx/src/include/aligned_alloc.h
+@@ -31,7 +31,7 @@
+   return ::_aligned_malloc(__size, __alignment);
+ 
+ // Android only provides aligned_alloc when targeting API 28 or higher.
+-#  elif !defined(__ANDROID__) || __ANDROID_API__ >= 28
++#  elif !defined(__APPLE__) && (!defined(__ANDROID__) || __ANDROID_API__ >= 28)
+   // aligned_alloc() requires that __size is a multiple of __alignment,
+   // but for C++ [new.delete.general], only states "if the value of an
+   // alignment argument passed to any of these functions is not a valid
