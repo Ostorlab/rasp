@@ -7,7 +7,32 @@
       "binaryDir": "${sourceDir}/build/host",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "RASP_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "host-asan",
+      "displayName": "Development machine, with the tests, AddressSanitizer and UndefinedBehaviorSanitizer",
+      "inherits": "host",
+      "binaryDir": "${sourceDir}/build/host-asan",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
+    },
+    {
+      "name": "host-tsan",
+      "displayName": "Development machine, with the tests and ThreadSanitizer",
+      "inherits": "host",
+      "binaryDir": "${sourceDir}/build/host-tsan",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=thread"
       }
     },
     {
@@ -19,15 +44,29 @@
         "CMAKE_SYSTEM_NAME": "iOS",
         "CMAKE_OSX_SYSROOT": "iphoneos",
         "CMAKE_OSX_ARCHITECTURES": "arm64",
-        "CMAKE_OSX_DEPLOYMENT_TARGET": "15.0"
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "12.0"
       }
     }
   ],
   "buildPresets": [
     {"name": "host", "configurePreset": "host"},
+    {"name": "host-asan", "configurePreset": "host-asan"},
+    {"name": "host-tsan", "configurePreset": "host-tsan"},
     {"name": "ios", "configurePreset": "ios"}
   ],
   "testPresets": [
-    {"name": "host", "configurePreset": "host", "output": {"outputOnFailure": true}}
+    {"name": "host", "configurePreset": "host", "output": {"outputOnFailure": true}},
+    {
+      "name": "host-asan",
+      "configurePreset": "host-asan",
+      "output": {"outputOnFailure": true},
+      "environment": {"ASAN_OPTIONS": "detect_leaks=1", "UBSAN_OPTIONS": "print_stacktrace=1"}
+    },
+    {
+      "name": "host-tsan",
+      "configurePreset": "host-tsan",
+      "output": {"outputOnFailure": true},
+      "environment": {"TSAN_OPTIONS": "halt_on_error=1"}
+    }
   ]
 }

@@ -1,5 +1,4 @@
-#ifndef RASP_VERSION_H
-#define RASP_VERSION_H
+#pragma once
 
 #include <string_view>
 
@@ -8,5 +7,3 @@ namespace rasp {
 inline constexpr std::string_view kRuntimeVersion = "@PROJECT_VERSION@";
 
 }  // namespace rasp
-
-#endif  // RASP_VERSION_H

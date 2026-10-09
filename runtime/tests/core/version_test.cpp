@@ -2,6 +2,4 @@
 
 #include <gtest/gtest.h>
 
-TEST(RuntimeVersion, IsTheProjectVersion) {
-  EXPECT_EQ(rasp::kRuntimeVersion, RASP_EXPECTED_VERSION);
-}
+TEST(RuntimeVersion, IsTheProjectVersion) { EXPECT_EQ(rasp::kRuntimeVersion, RASP_EXPECTED_VERSION); }

@@ -1,0 +1,10 @@
+BasedOnStyle: Google
+ColumnLimit: 120
+DerivePointerAlignment: false
+PointerAlignment: Left
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<.*>$'
+    Priority: 1
+  - Regex: '^".*"$'
+    Priority: 2

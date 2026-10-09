@@ -1,0 +1,69 @@
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  concurrency-*,
+  cppcoreguidelines-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -fuchsia-*,
+  -llvmlibc-*,
+  -altera-*,
+  -google-*,
+  -abseil-*,
+  -modernize-use-trailing-return-type,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-identifier-length,
+  -portability-avoid-pragma-once,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/runtime/.*'
+ExcludeHeaderFilterRegex: '.*/runtime/build/.*'
+CheckOptions:
+  misc-include-cleaner.IgnoreHeaders: 'stdlib\.h'
+  bugprone-unsafe-functions.CustomFunctions: >-
+    ^::exit$,,ends the process that is the customer's app;
+    ^::_Exit$,,ends the process that is the customer's app;
+    ^::quick_exit$,,ends the process that is the customer's app;
+    ^::abort$,,ends the process that is the customer's app;
+    ^::std::terminate$,,ends the process that is the customer's app;
+    ^::signal$,,replaces a process-wide signal handler that the app or its runtime relies on;
+    ^::sigaction$,,replaces a process-wide signal handler that the app or its runtime relies on;
+    ^::sigprocmask$,,blocks signals that the app or its runtime relies on;
+    ^::pthread_sigmask$,,blocks signals that the app or its runtime relies on;
+    ^::setenv$,,is not thread-safe and can crash app threads that read the environment;
+    ^::putenv$,,is not thread-safe and can crash app threads that read the environment;
+    ^::unsetenv$,,is not thread-safe and can crash app threads that read the environment;
+    ^::setlocale$,,is not thread-safe and changes the locale of the whole app;
+    ^::setrlimit$,,changes a resource limit of the whole app
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.UnionCase: CamelCase
+  readability-identifier-naming.TypeAliasCase: CamelCase
+  readability-identifier-naming.TypedefCase: CamelCase
+  readability-identifier-naming.FunctionCase: lower_case
+  readability-identifier-naming.MethodCase: lower_case
+  readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.MemberCase: lower_case
+  readability-identifier-naming.ConstexprVariableCase: CamelCase
+  readability-identifier-naming.ConstexprVariablePrefix: k
+  readability-identifier-naming.GlobalConstantCase: CamelCase
+  readability-identifier-naming.GlobalConstantPrefix: k
+  readability-identifier-naming.StaticConstantCase: CamelCase
+  readability-identifier-naming.StaticConstantPrefix: k
+  readability-identifier-naming.ClassConstantCase: CamelCase
+  readability-identifier-naming.ClassConstantPrefix: k
+  readability-identifier-naming.EnumConstantCase: CamelCase
+  readability-identifier-naming.EnumConstantPrefix: k
+  readability-identifier-naming.PrivateMemberCase: lower_case
+  readability-identifier-naming.PrivateMemberSuffix: _
+  readability-identifier-naming.ProtectedMemberCase: lower_case
+  readability-identifier-naming.ProtectedMemberSuffix: _
+  readability-identifier-naming.NamespaceCase: lower_case
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
