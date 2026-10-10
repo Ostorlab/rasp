@@ -1,16 +1,19 @@
 """Tests of the packer's entry point."""
 
+import hashlib
 import pathlib
 import uuid
 
 import pytest
 
+from rasp_packer import build
 from rasp_packer import errors
 from rasp_packer import packer
 from rasp_packer import platforms
+from rasp_packer import protection_versions
 from rasp_packer.ios import packer as ios_packer
 
-_RASP_APP_ID = uuid.UUID("5f0c8a52-3f7e-4d0a-9b8e-2a6f1c4d7e90")
+_APPLICATION_ID = uuid.UUID("5f0c8a52-3f7e-4d0a-9b8e-2a6f1c4d7e90")
 
 
 def testPack_whenAndroidApp_raisesUnsupportedPlatformError(
@@ -21,34 +24,69 @@ def testPack_whenAndroidApp_raisesUnsupportedPlatformError(
             app=tmp_path / "app.apk",
             platform=platforms.Platform.ANDROID,
             output=tmp_path / "out.apk",
-            rasp_app_id=_RASP_APP_ID,
+            application_id=_APPLICATION_ID,
         )
 
 
-def testPack_whenIosApp_packsAndReturnsTheBuild(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+def testPack_whenIosApp_packsAndReturnsTheBuildId(
+    ipa_file: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: dict[str, object] = {}
 
     def fake_pack(
-        *, app: pathlib.Path, output: pathlib.Path, build: object, **_: object
+        *, app: pathlib.Path, output: pathlib.Path, build_id: object, **_: object
     ) -> None:
         calls["app"] = app
         calls["output"] = output
-        calls["build"] = build
+        calls["build_id"] = build_id
 
     monkeypatch.setattr(ios_packer, "pack", fake_pack)
     result = packer.pack(
-        app=tmp_path / "app.ipa",
+        app=ipa_file,
         platform=platforms.Platform.IOS,
         output=tmp_path / "out.ipa",
-        rasp_app_id=_RASP_APP_ID,
+        application_id=_APPLICATION_ID,
     )
 
     assert result.output == tmp_path / "out.ipa"
-    assert result.build.rasp_app_id == _RASP_APP_ID
-    assert calls["app"] == tmp_path / "app.ipa"
-    assert calls["build"] is result.build
+    assert calls["app"] == ipa_file
+    assert calls["build_id"] == result.build_id
+
+
+def testPack_whenIosApp_usesTheIosProtectionVersion(
+    ipa_file: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ios_packer, "pack", lambda **_: None)
+    monkeypatch.setattr(
+        protection_versions,
+        "PROTECTION_VERSIONS",
+        {platforms.Platform.ANDROID: 3, platforms.Platform.IOS: 7},
+    )
+    result = packer.pack(
+        app=ipa_file,
+        platform=platforms.Platform.IOS,
+        output=tmp_path / "out.ipa",
+        application_id=_APPLICATION_ID,
+    )
+
+    expected = build.compute_id(
+        application_id=_APPLICATION_ID,
+        app_digest=hashlib.sha256(ipa_file.read_bytes()).hexdigest(),
+        platform=platforms.Platform.IOS,
+        protection_version=7,
+    )
+    assert result.protection_version == 7
+    assert result.build_id == expected
+
+
+def testPack_whenAppIsMissing_raisesInvalidAppError(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(errors.InvalidAppError, match=r"app\.ipa"):
+        packer.pack(
+            app=tmp_path / "app.ipa",
+            platform=platforms.Platform.IOS,
+            output=tmp_path / "out.ipa",
+            application_id=_APPLICATION_ID,
+        )
 
 
 def testPack_whenOutputExists_raisesOutputExistsError(tmp_path: pathlib.Path) -> None:
@@ -60,5 +98,5 @@ def testPack_whenOutputExists_raisesOutputExistsError(tmp_path: pathlib.Path) ->
             app=tmp_path / "app.ipa",
             platform=platforms.Platform.IOS,
             output=output,
-            rasp_app_id=_RASP_APP_ID,
+            application_id=_APPLICATION_ID,
         )

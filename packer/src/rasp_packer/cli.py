@@ -39,10 +39,10 @@ def _parser() -> argparse.ArgumentParser:
         help="the platform of the app",
     )
     pack.add_argument(
-        "--rasp-app-id",
+        "--application-id",
         type=uuid.UUID,
         required=True,
-        help="id of the protected app in the RASP registry",
+        help="id of the application in the RASP registry",
     )
     pack.add_argument(
         "--output",
@@ -54,18 +54,20 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _pack(arguments: argparse.Namespace) -> int:
+    """Packs the app given on the command line and prints the result."""
     try:
         result = packer.pack(
             app=arguments.app,
             platform=arguments.platform,
             output=arguments.output,
-            rasp_app_id=arguments.rasp_app_id,
+            application_id=arguments.application_id,
         )
     except errors.Error as error:
         print(f"rasp pack: {error}", file=sys.stderr)
         return EXIT_FAILED
     print(
-        f"packed {arguments.platform} app: {result.output} (build {result.build.build_id})"
+        f"packed {arguments.platform} app: {result.output} "
+        f"(build {result.build_id}, protection version {result.protection_version})"
     )
     return EXIT_OK
 
