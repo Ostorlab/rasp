@@ -34,6 +34,20 @@ add_library(rasp_language INTERFACE)
 target_compile_options(rasp_language INTERFACE -fno-exceptions -fno-rtti)
 
 option(RASP_BUILD_TESTS "Build the tests that run on a development machine" OFF)
+option(RASP_LOGGING "Write development logs" OFF)
+
+if(RASP_LOGGING)
+  get_property(rasp_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+  if(rasp_multi_config OR CMAKE_CONFIGURATION_TYPES)
+    message(FATAL_ERROR "RASP_LOGGING needs a single-configuration generator: with a multi-configuration one, the same "
+      "build directory can also build a release configuration, which must not write any log")
+  endif()
+  string(TOLOWER "${CMAKE_BUILD_TYPE}" rasp_build_type)
+  if(NOT rasp_build_type STREQUAL "debug")
+    message(FATAL_ERROR "RASP_LOGGING is for Debug builds only, and the build type is '${CMAKE_BUILD_TYPE}': "
+      "any other build must not write any log")
+  endif()
+endif()
 
 add_subdirectory(core)
 

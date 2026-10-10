@@ -188,3 +188,14 @@ jobs:
           imports="$(nm -u "$binary")"
           test -n "$imports"
           test -z "$(grep -xE '_(exit|_Exit|quick_exit|signal|sigaction|sigprocmask|pthread_sigmask|setenv|putenv|unsetenv|setlocale|setrlimit)' <<< "$imports")"
+      - name: Check the framework writes no log
+        run: |
+          binary=build/ios/ios/RaspRuntime.framework/RaspRuntime
+          test -z "$(nm -u "$binary" | grep _os_log)"
+          test -z "$(strings -a "$binary" | grep -F "{public}")"
+      - name: Configure the development build
+        run: cmake --preset ios-dev
+      - name: Build the development build
+        run: cmake --build --preset ios-dev --parallel
+      - name: Check the development build writes logs
+        run: nm -u build/ios-dev/ios/RaspRuntime.framework/RaspRuntime | grep -q _os_log
