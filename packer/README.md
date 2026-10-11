@@ -25,6 +25,16 @@ rasp pack app.ipa --platform ios --rasp-app-id 5f0c8a52-3f7e-4d0a-9b8e-2a6f1c4d7
 
 The runtime is bundled in the packer.
 
+## Install
+
+Install a release straight from the repository, with your access to it. Replace `vX.Y.Z` with the release tag:
+
+```
+pip install "rasp-packer @ git+ssh://git@github.com/Ostorlab/rasp.git@vX.Y.Z#subdirectory=packer"
+```
+
+Only a release tag has the runtime in it. A checkout of `main` has no runtime, so its packer raises `InvalidRuntimeError` when it packs an app.
+
 ## Layout
 
 - `src/rasp_packer/packer.py`: `pack`, the entry point.
