@@ -26,6 +26,17 @@ poc/                    the proof of concept, kept for reference
 
 Each folder is created by the first pull request that adds code to it.
 
+## Releases
+
+A release is the packer with the runtimes built into it. To make one:
+
+1. Bump the version to the same number in `packer/pyproject.toml` and `runtime/CMakeLists.txt`, in a pull request.
+2. Run the **Release** workflow on `main`, from the repository's Actions tab.
+
+The workflow builds the iOS framework on macOS and runs the same checks as CI on it. It then makes one commit on top of `main` that adds the framework to the packer, tags it `v<version>`, and pushes only the tag, so `main` never holds a built runtime. It refuses a version that is already released, or a packer and runtime whose versions differ.
+
+Install a release with `pip`, as the [packer README](packer/README.md#install) shows.
+
 ## The `poc/` folder
 
 `poc/` holds the proof of concept that came before this production code: the Flutter plugin and its demo bank app, the reference trust service (`verifier/`), the build-time hardener, the Linux ELF packer, and the assurance and server-agent tools. See [`poc/README.md`](poc/README.md).
