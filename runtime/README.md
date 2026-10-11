@@ -16,6 +16,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
     - `reporter.h`: `Reporter`, which numbers the batches of a session (`seq`) and sends each one at most once, in order. At most 64 batches wait to be sent: when a 65th is added, the oldest one is dropped and never sent. A batch is never sent again, even when its request fails. `SessionIds` holds the install id and session id that every batch of the session carries.
     - `transport.h`: `Transport`, the HTTP POST each platform implements with its own network stack.
   - `include/rasp/util/`: generic helpers.
+    - `http.h`: `post_request`, the text of an HTTP/1.1 POST with a JSON body. It refuses a host or a path that isn't made only of visible ASCII characters, and a path that doesn't start with `/`, so neither can change the request line or add a header.
     - `json.h`: JSON string writing. It always writes valid JSON: each byte that isn't valid UTF-8 is replaced with U+FFFD.
     - `logging.h`: `rasp::log` and `kLoggingEnabled`, the development logging that release builds leave out.
     - `uuid.h`: `Uuid`. `random_uuid` makes a random version 4 one, and `to_string` writes its 36-character text form.
@@ -23,6 +24,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
 - `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it runs the checks.
   - `src/checks/`: the iOS checks. Each one reports observations, never a verdict.
     - `example.h`: `example.loaded`, a placeholder that shows where a check goes and how it reports its observations.
+  - `src/reporting/network_transport.h`: `NetworkTransport`, the iOS transport. Each post opens a TLS connection to the server on port 443 with Network.framework, which checks the server's certificate, writes the request, waits for the start of the answer, and closes the connection. One timeout covers the whole post, from opening the connection to the start of the answer.
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
 - `tests/`: tests that run on a development machine, with GoogleTest. They use the same folders as the code.
 
@@ -96,4 +98,11 @@ cmake --preset host
 run-clang-tidy -quiet -p build/host "^$PWD/(?!build/).*\.cpp$"
 ```
 
-CI runs the format and tidy checks, the three host builds, and the iOS release and development builds (`.github/workflows/runtime.yml`). It checks that the release framework exports no symbols, and that it imports none of `exit`, `_Exit`, `quick_exit`, `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `setenv`, `putenv`, `unsetenv`, `setlocale` and `setrlimit`. `.clang-tidy` forbids these functions in the source, and also `abort` and `std::terminate`, which the binary check leaves out. CI also checks that the release framework imports no symbol with `_os_log` in its name and contains no `{public}` text.
+The host build doesn't compile the iOS code, so on a Mac, check it with the development build too:
+
+```
+cmake --preset ios-dev
+run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.cpp$"
+```
+
+CI runs the format check, clang-tidy (on Linux for the shared code and the tests, and on macOS for the iOS code), the three host builds, and the iOS release and development builds (`.github/workflows/runtime.yml`). It checks that the release framework exports no symbols, and that it imports none of `exit`, `_Exit`, `quick_exit`, `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `setenv`, `putenv`, `unsetenv`, `setlocale` and `setrlimit`. `.clang-tidy` forbids these functions in the source, and also `abort` and `std::terminate`, which the binary check leaves out. CI also checks that the release framework imports no symbol with `_os_log` in its name and contains no `{public}` text.
