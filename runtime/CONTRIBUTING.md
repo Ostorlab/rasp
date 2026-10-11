@@ -44,6 +44,8 @@ git ls-files -z -- '*.h' '*.cpp' '*.h.in' | xargs -0 clang-format --dry-run --We
 run-clang-tidy -quiet -p build/host "^$PWD/(?!build/).*\.cpp$"
 ```
 
+The host build doesn't compile the iOS code. On a Mac, check it too: `cmake --preset ios-dev`, then `run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.cpp$"`.
+
 Fix clang-tidy findings instead of silencing them with `NOLINT`. If a check is wrong for the whole project, propose turning it off in `.clang-tidy`, so everyone sees the decision.
 
 ## Never crash the app

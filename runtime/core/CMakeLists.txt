@@ -4,6 +4,7 @@ add_library(rasp_core STATIC
   src/observation.cpp
   src/reporting/reporter.cpp
   src/reporting/submit_event.cpp
+  src/util/http.cpp
   src/util/json.cpp
   src/util/uuid.cpp)
 target_include_directories(rasp_core PUBLIC

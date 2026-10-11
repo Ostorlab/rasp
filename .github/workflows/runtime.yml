@@ -197,5 +197,23 @@ jobs:
         run: cmake --preset ios-dev
       - name: Build the development build
         run: cmake --build --preset ios-dev --parallel
+      - name: Install clang-tidy
+        env:
+          LLVM_RELEASE: "23.1.3"
+          LLVM_SHA256: a3f181b1176406893c097443e21b2a54b85afeac2d10eca3b6d251e6dca32eb3
+        run: |
+          archive="LLVM-${LLVM_RELEASE}-macOS-ARM64"
+          curl -fsSL -o "$RUNNER_TEMP/llvm.tar.zst" \
+            "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_RELEASE}/${archive}.tar.zst"
+          echo "${LLVM_SHA256}  $RUNNER_TEMP/llvm.tar.zst" | shasum -a 256 -c -
+          mkdir "$RUNNER_TEMP/llvm"
+          zstd -dc --long=31 "$RUNNER_TEMP/llvm.tar.zst" | tar -x -C "$RUNNER_TEMP/llvm" --strip-components 1 \
+            "${archive}/bin/clang-tidy" "${archive}/bin/run-clang-tidy" "${archive}/lib/clang"
+          rm "$RUNNER_TEMP/llvm.tar.zst"
+          echo "$RUNNER_TEMP/llvm/bin" >> "$GITHUB_PATH"
+      - name: Check the iOS code
+        run: |
+          clang-tidy --version
+          run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.cpp$"
       - name: Check the development build writes logs
         run: nm -u build/ios-dev/ios/RaspRuntime.framework/RaspRuntime | grep -q _os_log

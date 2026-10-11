@@ -24,7 +24,8 @@ WarningsAsErrors: '*'
 HeaderFilterRegex: '.*/runtime/.*'
 ExcludeHeaderFilterRegex: '.*/runtime/build/.*'
 CheckOptions:
-  misc-include-cleaner.IgnoreHeaders: 'stdlib\.h'
+  misc-include-cleaner.IgnoreHeaders: 'stdlib\.h;Network\.framework/.*'
+  performance-unnecessary-value-param.AllowedTypes: '::std::shared_ptr'
   bugprone-unsafe-functions.CustomFunctions: >-
     ^::exit$,,ends the process that is the customer's app;
     ^::_Exit$,,ends the process that is the customer's app;
