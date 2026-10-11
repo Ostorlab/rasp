@@ -2,24 +2,27 @@
 /// before the app's own code.
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "checks/example.h"
 #include "rasp/observation.h"
 #include "rasp/util/logging.h"
 #include "rasp/version.h"
+#include "reporting/thread.h"
 
 namespace {
 
-/// Runs the checks and, in a development build, logs the runtime version and each observation.
+/// Runs the checks, logs them in a development build, and starts the thread that reports them to the ADR server.
 __attribute__((constructor)) void rasp_start() noexcept {
-  const std::vector<rasp::Observation> observations = rasp::ios::checks::example();
+  std::vector<rasp::Observation> observations = rasp::ios::checks::example();
   if constexpr (rasp::kLoggingEnabled) {
     rasp::log(std::string(rasp::kRuntimeVersion) + " loaded");
     for (const rasp::Observation& observation : observations) {
       rasp::log(rasp::describe(observation));
     }
   }
+  rasp::ios::start_reporting(std::move(observations));
 }
 
 }  // namespace

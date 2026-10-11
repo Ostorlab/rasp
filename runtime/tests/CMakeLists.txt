@@ -27,3 +27,8 @@ add_executable(rasp_ios_example_test ios/checks/example_test.cpp ${PROJECT_SOURC
 target_include_directories(rasp_ios_example_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
 target_link_libraries(rasp_ios_example_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_ios_example_test)
+
+add_executable(rasp_ios_install_id_test ios/reporting/install_id_test.cpp ${PROJECT_SOURCE_DIR}/ios/src/reporting/install_id.cpp)
+target_include_directories(rasp_ios_install_id_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_install_id_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_ios_install_id_test)

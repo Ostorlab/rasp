@@ -15,15 +15,18 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
     - `submit_event.h`: the GraphQL `submitEvent` request for an event.
     - `reporter.h`: `Reporter`, which numbers the batches of a session (`seq`) and sends each one at most once, in order. At most 64 batches wait to be sent: when a 65th is added, the oldest one is dropped and never sent. A batch is never sent again, even when its request fails. `SessionIds` holds the install id and session id that every batch of the session carries.
     - `transport.h`: `Transport`, the HTTP POST each platform implements with its own network stack.
+    - `server.h`: `kServerHost` and `kServerPath`, the ADR server the runtime reports to, `adr.ostorlab.co/apis/graphql`.
   - `include/rasp/util/`: generic helpers.
     - `http.h`: `post_request`, the text of an HTTP/1.1 POST with a JSON body. It refuses a host or a path that isn't made only of visible ASCII characters, and a path that doesn't start with `/`, so neither can change the request line or add a header.
     - `json.h`: JSON string writing. It always writes valid JSON: each byte that isn't valid UTF-8 is replaced with U+FFFD.
     - `logging.h`: `rasp::log` and `kLoggingEnabled`, the development logging that release builds leave out.
     - `uuid.h`: `Uuid`. `random_uuid` makes a random version 4 one, and `to_string` writes its 36-character text form.
   - `src/`: the code of these headers, in the same folders.
-- `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it runs the checks.
+- `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it runs the checks and starts the thread that reports them.
   - `src/checks/`: the iOS checks. Each one reports observations, never a verdict.
     - `example.h`: `example.loaded`, a placeholder that shows where a check goes and how it reports its observations.
+  - `src/reporting/thread.h`: `start_reporting`, the reporting thread. It reads the build id from the framework's `Info.plist`, loads the install id, makes a session id, sends the launch's observations as one batch, and ends.
+  - `src/reporting/install_id.h`: `load_install_id`, which keeps the install id in a 16-byte file in the app's `Library/Application Support`.
   - `src/reporting/network_transport.h`: `NetworkTransport`, the iOS transport. Each post opens a TLS connection to the server on port 443 with Network.framework, which checks the server's certificate, writes the request, waits for the start of the answer, and closes the connection. One timeout covers the whole post, from opening the connection to the start of the answer.
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
 - `tests/`: tests that run on a development machine, with GoogleTest. They use the same folders as the code.
