@@ -7,8 +7,8 @@ tag only:
 
 - `RaspRuntime.framework` — the iOS runtime framework. The packer makes the
   app's main executable load it (`@rpath/RaspRuntime.framework/RaspRuntime`),
-  embeds it under the app's `Frameworks/`, and writes the build identity
-  (`RaspAppId`, `RaspBuildId`) into its `Info.plist`.
+  embeds it under the app's `Frameworks/`, and writes the build id
+  (`RaspBuildId`) into its `Info.plist`.
 
 `main` doesn't have it, so outside a release `resources.framework()` raises
 `InvalidRuntimeError`.

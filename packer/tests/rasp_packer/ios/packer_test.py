@@ -4,20 +4,16 @@ import collections.abc
 import pathlib
 import plistlib
 import stat
-import uuid
 import zipfile
 
 import lief
 import pytest
 
-from rasp_packer import build
 from rasp_packer import errors
 from rasp_packer.ios import macho
 from rasp_packer.ios import packer
 
-_BUILD = build.Build(
-    rasp_app_id=uuid.UUID("5f0c8a52-3f7e-4d0a-9b8e-2a6f1c4d7e90"), build_id="build-1"
-)
+_BUILD_ID = "build-1"
 _APP = "Payload/Demo.app"
 _FRAMEWORK = f"{_APP}/Frameworks/RaspRuntime.framework"
 
@@ -25,7 +21,8 @@ _FRAMEWORK = f"{_APP}/Frameworks/RaspRuntime.framework"
 def _pack(
     app: pathlib.Path, runtime: pathlib.Path, output: pathlib.Path
 ) -> zipfile.ZipFile:
-    packer.pack(app=app, output=output, runtime=runtime, build=_BUILD)
+    """Packs the app with the test build id and opens the protected IPA."""
+    packer.pack(app=app, output=output, runtime=runtime, build_id=_BUILD_ID)
     return zipfile.ZipFile(output)
 
 
@@ -45,7 +42,7 @@ def testPack_whenValidIpa_makesTheExecutableLoadTheRuntime(
     assert mode == 0o755
 
 
-def testPack_whenValidIpa_embedsTheRuntimeWithTheBuildIdentity(
+def testPack_whenValidIpa_embedsTheRuntimeWithTheBuildId(
     ipa_file: pathlib.Path, runtime: pathlib.Path, tmp_path: pathlib.Path
 ) -> None:
     with _pack(ipa_file, runtime, tmp_path / "out.ipa") as archive:
@@ -53,8 +50,7 @@ def testPack_whenValidIpa_embedsTheRuntimeWithTheBuildIdentity(
         info = plistlib.loads(archive.read(f"{_FRAMEWORK}/Info.plist"))
 
     assert binary == b"runtime binary"
-    assert info[packer.RASP_APP_ID_KEY] == str(_BUILD.rasp_app_id)
-    assert info[packer.RASP_BUILD_ID_KEY] == _BUILD.build_id
+    assert info[packer.RASP_BUILD_ID_KEY] == _BUILD_ID
 
 
 def testPack_whenAppWasSigned_removesItsSignature(
@@ -74,7 +70,9 @@ def testPack_whenAppEmbedsTheRuntimeAlready_raisesAlreadyProtectedError(
     app = make_ipa(extra_entries={f"{_FRAMEWORK}/RaspRuntime": b""})
 
     with pytest.raises(errors.AlreadyProtectedError):
-        packer.pack(app=app, output=tmp_path / "out.ipa", runtime=runtime, build=_BUILD)
+        packer.pack(
+            app=app, output=tmp_path / "out.ipa", runtime=runtime, build_id=_BUILD_ID
+        )
 
 
 @pytest.mark.parametrize("missing", ["RaspRuntime", "Info.plist"])
@@ -85,7 +83,10 @@ def testPack_whenRuntimeIsIncomplete_raisesInvalidRuntimeError(
 
     with pytest.raises(errors.InvalidRuntimeError, match=missing):
         packer.pack(
-            app=ipa_file, output=tmp_path / "out.ipa", runtime=runtime, build=_BUILD
+            app=ipa_file,
+            output=tmp_path / "out.ipa",
+            runtime=runtime,
+            build_id=_BUILD_ID,
         )
 
 
@@ -94,5 +95,8 @@ def testPack_whenRuntimeIsNotTheFramework_raisesInvalidRuntimeError(
 ) -> None:
     with pytest.raises(errors.InvalidRuntimeError):
         packer.pack(
-            app=ipa_file, output=tmp_path / "out.ipa", runtime=tmp_path, build=_BUILD
+            app=ipa_file,
+            output=tmp_path / "out.ipa",
+            runtime=tmp_path,
+            build_id=_BUILD_ID,
         )

@@ -14,7 +14,7 @@ class OutputExistsError(Error):
 
 
 class InvalidAppError(Error):
-    """The app is not a well-formed archive of a single app."""
+    """The app file cannot be read, or is not a well-formed archive of a single app."""
 
 
 class UnsupportedBinaryError(Error):

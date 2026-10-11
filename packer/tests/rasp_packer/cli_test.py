@@ -7,20 +7,24 @@ import pytest
 
 from rasp_packer import cli
 
-_RASP_APP_ID = "5f0c8a52-3f7e-4d0a-9b8e-2a6f1c4d7e90"
+_APPLICATION_ID = "5f0c8a52-3f7e-4d0a-9b8e-2a6f1c4d7e90"
 _USAGE_ERROR = 2
 
 
 def _pack_arguments(
-    tmp_path: pathlib.Path, *, platform: str = "ios", rasp_app_id: str = _RASP_APP_ID
+    tmp_path: pathlib.Path,
+    *,
+    platform: str = "ios",
+    application_id: str = _APPLICATION_ID,
 ) -> list[str]:
+    """Returns the `rasp pack` arguments for an app and output in `tmp_path`."""
     return [
         "pack",
         str(tmp_path / "app.ipa"),
         "--platform",
         platform,
-        "--rasp-app-id",
-        rasp_app_id,
+        "--application-id",
+        application_id,
         "--output",
         str(tmp_path / "out.ipa"),
     ]
@@ -50,11 +54,11 @@ def testMain_whenPlatformUnknown_exitsWithUsageError(tmp_path: pathlib.Path) -> 
     assert exit_info.value.code == _USAGE_ERROR
 
 
-def testMain_whenRaspAppIdIsNotAUuid_exitsWithUsageError(
+def testMain_whenApplicationIdIsNotAUuid_exitsWithUsageError(
     tmp_path: pathlib.Path,
 ) -> None:
     with pytest.raises(SystemExit) as exit_info:
-        cli.main(_pack_arguments(tmp_path, rasp_app_id="abc"))
+        cli.main(_pack_arguments(tmp_path, application_id="abc"))
 
     assert exit_info.value.code == _USAGE_ERROR
 
