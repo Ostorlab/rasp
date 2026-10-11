@@ -126,6 +126,10 @@ jobs:
           cd "$RUNNER_TEMP"
           venv/bin/python -c 'from rasp_packer.ios import resources
           with resources.framework() as path: print(path)'
+      - name: Pack the test apps
+        run: >-
+          "$RUNNER_TEMP/venv/bin/python" .github/scripts/pack_test_ipas.py
+          packer/tests/apps/ios "$FRAMEWORK_DIR/RaspRuntime.framework"
       - name: Commit the framework and tag the release
         env:
           GH_TOKEN: ${{ github.token }}
