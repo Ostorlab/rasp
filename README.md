@@ -33,7 +33,7 @@ A release is the packer with the runtimes built into it. To make one:
 1. Bump the version to the same number in `packer/pyproject.toml` and `runtime/CMakeLists.txt`, in a pull request.
 2. Run the **Release** workflow on `main`, from the repository's Actions tab.
 
-The workflow builds the iOS framework on macOS and runs the same checks as CI on it. It then makes one commit on top of `main` that adds the framework to the packer, tags it `v<version>`, and pushes only the tag, so `main` never holds a built runtime. It refuses a version that is already released, or a packer and runtime whose versions differ.
+The workflow builds the iOS framework on macOS and runs the same checks as CI on it. It packs each app in [`packer/tests/apps/`](packer/tests/apps/README.md) with the new packer and checks the protected app. It then makes one commit on top of `main` that adds the framework to the packer, tags it `v<version>`, and pushes only the tag, so `main` never holds a built runtime. It refuses a version that is already released, or a packer and runtime whose versions differ.
 
 Install a release with `pip`, as the [packer README](packer/README.md#install) shows.
 
