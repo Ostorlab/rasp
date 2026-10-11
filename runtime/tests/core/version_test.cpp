@@ -1,3 +1,5 @@
+/// Tests that the runtime version is the project version CMake sets.
+
 #include "rasp/version.h"
 
 #include <gtest/gtest.h>

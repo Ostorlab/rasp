@@ -6,9 +6,25 @@ Before you change anything here, read [CONTRIBUTING.md](CONTRIBUTING.md): it lis
 
 ## Layout
 
+The code is grouped the same way at every level. `util/` holds generic helpers that know nothing about RASP. Every other folder is one domain module, named after the job it does: `checks/` produces the observations, and `reporting/` sends them to the ADR server. The shared part of a module is in `core/`, and its platform part is in the folder with the same name under `ios/`. Every check is platform code, so checks are only in the platform folders.
+
 - `core/`: code shared by every platform. It uses no platform API.
-- `ios/`: `RaspRuntime.framework`, the runtime for iOS, and its entry point.
-- `tests/`: tests that run on a development machine, with GoogleTest.
+  - `include/rasp/observation.h`: `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`). Checks and reporting both use it.
+  - `include/rasp/reporting/`: sending the observations to the ADR server.
+    - `event.h`: `Event`, a batch of observations as the ADR server receives it. The install id and session id of an event are `Uuid`s.
+    - `submit_event.h`: the GraphQL `submitEvent` request for an event.
+    - `reporter.h`: `Reporter`, which numbers the batches of a session (`seq`) and sends each one at most once, in order. At most 64 batches wait to be sent: when a 65th is added, the oldest one is dropped and never sent. A batch is never sent again, even when its request fails. `SessionIds` holds the install id and session id that every batch of the session carries.
+    - `transport.h`: `Transport`, the HTTP POST each platform implements with its own network stack.
+  - `include/rasp/util/`: generic helpers.
+    - `json.h`: JSON string writing. It always writes valid JSON: each byte that isn't valid UTF-8 is replaced with U+FFFD.
+    - `logging.h`: `rasp::log` and `kLoggingEnabled`, the development logging that release builds leave out.
+    - `uuid.h`: `Uuid`. `random_uuid` makes a random version 4 one, and `to_string` writes its 36-character text form.
+  - `src/`: the code of these headers, in the same folders.
+- `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it runs the checks.
+  - `src/checks/`: the iOS checks. Each one reports observations, never a verdict.
+    - `example.h`: `example.loaded`, a placeholder that shows where a check goes and how it reports its observations.
+  - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
+- `tests/`: tests that run on a development machine, with GoogleTest. They use the same folders as the code.
 
 ## Build
 
@@ -55,6 +71,20 @@ The framework is written to `build/ios/ios/RaspRuntime.framework`. Its install n
 
 The framework supports iOS 12.0 and later. It doesn't use the libc++ that comes with iOS, which only supports iOS 15 and later. Instead it links a static libc++ built from LLVM 23.1.3 for the same minimum iOS version, with all its symbols hidden. That library is built once and committed under `third_party/libcxx/`, and `cmake/libcxx.cmake` checks its hash and links it. The build steps, the one-line source change it needs, and the CI job that proves the committed library matches the source are described in `third_party/libcxx/README.md`.
 
+## Logs
+
+Only development builds write logs. A release build writes nothing to any log, so a protected app leaves no trace of the runtime in the device's log.
+
+The `RASP_LOGGING` option turns logging on. CMake accepts it only in a Debug build (the build type is compared without case), and only with a single-configuration generator. It refuses every other build type, an empty build type, and multi-configuration generators such as Ninja Multi-Config. On iOS, the development build writes each line to the system log with `os_log`, and the `ios-dev` preset builds it:
+
+```
+cd runtime
+cmake --preset ios-dev
+cmake --build --preset ios-dev
+```
+
+The framework is written to `build/ios-dev/ios/RaspRuntime.framework`. Code writes a log line with `rasp::log` (`core/include/rasp/util/logging.h`), and only inside `if constexpr (rasp::kLoggingEnabled)`. In a release build, the compiler still checks the code in that block, but it generates no code for it, so neither the call nor its text is in the framework.
+
 ## Format and check
 
 The style is in `.clang-format` and the checks are in `.clang-tidy`.
@@ -66,4 +96,4 @@ cmake --preset host
 run-clang-tidy -quiet -p build/host "^$PWD/(?!build/).*\.cpp$"
 ```
 
-CI runs the format and tidy checks, the three host builds and the iOS build (`.github/workflows/runtime.yml`). It also checks that the iOS framework exports no symbols and calls none of the functions `.clang-tidy` forbids.
+CI runs the format and tidy checks, the three host builds, and the iOS release and development builds (`.github/workflows/runtime.yml`). It checks that the release framework exports no symbols, and that it imports none of `exit`, `_Exit`, `quick_exit`, `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `setenv`, `putenv`, `unsetenv`, `setlocale` and `setrlimit`. `.clang-tidy` forbids these functions in the source, and also `abort` and `std::terminate`, which the binary check leaves out. CI also checks that the release framework imports no symbol with `_os_log` in its name and contains no `{public}` text.

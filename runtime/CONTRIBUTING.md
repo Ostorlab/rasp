@@ -33,10 +33,11 @@ ctest --preset host
 | `host-asan` | the same, with AddressSanitizer, LeakSanitizer and UndefinedBehaviorSanitizer |
 | `host-tsan` | the same, with ThreadSanitizer |
 | `ios` | the release framework, the one that ships |
+| `ios-dev` | a development framework that writes logs |
 
 The tests must pass under `host-asan` and `host-tsan`, not only `host`. A memory error or a data race often doesn't fail a test. It corrupts something and crashes later, somewhere else. In a customer's app, that shows up as a random crash nobody can trace back to us. The sanitizers turn these bugs into test failures.
 
-Before pushing, run what CI runs (`.github/workflows/runtime.yml`): clang-format, clang-tidy, the three host presets, and on a Mac, `ios`.
+Before pushing, run what CI runs (`.github/workflows/runtime.yml`): clang-format, clang-tidy, the three host presets, and on a Mac, `ios` and `ios-dev`.
 
 ```
 git ls-files -z -- '*.h' '*.cpp' '*.h.in' | xargs -0 clang-format --dry-run --Werror
@@ -71,7 +72,7 @@ For the same reason, CI enforces three rules on the code that ships:
 
 ### The process belongs to the app
 
-Some state is shared by the whole process: signal handlers, the signal mask, environment variables, the locale and resource limits. All of it belongs to the app, and we never change it. CI rejects these functions, both in the source and in the release binary:
+Some state is shared by the whole process: signal handlers, the signal mask, environment variables, the locale and resource limits. All of it belongs to the app, and we never change it. clang-tidy rejects all of these functions in the source. CI also checks the functions the release binary imports, but that check covers every function below except `abort` and `std::terminate`:
 
 | Functions | Why |
 |---|---|
@@ -108,6 +109,12 @@ On a protected app, the attacker controls the device. They can read our binary, 
 
 A check reports what it saw (`signal`, `source`, `status`, `value`) and never decides whether the device is compromised. The ADR server makes that decision. If the decision were in the app, an attacker could find it in the binary and patch it. On the server, they can't see it, and we can change it without shipping a new runtime.
 
+### No logs in release builds
+
+Anyone with the device and a computer can read its system log, without a jailbreak. If we logged what we check and what we find, an attacker would get exact feedback on every attempt to get around a check. CI checks that the release framework imports no symbol with `_os_log` in its name, and that it contains no `{public}` text, the marker os_log format strings use.
+
+During development, write log lines only with `rasp::log`, and only inside `if constexpr (rasp::kLoggingEnabled)`. In a release build, the compiler still checks the code in that block, but it generates no code for it, so neither the call nor its text ends up in the binary. Never call `os_log`, `printf` or another log function directly.
+
 ### Other rules
 
 - **No exported symbols.** CI checks that the framework exports nothing. Exported names show an attacker where our functions are, and could clash with functions of the same name in the app.
@@ -120,6 +127,6 @@ A check reports what it saw (`signal`, `source`, `status`, `value`) and never de
 - **Fixed-width integers for values sent to the server** (`int32_t`, `int64_t`). They must match the GraphQL types exactly. `int` and `long` change size between platforms. Write every intended conversion with `static_cast`: warnings are errors, and the build rejects silent ones.
 - **Never keep a `std::string_view` or `std::span` beyond the call that received it.** It points into memory it doesn't own, and that memory can be freed while we still use it.
 - **No `<iostream>` or `<regex>`.** Every protected app pays for our binary's size and our load time, and these two add a lot of both.
-- **Platform code goes in its own files** (`src/ios/`, `src/android/`), chosen by CMake. The same shared code builds for both platforms, so it must not contain platform `#if` blocks.
-- **No comments in code**, apart from `///` descriptions in public headers. Names and small functions say what the code does.
-- **Test names** follow `TEST(Suite, action_whenCondition_result)`, for example `TEST_F(Reporter, send_whenRateLimited_waitsAsTheServerSays)`.
+- **Platform code goes in its platform's folder** (`ios/`, `android/`), chosen by CMake. Every check is platform code: it goes in `ios/src/checks/` or `android/src/checks/`. The same shared code builds for both platforms, so it must not contain platform `#if` blocks.
+- **Document every file and function with `///`.** Every C++ file starts with a description of what it holds. A public header documents every public symbol. Every public function says what it does and the cases a caller must know about, describes each parameter with `@param` and, unless it returns `void`, its result with `@return`. Every private function has at least one sentence that says what it does. Write no other comments: names and small functions say how the code does it.
+- **Test names** follow `TEST(Suite, action_whenCondition_result)`, for example `TEST_F(Reporter, add_whenTheQueueIsFull_dropsTheOldestBatch)`.

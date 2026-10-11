@@ -1,9 +1,12 @@
+/// The runtime's version. CMake fills it in from the project version when it configures the build.
+
 #pragma once
 
 #include <string_view>
 
 namespace rasp {
 
+/// The version of this runtime, such as 0.1.0.
 inline constexpr std::string_view kRuntimeVersion = "@PROJECT_VERSION@";
 
 }  // namespace rasp

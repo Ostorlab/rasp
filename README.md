@@ -16,10 +16,9 @@ packer/                 Python packer: a library, with the `rasp` command line a
     ios/                IPA: add the runtime framework
   tests/
 runtime/                C++ runtime libraries, built with CMake
-  core/                 code shared by both platforms: observations, batches, sending them to the ADR server
-  checks/               the checks: shared code, plus platform-specific files where a check needs them
-  android/              Android entry point (JNI) and the .so build
-  ios/                  iOS entry point and the RaspRuntime.framework build
+  core/                 code shared by both platforms: observations, sending them to the ADR server, helpers
+  android/              Android entry point (JNI), the Android checks, and the .so build
+  ios/                  iOS entry point, the iOS checks, and the RaspRuntime.framework build
   tests/                tests that run on a development machine, without a device
 docs/                   notes about this repository
 poc/                    the proof of concept, kept for reference
