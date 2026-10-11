@@ -54,6 +54,8 @@ add_subdirectory(core)
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   include(cmake/libcxx.cmake)
   add_subdirectory(ios)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
+  add_subdirectory(android)
 endif()
 
 if(RASP_BUILD_TESTS)

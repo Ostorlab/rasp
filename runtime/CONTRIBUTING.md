@@ -14,6 +14,8 @@ Most of the rules below follow from these two facts. CI enforces the ones a tool
 | Clang, clang-format, clang-tidy | LLVM 23 |
 | CMake | 4.4.4 |
 | Xcode, for iOS builds | 27.0 |
+| Android NDK, for Android builds | the newest release, as on the CI runner |
+| JDK, for the Android stub | 17 or newer |
 
 The host presets compile with the first `clang` in `PATH`, so put LLVM 23 first: `/usr/lib/llvm-23/bin` on Linux, `$(brew --prefix llvm)/bin` on macOS. clang-format and clang-tidy must come from the same release, because their output changes between versions.
 
@@ -34,10 +36,12 @@ ctest --preset host
 | `host-tsan` | the same, with ThreadSanitizer |
 | `ios` | the release framework, the one that ships |
 | `ios-dev` | a development framework that writes logs |
+| `android` | the release Android library, the one that ships |
+| `android-dev` | a development Android library that writes logs |
 
 The tests must pass under `host-asan` and `host-tsan`, not only `host`. A memory error or a data race often doesn't fail a test. It corrupts something and crashes later, somewhere else. In a customer's app, that shows up as a random crash nobody can trace back to us. The sanitizers turn these bugs into test failures.
 
-Before pushing, run what CI runs (`.github/workflows/runtime.yml`): clang-format, clang-tidy, the three host presets, and on a Mac, `ios` and `ios-dev`.
+Before pushing, run what CI runs (`.github/workflows/runtime.yml`): clang-format, clang-tidy, the three host presets, `android` and `android-dev` with the Android NDK, and on a Mac, `ios` and `ios-dev`.
 
 ```
 git ls-files -z -- '*.h' '*.cpp' '*.h.in' | xargs -0 clang-format --dry-run --Werror
@@ -113,16 +117,24 @@ A check reports what it saw (`signal`, `source`, `status`, `value`) and never de
 
 ### No logs in release builds
 
-Anyone with the device and a computer can read its system log, without a jailbreak. If we logged what we check and what we find, an attacker would get exact feedback on every attempt to get around a check. CI checks that the release framework imports no symbol with `_os_log` in its name, and that it contains no `{public}` text, the marker os_log format strings use.
+Anyone with the device and a computer can read its system log, without a jailbreak. If we logged what we check and what we find, an attacker would get exact feedback on every attempt to get around a check. CI checks that the release framework imports no symbol with `_os_log` in its name, and that it contains no `{public}` text, the marker os_log format strings use. It also checks that the release Android library imports no symbol with `__android_log` in its name, and that it contains no `RaspRuntime` text, the tag of our Android log lines.
 
-During development, write log lines only with `rasp::log`, and only inside `if constexpr (rasp::kLoggingEnabled)`. In a release build, the compiler still checks the code in that block, but it generates no code for it, so neither the call nor its text ends up in the binary. Never call `os_log`, `printf` or another log function directly.
+During development, write log lines only with `rasp::log`, and only inside `if constexpr (rasp::kLoggingEnabled)`. In a release build, the compiler still checks the code in that block, but it generates no code for it, so neither the call nor its text ends up in the binary. Never call `os_log`, `__android_log_write`, `printf` or another log function directly.
 
 ### Other rules
 
-- **No exported symbols.** CI checks that the framework exports nothing. Exported names show an attacker where our functions are, and could clash with functions of the same name in the app.
+- **No exported symbols.** CI checks that the framework exports nothing, and that the Android library exports only the JNI function the stub calls. Exported names show an attacker where our functions are, and could clash with functions of the same name in the app.
 - **Treat everything from outside as hostile.** Server responses, files and system call results can all be forged. Parse with limits and check every value before using it.
 - **No secrets in the source or the binary.** Anything in the binary can be extracted.
 - **Never turn off certificate checks**, not even in a development build. Development code tends to reach release builds.
+
+## Android
+
+The packer points the app's manifest at `co.ostorlab.rasp.RaspStub`, the stub in `android/stub/`. When the app starts, the stub loads `librasp.so` and calls its `raspStart` method. That function runs the checks, then decrypts the app's code and returns it for the stub to load. Decryption happens in native code, never in Java, and the decrypted code stays in memory.
+
+- **`librasp.so` exports only `Java_co_ostorlab_rasp_RaspStub_raspStart`**, the JNI function behind `raspStart`. Everything else, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. A leaked symbol is a handle an attacker can hook, and CI fails if anything else is exported. JNI fixes the name of that function, so `android/.clang-tidy` lets that one name break the naming rule.
+- **The payload cipher must stay byte for byte compatible with the packer's.** It is built on HMAC-SHA256, so the device needs only SHA-256 (`core/include/rasp/util/sha256.h`). The tests decrypt a frame and a payload that the packer made. If you change the cipher on either side, change the other side and these tests with it.
+- **The minimum is API 26**, so the decrypted dex files are loaded from memory and never written to disk.
 
 ## Code
 

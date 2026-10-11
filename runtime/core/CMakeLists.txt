@@ -6,6 +6,7 @@ add_library(rasp_core STATIC
   src/reporting/submit_event.cpp
   src/util/http.cpp
   src/util/json.cpp
+  src/util/sha256.cpp
   src/util/uuid.cpp)
 target_include_directories(rasp_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include

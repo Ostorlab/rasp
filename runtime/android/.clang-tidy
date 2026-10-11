@@ -1,0 +1,3 @@
+InheritParentConfig: true
+CheckOptions:
+  readability-identifier-naming.FunctionIgnoredRegexp: '^Java_co_ostorlab_rasp_RaspStub_[A-Za-z]+$'

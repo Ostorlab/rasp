@@ -13,7 +13,7 @@ inline constexpr bool kLoggingEnabled = RASP_LOGGING_ENABLED;
 ///
 /// Call it only inside `if constexpr (kLoggingEnabled)`. Release builds don't define this function, so neither the
 /// call nor its text ends up in the binary. On iOS, the line goes to the system log through os_log, after the prefix
-/// `RaspRuntime`.
+/// `RaspRuntime`. On Android, it goes to the system log through __android_log_write, with the tag `RaspRuntime`.
 ///
 /// @param message The text of the line.
 void log(std::string_view message) noexcept;
