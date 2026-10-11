@@ -1,9 +1,10 @@
-/// Observation, the raw fact a check reports, and its description for logs.
+/// Observation, the raw fact a check reports, the helpers that build one, and its description for logs.
 
 #pragma once
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -42,6 +43,28 @@ struct Observation {
   /// @return `true` when both have the same signal, source, status and value.
   [[nodiscard]] friend bool operator==(const Observation& left, const Observation& right) = default;
 };
+
+/// An observation for a check that ran and produced `value`.
+///
+/// @param signal What was observed, such as jb.fork_ok.
+/// @param source How it was read, such as fork.
+/// @param value What the check found.
+/// @return The observation, with status `kOk`.
+[[nodiscard]] Observation observed(std::string_view signal, std::string_view source, Value value);
+
+/// An observation for a check that cannot run here, with no value.
+///
+/// @param signal What the check would observe, such as jb.fork_ok.
+/// @param source How the check would read it, such as fork.
+/// @return The observation, with status `kUnsupported` and an empty value.
+[[nodiscard]] Observation unsupported(std::string_view signal, std::string_view source);
+
+/// An observation for a check that ran but failed, with no value.
+///
+/// @param signal What the check tried to observe, such as jb.sandbox_escape.
+/// @param source How the check tried to read it, such as open.
+/// @return The observation, with status `kError` and an empty value.
+[[nodiscard]] Observation failed(std::string_view signal, std::string_view source);
 
 /// Writes an observation as one line of text, for development logs.
 ///

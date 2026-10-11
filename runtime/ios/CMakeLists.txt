@@ -2,7 +2,7 @@ set(RASP_FRAMEWORK_IDENTIFIER co.ostorlab.rasp.runtime)
 
 add_library(RaspRuntime SHARED
   src/entry.cpp
-  src/checks/example.cpp
+  src/checks/jailbreak.cpp
   src/reporting/install_id.cpp
   src/reporting/network_transport.cpp
   src/reporting/thread.cpp)

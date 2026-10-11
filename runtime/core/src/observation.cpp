@@ -1,10 +1,11 @@
-/// describe: writes an observation as one line of text, for logs.
+/// observed, unsupported and failed: build an observation. describe: writes one as one line of text, for logs.
 
 #include "rasp/observation.h"
 
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -51,6 +52,33 @@ struct ValueText {
 };
 
 }  // namespace
+
+Observation observed(std::string_view signal, std::string_view source, Value value) {
+  return Observation{
+      .signal = std::string(signal),
+      .source = std::string(source),
+      .status = Status::kOk,
+      .value = std::move(value),
+  };
+}
+
+Observation unsupported(std::string_view signal, std::string_view source) {
+  return Observation{
+      .signal = std::string(signal),
+      .source = std::string(source),
+      .status = Status::kUnsupported,
+      .value = {},
+  };
+}
+
+Observation failed(std::string_view signal, std::string_view source) {
+  return Observation{
+      .signal = std::string(signal),
+      .source = std::string(source),
+      .status = Status::kError,
+      .value = {},
+  };
+}
 
 std::string describe(const Observation& observation) {
   const std::string text =

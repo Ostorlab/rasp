@@ -47,3 +47,5 @@ The design is described in the `Ostorlab/design-docs` repository:
 ## Contributing
 
 Every change goes through a pull request.
+
+Known work that isn't done yet is listed in [`TODO.md`](TODO.md).

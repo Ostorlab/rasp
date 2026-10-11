@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-#include "checks/example.h"
+#include "checks/jailbreak.h"
 #include "rasp/observation.h"
 #include "rasp/util/logging.h"
 #include "rasp/version.h"
@@ -15,7 +15,7 @@ namespace {
 
 /// Runs the checks, logs them in a development build, and starts the thread that reports them to the ADR server.
 __attribute__((constructor)) void rasp_start() noexcept {
-  std::vector<rasp::Observation> observations = rasp::ios::checks::example();
+  std::vector<rasp::Observation> observations = rasp::ios::checks::jailbreak();
   if constexpr (rasp::kLoggingEnabled) {
     rasp::log(std::string(rasp::kRuntimeVersion) + " loaded");
     for (const rasp::Observation& observation : observations) {
