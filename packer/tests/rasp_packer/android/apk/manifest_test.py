@@ -2,40 +2,70 @@
 
 import pathlib
 
+import pytest
+
+from rasp_packer import errors
+from rasp_packer import identity
+from rasp_packer.android.apk import axml
 from rasp_packer.android.apk import manifest
 
 _FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 
-def testApplicationClass_whenDeclared_returnsIt() -> None:
+def testAppIdentity_whenPackageAndVersionAreDeclared_returnsThem() -> None:
+    data = (_FIXTURES / "manifest_with_application_and_version.bin").read_bytes()
+
+    assert manifest.app_identity(data) == identity.AppIdentity(
+        package_name="com.example.withapp", version="2.4.1"
+    )
+
+
+def testAppIdentity_whenNoVersionName_raisesInvalidApkError() -> None:
     data = (_FIXTURES / "manifest_with_application.bin").read_bytes()
-    assert manifest.application_class(data) == "com.example.withapp.MyApp"
+
+    with pytest.raises(errors.InvalidApkError, match="versionName"):
+        manifest.app_identity(data)
 
 
-def testApplicationClass_whenAbsent_returnsDefault() -> None:
-    data = (_FIXTURES / "manifest_without_application.bin").read_bytes()
-    assert manifest.application_class(data) == manifest.DEFAULT_APPLICATION_CLASS
+def testAppIdentity_whenTheVersionNameIsAResourceReference_raisesInvalidApkError() -> (
+    None
+):
+    data = (_FIXTURES / "manifest_with_version_reference.bin").read_bytes()
+
+    with pytest.raises(errors.InvalidApkError, match="versionName"):
+        manifest.app_identity(data)
 
 
-def testSetApplicationClass_whenAbsent_setsTheName() -> None:
-    data = (_FIXTURES / "manifest_without_application.bin").read_bytes()
-    edited = manifest.set_application_class(data, "co.ostorlab.rasp.RaspStub")
-    assert manifest.application_class(edited) == "co.ostorlab.rasp.RaspStub"
-
-
-def testApplicationClass_whenRelativeDottedName_prependsThePackage() -> None:
+def testRaiseMinSdkVersion_whenLower_raisesIt() -> None:
     data = (_FIXTURES / "manifest_with_application.bin").read_bytes()
-    edited = manifest.set_application_class(data, ".MyApp")
-    assert manifest.application_class(edited) == "com.example.withapp.MyApp"
+
+    edited = manifest.raise_min_sdk_version(data, 26)
+
+    assert axml.read_min_sdk_version(edited) == 26
 
 
-def testApplicationClass_whenBareName_prependsThePackage() -> None:
+def testRaiseMinSdkVersion_whenNotLower_returnsTheManifestUnchanged() -> None:
     data = (_FIXTURES / "manifest_with_application.bin").read_bytes()
-    edited = manifest.set_application_class(data, "MyApp")
-    assert manifest.application_class(edited) == "com.example.withapp.MyApp"
+
+    assert manifest.raise_min_sdk_version(data, 21) == data
 
 
-def testApplicationClass_whenFullyQualifiedName_returnsItUnchanged() -> None:
+def testRaiseMinSdkVersion_whenAbsent_raisesInvalidApkError() -> None:
+    data = (_FIXTURES / "manifest_without_min_sdk.bin").read_bytes()
+
+    with pytest.raises(errors.InvalidApkError, match="minSdkVersion"):
+        manifest.raise_min_sdk_version(data, 26)
+
+
+def testAppComponentFactory_whenAbsent_returnsNone() -> None:
     data = (_FIXTURES / "manifest_with_application.bin").read_bytes()
-    edited = manifest.set_application_class(data, "com.other.MyApp")
-    assert manifest.application_class(edited) == "com.other.MyApp"
+
+    assert manifest.app_component_factory(data) is None
+
+
+def testSetAppComponentFactory_whenAbsent_addsIt() -> None:
+    data = (_FIXTURES / "manifest_with_application.bin").read_bytes()
+
+    edited = manifest.set_app_component_factory(data, "co.ostorlab.rasp.RaspStub")
+
+    assert manifest.app_component_factory(edited) == "co.ostorlab.rasp.RaspStub"

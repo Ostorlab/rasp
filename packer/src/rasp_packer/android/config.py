@@ -1,8 +1,10 @@
 """The runtime configuration the packer writes into the protected APK.
 
-The packer writes this as an asset, next to the encrypted payload. The stub
-reads the payload key from it and passes it to the native runtime, which uses the
-key to decrypt the payload.
+The packer writes this as an asset, next to the encrypted payload. It is build
+metadata: the native runtime does not read it. The runtime reads the payload key
+from the raw ``key.bin`` asset and the payload from ``payload.bin``, both stored
+uncompressed, so it can read them from the APK without parsing JSON or inflating
+anything.
 """
 
 import dataclasses
@@ -12,6 +14,7 @@ from typing import Self
 
 ASSET_DIRECTORY = "assets/rasp"
 CONFIG_ENTRY = f"{ASSET_DIRECTORY}/config.json"
+KEY_ENTRY = f"{ASSET_DIRECTORY}/key.bin"
 PAYLOAD_ENTRY = f"{ASSET_DIRECTORY}/payload.bin"
 
 

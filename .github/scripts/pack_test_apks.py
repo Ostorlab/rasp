@@ -165,8 +165,6 @@ def _payload_problems(
         problems.append(
             f"the runtime config records {runtime_config.build_id!r}, not the build id passed to the packer"
         )
-    if len(runtime_config.application_class) == 0:
-        problems.append("the runtime config records no original application class")
     if len(archive.read(config.PAYLOAD_ENTRY)) == 0:
         problems.append("the encrypted payload is empty")
     return problems
@@ -175,13 +173,13 @@ def _payload_problems(
 def _manifest_problems(
     archive: zipfile.ZipFile, names: collections.abc.Set[str]
 ) -> list[str]:
-    """Checks that the manifest points its application at the stub class."""
+    """Checks that the manifest names the stub as its component factory."""
     manifest_entry = "AndroidManifest.xml"
     if manifest_entry not in names:
         return ["the protected app has no AndroidManifest.xml"]
-    application_class = axml.read_application_class(archive.read(manifest_entry))
-    if application_class != resources.STUB_APPLICATION_CLASS:
-        return [f"the manifest does not point at {resources.STUB_APPLICATION_CLASS}"]
+    factory = axml.read_app_component_factory(archive.read(manifest_entry))
+    if factory != resources.STUB_FACTORY_CLASS:
+        return [f"the manifest does not name {resources.STUB_FACTORY_CLASS} as its component factory"]
     return []
 
 

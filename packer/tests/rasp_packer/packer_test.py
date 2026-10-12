@@ -8,22 +8,11 @@ from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import packer
 from rasp_packer import platforms
+from rasp_packer.android import packer as android_packer
 from rasp_packer.ios import packer as ios_packer
 
 _BUILD_ID = "a" * 64
 _IDENTITY = identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
-
-
-def testPack_whenAndroidApp_raisesUnsupportedPlatformError(
-    tmp_path: pathlib.Path,
-) -> None:
-    with pytest.raises(errors.UnsupportedPlatformError, match="android"):
-        packer.pack(
-            app=tmp_path / "app.apk",
-            platform=platforms.Platform.ANDROID,
-            output=tmp_path / "out.apk",
-            build_id=_BUILD_ID,
-        )
 
 
 def testPack_whenIosApp_packsWithTheGivenBuildId(
@@ -116,3 +105,55 @@ def testPack_whenOutputExists_raisesOutputExistsError(tmp_path: pathlib.Path) ->
             output=output,
             build_id=_BUILD_ID,
         )
+
+
+def testPack_whenAndroidApp_packsWithTheGivenBuildId(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app.apk"
+    app.write_bytes(b"an apk")
+    calls: dict[str, object] = {}
+
+    def fake_pack(
+        *, app: pathlib.Path, output: pathlib.Path, build_id: object, **_: object
+    ) -> identity.AppIdentity:
+        calls["app"] = app
+        calls["output"] = output
+        calls["build_id"] = build_id
+        return _IDENTITY
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+    packer.pack(
+        app=app,
+        platform=platforms.Platform.ANDROID,
+        output=tmp_path / "out.apk",
+        build_id=_BUILD_ID,
+    )
+
+    assert calls == {
+        "app": app,
+        "output": tmp_path / "out.apk",
+        "build_id": _BUILD_ID,
+    }
+
+
+def testPack_whenAndroidApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app.apk"
+    app.write_bytes(b"an apk")
+    monkeypatch.setattr(android_packer, "pack", lambda **_: _IDENTITY)
+
+    result = packer.pack(
+        app=app,
+        platform=platforms.Platform.ANDROID,
+        output=tmp_path / "out.apk",
+        build_id=_BUILD_ID,
+    )
+
+    assert result == packer.PackResult(
+        output=tmp_path / "out.apk",
+        package_name="dev.ostorlab.demo",
+        version="1.2.3",
+        build_id=_BUILD_ID,
+    )

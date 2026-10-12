@@ -5,10 +5,6 @@ class Error(Exception):
     """Base error of the packer."""
 
 
-class UnsupportedPlatformError(Error):
-    """The packer cannot pack apps of this platform."""
-
-
 class InvalidApkError(Error):
     """The app is not a valid APK, or is missing something the packer needs."""
 
@@ -23,6 +19,10 @@ class InvalidBuildIdError(Error):
 
 class MissingRuntimeArtifactError(Error):
     """A prebuilt runtime artifact the packer needs is not present."""
+
+
+class UnsupportedAbiError(Error):
+    """The app ships native libraries for an ABI the runtime is not built for."""
 
 
 class OutputExistsError(Error):

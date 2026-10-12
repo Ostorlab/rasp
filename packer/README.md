@@ -22,9 +22,30 @@ result = packer.pack(
 rasp pack app.ipa --platform ios --build-id e6a8373149e83d008a5212b34bdd23bf637ad9561483c7a3c43b0a157c3f2a18 --output app-protected.ipa
 ```
 
-`pack` returns the path of the protected app, the app's package name and version (on iOS, `CFBundleIdentifier` and `CFBundleShortVersionString` from its `Info.plist`), and the build id.
+`pack` returns the path of the protected app, the app's package name and version (on iOS, `CFBundleIdentifier` and `CFBundleShortVersionString` from its `Info.plist`; on Android, the `package` and `android:versionName` of its manifest), and the build id.
 
 The runtime is bundled in the packer.
+
+## Android
+
+For Android the packer protects the app's code:
+
+- it encrypts the app's dex files (`classes.dex`, `classes2.dex`, ...) and stores them as the asset `assets/rasp/payload.bin`;
+- it replaces `classes.dex` with a small stub, and sets `<application android:appComponentFactory>` to the stub's class, `co.ostorlab.rasp.RaspStub`, while leaving the app's own `<application android:name>` alone;
+- it adds the native runtime as `lib/<abi>/librasp.so`, for each ABI the app has native libraries for, or for every ABI the runtime is built for when the app has none. Android installs the native libraries of one ABI only, so each of the app's ABIs needs the runtime. An app with native libraries for an ABI the runtime isn't built for is refused with `UnsupportedAbiError`;
+- it raises the app's `android:minSdkVersion` to 31 when it is lower. The stub loads the dex files from memory as an `AppComponentFactory`, through a class loader with a native-library path, which needs Android 12 (API 31). The protected app then doesn't install on older devices;
+- it writes the asset `assets/rasp/config.json`, which the stub reads: the payload key, which the stub passes to the native runtime, the build id and the names of the dex files;
+- it removes the app's v1 signature files from `META-INF/`, since the customer signs the protected APK again.
+
+It reads the app's package and version from the `<manifest>` element. An APK whose manifest has no package, or no literal `android:versionName` (for example an `android:versionName` set to a `@string` resource), is refused with `InvalidApkError`, and so is one without a literal `android:minSdkVersion` on `<uses-sdk>`. An APK that already holds a payload, or whose manifest already names the stub as its component factory, is refused with `AlreadyProtectedError`.
+
+At run time Android loads the stub as the app's component factory; the stub loads the runtime; the runtime runs its pre-decryption checks and, if they pass, decrypts the dex files; the stub then serves them from memory, and Android creates the app's own Application and components from them.
+
+The stub and the native runtime are prebuilt by the runtime build and live under `src/rasp_packer/android/resources/` (see the README there). Without them the packer raises `MissingRuntimeArtifactError`.
+
+The binary `AndroidManifest.xml` is edited in place by `android/apk/axml.py`, so the packer needs no Android build tool. The protected APK is returned aligned, with native libraries on 16 KB page boundaries and other stored entries on 4-byte boundaries, so the customer signs it directly with no separate `zipalign` step.
+
+First version: the payload key is written in cleartext in `config.json`. The dex encryption raises the effort needed to read the app's code, but on its own does not defeat a determined analyst who reads the key in `config.json`. `TODO.md` at the repository root tracks this limit.
 
 ## Install
 
@@ -45,7 +66,7 @@ pip install rasp-packer==X.Y.Z
 
 When pip needs credentials for Artifact Registry, it asks keyring, and the helper gets a short-lived access token from the Google Cloud credentials above. The second command points `--index-url` at Artifact Registry only, so pip can't take `rasp-packer` from PyPI even if a package with that name exists there, and `--force-reinstall` replaces a copy of `rasp-packer` installed from anywhere else. The third command finds `rasp-packer==X.Y.Z` already installed, reads the dependencies it declares, and installs them from PyPI.
 
-Only a release has the runtime in it. A checkout of `main` has no runtime, so its packer raises `InvalidRuntimeError` when it packs an app.
+Only a release has the prebuilt runtime in it: the iOS framework, and the Android stub and native libraries. A checkout of `main` has none of them, so its packer raises `InvalidRuntimeError` when it packs an IPA, and `MissingRuntimeArtifactError` when it packs an APK.
 
 ## Layout
 
@@ -60,6 +81,15 @@ Only a release has the runtime in it. A checkout of `main` has no runtime, so it
   - `packer.py`: embeds `RaspRuntime.framework`, writes the build id (`RaspBuildId`) into its `Info.plist`, and removes the app's `_CodeSignature`.
   - `resources.py`: locates the `RaspRuntime.framework` that ships with the packer, under `resources/` (see the README there). The framework is prebuilt by the runtime build; without it the packer raises `InvalidRuntimeError`.
 - `src/rasp_packer/android/`: packing of APKs.
+  - `packer.py`: the Android `pack`. It encrypts the dex files into the payload, puts the stub in place of `classes.dex`, adds `librasp.so` for the app's ABIs, sets the manifest's `appComponentFactory` to the stub, raises its `minSdkVersion`, writes `config.json`, and removes the v1 signature files.
+  - `apk/`: reading and editing the APK.
+    - `archive.py`: reading and repacking the APK (a ZIP).
+    - `axml.py`: reading and editing the binary `AndroidManifest.xml`.
+    - `manifest.py`: the layer over `axml.py` for the component factory, the app's package and version, and its minimum API level.
+  - `cipher.py`: the authenticated cipher for the payload.
+  - `payload.py`: packing the dex files into the encrypted payload.
+  - `config.py`: the runtime config written into the APK.
+  - `resources.py`: locating the prebuilt stub and native libraries.
 - `tests/`: one test file per source file, at the same path, named `<module>_test.py`.
 
 ## Development
