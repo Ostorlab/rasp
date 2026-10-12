@@ -21,6 +21,10 @@ class InvalidBuildIdError(Error):
     """The build id cannot be written into the app."""
 
 
+class MissingRuntimeArtifactError(Error):
+    """A prebuilt runtime artifact the packer needs is not present."""
+
+
 class OutputExistsError(Error):
     """The path to write the protected app to already exists."""
 
