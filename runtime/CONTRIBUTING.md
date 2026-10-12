@@ -130,11 +130,14 @@ During development, write log lines only with `rasp::log`, and only inside `if c
 
 ## Android
 
-The packer points the app's manifest at `co.ostorlab.rasp.RaspStub`, the stub in `android/stub/`. When the app starts, the stub loads `librasp.so` and calls its `raspStart` method. That function runs the checks, then decrypts the app's code and returns it for the stub to load. Decryption happens in native code, never in Java, and the decrypted code stays in memory.
+The packer points the app's manifest at `co.ostorlab.rasp.RaspStub`, the stub in `android/stub/`. When the app starts, the stub loads `librasp.so` and calls its `raspStart` method. That function runs the checks and starts the thread that reports them, then decrypts the app's code and returns it for the stub to load. Decryption happens in native code, never in Java, and the decrypted code stays in memory.
 
 - **`librasp.so` exports only `Java_co_ostorlab_rasp_RaspStub_raspStart`**, the JNI function behind `raspStart`. Everything else, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. A leaked symbol is a handle an attacker can hook, and CI fails if anything else is exported. JNI fixes the name of that function, so `android/.clang-tidy` lets that one name break the naming rule.
 - **The payload cipher must stay byte for byte compatible with the packer's.** It is built on HMAC-SHA256, so the device needs only SHA-256 (`core/include/rasp/util/sha256.h`). The tests decrypt a frame and a payload that the packer made. If you change the cipher on either side, change the other side and these tests with it.
 - **The minimum is API 26**, so the decrypted dex files are loaded from memory and never written to disk.
+- **The reporting thread must detach itself from the JVM before it ends.** It calls Java, so it attaches itself with `AttachCurrentThread`. ART aborts the process when a native thread ends while it is still attached, so every path that attached must call `DetachCurrentThread`.
+- **Every JNI call is followed by an exception check.** A Java exception raised during a JNI call stays pending until native code clears it, and calling most JNI functions while one is pending is an error. The transport checks after each call, clears the exception and gives up quietly. That includes the `SecurityException` an app without the `INTERNET` permission gets: the packer doesn't add the permission, and such an app simply sends nothing.
+- **The transport is Java's `HttpsURLConnection`, called through JNI.** The platform does TLS and checks the server's certificate and host name, as Network.framework does on iOS. Don't replace it with a raw `SSLSocket`, which doesn't check the host name.
 
 ## Code
 

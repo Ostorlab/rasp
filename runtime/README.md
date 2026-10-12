@@ -13,8 +13,10 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
   - `include/rasp/reporting/`: sending the observations to the ADR server.
     - `event.h`: `Event`, a batch of observations as the ADR server receives it. The install id and session id of an event are `Uuid`s.
     - `submit_event.h`: the GraphQL `submitEvent` request for an event.
+    - `install_id.h`: `load_install_id`, which keeps the install id in a 16-byte file, in a directory each platform chooses. The first launch stores a random id, and later launches read it back. When the file exists but can't be read, the launch uses a random id of its own and leaves the file untouched.
     - `reporter.h`: `Reporter`, which numbers the batches of a session (`seq`) and sends each one at most once, in order. At most 64 batches wait to be sent: when a 65th is added, the oldest one is dropped and never sent. A batch is never sent again, even when its request fails. `SessionIds` holds the install id and session id that every batch of the session carries.
     - `transport.h`: `Transport`, the HTTP POST each platform implements with its own network stack.
+    - `server.h`: `kServerHost` and `kServerPath`, the ADR server the runtime reports to, `adr.ostorlab.co/apis/graphql`.
   - `include/rasp/util/`: generic helpers.
     - `http.h`: `post_request`, the text of an HTTP/1.1 POST with a JSON body. It refuses a host or a path that isn't made only of visible ASCII characters, and a path that doesn't start with `/`, so neither can change the request line or add a header.
     - `json.h`: JSON string writing. It always writes valid JSON: each byte that isn't valid UTF-8 is replaced with U+FFFD.
@@ -27,15 +29,17 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
     - `example.h`: `example.loaded`, a placeholder that shows where a check goes and how it reports its observations.
   - `src/reporting/network_transport.h`: `NetworkTransport`, the iOS transport. Each post opens a TLS connection to the server on port 443 with Network.framework, which checks the server's certificate, writes the request, waits for the start of the answer, and closes the connection. One timeout covers the whole post, from opening the connection to the start of the answer.
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
-- `android/`: `librasp.so`, the runtime for Android, and the stub that loads it. When the app starts, the stub calls the library, which runs the checks and gives back the app's code.
-  - `src/entry.cpp`: `Java_co_ostorlab_rasp_RaspStub_raspStart`, the JNI function the stub calls. It runs the checks, then decrypts the app's dex files and returns them to the stub.
+- `android/`: `librasp.so`, the runtime for Android, and the stub that loads it. When the app starts, the stub calls the library, which runs the checks, starts the thread that reports them, and gives back the app's code.
+  - `src/entry.cpp`: `Java_co_ostorlab_rasp_RaspStub_raspStart`, the JNI function the stub calls. It runs the checks and starts the thread that reports them, then decrypts the app's dex files and returns them to the stub.
   - `src/checks/`: the Android checks. Each one reports observations, never a verdict.
     - `example.h`: `example.loaded`, a placeholder that shows where a check goes and how it reports its observations.
   - `src/payload/`: recovering the app's dex files, which the packer encrypted.
     - `cipher.h`: `decrypt`, the native counterpart of the packer's Android cipher. It checks a frame's HMAC-SHA256 tag first, and only then decrypts it with an HMAC-SHA256 keystream.
     - `payload.h`: `Dex` and `unpack`, which decrypts the payload and reads the app's dex files from it, in load order.
+  - `src/reporting/thread.h`: `start_reporting`, the reporting thread. It attaches itself to the JVM, loads the install id from the app's no-backup files directory, makes a session id, sends the launch's observations as one batch, detaches itself from the JVM, and ends. Nothing is sent when the app's `config.json` has no build id.
+  - `src/reporting/https_transport.h`: `HttpsTransport`, the Android transport. Each post calls Java's `HttpsURLConnection` through JNI: the platform does TLS and checks the server's certificate and host name. It writes the request, waits for the start of the answer, and closes the connection. The timeout is Java's connect timeout and read timeout, which bound each step, not the whole post, and don't cover the DNS lookup. An app without the `INTERNET` permission sends nothing, and the packer doesn't add that permission.
   - `src/util/logging.cpp`: the Android backend of `rasp::log`, which writes to the system log with `__android_log_write`.
-  - `stub/`: `co/ostorlab/rasp/RaspStub.java`, the loader the packer points the manifest at, and `build.sh`, which builds it into `stub.dex`.
+  - `stub/`: `co/ostorlab/rasp/RaspStub.java`, the loader the packer points the manifest at, and `build.sh`, which builds it into `stub.dex`. The stub reads the key and the build id from `assets/rasp/config.json` and gives them to the library, with the app's no-backup files directory for the install id.
 - `tests/`: tests that run on a development machine, with GoogleTest. They use the same folders as the code.
 
 ## Build

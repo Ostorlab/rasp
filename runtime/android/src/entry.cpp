@@ -8,6 +8,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "checks/example.h"
@@ -15,6 +16,7 @@
 #include "rasp/observation.h"
 #include "rasp/util/logging.h"
 #include "rasp/version.h"
+#include "reporting/thread.h"
 
 namespace {
 
@@ -28,6 +30,38 @@ namespace {
   std::ranges::copy(std::span(static_cast<const std::uint8_t*>(elements), copy.size()), copy.begin());
   env->ReleasePrimitiveArrayCritical(array, elements, JNI_ABORT);
   return copy;
+}
+
+/// Copies a Java string as modified UTF-8, or gives nothing when the JVM can't give access to it.
+[[nodiscard]] std::optional<std::string> read_string(JNIEnv* env, jstring string) {
+  const char* const characters = env->GetStringUTFChars(string, nullptr);
+  if (characters == nullptr) {
+    env->ExceptionClear();
+    return std::nullopt;
+  }
+  std::string copy(characters);
+  env->ReleaseStringUTFChars(string, characters);
+  return copy;
+}
+
+/// Starts the thread that reports `observations`, unless `build_id` is null or the JVM can't give what it needs.
+void report(JNIEnv* env, jstring build_id, jstring directory, std::vector<rasp::Observation> observations) {
+  if (build_id == nullptr) {
+    return;
+  }
+  JavaVM* vm = nullptr;
+  if (env->GetJavaVM(&vm) != JNI_OK) {
+    return;
+  }
+  std::optional<std::string> build_id_text = read_string(env, build_id);
+  if (!build_id_text) {
+    return;
+  }
+  std::optional<std::string> directory_text = directory == nullptr ? std::string() : read_string(env, directory);
+  if (!directory_text) {
+    return;
+  }
+  rasp::android::start_reporting(vm, std::move(*build_id_text), std::move(*directory_text), std::move(observations));
 }
 
 /// Makes a Java byte array that holds `data`, or gives null when the JVM can't allocate it.
@@ -71,28 +105,37 @@ namespace {
 
 }  // namespace
 
-/// Runs the checks, then recovers the app's dex files from the payload for the stub to load.
+/// Runs the checks, starts the thread that reports them to the ADR server, then recovers the app's dex files from the
+/// payload for the stub to load.
 ///
-/// In a development build, it also logs the runtime version and each observation. The dex files are decrypted in
-/// memory and never written to disk. When it returns null, the JVM may have a pending exception, such as an
-/// OutOfMemoryError.
+/// In a development build, it also logs the runtime version and each observation. Reporting starts before the
+/// payload is decrypted, on the runtime's own thread (see rasp::android::start_reporting), so the app never waits for
+/// the network. The dex files are decrypted in memory and never written to disk. When it returns null, the JVM may
+/// have a pending exception, such as an OutOfMemoryError.
 ///
 /// @param env The JNI environment of the calling thread.
 /// @param stub_class The RaspStub class, which JNI passes to a static native method. It is not used.
 /// @param key The payload key, from the app's `assets/rasp/config.json`.
 /// @param payload The packed payload, the app's `assets/rasp/payload.bin`.
+/// @param build_id The id the packer gave the protected build, from the app's `assets/rasp/config.json`. When it is
+/// null, nothing is reported. When it is empty because the app wasn't packed, nothing is sent.
+/// @param directory The directory that keeps the install id from one launch to the next, the app's no-backup files
+/// directory. When it is null, the install id is a new random one, for this launch only.
 /// @return The bytes of each dex file, in load order. Null when `key` or `payload` is null, when the payload can't be
 /// decrypted or read (see rasp::android::payload::unpack), or when the JVM can't allocate the arrays.
 extern "C" JNIEXPORT jobjectArray JNICALL Java_co_ostorlab_rasp_RaspStub_raspStart(JNIEnv* env,
                                                                                    [[maybe_unused]] jclass stub_class,
-                                                                                   jbyteArray key, jbyteArray payload) {
-  const std::vector<rasp::Observation> observations = rasp::android::checks::example();
+                                                                                   jbyteArray key, jbyteArray payload,
+                                                                                   jstring build_id,
+                                                                                   jstring directory) {
+  std::vector<rasp::Observation> observations = rasp::android::checks::example();
   if constexpr (rasp::kLoggingEnabled) {
     rasp::log(std::string(rasp::kRuntimeVersion) + " loaded");
     for (const rasp::Observation& observation : observations) {
       rasp::log(rasp::describe(observation));
     }
   }
+  report(env, build_id, directory, std::move(observations));
 
   if (key == nullptr || payload == nullptr) {
     return nullptr;
