@@ -9,6 +9,13 @@ import zipfile
 import pytest
 
 _DATA = pathlib.Path(__file__).parent / "ios" / "data"
+PACKAGE_NAME = "dev.ostorlab.demo"
+VERSION = "1.2.3"
+APP_INFO = {
+    "CFBundleExecutable": "Demo",
+    "CFBundleIdentifier": PACKAGE_NAME,
+    "CFBundleShortVersionString": VERSION,
+}
 
 
 @pytest.fixture
@@ -43,12 +50,13 @@ def make_ipa(tmp_path: pathlib.Path) -> collections.abc.Callable[..., pathlib.Pa
         *,
         executable_source: pathlib.Path = _DATA / "arm64_app",
         extra_entries: collections.abc.Mapping[str, bytes] | None = None,
+        info: collections.abc.Mapping[str, str] | None = None,
     ) -> pathlib.Path:
         path = tmp_path / "Demo.ipa"
         with zipfile.ZipFile(path, "w") as archive:
             archive.writestr(
                 "Payload/Demo.app/Info.plist",
-                plistlib.dumps({"CFBundleExecutable": "Demo"}),
+                plistlib.dumps(dict(APP_INFO if info is None else info)),
             )
             binary = zipfile.ZipInfo("Payload/Demo.app/Demo")
             binary.external_attr = 0o100755 << 16

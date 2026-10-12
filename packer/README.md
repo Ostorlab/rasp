@@ -6,7 +6,6 @@ The packer is a library. `rasp_packer.packer.pack` is its entry point, and the `
 
 ```python
 import pathlib
-import uuid
 
 from rasp_packer import packer
 from rasp_packer import platforms
@@ -15,13 +14,15 @@ result = packer.pack(
     app=pathlib.Path("app.ipa"),
     platform=platforms.Platform.IOS,
     output=pathlib.Path("app-protected.ipa"),
-    application_id=uuid.UUID("5f0c8a52-3f7e-4d0a-9b8e-2a6f1c4d7e90"),
+    build_id="e6a8373149e83d008a5212b34bdd23bf637ad9561483c7a3c43b0a157c3f2a18",
 )
 ```
 
 ```
-rasp pack app.ipa --platform ios --application-id 5f0c8a52-3f7e-4d0a-9b8e-2a6f1c4d7e90 --output app-protected.ipa
+rasp pack app.ipa --platform ios --build-id e6a8373149e83d008a5212b34bdd23bf637ad9561483c7a3c43b0a157c3f2a18 --output app-protected.ipa
 ```
+
+`pack` returns the path of the protected app, the app's package name and version (on iOS, `CFBundleIdentifier` and `CFBundleShortVersionString` from its `Info.plist`), and the build id.
 
 The runtime is bundled in the packer.
 
@@ -39,11 +40,11 @@ Only a release tag has the runtime in it. A checkout of `main` has no runtime, s
 
 - `src/rasp_packer/packer.py`: `pack`, the entry point.
 - `src/rasp_packer/platforms.py`: the platforms, Android and iOS.
-- `src/rasp_packer/build.py`: `compute_id`, the deterministic build id the packer writes into the app.
-- `src/rasp_packer/protection_versions.py`: the protection version of each platform, part of every build id.
+- `src/rasp_packer/identity.py`: `AppIdentity`, the package name and version read from the app.
+- `src/rasp_packer/protection_versions.py`: the protection version of each platform, part of every build id. It is public: the caller reads it to compute the build id.
 - `src/rasp_packer/cli.py`: the `rasp` command line.
 - `src/rasp_packer/ios/`: packing of IPAs.
-  - `ipa.py`: unpacks and repacks the IPA, keeping file permissions.
+  - `ipa.py`: unpacks and repacks the IPA, keeping file permissions, and reads the app's identity (`CFBundleIdentifier` and `CFBundleShortVersionString`) from its `Info.plist`.
   - `macho.py`: makes the main executable load the runtime (`LC_LOAD_DYLIB` and `LC_RPATH`) and removes its code signature.
   - `packer.py`: embeds `RaspRuntime.framework`, writes the build id (`RaspBuildId`) into its `Info.plist`, and removes the app's `_CodeSignature`.
   - `resources.py`: locates the `RaspRuntime.framework` that ships with the packer, under `resources/` (see the README there). The framework is prebuilt by the runtime build; without it the packer raises `InvalidRuntimeError`.
@@ -67,6 +68,8 @@ CI runs the same commands (`.github/workflows/packer.yml`).
 
 ## Build id and protection version
 
-Every protected build gets a deterministic build id: `rasp-build/v1:` followed by the hex SHA-256 over these parts, each prefixed with its length: the scheme `rasp-build/v1`, the application id, the SHA-256 of the input app file, the platform name, and the platform's protection version. The same app version protected at the same protection version always gets the same build id.
+Every protected build has a build id, which the packer writes into the app. The caller computes it and passes it to `pack` (or to `rasp pack --build-id`); the packer writes it as it is and does not check its format. It only refuses an id it cannot write: an empty one, or one with control characters.
+
+The Reporting Engine computes the build id before it packs an app: the lowercase hex SHA-256 over the organisation id, the SHA-256 of the input app file, the platform name, and the platform's protection version. If a build with that id already exists, it does not pack the app again. It reads the protection version from `rasp_packer.protection_versions.PROTECTION_VERSIONS`.
 
 Each platform's protection version is a whole number in `src/rasp_packer/protection_versions.py`. Bump it when a change alters what protected apps do on that platform: the runtime's behaviour, or how the packer transforms the app. Changes that leave protected apps the same, such as comments, refactors, tests or docs, do not bump it.

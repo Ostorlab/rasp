@@ -11,6 +11,7 @@ import shutil
 import tempfile
 
 from rasp_packer import errors
+from rasp_packer import identity
 from rasp_packer.ios import ipa
 from rasp_packer.ios import macho
 from rasp_packer.ios import resources
@@ -25,7 +26,7 @@ def pack(
     output: pathlib.Path,
     build_id: str,
     runtime: pathlib.Path | None = None,
-) -> None:
+) -> identity.AppIdentity:
     """Protects an IPA and writes the protected IPA to `output`.
 
     Args:
@@ -33,6 +34,9 @@ def pack(
         output: Path to write the protected IPA to.
         build_id: The id of the build, written into the framework's `Info.plist`.
         runtime: The `RaspRuntime.framework` to embed. Defaults to the one bundled in the packer.
+
+    Returns:
+        The app's bundle identifier and short version string, from its `Info.plist`.
 
     Raises:
         InvalidRuntimeError: The runtime framework is missing or malformed.
@@ -56,6 +60,7 @@ def pack(
         shutil.copytree(framework_dir, embedded)
         _write_build_id(embedded / "Info.plist", build_id)
         ipa.archive(bundle.payload_dir, output)
+    return bundle.identity
 
 
 def _write_build_id(info_plist: pathlib.Path, build_id: str) -> None:

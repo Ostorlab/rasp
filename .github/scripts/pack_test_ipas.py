@@ -12,18 +12,16 @@ import plistlib
 import subprocess
 import sys
 import tempfile
-import uuid
 import zipfile
 
 import lief
 
-_APPLICATION_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
 _RUNTIME_DIR = "Frameworks/RaspRuntime.framework"
 _RUNTIME_BINARY = "RaspRuntime"
 _RUNTIME_INSTALL_NAME = "@rpath/RaspRuntime.framework/RaspRuntime"
 _FRAMEWORKS_RPATH = "@executable_path/Frameworks"
 _BUILD_ID_KEY = "RaspBuildId"
-_BUILD_ID_PREFIX = "rasp-build/v1:"
+_BUILD_ID = "0" * 64
 
 
 def main(argv: collections.abc.Sequence[str] | None = None) -> int:
@@ -80,8 +78,8 @@ def _pack_and_check(
         str(app),
         "--platform",
         "ios",
-        "--application-id",
-        str(_APPLICATION_ID),
+        "--build-id",
+        _BUILD_ID,
         "--output",
         str(output),
     ]
@@ -121,11 +119,10 @@ def _protected_app_problems(protected: pathlib.Path, runtime: bytes) -> list[str
         if archive.read(runtime_path) != runtime:
             problems.append("the embedded runtime is not the one the packer ships")
         build_id = plistlib.loads(archive.read(runtime_info_path)).get(_BUILD_ID_KEY)
-        if (
-            not isinstance(build_id, str)
-            or build_id.startswith(_BUILD_ID_PREFIX) is False
-        ):
-            problems.append(f"the runtime's Info.plist has no {_BUILD_ID_KEY}")
+        if build_id != _BUILD_ID:
+            problems.append(
+                f"the runtime's Info.plist does not have {_BUILD_ID_KEY} {_BUILD_ID}"
+            )
         if any(name.startswith(f"{app_dir}_CodeSignature/") for name in names):
             problems.append("the app's _CodeSignature is still there")
         if (archive.getinfo(executable_path).external_attr >> 16) & 0o111 == 0:

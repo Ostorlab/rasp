@@ -6,8 +6,9 @@ from importlib import metadata
 import pytest
 
 from rasp_packer import cli
+from rasp_packer import packer
 
-_APPLICATION_ID = "5f0c8a52-3f7e-4d0a-9b8e-2a6f1c4d7e90"
+_BUILD_ID = "a" * 64
 _USAGE_ERROR = 2
 
 
@@ -15,7 +16,7 @@ def _pack_arguments(
     tmp_path: pathlib.Path,
     *,
     platform: str = "ios",
-    application_id: str = _APPLICATION_ID,
+    build_id: str = _BUILD_ID,
 ) -> list[str]:
     """Returns the `rasp pack` arguments for an app and output in `tmp_path`."""
     return [
@@ -23,8 +24,8 @@ def _pack_arguments(
         str(tmp_path / "app.ipa"),
         "--platform",
         platform,
-        "--application-id",
-        application_id,
+        "--build-id",
+        build_id,
         "--output",
         str(tmp_path / "out.ipa"),
     ]
@@ -54,13 +55,23 @@ def testMain_whenPlatformUnknown_exitsWithUsageError(tmp_path: pathlib.Path) -> 
     assert exit_info.value.code == _USAGE_ERROR
 
 
-def testMain_whenApplicationIdIsNotAUuid_exitsWithUsageError(
-    tmp_path: pathlib.Path,
-) -> None:
+def testMain_whenBuildIdIsMissing_exitsWithUsageError(tmp_path: pathlib.Path) -> None:
+    arguments = _pack_arguments(tmp_path)
+    del arguments[arguments.index("--build-id") : arguments.index("--build-id") + 2]
+
     with pytest.raises(SystemExit) as exit_info:
-        cli.main(_pack_arguments(tmp_path, application_id="abc"))
+        cli.main(arguments)
 
     assert exit_info.value.code == _USAGE_ERROR
+
+
+def testMain_whenBuildIdIsEmpty_printsTheErrorAndReturnsFailed(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = cli.main(_pack_arguments(tmp_path, build_id=""))
+
+    assert exit_code == cli.EXIT_FAILED
+    assert "the build id is empty" in capsys.readouterr().err
 
 
 def testMain_whenPackFails_printsTheErrorAndReturnsFailed(
@@ -70,3 +81,28 @@ def testMain_whenPackFails_printsTheErrorAndReturnsFailed(
 
     assert exit_code == cli.EXIT_FAILED
     assert capsys.readouterr().err.startswith("rasp pack: ")
+
+
+def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        packer,
+        "pack",
+        lambda **_: packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+        ),
+    )
+
+    exit_code = cli.main(_pack_arguments(tmp_path))
+
+    assert exit_code == cli.EXIT_OK
+    assert capsys.readouterr().out.strip() == (
+        f"packed ios app: {tmp_path / 'out.ipa'} "
+        f"(package dev.ostorlab.demo, version 1.2.3, build {_BUILD_ID})"
+    )
