@@ -1,3 +1,4 @@
 InheritParentConfig: true
 CheckOptions:
   readability-identifier-naming.FunctionIgnoredRegexp: '^Java_co_ostorlab_rasp_RaspStub_[A-Za-z]+$'
+  misc-include-cleaner.IgnoreHeaders: 'stdlib\.h;bits/pthread_types\.h;asm-generic/.*;psa/crypto_.*'

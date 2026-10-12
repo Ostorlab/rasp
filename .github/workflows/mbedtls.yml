@@ -1,0 +1,35 @@
+name: Vendored Mbed TLS
+
+on:
+  pull_request:
+    paths:
+      - runtime/third_party/mbedtls/**
+      - .github/workflows/mbedtls.yml
+  push:
+    branches: [main]
+    paths:
+      - runtime/third_party/mbedtls/**
+      - .github/workflows/mbedtls.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: runtime/third_party/mbedtls
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Repack from the official release
+        run: ./pack.sh "$RUNNER_TEMP/fresh"
+      - name: Check the committed archive matches the repack
+        run: |
+          mkdir -p "$RUNNER_TEMP/committed-x" "$RUNNER_TEMP/fresh-x"
+          tar -xf mbedtls-3.6.7-source.tar.xz -C "$RUNNER_TEMP/committed-x"
+          tar -xf "$RUNNER_TEMP"/fresh/mbedtls-3.6.7-source.tar.xz -C "$RUNNER_TEMP/fresh-x"
+          diff -r "$RUNNER_TEMP/committed-x" "$RUNNER_TEMP/fresh-x"

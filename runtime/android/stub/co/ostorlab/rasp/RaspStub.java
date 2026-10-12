@@ -27,7 +27,7 @@ public final class RaspStub extends Application {
 
     private Application delegate;
 
-    private static native byte[][] raspStart(byte[] key, byte[] payload);
+    private static native byte[][] raspStart(byte[] key, byte[] payload, String buildId, String installIdDirectory);
 
     @Override
     protected void attachBaseContext(Context base) {
@@ -38,8 +38,9 @@ public final class RaspStub extends Application {
             JSONObject config = new JSONObject(new String(configBytes, StandardCharsets.UTF_8));
             byte[] key = hexToBytes(config.getString("key_hex"));
             String applicationClass = config.getString("application_class");
+            String buildId = config.optString("build_id", "");
 
-            byte[][] dexes = raspStart(key, payload);
+            byte[][] dexes = raspStart(key, payload, buildId, base.getNoBackupFilesDir().getPath());
             if (dexes == null) {
                 throw new IllegalStateException("the runtime refused to start the app");
             }

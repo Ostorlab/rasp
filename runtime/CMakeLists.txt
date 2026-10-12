@@ -55,6 +55,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   include(cmake/libcxx.cmake)
   add_subdirectory(ios)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
+  enable_language(C)
+  include(cmake/mbedtls.cmake)
   add_subdirectory(android)
 endif()
 

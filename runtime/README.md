@@ -13,8 +13,10 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
   - `include/rasp/reporting/`: sending the observations to the ADR server.
     - `event.h`: `Event`, a batch of observations as the ADR server receives it. The install id and session id of an event are `Uuid`s.
     - `submit_event.h`: the GraphQL `submitEvent` request for an event.
+    - `install_id.h`: `load_install_id`, which keeps the install id in a 16-byte file, in a directory each platform chooses. The first launch stores a random id, and later launches read it back. When the file exists but can't be read, the launch uses a random id of its own and leaves the file untouched.
     - `reporter.h`: `Reporter`, which numbers the batches of a session (`seq`) and sends each one at most once, in order. At most 64 batches wait to be sent: when a 65th is added, the oldest one is dropped and never sent. A batch is never sent again, even when its request fails. `SessionIds` holds the install id and session id that every batch of the session carries.
     - `transport.h`: `Transport`, the HTTP POST each platform implements with its own network stack.
+    - `server.h`: `kServerHost` and `kServerPath`, the ADR server the runtime reports to, `adr.ostorlab.co/apis/graphql`.
   - `include/rasp/util/`: generic helpers.
     - `http.h`: `post_request`, the text of an HTTP/1.1 POST with a JSON body. It refuses a host or a path that isn't made only of visible ASCII characters, and a path that doesn't start with `/`, so neither can change the request line or add a header.
     - `json.h`: JSON string writing. It always writes valid JSON: each byte that isn't valid UTF-8 is replaced with U+FFFD.
@@ -27,15 +29,19 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
     - `example.h`: `example.loaded`, a placeholder that shows where a check goes and how it reports its observations.
   - `src/reporting/network_transport.h`: `NetworkTransport`, the iOS transport. Each post opens a TLS connection to the server on port 443 with Network.framework, which checks the server's certificate, writes the request, waits for the start of the answer, and closes the connection. One timeout covers the whole post, from opening the connection to the start of the answer.
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
-- `android/`: `librasp.so`, the runtime for Android, and the stub that loads it. When the app starts, the stub calls the library, which runs the checks and gives back the app's code.
-  - `src/entry.cpp`: `Java_co_ostorlab_rasp_RaspStub_raspStart`, the JNI function the stub calls. It runs the checks, then decrypts the app's dex files and returns them to the stub.
+- `android/`: `librasp.so`, the runtime for Android, and the stub that loads it. When the app starts, the stub calls the library, which runs the checks, starts the thread that reports them, and gives back the app's code.
+  - `src/entry.cpp`: `Java_co_ostorlab_rasp_RaspStub_raspStart`, the JNI function the stub calls. It runs the checks and starts the thread that reports them, then decrypts the app's dex files and returns them to the stub.
   - `src/checks/`: the Android checks. Each one reports observations, never a verdict.
     - `example.h`: `example.loaded`, a placeholder that shows where a check goes and how it reports its observations.
   - `src/payload/`: recovering the app's dex files, which the packer encrypted.
     - `cipher.h`: `decrypt`, the native counterpart of the packer's Android cipher. It checks a frame's HMAC-SHA256 tag first, and only then decrypts it with an HMAC-SHA256 keystream.
     - `payload.h`: `Dex` and `unpack`, which decrypts the payload and reads the app's dex files from it, in load order.
+  - `src/reporting/thread.h`: `start_reporting`, the reporting thread. It loads the install id from the app's no-backup files directory, makes a session id, sends the launch's observations as one batch, and ends. It never calls Java, so it doesn't attach itself to the JVM. Nothing is sent when the app's `config.json` has no build id.
+  - `src/reporting/tls_transport.h`: `TlsTransport`, the Android transport. Each post opens a TCP connection to the server on port 443, does TLS inside the library with Mbed TLS, writes the request, reads the start of the answer, and closes the connection. Neither Java nor the system's TLS library is used, so hooks on them see nothing. The server's certificate must chain up to one of the trust anchors built into the library and be issued for the host name. The system's trust store and the user's certificates are never used. One deadline covers the connect, the handshake, the write and the read. The name lookup with `getaddrinfo` comes first and can't be interrupted, so it can run past the deadline. An app without the `INTERNET` permission sends nothing, and the packer doesn't add that permission.
+  - `src/reporting/socket.h`: `Socket` and `connect_socket`, the TCP connection under the transport. Each step waits with `poll` and gives up at the post's deadline, and a send never raises `SIGPIPE`.
+  - `reporting/trust_anchors.h`, which CMake writes into the build folder (`cmake/trust_anchors.cmake`): `kTrustAnchors`, the DER bytes of the certificates the transport trusts, from the PEM file the build is given (see [Build](#build)).
   - `src/util/logging.cpp`: the Android backend of `rasp::log`, which writes to the system log with `__android_log_write`.
-  - `stub/`: `co/ostorlab/rasp/RaspStub.java`, the loader the packer points the manifest at, and `build.sh`, which builds it into `stub.dex`.
+  - `stub/`: `co/ostorlab/rasp/RaspStub.java`, the loader the packer points the manifest at, and `build.sh`, which builds it into `stub.dex`. The stub reads the key and the build id from `assets/rasp/config.json` and gives them to the library, with the app's no-backup files directory for the install id.
 - `tests/`: tests that run on a development machine, with GoogleTest. They use the same folders as the code.
 
 ## Build
@@ -91,7 +97,19 @@ cmake --preset android
 cmake --build --preset android
 ```
 
-The library is written to `build/android/android/librasp.so`. It exports only the stub's entry point, `Java_co_ostorlab_rasp_RaspStub_raspStart`. Every other symbol, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 8.0 (API 26) and later, so the stub can load the decrypted code from memory with `InMemoryDexClassLoader`, and the code is never written to disk.
+The library is written to `build/android/android/librasp.so`. It exports only the stub's entry point, `Java_co_ostorlab_rasp_RaspStub_raspStart`. Every other symbol, libc++ and Mbed TLS included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 8.0 (API 26) and later, so the stub can load the decrypted code from memory with `InMemoryDexClassLoader`, and the code is never written to disk.
+
+The Android transport does TLS inside `librasp.so` with Mbed TLS 3.6.7, built from source with the NDK as static libraries. The host and iOS builds don't build it. Its source is committed as one archive under `third_party/mbedtls/`, next to the configuration the runtime builds it with. `cmake/mbedtls.cmake` checks the archive's hash, extracts it into the build folder and builds it, so the build needs no network access. How the archive is made, what the configuration turns on, and the CI job that proves the archive is the official source are described in `third_party/mbedtls/README.md`.
+
+The transport trusts only the CA certificates the build is given, never the system's trust store. Give them as a PEM file with the `RASP_TLS_TRUST_ANCHORS` cache variable:
+
+```
+cd runtime
+cmake --preset android -DRASP_TLS_TRUST_ANCHORS=<path to the PEM file>
+cmake --build --preset android
+```
+
+When CMake configures the build, it reads every certificate in the file and builds it into the library as DER (`cmake/trust_anchors.cmake`). It configures again by itself when the file changes. The certificates aren't committed to the repository. **A release must set this variable.** Without it, the library still builds, but no handshake could succeed, so the transport never connects and nothing is sent. The development build then logs that it has no trust anchors.
 
 The stub is Java, not C++, so CMake doesn't build it. `android/stub/build.sh` compiles it with `javac` and converts it with `d8`. Set `ANDROID_JAR` to the `android.jar` of a platform at API 26 or newer. `d8` comes from `PATH`, or from the `D8` variable. The script writes `stub.dex` to the folder given as its argument, or next to itself when there is none:
 

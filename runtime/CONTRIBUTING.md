@@ -130,11 +130,15 @@ During development, write log lines only with `rasp::log`, and only inside `if c
 
 ## Android
 
-The packer points the app's manifest at `co.ostorlab.rasp.RaspStub`, the stub in `android/stub/`. When the app starts, the stub loads `librasp.so` and calls its `raspStart` method. That function runs the checks, then decrypts the app's code and returns it for the stub to load. Decryption happens in native code, never in Java, and the decrypted code stays in memory.
+The packer points the app's manifest at `co.ostorlab.rasp.RaspStub`, the stub in `android/stub/`. When the app starts, the stub loads `librasp.so` and calls its `raspStart` method. That function runs the checks and starts the thread that reports them, then decrypts the app's code and returns it for the stub to load. Decryption happens in native code, never in Java, and the decrypted code stays in memory.
 
 - **`librasp.so` exports only `Java_co_ostorlab_rasp_RaspStub_raspStart`**, the JNI function behind `raspStart`. Everything else, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. A leaked symbol is a handle an attacker can hook, and CI fails if anything else is exported. JNI fixes the name of that function, so `android/.clang-tidy` lets that one name break the naming rule.
 - **The payload cipher must stay byte for byte compatible with the packer's.** It is built on HMAC-SHA256, so the device needs only SHA-256 (`core/include/rasp/util/sha256.h`). The tests decrypt a frame and a payload that the packer made. If you change the cipher on either side, change the other side and these tests with it.
 - **The minimum is API 26**, so the decrypted dex files are loaded from memory and never written to disk.
+- **Reporting never goes through Java or the system's TLS library.** An attacker can hook Java's `HttpsURLConnection` and the system's TLS library easily, for example with Frida, and read or drop our reports. So the transport opens its own socket and does TLS inside `librasp.so`, with Mbed TLS linked statically. Its symbols are hidden with the rest by `-Wl,--exclude-libs,ALL`. The reporting thread never calls Java, so it never attaches itself to the JVM.
+- **The server's certificate is checked against the built-in trust anchors only, and the host name is always checked.** Never add the system's trust store or the user's certificates, and never turn off `MBEDTLS_SSL_VERIFY_REQUIRED` or the host name check. The trust anchors come from the PEM file given with `RASP_TLS_TRUST_ANCHORS` when the build is configured, and aren't committed. A release must set it. Without it, nothing is sent.
+- **Keep the Mbed TLS configuration minimal** (`third_party/mbedtls/mbedtls_config.h`). Turn on only what the transport needs. Keep `MBEDTLS_ERROR_C`, `MBEDTLS_VERSION_C`, `MBEDTLS_VERSION_FEATURES` and `MBEDTLS_DEBUG_C` off: their text, such as error messages and the version string, would tell an attacker which library to hook.
+- **Every step of a post stops at one deadline.** The connect, the handshake, the write and the read all wait with `poll` and give up when it passes. Only the name lookup can run past it, because `getaddrinfo` can't be interrupted. An app without the `INTERNET` permission sends nothing: the name lookup or `socket()` fails, and the post returns. The packer doesn't add the permission.
 
 ## Code
 
