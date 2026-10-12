@@ -9,6 +9,18 @@ class UnsupportedPlatformError(Error):
     """The packer cannot pack apps of this platform."""
 
 
+class InvalidApkError(Error):
+    """The app is not a valid APK, or is missing something the packer needs."""
+
+
+class ManifestError(Error):
+    """The app's AndroidManifest.xml cannot be read or edited."""
+
+
+class MissingRuntimeArtifactError(Error):
+    """A prebuilt runtime artifact the packer needs is not present."""
+
+
 class OutputExistsError(Error):
     """The path to write the protected app to already exists."""
 

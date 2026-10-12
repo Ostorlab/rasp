@@ -25,6 +25,23 @@ rasp pack app.ipa --platform ios --application-id 5f0c8a52-3f7e-4d0a-9b8e-2a6f1c
 
 The runtime is bundled in the packer.
 
+## Android
+
+For Android the packer protects the app's code:
+
+- it encrypts the app's dex files and stores them as the asset `assets/rasp/payload.bin`;
+- it replaces `classes.dex` with a small stub loader and points `<application android:name>` at it;
+- it adds the native runtime under `lib/<abi>/librasp.so`;
+- it writes the asset `assets/rasp/config.json`, which the runtime reads.
+
+At run time the stub loads the runtime; the runtime runs its pre-decryption checks and, if they pass, decrypts the dex files; the stub then loads them and hands control to the app's original application class.
+
+The stub and the native runtime are prebuilt by the runtime build and live under `src/rasp_packer/android/resources/` (see the README there). Without them the packer raises `MissingRuntimeArtifactError`.
+
+The binary `AndroidManifest.xml` is edited in place by `android/apk/axml.py`, so the packer needs no Android build tool. The protected APK is returned aligned, with native libraries on 16 KB page boundaries and other stored entries on 4-byte boundaries, so the customer signs it directly with no separate `zipalign` step.
+
+First version: the payload key is written in cleartext in `config.json`. The dex encryption raises the effort needed to read the app's code, but on its own does not defeat a determined analyst who can read that asset. Moving the key out of the asset (into the native library, split and behind white-box tables), obfuscation, and lazy per-class decryption are planned; the `TODO(hardening)` notes in the code mark them.
+
 ## Install
 
 Install a release straight from the repository, with your access to it. Replace `vX.Y.Z` with the release tag:
@@ -33,7 +50,7 @@ Install a release straight from the repository, with your access to it. Replace 
 pip install "rasp-packer @ git+ssh://git@github.com/Ostorlab/rasp.git@vX.Y.Z#subdirectory=packer"
 ```
 
-Only a release tag has the runtime in it. A checkout of `main` has no runtime, so its packer raises `InvalidRuntimeError` when it packs an app.
+Only a release tag has the runtime in it. A checkout of `main` has no runtime, so its packer raises `InvalidRuntimeError` when it packs an IPA, and `MissingRuntimeArtifactError` when it packs an APK.
 
 ## Layout
 
@@ -48,6 +65,15 @@ Only a release tag has the runtime in it. A checkout of `main` has no runtime, s
   - `packer.py`: embeds `RaspRuntime.framework`, writes the build id (`RaspBuildId`) into its `Info.plist`, and removes the app's `_CodeSignature`.
   - `resources.py`: locates the `RaspRuntime.framework` that ships with the packer, under `resources/` (see the README there). The framework is prebuilt by the runtime build; without it the packer raises `InvalidRuntimeError`.
 - `src/rasp_packer/android/`: packing of APKs.
+  - `packer.py`: the Android `pack`, which drives the others.
+  - `apk/`: reading and editing the APK.
+    - `archive.py`: reading and repacking the APK (a ZIP).
+    - `axml.py`: editing the binary `AndroidManifest.xml`.
+    - `manifest.py`: the application-class layer over `axml.py`.
+  - `cipher.py`: the authenticated cipher for the payload.
+  - `payload.py`: packing the dex files into the encrypted payload.
+  - `config.py`: the runtime config written into the APK.
+  - `resources.py`: locating the prebuilt stub and native libraries.
 - `tests/`: one test file per source file, at the same path, named `<module>_test.py`.
 
 ## Development

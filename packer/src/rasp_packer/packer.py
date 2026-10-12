@@ -9,6 +9,7 @@ from rasp_packer import build
 from rasp_packer import errors
 from rasp_packer import platforms
 from rasp_packer import protection_versions
+from rasp_packer.android import packer as android_packer
 from rasp_packer.ios import packer as ios_packer
 
 
@@ -49,16 +50,11 @@ def pack(
 
     Raises:
         OutputExistsError: `output` already exists.
-        UnsupportedPlatformError: The packer cannot pack apps of this platform yet.
         InvalidAppError: The app file cannot be read.
         Error: The app cannot be packed; see the platform's packer.
     """
     if output.exists() is True:
         raise errors.OutputExistsError(f"{output} already exists")
-    if platform is platforms.Platform.ANDROID:
-        raise errors.UnsupportedPlatformError(
-            f"packing {platform} apps is not available yet"
-        )
     protection_version = protection_versions.PROTECTION_VERSIONS[platform]
     build_id = build.compute_id(
         application_id=application_id,
@@ -67,6 +63,8 @@ def pack(
         protection_version=protection_version,
     )
     match platform:
+        case platforms.Platform.ANDROID:
+            android_packer.pack(app=app, output=output, build_id=build_id)
         case platforms.Platform.IOS:
             ios_packer.pack(app=app, output=output, build_id=build_id)
     return PackResult(
