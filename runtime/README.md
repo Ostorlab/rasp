@@ -9,7 +9,7 @@ Before you change anything here, read [CONTRIBUTING.md](CONTRIBUTING.md): it lis
 The code is grouped the same way at every level. `util/` holds generic helpers that know nothing about RASP. Every other folder is one domain module, named after the job it does: `checks/` produces the observations, and `reporting/` sends them to the ADR server. The shared part of a module is in `core/`, and its platform part is in the folder with the same name under `ios/`. Every check is platform code, so checks are only in the platform folders.
 
 - `core/`: code shared by every platform. It uses no platform API.
-  - `include/rasp/observation.h`: `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`). Checks and reporting both use it.
+  - `include/rasp/observation.h`: `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`), and `observed`, `unsupported` and `failed`, which build one. Checks and reporting both use it.
   - `include/rasp/reporting/`: sending the observations to the ADR server.
     - `event.h`: `Event`, a batch of observations as the ADR server receives it. The install id and session id of an event are `Uuid`s.
     - `submit_event.h`: the GraphQL `submitEvent` request for an event.
@@ -24,7 +24,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
   - `src/`: the code of these headers, in the same folders.
 - `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it runs the checks and starts the thread that reports them.
   - `src/checks/`: the iOS checks. Each one reports observations, never a verdict.
-    - `example.h`: `example.loaded`, a placeholder that shows where a check goes and how it reports its observations.
+    - `jailbreak.h`: the jailbreak checks. `jb.fs_paths` (do known jailbreak files exist, read through access and stat), `jb.sandbox_escape` (can the app write outside its sandbox) and `jb.fork_ok` (can the app start a child process). Off a physical device every one is unsupported.
   - `src/reporting/thread.h`: `start_reporting`, the reporting thread. It reads the build id from the framework's `Info.plist`, loads the install id, makes a session id, sends the launch's observations as one batch, and ends.
   - `src/reporting/install_id.h`: `load_install_id`, which keeps the install id in a 16-byte file in the app's `Library/Application Support`.
   - `src/reporting/network_transport.h`: `NetworkTransport`, the iOS transport. Each post opens a TLS connection to the server on port 443 with Network.framework, which checks the server's certificate, writes the request, waits for the start of the answer, and closes the connection. One timeout covers the whole post, from opening the connection to the start of the answer.

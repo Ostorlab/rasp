@@ -1,4 +1,4 @@
-/// Tests for describe.
+/// Tests for observed, unsupported, failed and describe.
 
 #include "rasp/observation.h"
 
@@ -9,6 +9,29 @@
 
 namespace rasp {
 namespace {
+
+TEST(Observation, observed_whenGivenAValue_isOkWithThatValue) {
+  const Observation expected{
+      .signal = "jb.fs_paths",
+      .source = "stat",
+      .status = Status::kOk,
+      .value = std::vector<std::string>{"/bin/sh", "/var/jb"},
+  };
+
+  EXPECT_EQ(observed("jb.fs_paths", "stat", std::vector<std::string>{"/bin/sh", "/var/jb"}), expected);
+}
+
+TEST(Observation, unsupported_whenCalled_isUnsupportedWithNoValue) {
+  const Observation expected{.signal = "jb.fork_ok", .source = "fork", .status = Status::kUnsupported, .value = {}};
+
+  EXPECT_EQ(unsupported("jb.fork_ok", "fork"), expected);
+}
+
+TEST(Observation, failed_whenCalled_isAnErrorWithNoValue) {
+  const Observation expected{.signal = "jb.sandbox_escape", .source = "open", .status = Status::kError, .value = {}};
+
+  EXPECT_EQ(failed("jb.sandbox_escape", "open"), expected);
+}
 
 TEST(Observation, describe_whenItHasAValue_showsTheValue) {
   const Observation observation{
