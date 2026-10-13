@@ -15,9 +15,9 @@ packer/                 Python packer: a library, with the `rasp` command line a
     android/            APK: add the runtime library
     ios/                IPA: add the runtime framework
   tests/
-runtime/                C++ runtime libraries, built with CMake
+runtime/                C++ runtime libraries, built with CMake, and the Android stub, in Java
   core/                 code shared by both platforms: observations, sending them to the ADR server, helpers
-  android/              Android entry point (JNI), the Android checks, the payload decryption, and the .so build
+  android/              Android entry point (JNI), the Android checks, the payload decryption, the stub loader, and the .so build
   ios/                  iOS entry point, the iOS checks, and the RaspRuntime.framework build
   tests/                tests that run on a development machine, without a device
 docs/                   notes about this repository
