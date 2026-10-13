@@ -9,6 +9,10 @@ class UnsupportedPlatformError(Error):
     """The packer cannot pack apps of this platform."""
 
 
+class InvalidApkError(Error):
+    """The app is not a valid APK, or is missing something the packer needs."""
+
+
 class OutputExistsError(Error):
     """The path to write the protected app to already exists."""
 

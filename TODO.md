@@ -16,3 +16,7 @@ Work that is known and not done yet. Each item says what is missing and why it m
 - **The sandbox probe likely misses iOS 15 and later.** `jb.sandbox_escape` creates `/private/.rasp_sandbox_probe`. Since iOS 15 the system volume is sealed and read-only, and `/private` is on it, so the write is likely refused with `EROFS` whether or not the sandbox is in force, and the probe reports `false` on jailbroken devices too. To confirm on a jailbroken device.
 - **The fork probe counts every failure as a refusal.** `jb.fork_ok` reports `false` for any `fork()` failure, including errors the sandbox doesn't explain, such as `EAGAIN` or `ENOMEM`. `jb.sandbox_escape` reports those as an error.
 - **The packer accepts apps below the runtime's minimum iOS version.** The runtime supports iOS 12.0 and later, and the packer packs apps that declare an older minimum. On those older devices the runtime would fail to load.
+
+## Packer: Android
+
+- **The packer doesn't take Android App Bundles (AAB), only APKs.** Since August 2021, Google Play requires new apps to be published as AABs, so a customer who publishes on Google Play builds an AAB, not an APK, and has nothing the packer can protect.
