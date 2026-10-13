@@ -1,0 +1,28 @@
+/// decrypt, which checks and decrypts the packer's payload frame with ChaCha20-Poly1305.
+
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <vector>
+
+namespace rasp::android::payload {
+
+/// The size of the payload key, in bytes.
+inline constexpr std::size_t kKeySize = 32;
+
+/// Checks and decrypts a frame that the packer encrypted with ChaCha20-Poly1305, as RFC 8439 defines it.
+///
+/// A frame is the 12-byte nonce, then the encrypted bytes, then the 16-byte Poly1305 tag. It has no associated data.
+/// The packer makes it with the `cryptography` package, and this decrypts it with TF-PSA-Crypto, through the PSA API.
+///
+/// @param key The payload key. It must be exactly kKeySize bytes long.
+/// @param frame The frame to decrypt.
+/// @return The decrypted bytes, which can be empty. Nothing when the key has the wrong size, when the frame is shorter
+/// than a nonce and a tag, when the tag doesn't match, or when the crypto library can't start.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> decrypt(std::span<const std::uint8_t> key,
+                                                               std::span<const std::uint8_t> frame);
+
+}  // namespace rasp::android::payload

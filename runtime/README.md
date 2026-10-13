@@ -6,7 +6,7 @@ Before you change anything here, read [CONTRIBUTING.md](CONTRIBUTING.md): it lis
 
 ## Layout
 
-The code is grouped the same way at every level. `util/` holds generic helpers that know nothing about RASP. Every other folder is one domain module, named after the job it does: `checks/` produces the observations, and `reporting/` sends them to the ADR server. The shared part of a module is in `core/`, and its platform part is in the folder with the same name under `ios/` or `android/`. Every check is platform code, so checks are only in the platform folders.
+The code is grouped the same way at every level. `util/` holds generic helpers that know nothing about RASP. Every other folder is one domain module, named after the job it does: `checks/` produces the observations, `reporting/` sends them to the ADR server, and on Android, `payload/` recovers the app's protected code. The shared part of a module is in `core/`, and its platform part is in the folder with the same name under `ios/` or `android/`. Every check is platform code, so checks are only in the platform folders.
 
 - `core/`: code shared by every platform. It uses no platform API.
   - `include/rasp/observation.h`: `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`), and `observed`, `unsupported` and `failed`, which build one. Checks and reporting both use it.
@@ -32,6 +32,9 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
   - `src/entry.cpp`: a load-time constructor that runs the checks when the linker loads the library.
   - `src/checks/`: the Android checks. Each one reports observations, never a verdict.
     - `example.h`: `example.loaded`, a placeholder that shows where a check goes and how it reports its observations.
+  - `src/payload/`: recovering the app's dex files, which the packer encrypted.
+    - `cipher.h`: `decrypt`, which decrypts a frame of the packer's Android cipher: ChaCha20-Poly1305 (RFC 8439), from TF-PSA-Crypto. It refuses a frame whose tag doesn't match.
+    - `payload.h`: `Dex`, one dex file of the protected app, and `unpack`, which decrypts the payload and reads the app's dex files from it, in load order. A payload holds at most 1024 dex files.
   - `src/util/logging.cpp`: the Android backend of `rasp::log`, which writes to the system log with `__android_log_write`.
 - `tests/`: tests that run on a development machine, with GoogleTest. They use the same folders as the code.
 
@@ -89,6 +92,8 @@ cmake --build --preset android
 ```
 
 The library is written to `build/android/android/librasp.so`. It exports no entry point of its own: the checks run from a load-time constructor, and the stub's native method is bound with `RegisterNatives`, so the only exported symbol is the JVM's `JNI_OnLoad` hook. Every other symbol, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 12 (API 31) and later, so the stub can load the decrypted code from memory with `InMemoryDexClassLoader`, and the code is never written to disk.
+
+The payload decryption uses ChaCha20-Poly1305 from TF-PSA-Crypto, the cryptography library of the Mbed TLS project. Its source is committed as an archive under `third_party/tf-psa-crypto/`, and `cmake/tf_psa_crypto.cmake` checks the archive's hash, extracts it and builds it as a static library, for Android and for the builds with tests. Its symbols are hidden in `librasp.so` like every other one. Why it is built this way, its configuration, and the CI job that proves the archive is the official release are described in `third_party/tf-psa-crypto/README.md`.
 
 ## Logs
 

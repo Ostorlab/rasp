@@ -24,7 +24,7 @@ WarningsAsErrors: '*'
 HeaderFilterRegex: '.*/runtime/.*'
 ExcludeHeaderFilterRegex: '.*/runtime/build/.*'
 CheckOptions:
-  misc-include-cleaner.IgnoreHeaders: 'stdlib\.h;Network\.framework/.*;CoreFoundation\.framework/.*;MacTypes\.h;TargetConditionals\.h;sys/_pthread/.*;sys/_types/.*;sys/fcntl\.h;sys/unistd\.h;sys/types\.h'
+  misc-include-cleaner.IgnoreHeaders: 'stdlib\.h;Network\.framework/.*;CoreFoundation\.framework/.*;MacTypes\.h;TargetConditionals\.h;sys/_pthread/.*;sys/_types/.*;sys/fcntl\.h;sys/unistd\.h;sys/types\.h;psa/.*'
   bugprone-unused-return-value.AllowCastToVoid: true
   performance-unnecessary-value-param.AllowedTypes: '::std::shared_ptr'
   bugprone-unsafe-functions.CustomFunctions: >-
