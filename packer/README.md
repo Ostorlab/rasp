@@ -28,13 +28,24 @@ The runtime is bundled in the packer.
 
 ## Install
 
-Install a release straight from the repository, with your access to it. Replace `vX.Y.Z` with the release tag:
+Each release publishes the packer to the private Python repository `rasp-packer` in Google Artifact Registry. Installing it needs read access to that repository: ask an Ostorlab engineer with GCP admin rights to grant your account `roles/artifactregistry.reader` on `rasp-packer`.
+
+First sign in to Google Cloud:
+
+- on your machine, run `gcloud auth application-default login`;
+- in CI or an image build, set `GOOGLE_APPLICATION_CREDENTIALS` to the key file of a service account granted `roles/artifactregistry.reader` on `rasp-packer`.
+
+Then install the Artifact Registry keyring helper, the packer from Artifact Registry alone, and the packer's dependencies from PyPI. Replace `X.Y.Z` with the release version:
 
 ```
-pip install "rasp-packer @ git+ssh://git@github.com/Ostorlab/rasp.git@vX.Y.Z#subdirectory=packer"
+pip install keyring keyrings.google-artifactregistry-auth
+pip install --force-reinstall --no-deps --index-url https://us-central1-python.pkg.dev/api-project-609180564266/rasp-packer/simple/ rasp-packer==X.Y.Z
+pip install rasp-packer==X.Y.Z
 ```
 
-Only a release tag has the runtime in it. A checkout of `main` has no runtime, so its packer raises `InvalidRuntimeError` when it packs an app.
+When pip needs credentials for Artifact Registry, it asks keyring, and the helper gets a short-lived access token from the Google Cloud credentials above. The second command points `--index-url` at Artifact Registry only, so pip can't take `rasp-packer` from PyPI even if a package with that name exists there, and `--force-reinstall` replaces a copy of `rasp-packer` installed from anywhere else. The third command finds `rasp-packer==X.Y.Z` already installed, reads the dependencies it declares, and installs them from PyPI.
+
+Only a release has the runtime in it. A checkout of `main` has no runtime, so its packer raises `InvalidRuntimeError` when it packs an app.
 
 ## Layout
 

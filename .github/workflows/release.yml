@@ -169,6 +169,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       FRAMEWORK_DIR: packer/src/rasp_packer/ios/resources
       ANDROID_DIR: packer/src/rasp_packer/android/resources
+      PACKER_REPOSITORY_URL: https://us-central1-python.pkg.dev/api-project-609180564266/rasp-packer/
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -213,6 +214,15 @@ jobs:
         run: >-
           "$RUNNER_TEMP/venv/bin/python" .github/scripts/pack_test_apks.py
           packer/tests/apps/android "$ANDROID_DIR"
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          credentials_json: ${{ secrets.RASP_PACKER_PUBLISHER_CREDENTIALS }}
+      - name: Publish the packer to Artifact Registry
+        env:
+          UV_PUBLISH_USERNAME: oauth2accesstoken
+        run: >-
+          UV_PUBLISH_PASSWORD="$(gcloud auth print-access-token)"
+          uv publish --publish-url "$PACKER_REPOSITORY_URL" "$RUNNER_TEMP"/dist/*.whl
       - name: Commit the framework and tag the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -228,8 +238,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v${VERSION}" --verify-tag --title "v${VERSION}" --generate-notes --notes "Install the packer with:
+          gh release create "v${VERSION}" --verify-tag --title "v${VERSION}" --generate-notes --notes "Install the packer from Artifact Registry, signed in to Google Cloud with an account that can read it (see packer/README.md):
 
           \`\`\`
-          pip install \"rasp-packer @ git+ssh://git@github.com/${GITHUB_REPOSITORY}.git@v${VERSION}#subdirectory=packer\"
+          pip install keyring keyrings.google-artifactregistry-auth
+          pip install --force-reinstall --no-deps --index-url ${PACKER_REPOSITORY_URL}simple/ rasp-packer==${VERSION}
+          pip install rasp-packer==${VERSION}
           \`\`\`"
