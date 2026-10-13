@@ -1,6 +1,6 @@
-/// start_reporting: the runtime's reporting thread on iOS.
+/// start_monitoring: the runtime's own thread on iOS, which runs the checks and reports what changed.
 
-#include "reporting/thread.h"
+#include "monitoring.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <algorithm>
@@ -8,13 +8,14 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <pthread.h>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
+#include "checks/jailbreak.h"
 #include "rasp/observation.h"
 #include "rasp/reporting/reporter.h"
 #include "rasp/reporting/server.h"
@@ -27,8 +28,11 @@ namespace rasp::ios {
 
 namespace {
 
-/// The stack size of the reporting thread, a whole number of pages.
+/// The stack size of the thread, a whole number of pages.
 constexpr std::size_t kThreadStackSize = std::size_t{256} * 1024;
+
+/// How long the thread waits between two runs of the checks.
+constexpr std::chrono::seconds kCheckInterval{60};
 
 /// The longest one post to the server may take.
 constexpr std::chrono::milliseconds kPostTimeout{10'000};
@@ -86,39 +90,42 @@ constexpr std::size_t kMaxPathBytes = 1024;
   return load_install_id(*home + "/Library/Application Support");
 }
 
-/// The reporting thread: sends the observations it owns as the session's first batch, then ends.
-void* report(void* argument) {
-  const std::unique_ptr<std::vector<Observation>> observations{static_cast<std::vector<Observation>*>(argument)};
+/// The thread: runs the checks and reports what changed, then again every kCheckInterval, until the process exits.
+void* monitor(void* /*argument*/) {
   const std::optional<std::string> build_id = read_build_id();
   if (!build_id.has_value()) {
     if constexpr (kLoggingEnabled) {
-      rasp::log("reporting: the framework has no build id");
+      rasp::log("monitoring: the framework has no build id");
     }
     return nullptr;
   }
   NetworkTransport transport{std::string(kServerHost), std::string(kServerPath), kPostTimeout};
   Reporter reporter{*build_id, SessionIds{.install_id = install_id(), .session_id = random_uuid()}, transport};
-  reporter.add(std::move(*observations));
-  reporter.send();
-  return nullptr;
+  while (true) {
+    std::vector<Observation> observations = checks::jailbreak();
+    if constexpr (kLoggingEnabled) {
+      for (const Observation& observation : observations) {
+        rasp::log(describe(observation));
+      }
+    }
+    reporter.report(std::move(observations));
+    std::this_thread::sleep_for(kCheckInterval);
+  }
 }
 
 }  // namespace
 
-void start_reporting(std::vector<Observation> observations) noexcept {
-  auto owned = std::make_unique<std::vector<Observation>>(std::move(observations));
+void start_monitoring() noexcept {
   pthread_attr_t attributes{};
   if (pthread_attr_init(&attributes) != 0) {
     return;
   }
-  pthread_t thread{};
-  const bool started = pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED) == 0 &&
-                       pthread_attr_setstacksize(&attributes, kThreadStackSize) == 0 &&
-                       pthread_create(&thread, &attributes, report, owned.get()) == 0;
-  static_cast<void>(pthread_attr_destroy(&attributes));
-  if (started) {
-    static_cast<void>(owned.release());
+  if (pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED) == 0 &&
+      pthread_attr_setstacksize(&attributes, kThreadStackSize) == 0) {
+    pthread_t thread{};
+    static_cast<void>(pthread_create(&thread, &attributes, monitor, nullptr));
   }
+  static_cast<void>(pthread_attr_destroy(&attributes));
 }
 
 }  // namespace rasp::ios

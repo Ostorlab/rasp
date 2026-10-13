@@ -11,9 +11,8 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
 - `core/`: code shared by every platform. It uses no platform API.
   - `include/rasp/observation.h`: `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`), and `observed`, `unsupported` and `failed`, which build one. Checks and reporting both use it.
   - `include/rasp/reporting/`: sending the observations to the ADR server.
-    - `event.h`: `Event`, a batch of observations as the ADR server receives it. The install id and session id of an event are `Uuid`s.
-    - `submit_event.h`: the GraphQL `submitEvent` request for an event.
-    - `reporter.h`: `Reporter`, which numbers the batches of a session (`seq`) and sends each one at most once, in order. At most 64 batches wait to be sent: when a 65th is added, the oldest one is dropped and never sent. A batch is never sent again, even when its request fails. `SessionIds` holds the install id and session id that every batch of the session carries.
+    - `submit_observations.h`: `ObservationBatch`, a batch of observations as the ADR server receives it, and `submit_observations_request`, the GraphQL `submitObservations` request that sends it. The install id and session id of a batch are `Uuid`s.
+    - `reporter.h`: `Reporter`, whose `report` sends, at once and as one batch, only the observations that changed since the last ones reported: an observation is identified by its signal and source, and it has changed when it is new or when its status or value differs. It numbers the batches of a session (`seq`) and sends each one once, in order. A batch is never sent again, even when its request fails. `SessionIds` holds the install id and session id that every batch of the session carries.
     - `transport.h`: `Transport`, the HTTP POST each platform implements with its own network stack.
     - `server.h`: `kServerHost` and `kServerPath`, the ADR server the runtime reports to, `adr.ostorlab.co/apis/graphql`.
   - `include/rasp/util/`: generic helpers.
@@ -22,10 +21,10 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
     - `logging.h`: `rasp::log` and `kLoggingEnabled`, the development logging that release builds leave out.
     - `uuid.h`: `Uuid`. `random_uuid` makes a random version 4 one, and `to_string` writes its 36-character text form.
   - `src/`: the code of these headers, in the same folders.
-- `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it runs the checks and starts the thread that reports them.
+- `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it starts the thread that runs the checks and reports them.
+  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It reads the build id from the framework's `Info.plist`, loads the install id, and makes a session id. Then it runs the checks and sends their observations as the session's first batch, and every 60 seconds runs them again and sends only the observations that changed; a run where nothing changed sends nothing. It runs until the process exits, and iOS suspends it while the app is in the background.
   - `src/checks/`: the iOS checks. Each one reports observations, never a verdict.
     - `jailbreak.h`: the jailbreak checks. `jb.fs_paths` (do known jailbreak files exist, read through access and stat), `jb.sandbox_escape` (can the app write outside its sandbox) and `jb.fork_ok` (can the app start a child process). Off a physical device every one is unsupported.
-  - `src/reporting/thread.h`: `start_reporting`, the reporting thread. It reads the build id from the framework's `Info.plist`, loads the install id, makes a session id, sends the launch's observations as one batch, and ends.
   - `src/reporting/install_id.h`: `load_install_id`, which keeps the install id in a 16-byte file in the app's `Library/Application Support`.
   - `src/reporting/network_transport.h`: `NetworkTransport`, the iOS transport. Each post opens a TLS connection to the server on port 443 with Network.framework, which checks the server's certificate, writes the request, waits for the start of the answer, and closes the connection. One timeout covers the whole post, from opening the connection to the start of the answer.
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.

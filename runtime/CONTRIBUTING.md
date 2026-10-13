@@ -64,7 +64,7 @@ When a choice exists, use the function that can't fail.
 
 ### Load time and the main thread
 
-The runtime starts from a function that runs while the app loads, on the app's main thread, before the app's own code. Anything slow there delays the app's launch, and if launch takes too long, iOS kills the app. So that function only starts work. Network calls, waiting and retries happen on our own thread.
+The runtime starts from a function that runs while the app loads, on the app's main thread, before the app's own code. Anything slow there delays the app's launch, and if launch takes too long, iOS kills the app. So that function only starts work. The checks, the network calls and the waiting happen on our own thread.
 
 For the same reason, CI enforces three rules on the code that ships:
 
@@ -91,7 +91,7 @@ A check that calls `fork` creates a copy of the app's process. The copy has a si
 
 ### Threads and exit
 
-The app can exit at any moment, and our thread may be in the middle of its work when it does. The thread must not hold anything that breaks if the process ends there, and the app must never wait for our thread in order to exit.
+The app can exit at any moment, and our thread may be in the middle of its work when it does. Our thread never ends on its own: it runs the checks again every minute until the process exits, so the app always exits while it runs. The thread must not hold anything that breaks if the process ends there, and the app must never wait for our thread in order to exit.
 
 ### System calls
 
@@ -131,4 +131,4 @@ During development, write log lines only with `rasp::log`, and only inside `if c
 - **No `<iostream>` or `<regex>`.** Every protected app pays for our binary's size and our load time, and these two add a lot of both.
 - **Platform code goes in its platform's folder** (`ios/`, `android/`), chosen by CMake. Every check is platform code: it goes in `ios/src/checks/` or `android/src/checks/`. The same shared code builds for both platforms, so it must not contain platform `#if` blocks.
 - **Document every file and function with `///`.** Every C++ file starts with a description of what it holds. A public header documents every public symbol. Every public function says what it does and the cases a caller must know about, describes each parameter with `@param` and, unless it returns `void`, its result with `@return`. Every private function has at least one sentence that says what it does. Write no other comments: names and small functions say how the code does it.
-- **Test names** follow `TEST(Suite, action_whenCondition_result)`, for example `TEST_F(Reporter, add_whenTheQueueIsFull_dropsTheOldestBatch)`.
+- **Test names** follow `TEST(Suite, action_whenCondition_result)`, for example `TEST_F(Reporter, report_whenNothingChanged_sendsNothingAndUsesNoSeq)`.
