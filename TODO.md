@@ -8,7 +8,7 @@ Work that is known and not done yet. Each item says what is missing and why it m
 
 ## Runtime: all platforms
 
-- **The checks run only once per launch.** They run when the runtime loads, and that one batch is the only report of the session. Anything that happens later in the session, such as a debugger attaching or a hooking tool injected after launch, is only seen on the next launch.
+- **A lost batch hides a change.** Each batch is sent once, and after the first batch of a session, a batch holds only the observations that changed. When a batch doesn't reach the server, the server doesn't learn of the changes it held until those observations change again, which may not happen for the rest of the session.
 - **The runtime is not obfuscated.** The release binaries are easy to read, and they show what each check looks at: the paths the checks look for, the signal names and the server host are plain strings that `strings` lists, and the path list tells a bypass tool exactly which paths to hide. Encoding the strings is one example of this work.
 
 ## Runtime: iOS

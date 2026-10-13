@@ -1,7 +1,7 @@
-/// submit_event_request: writes a batch as the GraphQL submitEvent request, in the form the ADR server's contract
-/// defines.
+/// submit_observations_request: writes a batch as the GraphQL submitObservations request, in the form the ADR
+/// server's contract defines.
 
-#include "rasp/reporting/submit_event.h"
+#include "rasp/reporting/submit_observations.h"
 
 #include <chrono>
 #include <cstdint>
@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "rasp/observation.h"
-#include "rasp/reporting/event.h"
 #include "rasp/util/json.h"
 #include "rasp/util/uuid.h"
 
@@ -21,7 +20,7 @@ namespace {
 
 /// The GraphQL mutation sent with every batch; it asks only for the type name, because nothing reads the answer.
 constexpr std::string_view kQuery =
-    "mutation SubmitEvent($event: EventInput!) { submitEvent(event: $event) { __typename } }";
+    "mutation SubmitObservations($batch: ObservationBatchInput!) { submitObservations(batch: $batch) { __typename } }";
 
 /// The contract's name for `status`.
 [[nodiscard]] constexpr std::string_view status_name(Status status) {
@@ -91,31 +90,31 @@ void append_observation(std::string& out, const Observation& observation) {
 
 }  // namespace
 
-std::string submit_event_request(const Event& event) {
+std::string submit_observations_request(const ObservationBatch& batch) {
   std::string out = "{";
   append_member(out, "query");
   json::append_string(out, kQuery);
-  out += R"(,"variables":{"event":{)";
+  out += R"(,"variables":{"batch":{)";
   append_member(out, "installId");
-  json::append_string(out, to_string(event.install_id));
+  json::append_string(out, to_string(batch.install_id));
   out.push_back(',');
   append_member(out, "sessionId");
-  json::append_string(out, to_string(event.session_id));
+  json::append_string(out, to_string(batch.session_id));
   out.push_back(',');
   append_member(out, "seq");
-  out += std::to_string(event.seq);
+  out += std::to_string(batch.seq);
   out.push_back(',');
   append_member(out, "observedAtMs");
   json::append_string(
-      out, std::to_string(std::chrono::floor<std::chrono::milliseconds>(event.observed_at.time_since_epoch()).count()));
+      out, std::to_string(std::chrono::floor<std::chrono::milliseconds>(batch.observed_at.time_since_epoch()).count()));
   out.push_back(',');
   append_member(out, "buildId");
-  json::append_string(out, event.build_id);
+  json::append_string(out, batch.build_id);
   out.push_back(',');
   append_member(out, "observations");
   out.push_back('[');
   std::string_view separator;
-  for (const Observation& observation : event.observations) {
+  for (const Observation& observation : batch.observations) {
     out += separator;
     append_observation(out, observation);
     separator = ",";

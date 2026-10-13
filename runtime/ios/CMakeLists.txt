@@ -2,10 +2,10 @@ set(RASP_FRAMEWORK_IDENTIFIER co.ostorlab.rasp.runtime)
 
 add_library(RaspRuntime SHARED
   src/entry.cpp
+  src/monitoring.cpp
   src/checks/jailbreak.cpp
   src/reporting/install_id.cpp
-  src/reporting/network_transport.cpp
-  src/reporting/thread.cpp)
+  src/reporting/network_transport.cpp)
 target_include_directories(RaspRuntime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(RaspRuntime PRIVATE rasp_core rasp_warnings rasp_language rasp_shipped
   "-framework CoreFoundation" "-framework Network")

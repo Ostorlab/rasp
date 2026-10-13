@@ -3,7 +3,7 @@ configure_file(include/rasp/version.h.in ${CMAKE_CURRENT_BINARY_DIR}/include/ras
 add_library(rasp_core STATIC
   src/observation.cpp
   src/reporting/reporter.cpp
-  src/reporting/submit_event.cpp
+  src/reporting/submit_observations.cpp
   src/util/http.cpp
   src/util/json.cpp
   src/util/uuid.cpp)

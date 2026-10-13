@@ -2,20 +2,16 @@
 
 #include "rasp/reporting/reporter.h"
 
-#include <charconv>
 #include <chrono>
-#include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
-#include <memory>
 #include <string>
 #include <string_view>
-#include <system_error>
+#include <utility>
 #include <vector>
 
 #include "rasp/observation.h"
-#include "rasp/reporting/event.h"
-#include "rasp/reporting/submit_event.h"
+#include "rasp/reporting/submit_observations.h"
 #include "rasp/reporting/transport.h"
 #include "rasp/util/uuid.h"
 
@@ -34,19 +30,6 @@ class FakeTransport : public rasp::Transport {
   /// The request bodies received so far.
   std::vector<std::string> bodies_;
 };
-
-/// The seq in a request body, or -1 when the body has none.
-[[nodiscard]] std::int64_t seq_of(std::string_view body) {
-  constexpr std::string_view kKey = R"("seq":)";
-  const std::size_t start = body.find(kKey);
-  if (start == std::string_view::npos) {
-    return -1;
-  }
-  const std::string_view rest = body.substr(start + kKey.size());
-  std::int64_t seq = 0;
-  const auto [stop, error] = std::from_chars(std::to_address(rest.begin()), std::to_address(rest.end()), seq);
-  return error == std::errc() ? seq : -1;
-}
 
 /// The install id of the session, 0f8c2e1a-7b3d-4c5e-9a1b-2c3d4e5f6a7b.
 constexpr rasp::Uuid kInstallId{
@@ -78,72 +61,117 @@ class Reporter : public testing::Test {
   };
 };
 
-TEST_F(Reporter, send_whenBatchesAreQueued_sendsEachOnceInOrderWithIncreasingSeq) {
-  reporter_.add({});
-  reporter_.add({});
-
-  reporter_.send();
-
-  ASSERT_EQ(transport_.bodies().size(), 2U);
-  EXPECT_EQ(seq_of(transport_.bodies().at(0)), 1);
-  EXPECT_EQ(seq_of(transport_.bodies().at(1)), 2);
-  EXPECT_EQ(reporter_.pending(), 0U);
+/// The request body of the session's batch `seq`, holding `observations`.
+[[nodiscard]] std::string body_of(std::int32_t seq, std::vector<rasp::Observation> observations) {
+  return rasp::submit_observations_request(rasp::ObservationBatch{
+      .install_id = kInstallId,
+      .session_id = kSessionId,
+      .seq = seq,
+      .observed_at = kNow,
+      .build_id = std::string(kBuildId),
+      .observations = std::move(observations),
+  });
 }
 
-TEST_F(Reporter, send_whenObservationsAreQueued_sendsThemWithTheSessionIdsTheClockTimeAndTheBuildId) {
-  const std::vector<rasp::Observation> observations{
-      {.signal = "jb.fork_ok", .source = "fork", .status = rasp::Status::kOk, .value = true},
-      {
-          .signal = "jb.fs_paths",
-          .source = "stat",
-          .status = rasp::Status::kOk,
-          .value = std::vector<std::string>{"/var/jb"},
-      },
+/// What a first run of the checks observes.
+[[nodiscard]] std::vector<rasp::Observation> first_run() {
+  return {
+      {.signal = "jb.fs_paths", .source = "stat", .status = rasp::Status::kOk, .value = std::vector<std::string>{}},
+      {.signal = "jb.fork_ok", .source = "fork", .status = rasp::Status::kOk, .value = false},
   };
-  reporter_.add({});
-  reporter_.add(observations);
-
-  reporter_.send();
-
-  ASSERT_EQ(transport_.bodies().size(), 2U);
-  EXPECT_EQ(transport_.bodies().at(1), rasp::submit_event_request(rasp::Event{
-                                           .install_id = kInstallId,
-                                           .session_id = kSessionId,
-                                           .seq = 2,
-                                           .observed_at = kNow,
-                                           .build_id = std::string(kBuildId),
-                                           .observations = observations,
-                                       }));
 }
 
-TEST_F(Reporter, send_whenCalledAgain_neverSendsABatchTwice) {
-  reporter_.add({{.signal = "example.loaded", .source = "runtime", .status = rasp::Status::kOk, .value = true}});
+TEST_F(Reporter, report_whenNothingWasReported_sendsEveryObservation) {
+  reporter_.report(first_run());
 
-  reporter_.send();
-  reporter_.send();
+  ASSERT_EQ(transport_.bodies().size(), 1U);
+  EXPECT_EQ(transport_.bodies().at(0), body_of(1, first_run()));
+}
+
+TEST_F(Reporter, report_whenNothingChanged_sendsNothingAndUsesNoSeq) {
+  const rasp::Observation changed{.signal = "jb.fork_ok", .source = "fork", .status = rasp::Status::kOk, .value = true};
+  reporter_.report(first_run());
+
+  reporter_.report(first_run());
+  reporter_.report({changed});
+
+  ASSERT_EQ(transport_.bodies().size(), 2U);
+  EXPECT_EQ(transport_.bodies().at(1), body_of(2, {changed}));
+}
+
+TEST_F(Reporter, report_whenAValueChanged_sendsOnlyThatObservation) {
+  const rasp::Observation changed{
+      .signal = "jb.fs_paths",
+      .source = "stat",
+      .status = rasp::Status::kOk,
+      .value = std::vector<std::string>{"/var/jb"},
+  };
+  reporter_.report(first_run());
+
+  reporter_.report({changed, first_run().back()});
+
+  ASSERT_EQ(transport_.bodies().size(), 2U);
+  EXPECT_EQ(transport_.bodies().at(1), body_of(2, {changed}));
+}
+
+TEST_F(Reporter, report_whenAStatusChanged_sendsOnlyThatObservation) {
+  const rasp::Observation changed{
+      .signal = "jb.fork_ok",
+      .source = "fork",
+      .status = rasp::Status::kError,
+      .value = {},
+  };
+  reporter_.report(first_run());
+
+  reporter_.report({first_run().front(), changed});
+
+  ASSERT_EQ(transport_.bodies().size(), 2U);
+  EXPECT_EQ(transport_.bodies().at(1), body_of(2, {changed}));
+}
+
+TEST_F(Reporter, report_whenASignalAndSourceAreNew_sendsOnlyThatObservation) {
+  const rasp::Observation added{
+      .signal = "jb.fs_paths",
+      .source = "access",
+      .status = rasp::Status::kOk,
+      .value = std::vector<std::string>{},
+  };
+  std::vector<rasp::Observation> observations = first_run();
+  observations.push_back(added);
+  reporter_.report(first_run());
+
+  reporter_.report(observations);
+
+  ASSERT_EQ(transport_.bodies().size(), 2U);
+  EXPECT_EQ(transport_.bodies().at(1), body_of(2, {added}));
+}
+
+TEST_F(Reporter, report_whenAnObservationChangesBack_sendsItAgain) {
+  reporter_.report(first_run());
+  reporter_.report({{.signal = "jb.fork_ok", .source = "fork", .status = rasp::Status::kOk, .value = true}});
+
+  reporter_.report(first_run());
+
+  ASSERT_EQ(transport_.bodies().size(), 3U);
+  EXPECT_EQ(transport_.bodies().at(2), body_of(3, {first_run().back()}));
+}
+
+TEST_F(Reporter, report_whenAnObservationIsMissing_sendsNothingForIt) {
+  reporter_.report(first_run());
+  reporter_.report({first_run().front()});
+
+  reporter_.report(first_run());
 
   EXPECT_EQ(transport_.bodies().size(), 1U);
 }
 
-TEST_F(Reporter, add_whenEarlierBatchesWereSent_continuesTheSeqOfTheSession) {
-  reporter_.add({});
-  reporter_.send();
-  reporter_.add({});
-  reporter_.send();
+TEST_F(Reporter, report_whenAnObservationRepeatsInOneRun_sendsItOnce) {
+  const rasp::Observation observation = first_run().front();
 
-  ASSERT_EQ(transport_.bodies().size(), 2U);
-  EXPECT_EQ(seq_of(transport_.bodies().at(1)), 2);
-}
+  reporter_.report({observation, observation});
 
-TEST_F(Reporter, add_whenTheQueueIsFull_dropsTheOldestBatch) {
-  for (std::size_t i = 0; i <= rasp::Reporter::kMaxPendingBatches; ++i) {
-    reporter_.add({});
-  }
-
-  EXPECT_EQ(reporter_.pending(), rasp::Reporter::kMaxPendingBatches);
-  reporter_.send();
-  ASSERT_EQ(transport_.bodies().size(), rasp::Reporter::kMaxPendingBatches);
-  EXPECT_EQ(seq_of(transport_.bodies().at(0)), 2);
+  ASSERT_EQ(transport_.bodies().size(), 1U);
+  EXPECT_EQ(transport_.bodies().at(0), body_of(1, {observation}));
 }
 
 }  // namespace
