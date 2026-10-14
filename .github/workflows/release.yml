@@ -96,8 +96,71 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  android-runtime:
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: runtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install CMake
+        run: |
+          python3 -m venv "$RUNNER_TEMP/build-tools"
+          "$RUNNER_TEMP/build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
+          echo "$RUNNER_TEMP/build-tools/bin" >> "$GITHUB_PATH"
+      - name: Select the NDK
+        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+      - name: Log the Android toolchain versions
+        run: |
+          echo "NDK: $(sed -n 's/^Pkg.Revision = //p' "$ANDROID_NDK_HOME/source.properties") ($ANDROID_NDK_HOME)"
+          echo "android.jar: $(ls -d "$ANDROID_HOME"/platforms/android-*/android.jar | sort -V | tail -1)"
+          echo "d8: $(ls "$ANDROID_HOME"/build-tools/*/d8 | sort -V | tail -1)"
+      - name: Configure
+        run: cmake --preset android
+      - name: Build
+        run: cmake --build --preset android --parallel
+      - name: Check the library
+        run: |
+          nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          lib=build/android/android/librasp.so
+          file "$lib" | grep -q "ELF 64-bit LSB shared object, ARM aarch64"
+          test "$("$nm" -D --defined-only "$lib" | awk '$2 ~ /^[TW]$/ { print $3 }')" = "Java_co_ostorlab_rasp_RaspStub_raspStart"
+      - name: Check the library calls no forbidden function
+        run: |
+          nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          imports="$("$nm" -D -u build/android/android/librasp.so | awk '{ print $2 }' | sed 's/@.*//')"
+          test -n "$imports"
+          test -z "$(grep -xE '(exit|_Exit|quick_exit|signal|sigaction|sigprocmask|pthread_sigmask|setenv|putenv|unsetenv|setlocale|setrlimit)' <<< "$imports")"
+      - name: Check the library writes no log
+        run: |
+          nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          lib=build/android/android/librasp.so
+          test -z "$("$nm" -D -u "$lib" | grep __android_log)"
+          test -z "$(strings -a "$lib" | grep -F RaspRuntime)"
+      - name: Build the stub
+        run: |
+          jar="$(ls -d "$ANDROID_HOME"/platforms/android-*/android.jar | sort -V | tail -1)"
+          d8="$(ls "$ANDROID_HOME"/build-tools/*/d8 | sort -V | tail -1)"
+          ANDROID_JAR="$jar" D8="$d8" ./android/stub/build.sh "$RUNNER_TEMP"
+          test -s "$RUNNER_TEMP/stub.dex"
+      - name: Stage the Android runtime artifacts
+        run: |
+          mkdir -p "$RUNNER_TEMP/android-runtime/lib/arm64-v8a"
+          cp "$RUNNER_TEMP/stub.dex" "$RUNNER_TEMP/android-runtime/stub.dex"
+          cp build/android/android/librasp.so "$RUNNER_TEMP/android-runtime/lib/arm64-v8a/librasp.so"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-runtime
+          path: ${{ runner.temp }}/android-runtime
+          if-no-files-found: error
+          retention-days: 7
+
   release:
-    needs: [version, ios-framework]
+    needs: [version, ios-framework, android-runtime]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -105,6 +168,7 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       FRAMEWORK_DIR: packer/src/rasp_packer/ios/resources
+      ANDROID_DIR: packer/src/rasp_packer/android/resources
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -113,8 +177,17 @@ jobs:
         with:
           name: ios-framework
           path: ${{ runner.temp }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: android-runtime
+          path: ${{ runner.temp }}/android-runtime
       - name: Put the framework in the packer
         run: tar -C "$FRAMEWORK_DIR" -xzf "$RUNNER_TEMP/RaspRuntime.framework.tar.gz"
+      - name: Put the Android runtime in the packer
+        run: |
+          mkdir -p "$ANDROID_DIR/lib"
+          cp "$RUNNER_TEMP/android-runtime/stub.dex" "$ANDROID_DIR/stub.dex"
+          cp -r "$RUNNER_TEMP/android-runtime/lib/." "$ANDROID_DIR/lib/"
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.14"
@@ -126,17 +199,27 @@ jobs:
           cd "$RUNNER_TEMP"
           venv/bin/python -c 'from rasp_packer.ios import resources
           with resources.framework() as path: print(path)'
+      - name: Check that the packer installs with its Android runtime
+        run: |
+          cd "$RUNNER_TEMP"
+          venv/bin/python -c 'from rasp_packer.android import resources
+          artifacts = resources.load()
+          print(len(artifacts.stub_dex), sorted(artifacts.libraries))'
       - name: Pack the test apps
         run: >-
           "$RUNNER_TEMP/venv/bin/python" .github/scripts/pack_test_ipas.py
           packer/tests/apps/ios "$FRAMEWORK_DIR/RaspRuntime.framework"
+      - name: Pack the Android test app
+        run: >-
+          "$RUNNER_TEMP/venv/bin/python" .github/scripts/pack_test_apks.py
+          packer/tests/apps/android "$ANDROID_DIR"
       - name: Commit the framework and tag the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$FRAMEWORK_DIR/RaspRuntime.framework"
+          git add "$FRAMEWORK_DIR/RaspRuntime.framework" "$ANDROID_DIR/stub.dex" "$ANDROID_DIR/lib"
           git commit -q -m "release: ${VERSION}"
           git tag "v${VERSION}"
           gh auth setup-git
