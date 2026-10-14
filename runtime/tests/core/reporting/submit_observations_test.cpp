@@ -72,7 +72,7 @@ constexpr Uuid kSessionId{
 [[nodiscard]] std::string body(std::string_view observed_at_ms, std::string_view build_id,
                                std::string_view observations) {
   std::string out = R"({"query":"mutation SubmitObservations($batch: ObservationBatchInput!) )"
-                    R"({ submitObservations(batch: $batch) { __typename } }",)"
+                    R"({ submitObservations(batch: $batch) }",)"
                     R"("variables":{"batch":{"installId":"0f8c2e1a-7b3d-4c5e-9a1b-2c3d4e5f6a7b",)"
                     R"("sessionId":"3d6a9b7e-2c41-4f08-8e5d-1b7c9a2f4e63","seq":3,"observedAtMs":")";
   out += observed_at_ms;
@@ -92,7 +92,7 @@ constexpr Uuid kSessionId{
 TEST(SubmitObservations, submitObservationsRequest_whenGivenABatch_encodesItAsTheContractDefinesIt) {
   const std::string expected =
       R"({"query":"mutation SubmitObservations($batch: ObservationBatchInput!) )"
-      R"({ submitObservations(batch: $batch) { __typename } }",)"
+      R"({ submitObservations(batch: $batch) }",)"
       R"("variables":{"batch":{"installId":"0f8c2e1a-7b3d-4c5e-9a1b-2c3d4e5f6a7b",)"
       R"("sessionId":"3d6a9b7e-2c41-4f08-8e5d-1b7c9a2f4e63","seq":3,)"
       R"("observedAtMs":"1791381801512","buildId":"build-1",)"

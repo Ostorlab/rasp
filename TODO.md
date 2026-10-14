@@ -20,3 +20,7 @@ Work that is known and not done yet. Each item says what is missing and why it m
 ## Packer: Android
 
 - **The packer doesn't take Android App Bundles (AAB), only APKs.** Since August 2021, Google Play requires new apps to be published as AABs, so a customer who publishes on Google Play builds an AAB, not an APK, and has nothing the packer can protect.
+
+## ADR server
+
+- **A batch of observations is still called an event on the ADR server (Ostorlab/rasp-api).** The runtime and the ADR server's GraphQL API call it an observation batch (`ObservationBatch`, `submitObservations`), but the worker and the Pub/Sub setup still call it an event: `EventMessage`, `rasp/events.py` and its `store_event`, the push endpoint `/pubsub/events`, and the setting `SETTINGS_PUBSUB_EVENTS_TOPIC`. Two names for the same thing make the code harder to follow across the project.
