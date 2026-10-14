@@ -18,9 +18,9 @@ namespace rasp {
 
 namespace {
 
-/// The GraphQL mutation sent with every batch; it asks only for the type name, because nothing reads the answer.
+/// The GraphQL mutation sent with every batch. The server answers only true or false, and nothing reads it.
 constexpr std::string_view kQuery =
-    "mutation SubmitObservations($batch: ObservationBatchInput!) { submitObservations(batch: $batch) { __typename } }";
+    "mutation SubmitObservations($batch: ObservationBatchInput!) { submitObservations(batch: $batch) }";
 
 /// The contract's name for `status`.
 [[nodiscard]] constexpr std::string_view status_name(Status status) {
