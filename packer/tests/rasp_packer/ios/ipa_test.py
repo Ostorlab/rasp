@@ -8,7 +8,9 @@ import zipfile
 import pytest
 
 from rasp_packer import errors
+from rasp_packer import identity
 from rasp_packer.ios import ipa
+from tests.rasp_packer import conftest
 
 
 def _extract(path: pathlib.Path, tmp_path: pathlib.Path) -> ipa.AppBundle:
@@ -25,6 +27,30 @@ def testExtract_whenValidIpa_findsTheAppBundle(
     assert bundle.app_dir == tmp_path / "out" / "Payload" / "Demo.app"
     assert bundle.executable == bundle.app_dir / "Demo"
     assert bundle.frameworks_dir == bundle.app_dir / "Frameworks"
+
+
+def testExtract_whenValidIpa_readsTheAppIdentity(
+    ipa_file: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    bundle = _extract(ipa_file, tmp_path)
+
+    assert bundle.identity == identity.AppIdentity(
+        package_name=conftest.PACKAGE_NAME, version=conftest.VERSION
+    )
+
+
+@pytest.mark.parametrize(
+    "key", ["CFBundleExecutable", "CFBundleIdentifier", "CFBundleShortVersionString"]
+)
+def testExtract_whenInfoPlistLacksAKey_raisesInvalidAppError(
+    make_ipa: collections.abc.Callable[..., pathlib.Path],
+    tmp_path: pathlib.Path,
+    key: str,
+) -> None:
+    info = {name: value for name, value in conftest.APP_INFO.items() if name != key}
+
+    with pytest.raises(errors.InvalidAppError, match=key):
+        _extract(make_ipa(info=info), tmp_path)
 
 
 def testExtract_whenExecutableIsExecutable_keepsItsMode(
@@ -54,6 +80,11 @@ def testExtract_whenNotAZip_raisesInvalidAppError(tmp_path: pathlib.Path) -> Non
 
     with pytest.raises(errors.InvalidAppError, match="not a zip archive"):
         _extract(path, tmp_path)
+
+
+def testExtract_whenFileIsMissing_raisesInvalidAppError(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(errors.InvalidAppError, match="cannot read"):
+        _extract(tmp_path / "Demo.ipa", tmp_path)
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,7 @@
 
 An IPA is a zip archive with the app bundle at `Payload/<Name>.app/`. The bundle holds the main
 executable, named by `CFBundleExecutable` in its `Info.plist`, and its frameworks under `Frameworks/`.
+The `Info.plist` also gives the app's identity: `CFBundleIdentifier` and `CFBundleShortVersionString`.
 """
 
 import dataclasses
@@ -10,9 +11,11 @@ import pathlib
 import plistlib
 import stat
 import zipfile
+from typing import Any
 from xml.parsers import expat
 
 from rasp_packer import errors
+from rasp_packer import identity
 
 _PAYLOAD = "Payload"
 _MAX_EXTRACTED_BYTES = 4 * 1024 * 1024 * 1024
@@ -26,11 +29,13 @@ class AppBundle:
         payload_dir: The `Payload` directory.
         app_dir: The `<Name>.app` directory.
         executable: The main executable of the app.
+        identity: The app's bundle identifier and short version string.
     """
 
     payload_dir: pathlib.Path
     app_dir: pathlib.Path
     executable: pathlib.Path
+    identity: identity.AppIdentity
 
     @property
     def frameworks_dir(self) -> pathlib.Path:
@@ -51,14 +56,17 @@ def extract(ipa: pathlib.Path, destination: pathlib.Path) -> AppBundle:
         The app bundle.
 
     Raises:
-        InvalidAppError: The file is not a zip archive, an entry would be written outside the
-            destination, an entry is a symbolic link, the content is too large, or the archive does
-            not hold exactly one app bundle with an `Info.plist` naming an existing executable.
+        InvalidAppError: The file cannot be read or is not a zip archive, an entry would be
+            written outside the destination, an entry is a symbolic link, the content is too large,
+            or the archive does not hold exactly one app bundle with an `Info.plist` naming an
+            existing executable.
     """
     try:
         archive = zipfile.ZipFile(ipa)
     except zipfile.BadZipFile as error:
         raise errors.InvalidAppError(f"{ipa} is not a zip archive") from error
+    except OSError as error:
+        raise errors.InvalidAppError(f"cannot read {ipa}: {error.strerror}") from error
     with archive:
         entries = archive.infolist()
         _check_entries(entries, destination)
@@ -132,15 +140,25 @@ def _find_bundle(payload_dir: pathlib.Path) -> AppBundle:
             f"Payload holds {len(apps)} app bundles, expected 1"
         )
     app_dir = apps[0]
-    executable = app_dir / _executable_name(app_dir / "Info.plist")
+    info = _read_info(app_dir / "Info.plist")
+    executable = app_dir / _executable_name(info)
     if executable.is_file() is False:
         raise errors.InvalidAppError(
             f"the main executable {executable.name} is missing"
         )
-    return AppBundle(payload_dir=payload_dir, app_dir=app_dir, executable=executable)
+    return AppBundle(
+        payload_dir=payload_dir,
+        app_dir=app_dir,
+        executable=executable,
+        identity=identity.AppIdentity(
+            package_name=_info_string(info, "CFBundleIdentifier"),
+            version=_info_string(info, "CFBundleShortVersionString"),
+        ),
+    )
 
 
-def _executable_name(info_plist: pathlib.Path) -> str:
+def _read_info(info_plist: pathlib.Path) -> dict[str, Any]:
+    """Reads the app's `Info.plist`, which must be a dictionary."""
     if info_plist.is_file() is False:
         raise errors.InvalidAppError("the app bundle has no Info.plist")
     try:
@@ -149,9 +167,24 @@ def _executable_name(info_plist: pathlib.Path) -> str:
         raise errors.InvalidAppError(
             "the app's Info.plist is not a property list"
         ) from error
-    name = info.get("CFBundleExecutable") if isinstance(info, dict) else None
-    if not isinstance(name, str) or name == "" or "/" in name:
+    if not isinstance(info, dict):
+        raise errors.InvalidAppError("the app's Info.plist is not a dictionary")
+    return info
+
+
+def _executable_name(info: dict[str, Any]) -> str:
+    """Returns the main executable's file name, which must not leave the app bundle."""
+    name = _info_string(info, "CFBundleExecutable")
+    if "/" in name:
         raise errors.InvalidAppError(
             "the app's Info.plist has no valid CFBundleExecutable"
         )
     return name
+
+
+def _info_string(info: dict[str, Any], key: str) -> str:
+    """Returns the non-empty string the `Info.plist` holds at `key`."""
+    value = info.get(key)
+    if not isinstance(value, str) or value == "":
+        raise errors.InvalidAppError(f"the app's Info.plist has no valid {key}")
+    return value

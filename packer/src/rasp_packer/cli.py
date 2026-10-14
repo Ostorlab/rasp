@@ -4,7 +4,6 @@ import argparse
 import collections.abc
 import pathlib
 import sys
-import uuid
 from importlib import metadata
 
 from rasp_packer import errors
@@ -39,10 +38,9 @@ def _parser() -> argparse.ArgumentParser:
         help="the platform of the app",
     )
     pack.add_argument(
-        "--application-id",
-        type=uuid.UUID,
+        "--build-id",
         required=True,
-        help="id of the application in the RASP registry",
+        help="id of the protected build, written into the app",
     )
     pack.add_argument(
         "--output",
@@ -60,14 +58,14 @@ def _pack(arguments: argparse.Namespace) -> int:
             app=arguments.app,
             platform=arguments.platform,
             output=arguments.output,
-            application_id=arguments.application_id,
+            build_id=arguments.build_id,
         )
     except errors.Error as error:
         print(f"rasp pack: {error}", file=sys.stderr)
         return EXIT_FAILED
     print(
         f"packed {arguments.platform} app: {result.output} "
-        f"(build {result.build_id}, protection version {result.protection_version})"
+        f"(package {result.package_name}, version {result.version}, build {result.build_id})"
     )
     return EXIT_OK
 

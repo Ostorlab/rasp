@@ -17,6 +17,10 @@ class ManifestError(Error):
     """The app's AndroidManifest.xml cannot be read or edited."""
 
 
+class InvalidBuildIdError(Error):
+    """The build id cannot be written into the app."""
+
+
 class OutputExistsError(Error):
     """The path to write the protected app to already exists."""
 

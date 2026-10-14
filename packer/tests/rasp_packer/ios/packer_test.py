@@ -10,8 +10,10 @@ import lief
 import pytest
 
 from rasp_packer import errors
+from rasp_packer import identity
 from rasp_packer.ios import macho
 from rasp_packer.ios import packer
+from tests.rasp_packer import conftest
 
 _BUILD_ID = "build-1"
 _APP = "Payload/Demo.app"
@@ -51,6 +53,18 @@ def testPack_whenValidIpa_embedsTheRuntimeWithTheBuildId(
 
     assert binary == b"runtime binary"
     assert info[packer.RASP_BUILD_ID_KEY] == _BUILD_ID
+
+
+def testPack_whenValidIpa_returnsTheAppIdentity(
+    ipa_file: pathlib.Path, runtime: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    app_identity = packer.pack(
+        app=ipa_file, output=tmp_path / "out.ipa", runtime=runtime, build_id=_BUILD_ID
+    )
+
+    assert app_identity == identity.AppIdentity(
+        package_name=conftest.PACKAGE_NAME, version=conftest.VERSION
+    )
 
 
 def testPack_whenAppWasSigned_removesItsSignature(
