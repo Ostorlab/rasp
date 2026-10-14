@@ -19,7 +19,6 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
     - `http.h`: `post_request`, the text of an HTTP/1.1 POST with a JSON body. It refuses a host or a path that isn't made only of visible ASCII characters, and a path that doesn't start with `/`, so neither can change the request line or add a header.
     - `json.h`: JSON string writing. It always writes valid JSON: each byte that isn't valid UTF-8 is replaced with U+FFFD.
     - `logging.h`: `rasp::log` and `kLoggingEnabled`, the development logging that release builds leave out.
-    - `sha256.h`: `sha256` and `hmac_sha256`, SHA-256 and HMAC-SHA256 written with the standard library only.
     - `uuid.h`: `Uuid`. `random_uuid` makes a random version 4 one, and `to_string` writes its 36-character text form.
   - `src/`: the code of these headers, in the same folders.
 - `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it starts the thread that runs the checks and reports them.
