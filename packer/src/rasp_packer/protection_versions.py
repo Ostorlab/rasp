@@ -6,8 +6,8 @@ the packer transforms the app. Do not bump it for changes that leave protected a
 comments, refactors, tests or docs.
 
 The number is part of every build id, so a bump gives each app a new build on that platform.
-`PROTECTION_VERSIONS` is public: the caller of the packer, such as the Reporting Engine's build job,
-reads it to compute the build id before it packs the app.
+`PROTECTION_VERSIONS` is public: the caller of the packer reads it to compute the build id before it
+packs the app.
 """
 
 import collections.abc

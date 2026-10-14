@@ -70,6 +70,6 @@ CI runs the same commands (`.github/workflows/packer.yml`).
 
 Every protected build has a build id, which the packer writes into the app. The caller computes it and passes it to `pack` (or to `rasp pack --build-id`); the packer writes it as it is and does not check its format. It only refuses an id it cannot write: an empty one, or one with control characters.
 
-The Reporting Engine computes the build id before it packs an app: the lowercase hex SHA-256 over the organisation id, the SHA-256 of the input app file, the platform name, and the platform's protection version. If a build with that id already exists, it does not pack the app again. It reads the protection version from `rasp_packer.protection_versions.PROTECTION_VERSIONS`.
+The build id is the lowercase hex SHA-256 over the organisation id, the SHA-256 of the input app file, the platform name, and the platform's protection version. The caller reads the protection version from `rasp_packer.protection_versions.PROTECTION_VERSIONS`.
 
 Each platform's protection version is a whole number in `src/rasp_packer/protection_versions.py`. Bump it when a change alters what protected apps do on that platform: the runtime's behaviour, or how the packer transforms the app. Changes that leave protected apps the same, such as comments, refactors, tests or docs, do not bump it.
