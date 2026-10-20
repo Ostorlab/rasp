@@ -76,6 +76,7 @@ constexpr const char* kGetClassLoaderSignature = "()Ljava/lang/ClassLoader;";
     if (bytes == nullptr) {
       return nullptr;
     }
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): the JNI call methods are variadic by design.
     jobject buffer = env->CallStaticObjectMethod(buffer_class, wrap, bytes);
     env->DeleteLocalRef(bytes);
     if (buffer == nullptr || env->ExceptionCheck() == JNI_TRUE) {
@@ -101,6 +102,7 @@ constexpr const char* kGetClassLoaderSignature = "()Ljava/lang/ClassLoader;";
     env->ExceptionClear();
     return nullptr;
   }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): the JNI call methods are variadic by design.
   return env->CallObjectMethod(stub, get_loader);
 }
 
@@ -137,6 +139,7 @@ bool publish(JNIEnv* env, const std::vector<payload::Dex>& dexes, const std::str
     env->ExceptionClear();
     return false;
   }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): the JNI object constructors are variadic by design.
   jobject loader = env->NewObject(loader_class, constructor, buffers, path, parent);
   if (loader == nullptr || env->ExceptionCheck() == JNI_TRUE) {
     env->ExceptionClear();

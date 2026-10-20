@@ -41,8 +41,8 @@ struct Pending {
 /// has no static-init ordering and no exit-time destructor.
 [[nodiscard]] Pending& pending() {
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  static Pending* const state = new Pending();
-  return *state;
+  static auto* const kState = new Pending();
+  return *kState;
 }
 
 /// Whether the library is loaded inside a running JVM. On API 31 and newer, `JNI_GetCreatedJavaVMs` is part of the
@@ -121,13 +121,14 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     return JNI_VERSION_1_6;
   }
   auto* env = static_cast<JNIEnv*>(raw_env);
-  if (pending().dexes.has_value()) {
-    if (rasp::android::loader::publish(env, *pending().dexes, pending().library_dir)) {
+  Pending& state = pending();
+  if (state.dexes.has_value()) {
+    if (rasp::android::loader::publish(env, *state.dexes, state.library_dir)) {
       log_line("app class loader ready");
     } else {
       log_line("could not build the class loader");
     }
-    pending().dexes.reset();
+    state.dexes.reset();
   }
   return JNI_VERSION_1_6;
 }

@@ -51,7 +51,7 @@ namespace {
   if (!app.has_value()) {
     return std::nullopt;
   }
-  const std::string candidate = *app + "/base.apk";
+  std::string candidate = *app + "/base.apk";
   if (access(candidate.c_str(), R_OK) != 0) {
     return std::nullopt;
   }
@@ -74,10 +74,10 @@ namespace {
       continue;
     }
     const std::string_view path = line.substr(slash);
-    if (!path.ends_with(".apk") || path.find("/data/app/") == std::string_view::npos) {
+    if (!path.ends_with(".apk") || !path.contains("/data/app/")) {
       continue;
     }
-    if (path.find("base.apk") != std::string_view::npos) {
+    if (path.contains("base.apk")) {
       return std::string(path);
     }
     if (!fallback.has_value()) {
@@ -89,6 +89,8 @@ namespace {
 
 /// The APK path read from the process's memory map.
 [[nodiscard]] std::optional<std::string> apk_from_maps() {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner): open is a libc variadic function, and its
+  // flags come from the included <fcntl.h>.
   const int descriptor = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
   if (descriptor < 0) {
     return std::nullopt;

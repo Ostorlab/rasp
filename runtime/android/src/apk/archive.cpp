@@ -71,10 +71,19 @@ constexpr std::size_t kMaxComment = 65535;
   }
 }
 
-/// The bytes of the entry whose local header starts at `local_offset` and whose stored size is `data_size`.
+/// Where a stored entry's data sits: the offset of its local header in the file, and the entry's stored size.
+struct LocalEntry {
+  /// The offset of the local file header in the archive.
+  std::uint32_t local_offset = 0;
+  /// The stored size of the entry's data.
+  std::uint32_t data_size = 0;
+};
+
+/// The bytes of the entry whose local header and stored size `entry` describes.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_local_data(std::span<const std::uint8_t> file,
-                                                                       std::uint32_t local_offset,
-                                                                       std::uint32_t data_size) {
+                                                                       LocalEntry entry) {
+  const std::uint32_t local_offset = entry.local_offset;
+  const std::uint32_t data_size = entry.data_size;
   if (local_offset > file.size() || file.size() - local_offset < kLocalHeaderSize) {
     return std::nullopt;
   }
@@ -123,7 +132,7 @@ constexpr std::size_t kMaxComment = 65535;
       if (method != kStored) {
         return std::nullopt;
       }
-      return read_local_data(file, local_offset, stored_size);
+      return read_local_data(file, LocalEntry{.local_offset = local_offset, .data_size = stored_size});
     }
     const std::size_t entry_size = kCentralEntrySize + name_length + extra_length + comment_length;
     if (rest.size() < entry_size) {
@@ -137,6 +146,8 @@ constexpr std::size_t kMaxComment = 65535;
 }  // namespace
 
 std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& apk_path, std::string_view name) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner): open is a libc variadic function, and its
+  // flags come from the included <fcntl.h>.
   const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
   if (descriptor < 0) {
     return std::nullopt;
@@ -146,7 +157,8 @@ std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& ap
     close(descriptor);
     return std::nullopt;
   }
-  const std::size_t size = static_cast<std::size_t>(status.st_size);
+  const auto size = static_cast<std::size_t>(status.st_size);
+  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
   void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
   close(descriptor);
   if (mapping == MAP_FAILED) {
