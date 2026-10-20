@@ -146,8 +146,8 @@ struct LocalEntry {
 }  // namespace
 
 std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& apk_path, std::string_view name) {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner): open is a libc variadic function, and its
-  // flags come from the included <fcntl.h>.
+  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
   const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
   if (descriptor < 0) {
     return std::nullopt;

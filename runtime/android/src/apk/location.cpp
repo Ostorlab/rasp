@@ -89,8 +89,8 @@ namespace {
 
 /// The APK path read from the process's memory map.
 [[nodiscard]] std::optional<std::string> apk_from_maps() {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner): open is a libc variadic function, and its
-  // flags come from the included <fcntl.h>.
+  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
   const int descriptor = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
   if (descriptor < 0) {
     return std::nullopt;
