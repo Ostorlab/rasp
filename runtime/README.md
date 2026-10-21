@@ -6,7 +6,7 @@ Before you change anything here, read [CONTRIBUTING.md](CONTRIBUTING.md): it lis
 
 ## Layout
 
-The code is grouped the same way at every level. `util/` holds generic helpers that know nothing about RASP. Every other folder is one domain module, named after the job it does, such as `checks/`, which produces the observations. When a module has a part shared by every platform, that part is in `core/`, and its platform part is in the folder with the same name under `ios/`. Every check is platform code, so checks are only in the platform folders.
+The code is grouped the same way at every level. `util/` holds generic helpers that know nothing about RASP. Every other folder is one domain module, named after the job it does, such as `checks/`, which produces the observations. When a module has a part shared by every platform, that part is in `core/`, and its platform part is in the folder with the same name under `ios/` or `android/`. Every check is platform code, so checks are only in the platform folders.
 
 - `core/`: code shared by every platform. It uses no platform API.
   - `include/rasp/observation.h`: `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`), and `observed`, `unsupported` and `failed`, which build one.
@@ -18,6 +18,11 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
   - `src/checks/`: the iOS checks. Each one reports observations.
     - `jailbreak.h`: the jailbreak checks. `jb.fs_paths` (do known jailbreak files exist, read through access and stat), `jb.sandbox_escape` (can the app write outside its sandbox) and `jb.fork_ok` (can the app start a child process). Off a physical device every one is unsupported.
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
+- `android/`: `librasp.so`, the runtime for Android. When the app starts, the stub calls the library, which runs the checks.
+  - `src/entry.cpp`: a load-time constructor that runs the checks when the linker loads the library.
+  - `src/checks/`: the Android checks. Each one reports observations.
+    - `example.h`: `example.loaded`, a placeholder that shows where a check goes and how it reports its observations.
+  - `src/util/logging.cpp`: the Android backend of `rasp::log`, which writes to the system log with `__android_log_write`.
 - `tests/`: tests that run on a development machine, with GoogleTest. They use the same folders as the code.
 
 ## Build
@@ -65,6 +70,16 @@ The framework is written to `build/ios/ios/RaspRuntime.framework`. Its install n
 
 The framework supports iOS 12.0 and later. It doesn't use the libc++ that comes with iOS, which only supports iOS 15 and later. Instead it links a static libc++ built from LLVM 23.1.3 for the same minimum iOS version, with all its symbols hidden. That library is built once and committed under `third_party/libcxx/`, and `cmake/libcxx.cmake` checks its hash and links it. The build steps, the one-line source change it needs, and the CI job that proves the committed library matches the source are described in `third_party/libcxx/README.md`.
 
+For an Android device (arm64-v8a), with the Android NDK. Set `ANDROID_NDK_HOME` to the NDK's folder first:
+
+```
+cd runtime
+cmake --preset android
+cmake --build --preset android
+```
+
+The library is written to `build/android/android/librasp.so`. It exports no entry point of its own: the checks run from a load-time constructor, and the stub calls no native method, so the library exports no `Java_...` symbol. The only symbol it may export is the JVM's `JNI_OnLoad` hook, which the runtime uses to publish the decrypted class loader to the stub. A release build is also stripped (`-Wl,--strip-all`), so it carries no symbol table and no debug sections. Every other symbol, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 12 (API 31) and later, so the stub can load the decrypted code from memory with `InMemoryDexClassLoader`, and the code is never written to disk.
+
 ## Logs
 
 Only development builds write logs. A release build writes nothing to any log, so a protected app leaves no trace of the runtime in the device's log.
@@ -78,6 +93,16 @@ cmake --build --preset ios-dev
 ```
 
 The framework is written to `build/ios-dev/ios/RaspRuntime.framework`. Code writes a log line with `rasp::log` (`core/include/rasp/util/logging.h`), and only inside `if constexpr (rasp::kLoggingEnabled)`. In a release build, the compiler still checks the code in that block, but it generates no code for it, so neither the call nor its text is in the framework.
+
+On Android, the development build writes each line to the system log with `__android_log_write`, with the tag `RaspRuntime`, and the `android-dev` preset builds it:
+
+```
+cd runtime
+cmake --preset android-dev
+cmake --build --preset android-dev
+```
+
+The library is written to `build/android-dev/android/librasp.so`.
 
 ## Format and check
 
@@ -97,4 +122,27 @@ cmake --preset ios-dev
 run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.cpp$"
 ```
 
-CI runs the format check, clang-tidy (on Linux for the shared code and the tests, and on macOS for the iOS code), the three host builds, and the iOS release and development builds (`.github/workflows/runtime.yml`). It checks that the release framework exports no symbols, and that it imports none of `exit`, `_Exit`, `quick_exit`, `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `setenv`, `putenv`, `unsetenv`, `setlocale` and `setrlimit`. `.clang-tidy` forbids these functions in the source, and also `abort` and `std::terminate`, which the binary check leaves out. CI also checks that the release framework imports no symbol with `_os_log` in its name and contains no `{public}` text.
+The Android code, from an Android build, with `ANDROID_NDK_HOME` set:
+
+```
+cmake --preset android
+run-clang-tidy -quiet -p build/android "^$PWD/android/src/.*\.cpp$"
+```
+
+The release build leaves out `logging.cpp`, so check the development build too, the way CI does:
+
+```
+cmake --preset android-dev
+run-clang-tidy -quiet -p build/android-dev "^$PWD/android/src/.*\.cpp$"
+```
+
+CI (`.github/workflows/runtime.yml`) runs:
+
+- clang-format, and clang-tidy on the shared code and the tests (on Linux), the iOS code (on macOS) and the Android code (with the Android builds);
+- the three host builds, the iOS release and development builds, and the Android release and development builds.
+
+On the release binaries, it checks that:
+
+- the framework exports no symbols, and the Android library exports only the JVM's `JNI_OnLoad` hook;
+- neither imports any of `exit`, `_Exit`, `quick_exit`, `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `setenv`, `putenv`, `unsetenv`, `setlocale` and `setrlimit`. `.clang-tidy` forbids these functions in the source, and also `abort` and `std::terminate`, which the binary check leaves out;
+- neither writes logs: the framework imports no symbol with `_os_log` in its name and contains no `{public}` text, and the Android library imports no symbol with `__android_log` in its name and contains no `RaspRuntime` text.

@@ -217,3 +217,64 @@ jobs:
           run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.cpp$"
       - name: Check the development build writes logs
         run: nm -u build/ios-dev/ios/RaspRuntime.framework/RaspRuntime | grep -q _os_log
+
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: runtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install CMake
+        run: |
+          python3 -m venv "$RUNNER_TEMP/build-tools"
+          "$RUNNER_TEMP/build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
+          echo "$RUNNER_TEMP/build-tools/bin" >> "$GITHUB_PATH"
+      - name: Install LLVM
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "clang-tidy-${LLVM_VERSION}"
+          echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Select the NDK
+        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+      - name: Configure
+        run: cmake --preset android
+      - name: Build
+        run: cmake --build --preset android --parallel
+      - name: Check the Android code
+        run: run-clang-tidy -quiet -p build/android "^$PWD/android/src/.*\.cpp$"
+      - name: Check the library
+        run: |
+          nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          re="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          lib=build/android/android/librasp.so
+          file "$lib" | grep -q "ELF 64-bit LSB shared object, ARM aarch64"
+          test -z "$("$nm" -D --defined-only "$lib" | awk '{ print $3 }' | grep -vx 'JNI_OnLoad')"
+          test -z "$("$re" -S "$lib" | grep -oE '\.symtab|\.debug_[a-z_]+')"
+      - name: Check the library calls no forbidden function
+        run: |
+          nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          imports="$("$nm" -D -u build/android/android/librasp.so | awk '{ print $2 }' | sed 's/@.*//')"
+          test -n "$imports"
+          test -z "$(grep -xE '(exit|_Exit|quick_exit|signal|sigaction|sigprocmask|pthread_sigmask|setenv|putenv|unsetenv|setlocale|setrlimit)' <<< "$imports")"
+      - name: Check the library writes no log
+        run: |
+          nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          lib=build/android/android/librasp.so
+          test -z "$("$nm" -D -u "$lib" | grep __android_log)"
+          test -z "$(strings -a "$lib" | grep -F RaspRuntime)"
+      - name: Configure the development build
+        run: cmake --preset android-dev
+      - name: Build the development build
+        run: cmake --build --preset android-dev --parallel
+      - name: Check the Android development code
+        run: run-clang-tidy -quiet -p build/android-dev "^$PWD/android/src/.*\.cpp$"
+      - name: Check the development build writes logs
+        run: |
+          nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          "$nm" -D -u build/android-dev/android/librasp.so | grep -q __android_log_write
