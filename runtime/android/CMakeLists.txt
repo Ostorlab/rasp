@@ -1,5 +1,5 @@
 add_library(rasp SHARED
-  src/entry.cpp
+  src/loader/generator.cpp
   src/apk/archive.cpp
   src/apk/location.cpp
   src/payload/cipher.cpp)

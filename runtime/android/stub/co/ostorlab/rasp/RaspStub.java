@@ -29,8 +29,7 @@ public final class RaspStub extends AppComponentFactory {
             liftHiddenApi();
             ClassLoader boot = base.getParent();
             GeneratingClassLoader generating =
-                    new GeneratingClassLoader(
-                            boot, new AssetDexGenerator(info.sourceDir), info.nativeLibraryDir);
+                    new GeneratingClassLoader(boot, base, info.nativeLibraryDir);
             setParent(base, generating);
             return base;
         } catch (Throwable error) {

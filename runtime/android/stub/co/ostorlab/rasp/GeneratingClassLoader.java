@@ -11,19 +11,23 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * A class loader that serves the app's classes on demand: when a class is first needed, it asks the
- * generator for the dex that holds it, decrypts/opens that dex once, and defines the class from it.
- * A dex whose classes are never used is never opened. Framework classes (android.*, java.*) resolve
- * through the parent, so findClass runs only for the app's own names.
+ * A class loader that serves the app's classes on demand: when a class is first needed, the native
+ * runtime produces the dex that holds it (mapping it, reading the encrypted dex from the APK, and
+ * decrypting it), and this loader defines the class from that dex. A dex whose classes are never used
+ * is never produced. Framework classes resolve through the parent, so {@link #findClass} runs only for
+ * the app's own names.
+ *
+ * <p>{@link #generate} is a native method bound by the runtime's {@code JNI_OnLoad} with
+ * RegisterNatives, so it is not an exported symbol and the native library's symbols can be stripped or
+ * renamed.
  */
 public final class GeneratingClassLoader extends ClassLoader {
 
-    /** Produces the dex that holds a class, on demand. */
-    public interface DexGenerator {
-        GeneratedDex generate(String className) throws Exception;
+    static {
+        System.loadLibrary("rasp");
     }
 
-    /** One dex and the binary names of every class it defines. */
+    /** One dex and the binary names of every class it defines. Built by the native runtime. */
     public static final class GeneratedDex {
         final byte[] bytes;
         final Set<String> classNames;
@@ -45,7 +49,7 @@ public final class GeneratingClassLoader extends ClassLoader {
         }
     }
 
-    private final DexGenerator generator;
+    private final ClassLoader base;
     private final String librarySearchPath;
     private final Map<String, InMemoryDexClassLoader> owners =
             new ConcurrentHashMap<String, InMemoryDexClassLoader>();
@@ -54,11 +58,22 @@ public final class GeneratingClassLoader extends ClassLoader {
     private final Object generationLock = new Object();
     private final ThreadLocal<Set<String>> inProgress = new ThreadLocal<Set<String>>();
 
-    public GeneratingClassLoader(ClassLoader parent, DexGenerator generator, String librarySearchPath) {
+    /**
+     * @param parent the loader to delegate to first (the boot loader): framework/platform classes
+     *     resolve through it.
+     * @param base the app's base loader, which defines the framework classes that stayed in the base
+     *     dexes. A name that is not a business class is defined from here, so a business class can
+     *     reference a framework class even though base is this loader's child in the chain.
+     * @param librarySearchPath where a generated class's System.loadLibrary looks for the app's .so.
+     */
+    public GeneratingClassLoader(ClassLoader parent, ClassLoader base, String librarySearchPath) {
         super(parent);
-        this.generator = generator;
+        this.base = base;
         this.librarySearchPath = librarySearchPath;
     }
+
+    /** Produces the dex that defines {@code className}, or null when it is not a split-out class. Native. */
+    private native GeneratedDex generate(String className);
 
     private Set<String> inProgress() {
         Set<String> set = inProgress.get();
@@ -92,10 +107,7 @@ public final class GeneratingClassLoader extends ClassLoader {
                     return loaded;
                 }
                 InMemoryDexClassLoader owner = ownerOf(name);
-                if (owner == null) {
-                    throw new ClassNotFoundException(name);
-                }
-                loaded = defineIn(owner, name);
+                loaded = defineIn(owner != null ? owner : base, name);
                 defined.put(name, loaded);
                 return loaded;
             }
@@ -118,7 +130,7 @@ public final class GeneratingClassLoader extends ClassLoader {
         }
     }
 
-    private InMemoryDexClassLoader ownerOf(String name) throws ClassNotFoundException {
+    private InMemoryDexClassLoader ownerOf(String name) {
         InMemoryDexClassLoader owner = owners.get(name);
         if (owner != null) {
             return owner;
@@ -128,17 +140,9 @@ public final class GeneratingClassLoader extends ClassLoader {
             if (owner != null) {
                 return owner;
             }
-            GeneratedDex dex;
-            try {
-                dex = generator.generate(name);
-            } catch (Exception e) {
-                throw new ClassNotFoundException("generating dex for " + name + " failed", e);
-            }
+            GeneratedDex dex = generate(name);
             if (dex == null) {
                 return null;
-            }
-            if (!dex.classNames.contains(name)) {
-                throw new ClassNotFoundException("dex for " + name + " does not list it");
             }
             InMemoryDexClassLoader child =
                     new InMemoryDexClassLoader(
