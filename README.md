@@ -15,7 +15,7 @@ packer/                 Python packer: a library, with the `rasp` command line a
   tests/
 runtime/                C++ runtime libraries, built with CMake
   core/                 code shared by both platforms: observations, helpers
-  android/              Android entry point (JNI), the Android checks, and the .so build
+  android/              Android entry point (JNI), the Android checks, the payload decryption, and the .so build
   ios/                  iOS entry point, the iOS checks, and the RaspRuntime.framework build
   tests/                tests that run on a development machine, without a device
 docs/                   notes about this repository
