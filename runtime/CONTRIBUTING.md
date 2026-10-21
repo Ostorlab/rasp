@@ -58,19 +58,19 @@ Without exceptions, some standard library calls end the process when they fail, 
 
 - `.at()` ends the app on a bad index. Check the bounds, then index.
 - `std::random_device` ends the app when it can't open a random source. Use `arc4random_buf`, which can't fail.
-- Running out of memory ends the app. Every buffer, queue and loop needs an upper limit, and we never read a file or a server response without a size limit.
+- Running out of memory ends the app. Every buffer, queue and loop needs an upper limit, and we never read a file without a size limit.
 
 When a choice exists, use the function that can't fail.
 
 ### Load time and the main thread
 
-The runtime starts from a function that runs while the app loads, on the app's main thread, before the app's own code. Anything slow there delays the app's launch, and if launch takes too long, iOS kills the app. So that function only starts work. The checks, the network calls and the waiting happen on our own thread.
+The runtime starts from a function that runs while the app loads, on the app's main thread, before the app's own code. Anything slow there delays the app's launch, and if launch takes too long, iOS kills the app. So that function only starts work. The checks and the waiting happen on our own thread.
 
 For the same reason, CI enforces three rules on the code that ships:
 
 - **No global objects with a constructor or a destructor.** Their constructors run during that same load, in an order no one controls, so one global can use another before it exists. Their destructors run while the app exits, possibly while our thread still uses them. Use `constexpr` constants instead: a `std::string_view` for text, a `std::array` for a list. The entry point is the only load-time function.
 - **No function uses more than 4 KB of stack.** At load time we run on the app's main thread and use its stack. Our own threads have small stacks.
-- **No recursion.** How deep a recursion goes depends on its input. A deeply nested server response could use up the stack.
+- **No recursion.** How deep a recursion goes depends on its input. A deep enough input could use up the stack.
 
 ### The process belongs to the app
 
@@ -95,7 +95,7 @@ The app can exit at any moment, and our thread may be in the middle of its work 
 
 ### System calls
 
-Check the result of every system call. On failure, the check reports a `kError` observation. Never fall back to a guessed or default value: the server would treat it as something we observed. Clean up after a failure too. For example, a probe file must never be left outside the sandbox.
+Check the result of every system call. On failure, the check reports a `kError` observation. Never fall back to a guessed or default value: it would look like something the check observed. Clean up after a failure too. For example, a probe file must never be left outside the sandbox.
 
 ### iOS 12 and our own libc++
 
@@ -105,11 +105,7 @@ The framework doesn't use the libc++ that comes with iOS, because Apple's copy o
 
 ## Never help the attacker
 
-On a protected app, the attacker controls the device. They can read our binary, read the device's logs, fake files and system call results, and intercept or forge network traffic. Write the code with that in mind.
-
-### Observations, not verdicts
-
-A check reports what it saw (`signal`, `source`, `status`, `value`) and never decides whether the device is compromised. The ADR server makes that decision. If the decision were in the app, an attacker could find it in the binary and patch it. On the server, they can't see it, and we can change it without shipping a new runtime.
+On a protected app, the attacker controls the device. They can read our binary, read the device's logs, and fake files and system call results. Write the code with that in mind.
 
 ### No logs in release builds
 
@@ -120,15 +116,14 @@ During development, write log lines only with `rasp::log`, and only inside `if c
 ### Other rules
 
 - **No exported symbols.** CI checks that the framework exports nothing. Exported names show an attacker where our functions are, and could clash with functions of the same name in the app.
-- **Treat everything from outside as hostile.** Server responses, files and system call results can all be forged. Parse with limits and check every value before using it.
+- **Treat everything from outside as hostile.** Files and system call results can be forged. Parse with limits and check every value before using it.
 - **No secrets in the source or the binary.** Anything in the binary can be extracted.
-- **Never turn off certificate checks**, not even in a development build. Development code tends to reach release builds.
 
 ## Code
 
-- **Fixed-width integers for values sent to the server** (`int32_t`, `int64_t`). They must match the GraphQL types exactly. `int` and `long` change size between platforms. Write every intended conversion with `static_cast`: warnings are errors, and the build rejects silent ones.
+- **Fixed-width integers for values whose size matters** (`int32_t`, `int64_t`), such as an observation's value. `int` and `long` change size between platforms. Write every intended conversion with `static_cast`: warnings are errors, and the build rejects silent ones.
 - **Never keep a `std::string_view` or `std::span` beyond the call that received it.** It points into memory it doesn't own, and that memory can be freed while we still use it.
 - **No `<iostream>` or `<regex>`.** Every protected app pays for our binary's size and our load time, and these two add a lot of both.
 - **Platform code goes in its platform's folder** (`ios/`, `android/`), chosen by CMake. Every check is platform code: it goes in `ios/src/checks/` or `android/src/checks/`. The same shared code builds for both platforms, so it must not contain platform `#if` blocks.
 - **Document every file and function with `///`.** Every C++ file starts with a description of what it holds. A public header documents every public symbol. Every public function says what it does and the cases a caller must know about, describes each parameter with `@param` and, unless it returns `void`, its result with `@return`. Every private function has at least one sentence that says what it does. Write no other comments: names and small functions say how the code does it.
-- **Test names** follow `TEST(Suite, action_whenCondition_result)`, for example `TEST_F(Reporter, report_whenNothingChanged_sendsNothingAndUsesNoSeq)`.
+- **Test names** follow `TEST(Suite, action_whenCondition_result)`, for example `TEST(Jailbreak, observeSandboxWrite_whenRefused_reportsFalse)`.

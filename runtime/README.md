@@ -1,32 +1,22 @@
 # Runtime
 
-The C++ runtime libraries that the packer adds to a protected app. They run the checks inside the app and report what they observe to the ADR server.
+The C++ runtime libraries that the packer adds to a protected app. They run the checks inside the app.
 
 Before you change anything here, read [CONTRIBUTING.md](CONTRIBUTING.md): it lists the rules the build enforces and the ones reviewers check.
 
 ## Layout
 
-The code is grouped the same way at every level. `util/` holds generic helpers that know nothing about RASP. Every other folder is one domain module, named after the job it does: `checks/` produces the observations, and `reporting/` sends them to the ADR server. The shared part of a module is in `core/`, and its platform part is in the folder with the same name under `ios/`. Every check is platform code, so checks are only in the platform folders.
+The code is grouped the same way at every level. `util/` holds generic helpers that know nothing about RASP. Every other folder is one domain module, named after the job it does, such as `checks/`, which produces the observations. When a module has a part shared by every platform, that part is in `core/`, and its platform part is in the folder with the same name under `ios/`. Every check is platform code, so checks are only in the platform folders.
 
 - `core/`: code shared by every platform. It uses no platform API.
-  - `include/rasp/observation.h`: `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`), and `observed`, `unsupported` and `failed`, which build one. Checks and reporting both use it.
-  - `include/rasp/reporting/`: sending the observations to the ADR server.
-    - `submit_observations.h`: `ObservationBatch`, a batch of observations as the ADR server receives it, and `submit_observations_request`, the GraphQL `submitObservations` request that sends it. The install id and session id of a batch are `Uuid`s.
-    - `reporter.h`: `Reporter`, whose `report` sends, at once and as one batch, only the observations that changed since the last ones reported: an observation is identified by its signal and source, and it has changed when it is new or when its status or value differs. It numbers the batches of a session (`seq`) and sends each one once, in order. A batch is never sent again, even when its request fails. `SessionIds` holds the install id and session id that every batch of the session carries.
-    - `transport.h`: `Transport`, the HTTP POST each platform implements with its own network stack.
-    - `server.h`: `kServerHost` and `kServerPath`, the ADR server the runtime reports to, `adr.ostorlab.co/apis/graphql`.
+  - `include/rasp/observation.h`: `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`), and `observed`, `unsupported` and `failed`, which build one.
   - `include/rasp/util/`: generic helpers.
-    - `http.h`: `post_request`, the text of an HTTP/1.1 POST with a JSON body. It refuses a host or a path that isn't made only of visible ASCII characters, and a path that doesn't start with `/`, so neither can change the request line or add a header.
-    - `json.h`: JSON string writing. It always writes valid JSON: each byte that isn't valid UTF-8 is replaced with U+FFFD.
     - `logging.h`: `rasp::log` and `kLoggingEnabled`, the development logging that release builds leave out.
-    - `uuid.h`: `Uuid`. `random_uuid` makes a random version 4 one, and `to_string` writes its 36-character text form.
   - `src/`: the code of these headers, in the same folders.
-- `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it starts the thread that runs the checks and reports them.
-  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It reads the build id from the framework's `Info.plist`, loads the install id, and makes a session id. Then it runs the checks and sends their observations as the session's first batch, and every 60 seconds runs them again and sends only the observations that changed; a run where nothing changed sends nothing. It runs until the process exits, and iOS suspends it while the app is in the background.
-  - `src/checks/`: the iOS checks. Each one reports observations, never a verdict.
+- `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it starts the thread that runs the checks.
+  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It runs the checks, then runs them again every 60 seconds. A development build logs each observation. It runs until the process exits, and iOS suspends it while the app is in the background.
+  - `src/checks/`: the iOS checks. Each one reports observations.
     - `jailbreak.h`: the jailbreak checks. `jb.fs_paths` (do known jailbreak files exist, read through access and stat), `jb.sandbox_escape` (can the app write outside its sandbox) and `jb.fork_ok` (can the app start a child process). Off a physical device every one is unsupported.
-  - `src/reporting/install_id.h`: `load_install_id`, which keeps the install id in a 16-byte file in the app's `Library/Application Support`.
-  - `src/reporting/network_transport.h`: `NetworkTransport`, the iOS transport. Each post opens a TLS connection to the server on port 443 with Network.framework, which checks the server's certificate, writes the request, waits for the start of the answer, and closes the connection. One timeout covers the whole post, from opening the connection to the start of the answer.
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
 - `tests/`: tests that run on a development machine, with GoogleTest. They use the same folders as the code.
 

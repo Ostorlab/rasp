@@ -9,7 +9,7 @@
 
 namespace {
 
-/// Logs the runtime's version in a development build, and starts the thread that runs the checks and reports them.
+/// Logs the runtime's version in a development build, and starts the thread that runs the checks.
 __attribute__((constructor)) void rasp_start() noexcept {
   if constexpr (rasp::kLoggingEnabled) {
     rasp::log(std::string(rasp::kRuntimeVersion) + " loaded");
