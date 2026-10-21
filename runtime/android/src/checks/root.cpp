@@ -29,8 +29,7 @@ namespace gsl {
 
 /// Marks a raw pointer that owns what it points to, as the Guidelines Support Library does, so clang-tidy checks it.
 template <typename T>
-// NOLINTNEXTLINE(readability-identifier-naming): gsl::owner keeps the GSL's exact lowercase name so
-// cppcoreguidelines-owning-memory recognizes it.
+// NOLINTNEXTLINE(readability-identifier-naming): gsl::owner keeps the GSL's exact lowercase name so cppcoreguidelines-owning-memory recognizes it.
 using owner = T;
 
 }  // namespace gsl
