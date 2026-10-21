@@ -21,13 +21,19 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
 - `android/`: `librasp.so`, the runtime for Android, and the stub that loads it. The library runs its checks when it loads, and returns the app's decrypted dex files to the stub.
   - `src/entry.cpp`: a load-time constructor that runs the checks and decrypts the app's dex files, and `JNI_OnLoad`, which builds the class loader over them and stores it in the stub's field.
   - `src/checks/`: the Android checks. Each one reports observations.
-    - `example.h`: `example.loaded`, a placeholder that shows where a check goes and how it reports its observations.
+    - `root.h`: the root checks. They run on Android; off Android every observation has the unsupported status.
+      - `root.fs_paths`: which known root files exist, such as `su` and the Magisk, KernelSU and APatch files, read through access and stat.
+      - `root.mounts`: the lines of `/proc/self/mounts` that a root tool made.
+      - `root.rw_mounts`: the lines of `/proc/self/mounts` that mount a system folder writable.
+      - `root.selinux_enforcing`: whether SELinux enforces its policy, read from `/sys/fs/selinux/enforce`.
+      - `root.build_props`: the build properties that reveal a debuggable or test-signed build, or an unlocked bootloader.
   - `src/payload/`: recovering the app's dex files, which the packer encrypted.
     - `cipher.h`: `decrypt`, which decrypts a frame of the packer's Android cipher: ChaCha20-Poly1305 (RFC 8439), from TF-PSA-Crypto. It refuses a frame whose tag doesn't match.
     - `payload.h`: `Dex`, one dex file of the protected app, and `unpack`, which decrypts the payload and reads the app's dex files from it, in load order. A payload holds at most 1024 dex files.
   - `src/util/logging.cpp`: the Android backend of `rasp::log`, which writes to the system log with `__android_log_write`.
   - `stub/`: `co/ostorlab/rasp/RaspStub.java`, the component factory the packer points the manifest at, and `build.sh`, which builds it into `stub.dex`.
 - `tests/`: tests that run on a development machine, with GoogleTest. They use the same folders as the code.
+  - `support/files.h`: `TemporaryDirectory`, a temporary folder removed with its contents, and `write_file`, which writes a file the tests then read.
 
 ## Build
 

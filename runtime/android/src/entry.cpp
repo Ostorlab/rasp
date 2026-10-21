@@ -16,7 +16,7 @@
 
 #include "apk/archive.h"
 #include "apk/location.h"
-#include "checks/example.h"
+#include "checks/root.h"
 #include "loader/loader.h"
 #include "payload/cipher.h"
 #include "payload/payload.h"
@@ -89,7 +89,7 @@ __attribute__((constructor)) void rasp_start() noexcept {
   if (!running_in_jvm()) {
     return;
   }
-  log_observations(rasp::android::checks::example());
+  log_observations(rasp::android::checks::root());
 
   const std::optional<std::string> apk = rasp::android::apk::self_apk_path();
   const std::optional<std::string> library_dir = rasp::android::apk::self_library_dir();

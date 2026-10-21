@@ -2,7 +2,7 @@ add_library(rasp SHARED
   src/entry.cpp
   src/apk/archive.cpp
   src/apk/location.cpp
-  src/checks/example.cpp
+  src/checks/root.cpp
   src/loader/loader.cpp
   src/payload/cipher.cpp
   src/payload/payload.cpp)
