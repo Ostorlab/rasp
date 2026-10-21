@@ -358,12 +358,11 @@ std::optional<std::string> sha256_hex(std::span<const std::uint8_t> bytes) {
 }
 
 std::vector<Observation> observe_text_hashes(std::string_view library_path, std::span<const std::uint8_t> text_memory) {
-  const std::optional<std::string> file = read_library_file(library_path, kMaxLibrarySize);
+  const std::optional<std::vector<std::uint8_t>> file = read_library_file(library_path, kMaxLibrarySize);
   if (!file) {
     return {failed(kTextHashSignal, kFileSource), failed(kTextHashSignal, kMemorySource)};
   }
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the file's characters are read as raw octets.
-  const std::span<const std::uint8_t> image(reinterpret_cast<const std::uint8_t*>(file->data()), file->size());
+  const std::span<const std::uint8_t> image(*file);
   const std::optional<TextRegion> region = find_text_region(image, 0);
   if (!region || region->memory_address > text_memory.size() ||
       region->size > text_memory.size() - region->memory_address) {
@@ -410,11 +409,12 @@ struct LibrarySearch {
 // NOLINTNEXTLINE(misc-const-correctness): dl_iterate_phdr's callback takes a non-const dl_phdr_info* by its C signature.
 [[nodiscard]] int visit_object(dl_phdr_info* info, std::size_t /*size*/, void* cookie) {
   auto* const search = static_cast<LibrarySearch*>(cookie);
-  if (info->dlpi_addr != search->load_bias || info->dlpi_name == nullptr) {
+  const dl_phdr_info& object = *info;
+  if (object.dlpi_addr != search->load_bias || object.dlpi_name == nullptr) {
     return 0;
   }
   std::uint64_t image_size = 0;
-  const std::span<const ElfW(Phdr)> headers(info->dlpi_phdr, info->dlpi_phnum);
+  const std::span<const ElfW(Phdr)> headers(object.dlpi_phdr, object.dlpi_phnum);
   for (const ElfW(Phdr) & header : headers) {
     // NOLINTNEXTLINE(misc-include-cleaner): PT_LOAD comes from the included <link.h>.
     if (header.p_type == PT_LOAD) {
@@ -422,7 +422,7 @@ struct LibrarySearch {
     }
   }
   search->found = LoadedLibrary{
-      .path = info->dlpi_name,
+      .path = object.dlpi_name,
       .load_bias = search->load_bias,
       .image_size = image_size,
   };
@@ -434,11 +434,12 @@ struct LibrarySearch {
 /// dladdr gives the library's load address from the address of `integrity`, a function in it, and dl_iterate_phdr then
 /// gives the object with that load address: its path and the extent of its segments. Both are needed because dladdr
 /// alone doesn't give the span of the image, and dl_iterate_phdr alone doesn't say which object is ours.
+/// An object in this library, used only for its address: dladdr on it names librasp.so, with no function-pointer cast.
+constexpr char kAnchor = 0;
+
 [[nodiscard]] std::optional<LoadedLibrary> find_own_library() {
   Dl_info info{};
-  std::vector<Observation> (*const own_symbol)() = &integrity;
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): dladdr needs the address of a symbol in this library.
-  if (dladdr(reinterpret_cast<const void*>(own_symbol), &info) == 0 || info.dli_fbase == nullptr) {
+  if (dladdr(&kAnchor, &info) == 0 || info.dli_fbase == nullptr) {
     return std::nullopt;
   }
   LibrarySearch search{.load_bias = std::bit_cast<std::uintptr_t>(info.dli_fbase), .found = std::nullopt};

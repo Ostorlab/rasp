@@ -4,9 +4,10 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
-#include <string>
 #include <string_view>
+#include <vector>
 
 namespace rasp::android::util {
 
@@ -23,6 +24,7 @@ namespace rasp::android::util {
 /// @param limit The largest content accepted, in bytes.
 /// @return The bytes of the library, or nothing when the path can't be read, the APK or entry can't be parsed, the
 /// entry is compressed or missing, or the content is longer than `limit` bytes.
-[[nodiscard]] std::optional<std::string> read_library_file(std::string_view loader_path, std::size_t limit);
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_library_file(std::string_view loader_path,
+                                                                         std::size_t limit);
 
 }  // namespace rasp::android::util
