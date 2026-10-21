@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <cstdio>
 #include <iterator>
 #include <optional>
 #include <ranges>
@@ -19,24 +18,18 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "util/read_file.h"
 
 #ifdef __ANDROID__
 #include <cstdint>
 #include <sys/system_properties.h>
 #endif
 
-namespace gsl {
-
-/// Marks a raw pointer that owns what it points to, as the Guidelines Support Library does, so clang-tidy checks it.
-template <typename T>
-// NOLINTNEXTLINE(readability-identifier-naming): gsl::owner keeps the GSL's exact lowercase name so cppcoreguidelines-owning-memory recognizes it.
-using owner = T;
-
-}  // namespace gsl
-
 namespace rasp::android::checks {
 
 namespace {
+
+using util::read_file;
 
 /// The signal of the root-file probe.
 constexpr std::string_view kPathsSignal = "root.fs_paths";
@@ -206,40 +199,6 @@ constexpr std::array kPathSources = {
     PathSource{.name = "access", .exists = found_by_access},
     PathSource{.name = "stat", .exists = found_by_stat},
 };
-
-/// Reads `file` to its end, or gives nothing when a read fails or the content is longer than `limit` bytes.
-[[nodiscard]] std::optional<std::string> read_all(std::FILE* file, std::size_t limit) {
-  std::string content;
-  std::array<char, 1024> chunk{};
-  while (true) {
-    const std::size_t count = std::fread(chunk.data(), 1, chunk.size(), file);
-    if (count > limit - content.size()) {
-      return std::nullopt;
-    }
-    content.append(chunk.data(), count);
-    if (std::ferror(file) != 0) {
-      return std::nullopt;
-    }
-    if (std::feof(file) != 0) {
-      return content;
-    }
-  }
-}
-
-/// The content of the file at `path`, or nothing when it can't be opened, read or closed, or is longer than `limit`
-/// bytes.
-[[nodiscard]] std::optional<std::string> read_file(std::string_view path, std::size_t limit) {
-  const std::string name(path);
-  const gsl::owner<std::FILE*> file = std::fopen(name.c_str(), "re");
-  if (file == nullptr) {
-    return std::nullopt;
-  }
-  std::optional<std::string> content = read_all(file, limit);
-  if (std::fclose(file) != 0) {
-    return std::nullopt;
-  }
-  return content;
-}
 
 /// The fields of a mount table line that the probes read.
 struct MountLine {

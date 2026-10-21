@@ -28,10 +28,15 @@ target_include_directories(rasp_ios_jailbreak_test PRIVATE ${PROJECT_SOURCE_DIR}
 target_link_libraries(rasp_ios_jailbreak_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_ios_jailbreak_test)
 
-add_executable(rasp_android_root_test android/checks/root_test.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/root.cpp)
-target_include_directories(rasp_android_root_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(rasp_android_root_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
-gtest_discover_tests(rasp_android_root_test)
+foreach(check debugger root)
+  add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/read_file.cpp)
+  target_include_directories(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_android_${check}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_android_${check}_test)
+endforeach()
 
 add_executable(rasp_android_cipher_test android/payload/cipher_test.cpp ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp)
 target_include_directories(rasp_android_cipher_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
