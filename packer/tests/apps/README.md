@@ -24,7 +24,7 @@ An Android app must be an APK with a `classes.dex`. For each protected APK, the 
 - the stub loader replaces the app's `classes.dex`, and is the one the packer ships;
 - every native runtime library the packer ships is embedded, one per ABI, unchanged;
 - the runtime config and the encrypted payload are present, and the config has a build id;
-- the manifest declares the stub as the application class;
+- the manifest declares the stub as its component factory (`android:appComponentFactory`);
 - the app's v1 signature files (`META-INF/MANIFEST.MF` and the `.SF`, `.RSA`, `.DSA` and `.EC` files) and its original secondary dex files are gone.
 
 | File | Source | Licence | SHA-256 |
