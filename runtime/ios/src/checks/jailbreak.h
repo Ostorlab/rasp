@@ -15,7 +15,7 @@ namespace rasp::ios::checks {
 ///
 /// On a physical iOS device it runs every probe. Anywhere else, on a simulator, a Mac or a Linux host, it cannot: there
 /// is no app sandbox there, so the probes would only report noise. There every observation is unsupported instead, so
-/// the server still sees that the check ran.
+/// the result still shows that the check ran.
 ///
 /// @return One observation per source: jb.fs_paths read through access and through stat, jb.sandbox_escape through
 /// open, and jb.fork_ok through fork.

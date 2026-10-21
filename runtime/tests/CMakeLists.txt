@@ -16,7 +16,7 @@ target_link_libraries(rasp_core_test PRIVATE rasp_core rasp_warnings rasp_langua
 target_compile_definitions(rasp_core_test PRIVATE RASP_EXPECTED_VERSION="${PROJECT_VERSION}")
 gtest_discover_tests(rasp_core_test)
 
-foreach(test observation reporting/reporter reporting/submit_observations util/http util/json util/uuid)
+foreach(test observation)
   cmake_path(GET test FILENAME name)
   add_executable(rasp_core_${name}_test core/${test}_test.cpp)
   target_link_libraries(rasp_core_${name}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
@@ -27,8 +27,3 @@ add_executable(rasp_ios_jailbreak_test ios/checks/jailbreak_test.cpp ${PROJECT_S
 target_include_directories(rasp_ios_jailbreak_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
 target_link_libraries(rasp_ios_jailbreak_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_ios_jailbreak_test)
-
-add_executable(rasp_ios_install_id_test ios/reporting/install_id_test.cpp ${PROJECT_SOURCE_DIR}/ios/src/reporting/install_id.cpp)
-target_include_directories(rasp_ios_install_id_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
-target_link_libraries(rasp_ios_install_id_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
-gtest_discover_tests(rasp_ios_install_id_test)

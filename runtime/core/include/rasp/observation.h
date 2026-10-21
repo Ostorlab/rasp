@@ -22,7 +22,7 @@ enum class Status : std::uint8_t {
   kTimeout,
 };
 
-/// The value of an observation: none, or exactly one of the contract's value types.
+/// The value of an observation: none, a boolean, an integer, a string, or a list of strings.
 using Value = std::variant<std::monostate, bool, std::int64_t, std::string, std::vector<std::string>>;
 
 /// One raw fact observed by one check, read through one source.

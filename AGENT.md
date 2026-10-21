@@ -7,7 +7,7 @@ Guidance for coding agents working in this repository.
 The production source of Ostorlab Mobile RASP:
 
 - `packer/`: the packer, in Python. It takes a customer's built app (an APK or an IPA), adds the runtime, and returns the protected app unsigned. The customer signs it.
-- `runtime/`: the runtime libraries, in C++. They run inside the protected app, run the checks, and report what they observe to the ADR server. The ADR server is not in this repository.
+- `runtime/`: the runtime libraries, in C++. They run inside the protected app and run the checks.
 
 Read `README.md`, `packer/README.md` and `runtime/README.md` for the layout of each part.
 
@@ -39,7 +39,7 @@ The rules that most often matter:
 - No exceptions and no RTTI. Functions that can fail return `std::expected`, `std::optional` or a status, marked `[[nodiscard]]`.
 - Never end or take over the process: no `exit`, `abort`, signal handlers, `setenv` or `setlocale`. A child created with `fork` calls `_exit` at once and nothing else.
 - No global objects with a constructor or destructor; use `constexpr` constants. No recursion, and no more than 4 KB of stack per function.
-- Checks report observations (`signal`, `source`, `status`, `value`) and never a verdict. The ADR server decides.
+- Checks report observations (`signal`, `source`, `status`, `value`).
 - Release builds log nothing. Log only with `rasp::log`, inside `if constexpr (rasp::kLoggingEnabled)`.
 - Platform code goes in its platform folder (`ios/`), chosen by CMake. Every check is platform code. `core/` uses no platform API and has no platform `#if`.
 - Document every file and function with `///`, and write no other comments.
