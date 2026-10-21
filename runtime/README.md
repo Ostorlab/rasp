@@ -18,14 +18,15 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
   - `src/checks/`: the iOS checks. Each one reports observations.
     - `jailbreak.h`: the jailbreak checks. `jb.fs_paths` (do known jailbreak files exist, read through access and stat), `jb.sandbox_escape` (can the app write outside its sandbox) and `jb.fork_ok` (can the app start a child process). Off a physical device every one is unsupported.
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
-- `android/`: `librasp.so`, the runtime for Android. When the app starts, the stub calls the library, which runs the checks.
-  - `src/entry.cpp`: a load-time constructor that runs the checks when the linker loads the library.
+- `android/`: `librasp.so`, the runtime for Android, and the stub that loads it. The library runs its checks when it loads, and returns the app's decrypted dex files to the stub.
+  - `src/entry.cpp`: a load-time constructor that runs the checks and decrypts the app's dex files, and `JNI_OnLoad`, which builds the class loader over them and stores it in the stub's field.
   - `src/checks/`: the Android checks. Each one reports observations.
     - `example.h`: `example.loaded`, a placeholder that shows where a check goes and how it reports its observations.
   - `src/payload/`: recovering the app's dex files, which the packer encrypted.
     - `cipher.h`: `decrypt`, which decrypts a frame of the packer's Android cipher: ChaCha20-Poly1305 (RFC 8439), from TF-PSA-Crypto. It refuses a frame whose tag doesn't match.
     - `payload.h`: `Dex`, one dex file of the protected app, and `unpack`, which decrypts the payload and reads the app's dex files from it, in load order. A payload holds at most 1024 dex files.
   - `src/util/logging.cpp`: the Android backend of `rasp::log`, which writes to the system log with `__android_log_write`.
+  - `stub/`: `co/ostorlab/rasp/RaspStub.java`, the component factory the packer points the manifest at, and `build.sh`, which builds it into `stub.dex`.
 - `tests/`: tests that run on a development machine, with GoogleTest. They use the same folders as the code.
 
 ## Build
@@ -84,6 +85,20 @@ cmake --build --preset android
 The library is written to `build/android/android/librasp.so`. It exports no entry point of its own: the checks run from a load-time constructor, and the stub calls no native method, so the library exports no `Java_...` symbol. The only symbol it may export is the JVM's `JNI_OnLoad` hook, which the runtime uses to publish the decrypted class loader to the stub. A release build is also stripped (`-Wl,--strip-all`), so it carries no symbol table and no debug sections. Every other symbol, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 12 (API 31) and later, so the stub can load the decrypted code from memory with `InMemoryDexClassLoader`, and the code is never written to disk.
 
 The payload decryption uses ChaCha20-Poly1305 from TF-PSA-Crypto, the cryptography library of the Mbed TLS project. Its source is committed as an archive under `third_party/tf-psa-crypto/`, and `cmake/tf_psa_crypto.cmake` checks the archive's hash, extracts it and builds it as a static library, for Android and for the builds with tests. Its symbols are hidden in `librasp.so` like every other one. Why it is built this way, its configuration, and the CI job that proves the archive is the official release are described in `third_party/tf-psa-crypto/README.md`.
+
+The stub is Java, not C++, so CMake doesn't build it. `android/stub/build.sh` compiles it with `javac` against the platform's `android.jar`, so the Java classes it uses are Android's, and converts it with `d8`. It takes two files from the Android SDK:
+
+- `ANDROID_JAR` must be set to the `android.jar` of a platform at API 31 or newer, for example `$ANDROID_HOME/platforms/android-36/android.jar`. The stub is an `AppComponentFactory` (API 28) and calls the `InMemoryDexClassLoader` constructor with a library search path (API 31).
+- `d8` comes from the SDK's build-tools. It must be on `PATH`, or `D8` must be set to its path.
+
+The script writes `stub.dex` to the folder given as its argument, or to `android/stub/` when there is none:
+
+```
+cd runtime
+ANDROID_JAR="$ANDROID_HOME/platforms/android-36/android.jar" android/stub/build.sh <output folder>
+```
+
+The packer installs `stub.dex` as the app's `classes.dex`, and `librasp.so` under `lib/arm64-v8a/`.
 
 ## Logs
 
@@ -144,7 +159,7 @@ run-clang-tidy -quiet -p build/android-dev "^$PWD/android/src/.*\.cpp$"
 CI (`.github/workflows/runtime.yml`) runs:
 
 - clang-format, and clang-tidy on the shared code and the tests (on Linux), the iOS code (on macOS) and the Android code (with the Android builds);
-- the three host builds, the iOS release and development builds, and the Android release and development builds.
+- the three host builds, the iOS release and development builds, and the Android release, development and stub builds.
 
 On the release binaries, it checks that:
 

@@ -251,11 +251,13 @@ jobs:
       - name: Check the library
         run: |
           nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
-          re="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          readelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           lib=build/android/android/librasp.so
           file "$lib" | grep -q "ELF 64-bit LSB shared object, ARM aarch64"
           test -z "$("$nm" -D --defined-only "$lib" | awk '{ print $3 }' | grep -vx 'JNI_OnLoad')"
-          test -z "$("$re" -S "$lib" | grep -oE '\.symtab|\.debug_[a-z_]+')"
+          test -z "$("$readelf" -S "$lib" | grep -oE '\.symtab|\.debug_[a-z_]+')"
+          "$readelf" --dynamic "$lib" | grep -q 'INIT_ARRAY'
+          "$nm" -D -u "$lib" | awk '{ print $2 }' | sed 's/@.*//' | grep -qx 'JNI_GetCreatedJavaVMs'
       - name: Check the library calls no forbidden function
         run: |
           nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
@@ -278,3 +280,9 @@ jobs:
         run: |
           nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
           "$nm" -D -u build/android-dev/android/librasp.so | grep -q __android_log_write
+      - name: Build the stub
+        run: |
+          jar="$(ls -d "$ANDROID_HOME"/platforms/android-*/android.jar | sort -V | tail -1)"
+          d8="$(ls "$ANDROID_HOME"/build-tools/*/d8 | sort -V | tail -1)"
+          ANDROID_JAR="$jar" D8="$d8" ./android/stub/build.sh "$RUNNER_TEMP"
+          test -s "$RUNNER_TEMP/stub.dex"

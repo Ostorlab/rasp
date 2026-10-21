@@ -15,6 +15,8 @@ Most of the rules below follow from these two facts. CI enforces the ones a tool
 | CMake | 4.4.4 |
 | Xcode, for iOS builds | 27.0 |
 | Android NDK, for Android builds | the newest release; CI uses the one preinstalled on its Linux runner (`ANDROID_NDK_LATEST_HOME`) |
+| JDK, for the Android stub | 17 or newer |
+| Android SDK, for the Android stub | build-tools (for `d8`) and a platform at API 27 or newer (for `android.jar`) |
 
 The host presets compile with the first `clang` in `PATH`, so put LLVM 23 first: `/usr/lib/llvm-23/bin` on Linux, `$(brew --prefix llvm)/bin` on macOS. clang-format and clang-tidy must come from the same release, because their output changes between versions.
 
@@ -124,7 +126,7 @@ During development, write log lines only with `rasp::log`, and only inside `if c
 
 ## Android
 
-When the app starts, the stub class `co.ostorlab.rasp.RaspStub` loads `librasp.so`. A load-time constructor in the library runs the checks then, the way iOS starts from a constructor, so there is no exported entry point to run them. The constructor also decrypts the payload, and a minimal `JNI_OnLoad`, which the platform calls moments later, publishes the decrypted class loader to the stub. The stub calls no native method, so the library exports no `Java_...` symbol either.
+The packer sets the app's manifest `android:appComponentFactory` to `co.ostorlab.rasp.RaspStub`, the component factory in `android/stub/`. When the app starts, Android loads that factory, which loads `librasp.so`. A load-time constructor in the library runs the checks then, the way iOS starts from a constructor, so there is no exported entry point to run them. The constructor also decrypts the payload, and a minimal `JNI_OnLoad`, which the platform calls moments later, publishes the decrypted class loader to the stub. The stub calls no native method, so the library exports no `Java_...` symbol either. Decryption happens in native code, never in Java, and the decrypted dex files are never written to disk.
 
 - **`librasp.so` has no exported entry point.** The checks run from a load-time constructor, and the stub calls no native method, so no `Java_...` symbol is exported (see No exported symbols above). Everything, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. A release build is stripped (`-Wl,--strip-all`), so it keeps no symbol table and no debug sections. The only exported symbol is the JVM's `JNI_OnLoad` hook, whose fixed name `android/.clang-tidy` lets break the naming rule.
 - **The payload is decrypted with ChaCha20-Poly1305 from TF-PSA-Crypto, never with crypto code of our own.** The packer encrypts it with ChaCha20-Poly1305 too, from the `cryptography` package, so both sides use a standard algorithm through a reviewed library. TF-PSA-Crypto is vendored in `third_party/tf-psa-crypto/` (see the README there). The tests decrypt a frame and a payload that the packer made, and a Project Wycheproof test vector, which the packer's tests check too. If you change the frame on either side, change the other side and these tests with it.
