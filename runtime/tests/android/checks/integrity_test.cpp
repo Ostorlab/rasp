@@ -260,8 +260,7 @@ struct TextLayout {
 
 /// A `string_view` over `bytes`, so an image can be written to a file with write_file.
 [[nodiscard]] std::string_view as_view(std::span<const std::uint8_t> bytes) {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the image bytes are viewed as characters to write
-  // them.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the image bytes are viewed as characters to write them.
   return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
 }
 

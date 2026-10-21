@@ -154,8 +154,7 @@ struct CentralEntry {
 }
 
 /// Reads the entry `entry` from the APK file at `apk_path`, or nothing when it can't be read or found.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): the APK path and the entry name are distinct strings, and
-// read_library_file is the only caller.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): the APK path and the entry name are distinct strings, and read_library_file is the only caller.
 [[nodiscard]] std::optional<std::string> read_apk_entry(std::string_view apk_path, std::string_view entry,
                                                         std::size_t limit) {
   const std::optional<std::string> apk = read_file(apk_path, limit);

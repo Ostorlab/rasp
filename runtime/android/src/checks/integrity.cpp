@@ -407,8 +407,7 @@ struct LibrarySearch {
 
 /// Visits one loaded object: when its load address is the one being looked for, records its path and the extent of its
 /// loadable segments. The callback dl_iterate_phdr runs for each object, so it takes C linkage and a void cookie.
-// NOLINTNEXTLINE(misc-const-correctness): dl_iterate_phdr's callback takes a non-const dl_phdr_info* by its C
-// signature.
+// NOLINTNEXTLINE(misc-const-correctness): dl_iterate_phdr's callback takes a non-const dl_phdr_info* by its C signature.
 [[nodiscard]] int visit_object(dl_phdr_info* info, std::size_t /*size*/, void* cookie) {
   auto* const search = static_cast<LibrarySearch*>(cookie);
   if (info->dlpi_addr != search->load_bias || info->dlpi_name == nullptr) {

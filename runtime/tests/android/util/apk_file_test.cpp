@@ -22,8 +22,7 @@ using test_support::write_file;
 constexpr std::size_t kLimit = std::size_t{1} << 20U;
 
 /// Appends `value` as `width` little-endian bytes to `out`.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): the value and its width are distinct, and this is a test
-// helper.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): the value and its width are distinct, and this is a test helper.
 void append_le(std::string& out, std::uint64_t value, std::size_t width) {
   for (std::size_t index = 0; index < width; ++index) {
     out.push_back(static_cast<char>((value >> (8U * index)) & 0xFFU));
