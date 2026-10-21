@@ -171,7 +171,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       FRAMEWORK_DIR: packer/src/rasp_packer/ios/resources
       ANDROID_DIR: packer/src/rasp_packer/android/resources
-      PACKER_REPOSITORY_URL: https://us-central1-python.pkg.dev/api-project-609180564266/rasp-packer/
+      PACKER_REPOSITORY_URL: https://us-central1-python.pkg.dev/adr-rasp/rasp-packer/
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

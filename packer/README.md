@@ -60,7 +60,7 @@ Then install the Artifact Registry keyring helper, the packer from Artifact Regi
 
 ```
 pip install keyring keyrings.google-artifactregistry-auth
-pip install --force-reinstall --no-deps --index-url https://us-central1-python.pkg.dev/api-project-609180564266/rasp-packer/simple/ rasp-packer==X.Y.Z
+pip install --force-reinstall --no-deps --index-url https://us-central1-python.pkg.dev/adr-rasp/rasp-packer/simple/ rasp-packer==X.Y.Z
 pip install rasp-packer==X.Y.Z
 ```
 
