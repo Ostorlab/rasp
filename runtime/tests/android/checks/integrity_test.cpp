@@ -258,11 +258,9 @@ struct TextLayout {
   return {.signal = "integ.text_sha256", .source = std::string(source), .status = Status::kError, .value = {}};
 }
 
-/// A `string_view` over `bytes`, so an image can be written to a file with write_file.
-[[nodiscard]] std::string_view as_view(std::span<const std::uint8_t> bytes) {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the image bytes are viewed as characters to write them.
-  return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
-}
+/// The bytes of `image` as a string, so an image can be written to a file with write_file. Each byte is copied, so no
+/// pointer is reinterpreted.
+[[nodiscard]] std::string as_string(std::span<const std::uint8_t> image) { return {image.begin(), image.end()}; }
 
 /// The whole-page text layout the hash tests use: a 0x1000-byte segment, both in the file and in memory, with `.text`
 /// at `text_offset` inside it.
@@ -350,8 +348,7 @@ TEST(Integrity, findTextRegion_whenOnlySegmentIsWritable_reportsNothing) {
 
 TEST(Integrity, sha256Hex_whenGivenKnownInput_matchesTheKnownAnswer) {
   const std::string_view input = "abc";
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the input characters are read as raw octets.
-  const std::span<const std::uint8_t> bytes(reinterpret_cast<const std::uint8_t*>(input.data()), input.size());
+  const std::vector<std::uint8_t> bytes(input.begin(), input.end());
 
   EXPECT_EQ(sha256_hex(bytes), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 }
@@ -366,7 +363,7 @@ TEST(Integrity, observeTextHashes_whenMemoryMatchesTheFile_reportsEqualHashes) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string library = directory.path() + "/librasp.so";
-  ASSERT_TRUE(write_file(library, as_view(image)));
+  ASSERT_TRUE(write_file(library, as_string(image)));
   const std::vector<std::uint8_t> memory = loaded_image(image, whole_page_layout(0x30));
 
   const std::vector<Observation> observations = observe_text_hashes(library, memory);
@@ -382,7 +379,7 @@ TEST(Integrity, observeTextHashes_whenMemoryWasPatched_reportsDifferentHashes) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string library = directory.path() + "/librasp.so";
-  ASSERT_TRUE(write_file(library, as_view(image)));
+  ASSERT_TRUE(write_file(library, as_string(image)));
 
   std::vector<std::uint8_t> patched = loaded_image(image, whole_page_layout(0x30));
   patched[static_cast<std::size_t>(kSegmentVaddr + 0x30)] ^= 0xFFU;  // flip a byte of `.text` in the loaded copy
@@ -411,7 +408,7 @@ TEST(Integrity, observeTextHashes_whenTextReachesPastTheMemorySpan_reportsAnErro
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string library = directory.path() + "/librasp.so";
-  ASSERT_TRUE(write_file(library, as_view(image)));
+  ASSERT_TRUE(write_file(library, as_string(image)));
 
   // A memory span shorter than the `.text` address plus its size: reading it would run past the mapped image.
   const std::span<const std::uint8_t> short_memory(image.data(), static_cast<std::size_t>(kSegmentVaddr));

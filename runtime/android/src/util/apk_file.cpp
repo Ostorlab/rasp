@@ -7,8 +7,10 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "util/read_file.h"
 
@@ -44,13 +46,12 @@ constexpr std::size_t kMaxComment = std::size_t{1} << 16U;
 
 /// Reads a little-endian unsigned integer of type `T` at `offset`, or nothing when `data` is too short.
 template <typename T>
-[[nodiscard]] std::optional<T> read_scalar(std::string_view data, std::size_t offset) {
+[[nodiscard]] std::optional<T> read_scalar(std::span<const std::uint8_t> data, std::size_t offset) {
   if (!range_fits(offset, sizeof(T), data.size())) {
     return std::nullopt;
   }
   T value = 0;
-  const std::string_view field = data.substr(offset, sizeof(T));
-  std::memcpy(&value, field.data(), field.size());
+  std::memcpy(&value, data.subspan(offset, sizeof(T)).data(), sizeof(T));
   return value;
 }
 
@@ -64,9 +65,24 @@ struct CentralEntry {
   std::uint32_t local_header_offset = 0;
 };
 
+/// An APK path and the zip entry wanted inside it, split from a `<apk>!/<entry>` loader path. Grouping the two keeps
+/// callers from swapping them.
+struct ApkEntryPath {
+  /// The path of the APK file on disk.
+  std::string_view apk_path;
+  /// The name of the zip entry wanted inside the APK.
+  std::string_view entry;
+};
+
+/// Whether the bytes `name` equal the entry name `wanted`, compared byte for byte.
+[[nodiscard]] bool entry_named(std::span<const std::uint8_t> name, std::string_view wanted) {
+  return std::ranges::equal(
+      name, wanted, [](std::uint8_t byte, char character) { return byte == static_cast<std::uint8_t>(character); });
+}
+
 /// The offset of the central directory in `apk`, from its End Of Central Directory record, or nothing when the record
 /// can't be found or read. The record is found by scanning back from the end for its signature, past any comment.
-[[nodiscard]] std::optional<std::uint32_t> central_directory_offset(std::string_view apk) {
+[[nodiscard]] std::optional<std::uint32_t> central_directory_offset(std::span<const std::uint8_t> apk) {
   if (apk.size() < kEndOfCentralDirectorySize) {
     return std::nullopt;
   }
@@ -83,7 +99,7 @@ struct CentralEntry {
 
 /// Whether the central directory entry at `position` in `apk` names `entry`, filling `out` when it does. `position` is
 /// advanced to the next entry. Returns nothing when the header is malformed.
-[[nodiscard]] std::optional<bool> match_central_entry(std::string_view apk, std::size_t& position,
+[[nodiscard]] std::optional<bool> match_central_entry(std::span<const std::uint8_t> apk, std::size_t& position,
                                                       std::string_view entry, CentralEntry& out) {
   const std::optional<std::uint32_t> signature = read_scalar<std::uint32_t>(apk, position);
   if (signature != kCentralFileHeaderSignature) {
@@ -101,9 +117,9 @@ struct CentralEntry {
   if (!range_fits(position + kCentralFileHeaderSize, *name_length, apk.size())) {
     return std::nullopt;
   }
-  const std::string_view name = apk.substr(position + kCentralFileHeaderSize, *name_length);
+  const std::span<const std::uint8_t> name = apk.subspan(position + kCentralFileHeaderSize, *name_length);
   position += kCentralFileHeaderSize + *name_length + *extra_length + *comment_length;
-  if (name != entry) {
+  if (!entry_named(name, entry)) {
     return false;
   }
   out = CentralEntry{
@@ -116,8 +132,8 @@ struct CentralEntry {
 
 /// The central directory entry named `entry` in `apk`, starting the walk at `directory_offset`, or nothing when no
 /// entry matches or a header is malformed.
-[[nodiscard]] std::optional<CentralEntry> find_central_entry(std::string_view apk, std::uint32_t directory_offset,
-                                                             std::string_view entry) {
+[[nodiscard]] std::optional<CentralEntry> find_central_entry(std::span<const std::uint8_t> apk,
+                                                             std::uint32_t directory_offset, std::string_view entry) {
   std::size_t position = directory_offset;
   while (position < apk.size()) {
     CentralEntry found;
@@ -135,7 +151,8 @@ struct CentralEntry {
 /// The stored bytes of `entry` in `apk`, or nothing when the entry is compressed or its data lies outside the APK. The
 /// data offset is read from the entry's own local header, whose name and extra fields can differ in length from the
 /// central directory's.
-[[nodiscard]] std::optional<std::string_view> stored_entry_bytes(std::string_view apk, const CentralEntry& entry) {
+[[nodiscard]] std::optional<std::span<const std::uint8_t>> stored_entry_bytes(std::span<const std::uint8_t> apk,
+                                                                              const CentralEntry& entry) {
   if (entry.method != kMethodStored) {
     return std::nullopt;
   }
@@ -150,42 +167,47 @@ struct CentralEntry {
   if (!range_fits(data_offset, entry.uncompressed_size, apk.size())) {
     return std::nullopt;
   }
-  return apk.substr(static_cast<std::size_t>(data_offset), entry.uncompressed_size);
+  return apk.subspan(static_cast<std::size_t>(data_offset), entry.uncompressed_size);
 }
 
-/// Reads the entry `entry` from the APK file at `apk_path`, or nothing when it can't be read or found.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): the APK path and the entry name are distinct strings, and read_library_file is the only caller.
-[[nodiscard]] std::optional<std::string> read_apk_entry(std::string_view apk_path, std::string_view entry,
-                                                        std::size_t limit) {
-  const std::optional<std::string> apk = read_file(apk_path, limit);
-  if (!apk) {
+/// Reads the entry named by `target` from its APK file, or nothing when it can't be read or found.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_apk_entry(const ApkEntryPath& target, std::size_t limit) {
+  const std::optional<std::string> file = read_file(target.apk_path, limit);
+  if (!file) {
     return std::nullopt;
   }
-  const std::optional<std::uint32_t> directory_offset = central_directory_offset(*apk);
+  const std::vector<std::uint8_t> apk(file->begin(), file->end());
+  const std::optional<std::uint32_t> directory_offset = central_directory_offset(apk);
   if (!directory_offset) {
     return std::nullopt;
   }
-  const std::optional<CentralEntry> central = find_central_entry(*apk, *directory_offset, entry);
+  const std::optional<CentralEntry> central = find_central_entry(apk, *directory_offset, target.entry);
   if (!central) {
     return std::nullopt;
   }
-  const std::optional<std::string_view> bytes = stored_entry_bytes(*apk, *central);
+  const std::optional<std::span<const std::uint8_t>> bytes = stored_entry_bytes(apk, *central);
   if (!bytes) {
     return std::nullopt;
   }
-  return std::string(*bytes);
+  return std::vector<std::uint8_t>(bytes->begin(), bytes->end());
 }
 
 }  // namespace
 
-std::optional<std::string> read_library_file(std::string_view loader_path, std::size_t limit) {
+std::optional<std::vector<std::uint8_t>> read_library_file(std::string_view loader_path, std::size_t limit) {
   const std::size_t separator = loader_path.find(kApkEntrySeparator);
   if (separator == std::string_view::npos) {
-    return read_file(loader_path, limit);
+    const std::optional<std::string> file = read_file(loader_path, limit);
+    if (!file) {
+      return std::nullopt;
+    }
+    return std::vector<std::uint8_t>(file->begin(), file->end());
   }
-  const std::string_view apk_path = loader_path.substr(0, separator);
-  const std::string_view entry = loader_path.substr(separator + kApkEntrySeparator.size());
-  return read_apk_entry(apk_path, entry, limit);
+  const ApkEntryPath target{
+      .apk_path = loader_path.substr(0, separator),
+      .entry = loader_path.substr(separator + kApkEntrySeparator.size()),
+  };
+  return read_apk_entry(target, limit);
 }
 
 }  // namespace rasp::android::util
