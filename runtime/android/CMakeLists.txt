@@ -3,10 +3,12 @@ add_library(rasp SHARED
   src/apk/archive.cpp
   src/apk/location.cpp
   src/checks/debugger.cpp
+  src/checks/integrity.cpp
   src/checks/root.cpp
   src/loader/loader.cpp
   src/payload/cipher.cpp
   src/payload/payload.cpp
+  src/util/apk_file.cpp
   src/util/read_file.cpp)
 target_include_directories(rasp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(rasp PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language rasp_shipped nativehelper)

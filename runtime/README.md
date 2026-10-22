@@ -23,6 +23,8 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
   - `src/checks/`: the Android checks. Each one reports observations.
     - `debugger.h`: the debugger checks. They run on Android; off Android every observation has the unsupported status.
       - `dbg.tracer_pid`: the process id of the native debugger attached to the app, 0 when there is none, read from the `TracerPid:` line of `/proc/self/status`.
+    - `integrity.h`: the integrity checks. They run on Android; off Android every observation has the unsupported status.
+      - `integ.text_sha256`: the SHA-256 of librasp.so's own executable code (its `.text` section), read once from the installed file (the `file` source) and once from the process's memory (the `memory` source). The two are equal on a clean device and differ when the code was patched in memory, such as by a Frida hook that patches a check to always report a safe value. The server compares them; the app only reports both. The library finds its own file and load address through the dynamic loader, so no path is built into the binary; when the app keeps its libraries uncompressed inside the APK, the file is read from the APK's zip entry.
     - `root.h`: the root checks. They run on Android; off Android every observation has the unsupported status.
       - `root.fs_paths`: which known root files exist, such as `su` and the Magisk, KernelSU and APatch files, read through access and stat.
       - `root.mounts`: the lines of `/proc/self/mounts` that a root tool made.
