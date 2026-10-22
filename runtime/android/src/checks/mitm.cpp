@@ -7,8 +7,10 @@
 #include <array>
 #include <cstddef>
 #include <filesystem>
+#include <iterator>
 #include <optional>
 #include <ranges>
+#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -81,25 +83,36 @@ constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"tun", "tap", 
   return lines;
 }
 
-/// The names of the regular files directly in `directory`, sorted, at most kMaxEntries, or nothing when the directory
-/// can't be listed. Each user authority is one such file, named after the hash of its subject.
+/// The names of the regular files directly in `directory`, the kMaxEntries smallest of them, sorted, or nothing when
+/// the directory can't be listed or an entry can't be read. Each user authority is one such file, named after the hash
+/// of its subject. The iterator is advanced with `increment`, not a range-for, because its `operator++` throws on
+/// failure and the library is built with -fno-exceptions; the kept set is bounded as it is built, so the directory size
+/// doesn't bound memory.
 [[nodiscard]] std::optional<std::vector<std::string>> regular_file_names(std::string_view directory) {
   std::error_code error;
-  const std::filesystem::directory_iterator begin(std::filesystem::path(directory), error);
+  std::filesystem::directory_iterator iterator(std::filesystem::path(directory), error);
   if (error) {
     return std::nullopt;
   }
-  std::vector<std::string> names;
-  for (const std::filesystem::directory_entry& entry : begin) {
-    if (entry.is_regular_file(error) && !error) {
-      names.push_back(entry.path().filename().string());
+  const std::filesystem::directory_iterator end;
+  std::set<std::string> names;
+  while (iterator != end) {
+    const bool regular = iterator->is_regular_file(error);
+    if (error) {
+      return std::nullopt;
+    }
+    if (regular) {
+      names.insert(iterator->path().filename().string());
+      if (names.size() > kMaxEntries) {
+        names.erase(std::prev(names.end()));
+      }
+    }
+    iterator.increment(error);
+    if (error) {
+      return std::nullopt;
     }
   }
-  std::ranges::sort(names);
-  if (names.size() > kMaxEntries) {
-    names.resize(kMaxEntries);
-  }
-  return names;
+  return std::vector<std::string>(names.begin(), names.end());
 }
 
 }  // namespace

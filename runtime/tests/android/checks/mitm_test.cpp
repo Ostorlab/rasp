@@ -3,6 +3,7 @@
 
 #include "checks/mitm.h"
 
+#include <cstdio>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
@@ -121,6 +122,22 @@ TEST(Mitm, observeUserCas_whenSeveralAuthoritiesAreInstalled_reportsThemSorted) 
   ASSERT_TRUE(write_file(directory.path() + "/3c860d51.0", "two"));
 
   EXPECT_EQ(observe_user_cas(directory.path()), user_cas({"3c860d51.0", "c8750f0d.0"}));
+}
+
+TEST(Mitm, observeUserCas_whenMoreThan32AuthoritiesAreInstalled_reportsThe32Smallest) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  std::vector<std::string> expected;
+  for (int index = 0; index < 40; ++index) {
+    char name[8] = {};
+    std::snprintf(name, sizeof(name), "ca%02d.0", index);
+    ASSERT_TRUE(write_file(directory.path() + "/" + name, "cert"));
+    if (index < 32) {
+      expected.emplace_back(name);
+    }
+  }
+
+  EXPECT_EQ(observe_user_cas(directory.path()), user_cas(expected));
 }
 
 TEST(Mitm, observeUserCas_whenTheDirectoryIsMissing_reportsAnError) {

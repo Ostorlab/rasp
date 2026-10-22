@@ -35,16 +35,16 @@ namespace rasp::android::checks {
 
 /// Reports the user-installed certificate authorities in the trust store directory `cacerts_dir`.
 ///
-/// A proxy can only read TLS traffic once its own root certificate is trusted, and on Android a certificate the user
-/// installs lands in the user trust store, apart from the system authorities the device ships with. So a user-installed
-/// authority is the fingerprint of a traffic-decrypting proxy, such as the one a security tool runs. Each authority is
-/// a file named after the hash of its subject; this probe reports those file names, which name the authorities without
-/// reading their bytes.
+/// To decrypt traffic without certificate warnings, an interception proxy must install its root certificate where the
+/// app validates it, and on Android a certificate the user installs lands in the user trust store, apart from the
+/// system authorities the device ships with. So a user-installed authority is a signal a decrypting proxy left behind,
+/// not proof of one: this probe reports the authorities and the server decides. Each authority is a file named after
+/// the hash of its subject; the probe reports those file names, which name the authorities without reading their bytes.
 ///
 /// @param cacerts_dir The user trust store directory to list, `/data/misc/user/0/cacerts-added` on a device.
-/// @return One mitm.user_cas observation read through user_cacerts: the certificate file names, at most 32. It has an
-/// error status when the directory can't be listed. An empty list, the common case, means no user authority is
-/// installed.
+/// @return One mitm.user_cas observation read through user_cacerts: the certificate file names, the 32 smallest when
+/// there are more. It has an error status when the directory can't be listed or an entry can't be read. An empty list,
+/// the common case, means no user authority is installed.
 [[nodiscard]] Observation observe_user_cas(std::string_view cacerts_dir);
 
 }  // namespace rasp::android::checks
