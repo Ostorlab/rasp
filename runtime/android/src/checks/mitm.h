@@ -22,11 +22,11 @@ namespace rasp::android::checks {
 
 /// Reports the tunnel interfaces the kernel routes traffic through, from the route table at `route_path`.
 ///
-/// A man-in-the-middle proxy often captures the app's traffic through a virtual tunnel interface, such as the `tun`
-/// interface an on-device VPN app opens or the `ppp` interface a dial-up style tunnel opens. The route table names the
-/// interface of every route on its own line, so this probe reports the routes whose interface is a tunnel. A device
-/// with no capture running routes through its physical interfaces, such as `wlan0` or `rmnet`, and reports nothing. The
-/// file is read whole, up to 256 KiB.
+/// A man-in-the-middle proxy often captures the app's traffic through a virtual tunnel interface, the `tun` or `tap`
+/// interface an on-device VPN app opens through the kernel's TUN/TAP driver. The route table names the interface of
+/// every route on its own line, so this probe reports the routes whose interface is a tunnel. A device with no capture
+/// running routes through its physical interfaces, such as `wlan0` or `rmnet`, and reports nothing. The file is read
+/// whole, up to 256 KiB.
 ///
 /// @param route_path The route table to read, `/proc/net/route` on a device.
 /// @return One mitm.tunnels observation read through proc_net_route: the matching route lines, at most 32. It has an

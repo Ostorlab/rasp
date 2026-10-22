@@ -75,14 +75,24 @@ TEST(Mitm, observeTunnels_whenATunnelInterfaceRoutes_reportsItsLine) {
   EXPECT_EQ(observe_tunnels(path), tunnels({line}));
 }
 
-TEST(Mitm, observeTunnels_whenAPppInterfaceRoutes_reportsItsLine) {
+TEST(Mitm, observeTunnels_whenATapInterfaceRoutes_reportsItsLine) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string line = "tap0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0";
+  const std::string path = write_route(directory, std::string(kRouteHeader) + line + "\n");
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_tunnels(path), tunnels({line}));
+}
+
+TEST(Mitm, observeTunnels_whenAPppInterfaceRoutes_doesNotReportIt) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string line = "ppp0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0";
   const std::string path = write_route(directory, std::string(kRouteHeader) + line + "\n");
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_tunnels(path), tunnels({line}));
+  EXPECT_EQ(observe_tunnels(path), tunnels({}));
 }
 
 TEST(Mitm, observeTunnels_whenTheHeaderIsPresent_doesNotReportIt) {

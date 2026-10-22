@@ -53,9 +53,11 @@ constexpr std::string_view kUserCacertsDir = "/data/misc/user/0/cacerts-added";
 /// bound.
 constexpr std::size_t kMaxEntries = 32;
 
-/// The interface-name prefixes of a tunnel, the kind a capturing proxy routes traffic through: `tun` for a VPN app's
-/// interface, `tap` for an ethernet-level tunnel, and `ppp` for a point-to-point tunnel.
-constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"tun", "tap", "ppp"});
+/// The interface-name prefixes of a tunnel, the kind a capturing proxy routes traffic through: `tun` for the layer-3
+/// interface a VPN app opens through the kernel's TUN/TAP driver, and `tap` for its layer-2 interface. These are the
+/// tunnels an on-device interception proxy opens; physical interfaces (`wlan`, `rmnet`, `eth`) and the loopback never
+/// match.
+constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"tun", "tap"});
 
 /// Whether the route `line` names a tunnel interface in its first field. A route table line is tab-separated and starts
 /// with the interface name, so the name is the run of characters before the first tab.
