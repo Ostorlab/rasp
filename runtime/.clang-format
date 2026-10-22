@@ -1,5 +1,6 @@
 BasedOnStyle: Google
 ColumnLimit: 120
+CommentPragmas: '^ NOLINT'
 DerivePointerAlignment: false
 PointerAlignment: Left
 IncludeBlocks: Regroup
