@@ -51,7 +51,7 @@ constexpr std::string_view kUserCacertsDir = "/data/misc/user/0/cacerts-added";
 
 /// The most lines or file names one observation reports, so a crafted route table or trust store can't grow it without
 /// bound.
-constexpr std::size_t kMaxEntries = 32;
+constexpr std::size_t kMaxEntries = 100;
 
 /// The interface-name prefixes of a tunnel, the kind a capturing proxy routes traffic through: `tun` for the layer-3
 /// interface a VPN app opens through the kernel's TUN/TAP driver, and `tap` for its layer-2 interface. These are the

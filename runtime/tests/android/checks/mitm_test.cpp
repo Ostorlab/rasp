@@ -135,20 +135,20 @@ TEST(Mitm, observeUserCas_whenSeveralAuthoritiesAreInstalled_reportsThemSorted) 
   EXPECT_EQ(observe_user_cas(directory.path()), user_cas({"3c860d51.0", "c8750f0d.0"}));
 }
 
-/// The authority file name for `index`, with a two-digit number so the names sort in the same order as the numbers.
+/// The authority file name for `index`, with a three-digit number so the names sort in the same order as the numbers.
 [[nodiscard]] std::string authority_name(int index) {
   const std::string digits = std::to_string(index);
-  return "ca" + std::string(2 - std::min<std::size_t>(2, digits.size()), '0') + digits + ".0";
+  return "ca" + std::string(3 - std::min<std::size_t>(3, digits.size()), '0') + digits + ".0";
 }
 
-TEST(Mitm, observeUserCas_whenMoreThan32AuthoritiesAreInstalled_reportsThe32Smallest) {
+TEST(Mitm, observeUserCas_whenMoreThan100AuthoritiesAreInstalled_reportsThe100Smallest) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   std::vector<std::string> expected;
-  for (int index = 0; index < 40; ++index) {
+  for (int index = 0; index < 110; ++index) {
     const std::string name = authority_name(index);
     ASSERT_TRUE(write_file(directory.path() + "/" + name, "cert"));
-    if (index < 32) {
+    if (index < 100) {
       expected.push_back(name);
     }
   }

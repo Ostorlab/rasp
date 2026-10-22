@@ -29,7 +29,7 @@ namespace rasp::android::checks {
 /// whole, up to 256 KiB.
 ///
 /// @param route_path The route table to read, `/proc/net/route` on a device.
-/// @return One mitm.tunnels observation read through proc_net_route: the matching route lines, at most 32. It has an
+/// @return One mitm.tunnels observation read through proc_net_route: the matching route lines, at most 100. It has an
 /// error status when the file can't be read or is larger than 256 KiB.
 [[nodiscard]] Observation observe_tunnels(std::string_view route_path);
 
@@ -42,7 +42,7 @@ namespace rasp::android::checks {
 /// the hash of its subject; the probe reports those file names, which name the authorities without reading their bytes.
 ///
 /// @param cacerts_dir The user trust store directory to list, `/data/misc/user/0/cacerts-added` on a device.
-/// @return One mitm.user_cas observation read through user_cacerts: the certificate file names, the 32 smallest when
+/// @return One mitm.user_cas observation read through user_cacerts: the certificate file names, the 100 smallest when
 /// there are more. It has an error status when the directory can't be listed or an entry can't be read. An empty list,
 /// the common case, means no user authority is installed.
 [[nodiscard]] Observation observe_user_cas(std::string_view cacerts_dir);
