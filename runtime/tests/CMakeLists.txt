@@ -56,6 +56,15 @@ target_include_directories(rasp_android_apk_file_test PRIVATE ${PROJECT_SOURCE_D
 target_link_libraries(rasp_android_apk_file_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_apk_file_test)
 
+if(TARGET rasp_loader_dex)
+  add_executable(rasp_android_loader_dex_test android/loader/loader_dex_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/loader/loader_dex.cpp)
+  target_include_directories(rasp_android_loader_dex_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+  target_link_libraries(rasp_android_loader_dex_test PRIVATE rasp_core rasp_loader_dex rasp_warnings rasp_language
+    GTest::gtest_main)
+  gtest_discover_tests(rasp_android_loader_dex_test)
+endif()
+
 add_executable(rasp_android_cipher_test android/payload/cipher_test.cpp ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp)
 target_include_directories(rasp_android_cipher_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
 target_link_libraries(rasp_android_cipher_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language

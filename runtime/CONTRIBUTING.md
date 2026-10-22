@@ -15,8 +15,8 @@ Most of the rules below follow from these two facts. CI enforces the ones a tool
 | CMake | 4.4.4 |
 | Xcode, for iOS builds | 27.0 |
 | Android NDK, for Android builds | the newest release; CI uses the one preinstalled on its Linux runner (`ANDROID_NDK_LATEST_HOME`) |
-| JDK, for the Android stub | 17 or newer |
-| Android SDK, for the Android stub | build-tools (for `d8`) and a platform at API 27 or newer (for `android.jar`) |
+| JDK, for the Android stub and the class loader's dex | 17 or newer |
+| Android SDK, for the Android stub and the class loader's dex | build-tools (for `d8`) and a platform at API 27 or newer (for `android.jar`) |
 
 The host presets compile with the first `clang` in `PATH`, so put LLVM 23 first: `/usr/lib/llvm-23/bin` on Linux, `$(brew --prefix llvm)/bin` on macOS. clang-format and clang-tidy must come from the same release, because their output changes between versions.
 

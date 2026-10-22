@@ -53,6 +53,7 @@ add_subdirectory(core)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Android" OR RASP_BUILD_TESTS)
   include(cmake/tf_psa_crypto.cmake)
+  include(cmake/loader_dex.cmake)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
