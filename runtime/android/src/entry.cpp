@@ -6,7 +6,9 @@
 /// decrypted dex files and stores it in the stub's field. Java calls no native method; the stub only reads that field,
 /// and the library exports no `Java_...` entry.
 
+#include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <jni.h>
 #include <optional>
 #include <string>
@@ -16,6 +18,7 @@
 
 #include "apk/archive.h"
 #include "apk/location.h"
+#include "checks/debugger.h"
 #include "checks/root.h"
 #include "loader/loader.h"
 #include "payload/cipher.h"
@@ -89,7 +92,9 @@ __attribute__((constructor)) void rasp_start() noexcept {
   if (!running_in_jvm()) {
     return;
   }
-  log_observations(rasp::android::checks::root());
+  std::vector<rasp::Observation> observations = rasp::android::checks::root();
+  std::ranges::move(rasp::android::checks::debugger(), std::back_inserter(observations));
+  log_observations(observations);
 
   const std::optional<std::string> apk = rasp::android::apk::self_apk_path();
   const std::optional<std::string> library_dir = rasp::android::apk::self_library_dir();
