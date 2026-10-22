@@ -12,89 +12,20 @@
 #include <vector>
 
 #include "support/files.h"
+#include "support/zip.h"
 
 namespace rasp::android::util {
 namespace {
 
 using test_support::TemporaryDirectory;
 using test_support::write_file;
+using test_support::zip_with_stored_entry;
 
 /// The largest library read in the tests.
 constexpr std::size_t kLimit = std::size_t{1} << 20U;
 
 /// The bytes of `text`, the type read_library_file returns, so a result can be compared to an expected value.
 [[nodiscard]] std::vector<std::uint8_t> bytes(std::string_view text) { return {text.begin(), text.end()}; }
-
-/// A little-endian field to append: a value and how many bytes wide it is. Grouping the two keeps callers from
-/// swapping them.
-struct Field {
-  /// The value to append.
-  std::uint64_t value = 0;
-  /// The width in bytes, 1 to 8.
-  std::size_t width = 0;
-};
-
-/// Appends `field` as little-endian bytes to `out`.
-void append_le(std::string& out, Field field) {
-  for (std::size_t index = 0; index < field.width; ++index) {
-    out.push_back(static_cast<char>((field.value >> (8U * index)) & 0xFFU));
-  }
-}
-
-/// Builds a zip holding one stored (uncompressed) entry named `name` with the bytes `content`. The layout is a local
-/// file header and the data, then a central directory with one header, then the End Of Central Directory record.
-[[nodiscard]] std::string zip_with_stored_entry(std::string_view name, std::string_view content) {
-  std::string zip;
-
-  const std::uint32_t local_header_offset = 0;
-  // Local file header.
-  append_le(zip, {.value = 0x04034B50, .width = 4});      // signature
-  append_le(zip, {.value = 20, .width = 2});              // version needed
-  append_le(zip, {.value = 0, .width = 2});               // flags
-  append_le(zip, {.value = 0, .width = 2});               // method: stored
-  append_le(zip, {.value = 0, .width = 2});               // mod time
-  append_le(zip, {.value = 0, .width = 2});               // mod date
-  append_le(zip, {.value = 0, .width = 4});               // crc-32 (unchecked by the reader)
-  append_le(zip, {.value = content.size(), .width = 4});  // compressed size
-  append_le(zip, {.value = content.size(), .width = 4});  // uncompressed size
-  append_le(zip, {.value = name.size(), .width = 2});     // name length
-  append_le(zip, {.value = 0, .width = 2});               // extra length
-  zip.append(name);
-  zip.append(content);
-
-  const auto central_offset = static_cast<std::uint32_t>(zip.size());
-  // Central directory file header.
-  append_le(zip, {.value = 0x02014B50, .width = 4});           // signature
-  append_le(zip, {.value = 20, .width = 2});                   // version made by
-  append_le(zip, {.value = 20, .width = 2});                   // version needed
-  append_le(zip, {.value = 0, .width = 2});                    // flags
-  append_le(zip, {.value = 0, .width = 2});                    // method: stored
-  append_le(zip, {.value = 0, .width = 2});                    // mod time
-  append_le(zip, {.value = 0, .width = 2});                    // mod date
-  append_le(zip, {.value = 0, .width = 4});                    // crc-32
-  append_le(zip, {.value = content.size(), .width = 4});       // compressed size
-  append_le(zip, {.value = content.size(), .width = 4});       // uncompressed size
-  append_le(zip, {.value = name.size(), .width = 2});          // name length
-  append_le(zip, {.value = 0, .width = 2});                    // extra length
-  append_le(zip, {.value = 0, .width = 2});                    // comment length
-  append_le(zip, {.value = 0, .width = 2});                    // disk number
-  append_le(zip, {.value = 0, .width = 2});                    // internal attributes
-  append_le(zip, {.value = 0, .width = 4});                    // external attributes
-  append_le(zip, {.value = local_header_offset, .width = 4});  // local header offset
-  zip.append(name);
-
-  const auto central_size = static_cast<std::uint32_t>(zip.size() - central_offset);
-  // End Of Central Directory record.
-  append_le(zip, {.value = 0x06054B50, .width = 4});      // signature
-  append_le(zip, {.value = 0, .width = 2});               // disk number
-  append_le(zip, {.value = 0, .width = 2});               // disk with central directory
-  append_le(zip, {.value = 1, .width = 2});               // entries on this disk
-  append_le(zip, {.value = 1, .width = 2});               // total entries
-  append_le(zip, {.value = central_size, .width = 4});    // central directory size
-  append_le(zip, {.value = central_offset, .width = 4});  // central directory offset
-  append_le(zip, {.value = 0, .width = 2});               // comment length
-  return zip;
-}
 
 TEST(ApkFile, readLibraryFile_whenPathIsAPlainFile_readsItWhole) {
   const TemporaryDirectory directory;

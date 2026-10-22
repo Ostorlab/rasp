@@ -23,6 +23,7 @@
 #include "checks/integrity.h"
 #include "checks/root.h"
 #include "loader/loader.h"
+#include "payload/assets.h"
 #include "payload/cipher.h"
 #include "payload/payload.h"
 #include "rasp/observation.h"
@@ -31,8 +32,7 @@
 
 namespace {
 
-/// The APK assets the packer writes: the payload key and the packed payload, both stored uncompressed.
-constexpr const char* kKeyEntry = "assets/rasp/key.bin";
+/// The APK asset holding the packed payload, stored uncompressed.
 constexpr const char* kPayloadEntry = "assets/rasp/payload.bin";
 
 /// The app's decrypted dex files and native-library directory, decrypted by the constructor and published by
@@ -77,7 +77,8 @@ void log_observations(const std::vector<rasp::Observation>& observations) {
 
 /// Reads the app's dex files from its APK: reads the key and payload assets and decrypts them.
 [[nodiscard]] std::optional<std::vector<rasp::android::payload::Dex>> recover_dexes(const std::string& apk) {
-  const std::optional<std::vector<std::uint8_t>> key = rasp::android::apk::read_stored_entry(apk, kKeyEntry);
+  const std::optional<std::vector<std::uint8_t>> key =
+      rasp::android::apk::read_stored_entry(apk, rasp::android::payload::kKeyEntry);
   if (!key.has_value() || key->size() != rasp::android::payload::kKeySize) {
     return std::nullopt;
   }
