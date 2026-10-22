@@ -14,6 +14,8 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unistd.h>
+#include <utility>
 #include <vector>
 
 #include "rasp/observation.h"
@@ -46,8 +48,14 @@ constexpr std::string_view kRoutePath = "/proc/net/route";
 /// The largest route table read. A real one is a few KiB.
 constexpr std::size_t kMaxRouteSize = std::size_t{256} << 10U;
 
-/// The user trust store, where a certificate the user installs lands, apart from the system authorities.
-constexpr std::string_view kUserCacertsDir = "/data/misc/user/0/cacerts-added";
+/// The template of the user trust store path, where a certificate the user installs lands, apart from the system
+/// authorities. The Android user id, which is not always 0 on a device with a work or secondary profile, is spliced in.
+constexpr std::string_view kUserCacertsPrefix = "/data/misc/user/";
+constexpr std::string_view kUserCacertsSuffix = "/cacerts-added";
+
+/// The Android user id of this process, derived from its uid: an app uid is `userId * kUidsPerUser + appId`, so the
+/// user id is the uid divided by kUidsPerUser.
+constexpr uid_t kUidsPerUser = 100000;
 
 /// The most lines or file names one observation reports, so a crafted route table or trust store can't grow it without
 /// bound.
@@ -117,6 +125,13 @@ constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"tun", "tap"})
   return std::vector<std::string>(names.begin(), names.end());
 }
 
+/// The user trust store path for this process, with its Android user id spliced in, so a work or secondary profile,
+/// whose user id isn't 0, reads its own store rather than the primary user's.
+[[nodiscard]] std::string user_cacerts_dir() {
+  const uid_t user_id = getuid() / kUidsPerUser;
+  return std::string(kUserCacertsPrefix) + std::to_string(user_id) + std::string(kUserCacertsSuffix);
+}
+
 }  // namespace
 
 Observation observe_tunnels(std::string_view route_path) {
@@ -128,18 +143,18 @@ Observation observe_tunnels(std::string_view route_path) {
 }
 
 Observation observe_user_cas(std::string_view cacerts_dir) {
-  const std::optional<std::vector<std::string>> names = regular_file_names(cacerts_dir);
+  std::optional<std::vector<std::string>> names = regular_file_names(cacerts_dir);
   if (!names) {
     return failed(kUserCasSignal, kUserCasSource);
   }
-  return observed(kUserCasSignal, kUserCasSource, *names);
+  return observed(kUserCasSignal, kUserCasSource, std::move(*names));
 }
 
 std::vector<Observation> mitm() {
   if (!kOnAndroid) {
     return {unsupported(kTunnelsSignal, kTunnelsSource), unsupported(kUserCasSignal, kUserCasSource)};
   }
-  return {observe_tunnels(kRoutePath), observe_user_cas(kUserCacertsDir)};
+  return {observe_tunnels(kRoutePath), observe_user_cas(user_cacerts_dir())};
 }
 
 }  // namespace rasp::android::checks

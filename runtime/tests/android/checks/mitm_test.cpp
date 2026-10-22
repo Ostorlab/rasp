@@ -104,6 +104,24 @@ TEST(Mitm, observeTunnels_whenTheHeaderIsPresent_doesNotReportIt) {
   EXPECT_EQ(observe_tunnels(path), tunnels({}));
 }
 
+TEST(Mitm, observeTunnels_whenMoreThan100TunnelsRoute_reportsTheFirst100) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  std::string content(kRouteHeader);
+  std::vector<std::string> expected;
+  for (int index = 0; index < 110; ++index) {
+    const std::string line = "tun" + std::to_string(index) + "\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0";
+    content += line + "\n";
+    if (index < 100) {
+      expected.push_back(line);
+    }
+  }
+  const std::string path = write_route(directory, content);
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_tunnels(path), tunnels(expected));
+}
+
 TEST(Mitm, observeTunnels_whenTheFileIsMissing_reportsAnError) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
@@ -144,13 +162,14 @@ TEST(Mitm, observeUserCas_whenSeveralAuthoritiesAreInstalled_reportsThemSorted) 
 TEST(Mitm, observeUserCas_whenMoreThan100AuthoritiesAreInstalled_reportsThe100Smallest) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
+  // Create the files from the largest name to the smallest, so a check that kept the first 100 it encountered rather
+  // than the 100 smallest would fail this test.
+  for (int index = 109; index >= 0; --index) {
+    ASSERT_TRUE(write_file(directory.path() + "/" + authority_name(index), "cert"));
+  }
   std::vector<std::string> expected;
-  for (int index = 0; index < 110; ++index) {
-    const std::string name = authority_name(index);
-    ASSERT_TRUE(write_file(directory.path() + "/" + name, "cert"));
-    if (index < 100) {
-      expected.push_back(name);
-    }
+  for (int index = 0; index < 100; ++index) {
+    expected.push_back(authority_name(index));
   }
 
   EXPECT_EQ(observe_user_cas(directory.path()), user_cas(expected));

@@ -41,7 +41,9 @@ namespace rasp::android::checks {
 /// not proof of one: this probe reports the authorities and the server decides. Each authority is a file named after
 /// the hash of its subject; the probe reports those file names, which name the authorities without reading their bytes.
 ///
-/// @param cacerts_dir The user trust store directory to list, `/data/misc/user/0/cacerts-added` on a device.
+/// @param cacerts_dir The user trust store directory to list. On a device it is `/data/misc/user/<id>/cacerts-added`,
+/// where `<id>` is this process's Android user id, so a work or secondary profile reads its own store. The `mitm`
+/// dispatcher derives that path; a test passes any directory.
 /// @return One mitm.user_cas observation read through user_cacerts: the certificate file names, the 100 smallest when
 /// there are more. It has an error status when the directory can't be listed or an entry can't be read. An empty list,
 /// the common case, means no user authority is installed.
