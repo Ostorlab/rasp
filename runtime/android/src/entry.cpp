@@ -21,6 +21,7 @@
 #include "checks/debugger.h"
 #include "checks/hooks.h"
 #include "checks/integrity.h"
+#include "checks/mitm.h"
 #include "checks/root.h"
 #include "loader/loader.h"
 #include "payload/cipher.h"
@@ -98,6 +99,7 @@ __attribute__((constructor)) void rasp_start() noexcept {
   std::ranges::move(rasp::android::checks::debugger(), std::back_inserter(observations));
   std::ranges::move(rasp::android::checks::hooks(), std::back_inserter(observations));
   std::ranges::move(rasp::android::checks::integrity(), std::back_inserter(observations));
+  std::ranges::move(rasp::android::checks::mitm(), std::back_inserter(observations));
   log_observations(observations);
 
   const std::optional<std::string> apk = rasp::android::apk::self_apk_path();

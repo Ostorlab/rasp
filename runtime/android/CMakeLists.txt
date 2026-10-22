@@ -5,6 +5,7 @@ add_library(rasp SHARED
   src/checks/debugger.cpp
   src/checks/hooks.cpp
   src/checks/integrity.cpp
+  src/checks/mitm.cpp
   src/checks/root.cpp
   src/loader/loader.cpp
   src/payload/cipher.cpp
