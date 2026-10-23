@@ -41,8 +41,9 @@ constexpr std::string_view kUserCasSignal = "mitm.user_cas";
 /// The source of the user-authority probe.
 constexpr std::string_view kUserCasSource = "user_cacerts";
 
-/// The most interface names or file names one observation reports, so a host with very many interfaces or a crafted
-/// trust store can't grow it without bound.
+/// The most tunnel interface names the tunnels observation reports, so a host with very many interfaces or addresses
+/// can't grow it without bound. The user-authority probe is not capped: the user decides which certificates to trust,
+/// so every one is reported.
 constexpr std::size_t kMaxEntries = 100;
 
 /// The interface-name prefixes of a tunnel, the kind a capturing proxy routes traffic through: `tun` for the layer-3

@@ -49,9 +49,9 @@ namespace rasp::android::checks {
 /// stays covered by tests, which pass a readable directory.
 ///
 /// @param cacerts_dir The user trust store directory to list.
-/// @return One mitm.user_cas observation through user_cacerts: the certificate file names, the 100 smallest when there
-/// are more. It has an error status when the directory can't be listed or an entry can't be read. An empty list means
-/// no authority is installed.
+/// @return One mitm.user_cas observation through user_cacerts: every certificate file name, sorted and without
+/// duplicates, since the user decides which to trust. It has an error status when the directory can't be listed or an
+/// entry can't be read. An empty list means no authority is installed.
 [[nodiscard]] Observation observe_user_cas(std::string_view cacerts_dir);
 
 }  // namespace rasp::android::checks
