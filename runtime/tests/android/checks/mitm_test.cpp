@@ -131,17 +131,17 @@ TEST(Mitm, observeUserCas_whenSeveralAuthoritiesAreInstalled_reportsThemSorted) 
   return "ca" + std::string(3 - std::min<std::size_t>(3, digits.size()), '0') + digits + ".0";
 }
 
-TEST(Mitm, observeUserCas_whenMoreThan100AuthoritiesAreInstalled_reportsThe100Smallest) {
+TEST(Mitm, observeUserCas_whenManyAuthoritiesAreInstalled_reportsThemAllSorted) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
-  // Create the files from the largest name to the smallest, so a check that kept the first 100 it encountered rather
-  // than the 100 smallest would fail this test.
+  // Create the files from the largest name to the smallest, so a check that preserved creation order rather than
+  // sorting would fail this test. Every authority is reported: the user decides which to trust.
   for (int index = 109; index >= 0; --index) {
     ASSERT_TRUE(write_file(directory.path() + "/" + authority_name(index), "cert"));
   }
   std::vector<std::string> expected;
-  expected.reserve(100);
-  for (int index = 0; index < 100; ++index) {
+  expected.reserve(110);
+  for (int index = 0; index < 110; ++index) {
     expected.push_back(authority_name(index));
   }
 

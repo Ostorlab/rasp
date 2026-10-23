@@ -82,29 +82,35 @@ constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"tun", "tap"})
   return {tunnels.begin(), tunnels.end()};
 }
 
-/// The names of this process's network interfaces, read through getifaddrs, or nothing when getifaddrs fails. An
-/// interface appears once per address it holds; the caller removes the duplicates. getifaddrs reads the interfaces over
-/// a netlink socket, which an untrusted app process can open, unlike `/proc/net/route`, which Android denies it.
-[[nodiscard]] std::optional<std::vector<std::string>> interface_names() {
+/// The tunnel interface names among this process's network interfaces, read through getifaddrs, the kMaxEntries
+/// smallest of them without duplicates, or nothing when getifaddrs fails. The names are filtered and bounded while the
+/// list is walked, so a device with very many interfaces or addresses doesn't grow an intermediate buffer without
+/// bound. getifaddrs reads the interfaces over a netlink socket, which an untrusted app process can open, unlike
+/// `/proc/net/route`, which Android denies it.
+[[nodiscard]] std::optional<std::vector<std::string>> tunnel_interface_names() {
   ifaddrs* list = nullptr;
   if (getifaddrs(&list) != 0) {
     return std::nullopt;
   }
-  std::vector<std::string> names;
+  std::set<std::string> tunnels;
   for (const ifaddrs* entry = list; entry != nullptr; entry = entry->ifa_next) {
-    if (entry->ifa_name != nullptr) {
-      names.emplace_back(entry->ifa_name);
+    if (entry->ifa_name == nullptr || !is_tunnel(entry->ifa_name)) {
+      continue;
+    }
+    tunnels.insert(entry->ifa_name);
+    if (tunnels.size() > kMaxEntries) {
+      tunnels.erase(std::prev(tunnels.end()));
     }
   }
   freeifaddrs(list);
-  return names;
+  return std::vector<std::string>{tunnels.begin(), tunnels.end()};
 }
 
-/// The names of the regular files directly in `directory`, the kMaxEntries smallest of them, sorted, or nothing when
-/// the directory can't be listed or an entry can't be read. Each user authority is one such file, named after the hash
-/// of its subject. The iterator is advanced with `increment`, not a range-for, because its `operator++` throws on
-/// failure and the library is built with -fno-exceptions; the kept set is bounded as it is built, so the directory size
-/// doesn't bound memory.
+/// The names of all the regular files directly in `directory`, sorted and without duplicates, or nothing when the
+/// directory can't be listed or an entry can't be read. Each user authority is one such file, named after the hash of
+/// its subject, and the user decides which to trust, so the probe reports every one rather than a bounded subset. The
+/// iterator is advanced with `increment`, not a range-for, because its `operator++` throws on failure and the library
+/// is built with -fno-exceptions.
 [[nodiscard]] std::optional<std::vector<std::string>> regular_file_names(std::string_view directory) {
   std::error_code error;
   std::filesystem::directory_iterator iterator(std::filesystem::path(directory), error);
@@ -120,9 +126,6 @@ constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"tun", "tap"})
     }
     if (regular) {
       names.insert(iterator->path().filename().string());
-      if (names.size() > kMaxEntries) {
-        names.erase(std::prev(names.end()));
-      }
     }
     iterator.increment(error);
     if (error) {
@@ -150,7 +153,7 @@ std::vector<Observation> mitm() {
   if (!kOnAndroid) {
     return {unsupported(kTunnelsSignal, kTunnelsSource), unsupported(kUserCasSignal, kUserCasSource)};
   }
-  const std::optional<std::vector<std::string>> names = interface_names();
+  const std::optional<std::vector<std::string>> names = tunnel_interface_names();
   Observation tunnels = names ? observe_tunnels(*names) : failed(kTunnelsSignal, kTunnelsSource);
   // The user trust store (`/data/misc/user/<id>/cacerts-added`) is labeled system_data_file under SELinux and there is
   // no public SDK API that exposes user-installed CAs, so an untrusted app process can't enumerate them: report
