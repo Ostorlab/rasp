@@ -80,11 +80,10 @@ TEST(Identity, observePackage_whenTheFileIsMissing_reportsAnError) {
 }
 
 TEST(Identity, identity_whenOffAndroid_reportsTheCheckAsUnsupported) {
-  EXPECT_EQ(
-      identity(),
-      (std::vector<Observation>{
-          {.signal = "id.package", .source = "proc_cmdline", .status = Status::kUnsupported, .value = {}},
-      }));
+  EXPECT_EQ(identity(),
+            (std::vector<Observation>{
+                {.signal = "id.package", .source = "proc_cmdline", .status = Status::kUnsupported, .value = {}},
+            }));
 }
 
 }  // namespace
