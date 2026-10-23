@@ -102,11 +102,17 @@ Observation observe_code_path(std::string_view code_path) {
 std::vector<Observation> identity() {
 #ifdef __ANDROID__
   const std::optional<std::string> code_path = library_path();
-  return {observe_package(kCmdlinePath), observe_uid(static_cast<std::int64_t>(getuid())),
-          observe_code_path(code_path.value_or(std::string()))};
+  return {
+      observe_package(kCmdlinePath),
+      observe_uid(static_cast<std::int64_t>(getuid())),
+      observe_code_path(code_path.value_or(std::string())),
+  };
 #else
-  return {unsupported(kPackageSignal, kPackageSource), unsupported(kUidSignal, kUidSource),
-          unsupported(kCodePathSignal, kCodePathSource)};
+  return {
+      unsupported(kPackageSignal, kPackageSource),
+      unsupported(kUidSignal, kUidSource),
+      unsupported(kCodePathSignal, kCodePathSource),
+  };
 #endif
 }
 
