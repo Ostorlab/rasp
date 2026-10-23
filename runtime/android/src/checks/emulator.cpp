@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "checks/root.h"
 #include "rasp/observation.h"
 
 #ifdef __ANDROID__
