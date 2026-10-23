@@ -18,6 +18,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
   - `src/checks/`: the iOS checks. Each one reports observations.
     - `debugger.h`: the debugger checks. Off a physical device every observation has the unsupported status.
       - `dbg.traced`: whether the kernel marks the app's process as traced by a debugger, read through sysctl from the `P_TRACED` flag of the process. The monitoring thread reads it on every pass, so it also sees a debugger that attaches after launch.
+      - `dbg.parent`: the process id of the app's parent process, read through getppid. An app that iOS launched normally has `launchd`, process id 1, as its parent; an app launched under a debugger has another parent. The server judges the value; the app only reports it.
     - `jailbreak.h`: the jailbreak checks. `jb.fs_paths` (do known jailbreak files exist, read through access and stat), `jb.sandbox_escape` (can the app write outside its sandbox) and `jb.fork_ok` (can the app start a child process). Off a physical device every one is unsupported.
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
 - `android/`: `librasp.so`, the runtime for Android, and the stub that loads it. The library runs its checks when it loads, and returns the app's decrypted dex files to the stub.
