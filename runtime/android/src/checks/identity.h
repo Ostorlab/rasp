@@ -1,6 +1,6 @@
 /// The Android app-identity self-check: whether the app still has the identity it shipped with, which a repackaged or
-/// cloned build changes. It reports the running package name and the process's own user id; the server compares them
-/// against the values the packer recorded and decides.
+/// cloned build changes. It reports the running package name, the process's own user id, and the path the runtime's
+/// code loads from; the server compares them against the values the packer recorded and decides.
 
 #pragma once
 
@@ -14,11 +14,12 @@ namespace rasp::android::checks {
 
 /// Runs the app-identity check and returns what it observed.
 ///
-/// On Android it reports the running package name, read from the process's own command line, and the process's own user
-/// id, read from getuid. Anywhere else both observations are unsupported instead, so the server still sees that the
-/// check ran.
+/// On Android it reports the running package name, read from the process's own command line; the process's own user id,
+/// read from getuid; and the path the runtime's library loads from, read from the dynamic loader. Anywhere else every
+/// observation is unsupported instead, so the server still sees that the check ran.
 ///
-/// @return Two observations: id.package through proc_cmdline, then id.uid through getuid.
+/// @return Three observations: id.package through proc_cmdline, id.uid through getuid, then id.code_path through
+/// dladdr.
 [[nodiscard]] std::vector<Observation> identity();
 
 /// Reports the running package name, read from the command line at `cmdline_path`.
@@ -43,11 +44,25 @@ namespace rasp::android::checks {
 /// profile, an OEM "Dual Apps" clone, or an added user) start at 100000. The uid alone therefore tells which user the
 /// app runs under: `uid / 100000` is 0 for the main install and 1 or more for a copy running in a separate user. This
 /// probe reports the raw uid as a fact; the server does the arithmetic and decides, since a work profile is legitimate
-/// while a cloned banking app may not be. It doesn't catch a third-party cloner (such as Parallel Space) that runs
-/// under the host's own uid; that needs the data path, left to a later probe.
+/// while a cloned banking app may not be. It doesn't catch a third-party virtualizer (such as Parallel Space) that runs
+/// under the host's own uid; id.code_path does.
 ///
 /// @param uid The process's own user id, from getuid on a device.
 /// @return One id.uid observation through getuid: the uid as an integer.
 [[nodiscard]] Observation observe_uid(std::int64_t uid);
+
+/// Reports the path the runtime's own library loads from, `code_path`.
+///
+/// A genuine install loads librasp.so from the app's own install directory, whose path carries the app's package name,
+/// such as `/data/app/~~.../com.example-<suffix>/lib/<abi>`. A third-party virtualizer (such as Parallel Space or
+/// VirtualApp) runs the guest app inside its own process and redirects its files, so the library loads from the host
+/// app's directory instead, whose path carries the host's package, not the guest's. The uid is the host's normal uid,
+/// so id.uid can't see this; the load path can. The probe reports the path as a fact and the server checks whether it
+/// belongs to the package the packer recorded. A sophisticated virtualizer can fake the path, so this is a signal, not
+/// proof.
+///
+/// @param code_path The load path of the runtime's library, from the dynamic loader on a device.
+/// @return One id.code_path observation through dladdr: the path. It has an error status when the path can't be read.
+[[nodiscard]] Observation observe_code_path(std::string_view code_path);
 
 }  // namespace rasp::android::checks
