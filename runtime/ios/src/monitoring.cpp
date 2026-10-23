@@ -15,6 +15,7 @@
 #include "checks/debugger.h"
 #include "checks/hooks.h"
 #include "checks/jailbreak.h"
+#include "checks/mitm.h"
 #include "rasp/observation.h"
 #include "rasp/util/logging.h"
 
@@ -28,8 +29,8 @@ constexpr std::size_t kThreadStackSize = std::size_t{256} * 1024;
 /// How long the thread waits between two runs of the checks.
 constexpr std::chrono::seconds kCheckInterval{60};
 
-/// The thread: runs the jailbreak, debugger and hooking checks, then again every kCheckInterval, until the process
-/// exits.
+/// The thread: runs the jailbreak, debugger, hooking and network-interception checks, then again every kCheckInterval,
+/// until the process exits.
 ///
 /// @param argument The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, a `std::string` allocated with `new`
 /// that the thread takes and keeps until the process exits.
@@ -40,6 +41,7 @@ void* monitor(void* argument) {
     std::vector<Observation> observations = checks::jailbreak();
     std::ranges::move(checks::debugger(), std::back_inserter(observations));
     std::ranges::move(checks::hooks(*inserted_libraries), std::back_inserter(observations));
+    std::ranges::move(checks::mitm(), std::back_inserter(observations));
     if constexpr (kLoggingEnabled) {
       for (const Observation& observation : observations) {
         rasp::log(describe(observation));
