@@ -31,8 +31,12 @@ constexpr std::string_view kUidSignal = "id.uid";
 /// The source of the user-id probe, the process's own uid.
 constexpr std::string_view kUidSource = "getuid";
 
-/// The process's command line, whose first NUL-separated argument is the package name.
+#ifdef __ANDROID__
+/// The process's command line, whose first NUL-separated argument is the package name. Only identity() reads it, on a
+/// device, so it is guarded; observe_package takes the path from its caller.
 constexpr std::string_view kCmdlinePath = "/proc/self/cmdline";
+#endif
+
 /// The largest command line read. A real one is well under this.
 constexpr std::size_t kMaxCmdlineSize = std::size_t{64} << 10U;
 
