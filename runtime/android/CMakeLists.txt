@@ -3,6 +3,7 @@ add_library(rasp SHARED
   src/apk/archive.cpp
   src/apk/location.cpp
   src/checks/debugger.cpp
+  src/checks/emulator.cpp
   src/checks/hooks.cpp
   src/checks/identity.cpp
   src/checks/integrity.cpp
