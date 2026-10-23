@@ -1,5 +1,5 @@
-/// Tests for the Android network-interception checks: the route probe that reports tunnel interfaces and the trust
-/// store probe that reports user-installed certificate authorities.
+/// Tests for the Android network-interception checks: the tunnel probe that reports tunnel interface names and the
+/// trust store probe that reports user-installed certificate authorities.
 
 #include "checks/mitm.h"
 
@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <gtest/gtest.h>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -20,19 +19,12 @@ namespace {
 using test_support::TemporaryDirectory;
 using test_support::write_file;
 
-/// The header line of a route table, which names no interface.
-constexpr std::string_view kRouteHeader =
-    "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n";
+/// A clean device's interface names: its physical interfaces and the loopback, no tunnel.
+const std::vector<std::string> kCleanInterfaces = {"lo", "wlan0", "wlan0", "rmnet0"};
 
-/// A clean device's route table: its physical interfaces only, no tunnel.
-constexpr std::string_view kCleanRoutes =
-    "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
-    "wlan0\t00000000\t0101A8C0\t0003\t0\t0\t600\t00000000\t0\t0\t0\n"
-    "wlan0\t0001A8C0\t00000000\t0001\t0\t0\t600\t00FFFFFF\t0\t0\t0\n";
-
-/// The mitm.tunnels observation that reports `lines`.
-[[nodiscard]] Observation tunnels(std::vector<std::string> lines) {
-  return {.signal = "mitm.tunnels", .source = "proc_net_route", .status = Status::kOk, .value = std::move(lines)};
+/// The mitm.tunnels observation that reports `names`.
+[[nodiscard]] Observation tunnels(std::vector<std::string> names) {
+  return {.signal = "mitm.tunnels", .source = "getifaddrs", .status = Status::kOk, .value = std::move(names)};
 }
 
 /// The mitm.user_cas observation that reports `names`.
@@ -40,93 +32,63 @@ constexpr std::string_view kCleanRoutes =
   return {.signal = "mitm.user_cas", .source = "user_cacerts", .status = Status::kOk, .value = std::move(names)};
 }
 
-/// The observation of a route table that couldn't be read.
-[[nodiscard]] Observation unreadable_route() {
-  return {.signal = "mitm.tunnels", .source = "proc_net_route", .status = Status::kError, .value = {}};
-}
-
 /// The observation of a trust store that couldn't be listed.
 [[nodiscard]] Observation unreadable_cacerts() {
   return {.signal = "mitm.user_cas", .source = "user_cacerts", .status = Status::kError, .value = {}};
 }
 
-/// Writes `content` to a route file in `directory` and returns its path.
-[[nodiscard]] std::string write_route(const TemporaryDirectory& directory, std::string_view content) {
-  const std::string path = directory.path() + "/route";
-  return write_file(path, content) ? path : std::string();
+/// The three-digit-numbered tunnel name for `index`, so the names sort in the same order as the numbers.
+[[nodiscard]] std::string numbered_tunnel(int index) {
+  const std::string digits = std::to_string(index);
+  return "tun" + std::string(3 - std::min<std::size_t>(3, digits.size()), '0') + digits;
 }
 
-TEST(Mitm, observeTunnels_whenNoTunnelRoutes_reportsEmptyList) {
-  const TemporaryDirectory directory;
-  ASSERT_FALSE(directory.path().empty());
-  const std::string path = write_route(directory, kCleanRoutes);
-  ASSERT_FALSE(path.empty());
-
-  EXPECT_EQ(observe_tunnels(path), tunnels({}));
+TEST(Mitm, observeTunnels_whenNoTunnelInterfaces_reportsEmptyList) {
+  EXPECT_EQ(observe_tunnels(kCleanInterfaces), tunnels({}));
 }
 
-TEST(Mitm, observeTunnels_whenATunnelInterfaceRoutes_reportsItsLine) {
-  const TemporaryDirectory directory;
-  ASSERT_FALSE(directory.path().empty());
-  const std::string line = "tun0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0";
-  const std::string path = write_route(directory, std::string(kCleanRoutes) + line + "\n");
-  ASSERT_FALSE(path.empty());
+TEST(Mitm, observeTunnels_whenATunInterfaceIsPresent_reportsItsName) {
+  std::vector<std::string> names = kCleanInterfaces;
+  names.emplace_back("tun0");
 
-  EXPECT_EQ(observe_tunnels(path), tunnels({line}));
+  EXPECT_EQ(observe_tunnels(names), tunnels({"tun0"}));
 }
 
-TEST(Mitm, observeTunnels_whenATapInterfaceRoutes_reportsItsLine) {
-  const TemporaryDirectory directory;
-  ASSERT_FALSE(directory.path().empty());
-  const std::string line = "tap0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0";
-  const std::string path = write_route(directory, std::string(kRouteHeader) + line + "\n");
-  ASSERT_FALSE(path.empty());
+TEST(Mitm, observeTunnels_whenATapInterfaceIsPresent_reportsItsName) {
+  std::vector<std::string> names = kCleanInterfaces;
+  names.emplace_back("tap0");
 
-  EXPECT_EQ(observe_tunnels(path), tunnels({line}));
+  EXPECT_EQ(observe_tunnels(names), tunnels({"tap0"}));
 }
 
-TEST(Mitm, observeTunnels_whenAPppInterfaceRoutes_doesNotReportIt) {
-  const TemporaryDirectory directory;
-  ASSERT_FALSE(directory.path().empty());
-  const std::string line = "ppp0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0";
-  const std::string path = write_route(directory, std::string(kRouteHeader) + line + "\n");
-  ASSERT_FALSE(path.empty());
+TEST(Mitm, observeTunnels_whenAPppInterfaceIsPresent_doesNotReportIt) {
+  std::vector<std::string> names = kCleanInterfaces;
+  names.emplace_back("ppp0");
 
-  EXPECT_EQ(observe_tunnels(path), tunnels({}));
+  EXPECT_EQ(observe_tunnels(names), tunnels({}));
 }
 
-TEST(Mitm, observeTunnels_whenTheHeaderIsPresent_doesNotReportIt) {
-  const TemporaryDirectory directory;
-  ASSERT_FALSE(directory.path().empty());
-  const std::string path = write_route(directory, kRouteHeader);
-  ASSERT_FALSE(path.empty());
+TEST(Mitm, observeTunnels_whenATunnelAppearsTwice_reportsItOnce) {
+  // getifaddrs lists an interface once per address it holds, so a tunnel with an IPv4 and an IPv6 address appears
+  // twice.
+  const std::vector<std::string> names = {"wlan0", "tun0", "tun0"};
 
-  EXPECT_EQ(observe_tunnels(path), tunnels({}));
+  EXPECT_EQ(observe_tunnels(names), tunnels({"tun0"}));
 }
 
-TEST(Mitm, observeTunnels_whenMoreThan100TunnelsRoute_reportsTheFirst100) {
-  const TemporaryDirectory directory;
-  ASSERT_FALSE(directory.path().empty());
-  std::string content(kRouteHeader);
+TEST(Mitm, observeTunnels_whenMoreThan100Tunnels_reportsThe100Smallest) {
+  std::vector<std::string> names;
   std::vector<std::string> expected;
-  for (int index = 0; index < 110; ++index) {
-    const std::string line = "tun" + std::to_string(index) + "\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0";
-    content += line + "\n";
-    if (index < 100) {
-      expected.push_back(line);
-    }
+  // Add the names from the largest to the smallest, so a probe that kept the first 100 encountered rather than the 100
+  // smallest would fail this test.
+  for (int index = 109; index >= 0; --index) {
+    names.push_back(numbered_tunnel(index));
   }
-  const std::string path = write_route(directory, content);
-  ASSERT_FALSE(path.empty());
+  for (int index = 0; index < 100; ++index) {
+    expected.push_back(numbered_tunnel(index));
+  }
 
-  EXPECT_EQ(observe_tunnels(path), tunnels(expected));
-}
-
-TEST(Mitm, observeTunnels_whenTheFileIsMissing_reportsAnError) {
-  const TemporaryDirectory directory;
-  ASSERT_FALSE(directory.path().empty());
-
-  EXPECT_EQ(observe_tunnels(directory.path() + "/missing"), unreadable_route());
+  EXPECT_EQ(observe_tunnels(names), tunnels(expected));
 }
 
 TEST(Mitm, observeUserCas_whenTheStoreIsEmpty_reportsEmptyList) {
@@ -185,7 +147,7 @@ TEST(Mitm, observeUserCas_whenTheDirectoryIsMissing_reportsAnError) {
 TEST(Mitm, mitm_whenOffAndroid_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(mitm(),
             (std::vector<Observation>{
-                {.signal = "mitm.tunnels", .source = "proc_net_route", .status = Status::kUnsupported, .value = {}},
+                {.signal = "mitm.tunnels", .source = "getifaddrs", .status = Status::kUnsupported, .value = {}},
                 {.signal = "mitm.user_cas", .source = "user_cacerts", .status = Status::kUnsupported, .value = {}},
             }));
 }

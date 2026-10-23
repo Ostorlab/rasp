@@ -1,5 +1,5 @@
-/// The Android network-interception checks: the tunnel probe, the user-authority probe, and their unsupported results
-/// off Android.
+/// The Android network-interception checks: the tunnel probe over the process's own network interfaces, the
+/// user-authority probe, and their unsupported results off Android.
 
 #include "checks/mitm.h"
 
@@ -7,19 +7,17 @@
 #include <array>
 #include <cstddef>
 #include <filesystem>
+#include <ifaddrs.h>
 #include <iterator>
 #include <optional>
-#include <ranges>
 #include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <unistd.h>
 #include <utility>
 #include <vector>
 
 #include "rasp/observation.h"
-#include "util/read_file.h"
 
 namespace rasp::android::checks {
 
@@ -35,30 +33,16 @@ constexpr bool kOnAndroid = false;
 
 /// The signal of the tunnel probe.
 constexpr std::string_view kTunnelsSignal = "mitm.tunnels";
-/// The source of the tunnel probe.
-constexpr std::string_view kTunnelsSource = "proc_net_route";
+/// The source of the tunnel probe: the process's own network interfaces, read through getifaddrs.
+constexpr std::string_view kTunnelsSource = "getifaddrs";
 
 /// The signal of the user-authority probe.
 constexpr std::string_view kUserCasSignal = "mitm.user_cas";
 /// The source of the user-authority probe.
 constexpr std::string_view kUserCasSource = "user_cacerts";
 
-/// The route table, which names the interface of every route.
-constexpr std::string_view kRoutePath = "/proc/net/route";
-/// The largest route table read. A real one is a few KiB.
-constexpr std::size_t kMaxRouteSize = std::size_t{256} << 10U;
-
-/// The template of the user trust store path, where a certificate the user installs lands, apart from the system
-/// authorities. The Android user id, which is not always 0 on a device with a work or secondary profile, is spliced in.
-constexpr std::string_view kUserCacertsPrefix = "/data/misc/user/";
-constexpr std::string_view kUserCacertsSuffix = "/cacerts-added";
-
-/// The Android user id of this process, derived from its uid: an app uid is `userId * kUidsPerUser + appId`, so the
-/// user id is the uid divided by kUidsPerUser.
-constexpr uid_t kUidsPerUser = 100000;
-
-/// The most lines or file names one observation reports, so a crafted route table or trust store can't grow it without
-/// bound.
+/// The most interface names or file names one observation reports, so a host with very many interfaces or a crafted
+/// trust store can't grow it without bound.
 constexpr std::size_t kMaxEntries = 100;
 
 /// The interface-name prefixes of a tunnel, the kind a capturing proxy routes traffic through: `tun` for the layer-3
@@ -67,30 +51,43 @@ constexpr std::size_t kMaxEntries = 100;
 /// match.
 constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"tun", "tap"});
 
-/// Whether the route `line` names a tunnel interface in its first field. A route table line is tab-separated and starts
-/// with the interface name, so the name is the run of characters before the first tab.
-[[nodiscard]] bool routes_through_tunnel(std::string_view line) {
-  const std::size_t tab = line.find('\t');
-  const std::string_view interface = line.substr(0, std::min(tab, line.size()));
-  return std::ranges::any_of(kTunnelPrefixes,
-                             [interface](std::string_view prefix) { return interface.starts_with(prefix); });
+/// Whether the interface `name` is a tunnel: its name starts with a tunnel prefix.
+[[nodiscard]] bool is_tunnel(std::string_view name) {
+  return std::ranges::any_of(kTunnelPrefixes, [name](std::string_view prefix) { return name.starts_with(prefix); });
 }
 
-/// The route lines of `routes` that name a tunnel interface, at most kMaxEntries. The header line names no interface,
-/// so it never matches.
-[[nodiscard]] std::vector<std::string> tunnel_routes(std::string_view routes) {
-  std::vector<std::string> lines;
-  for (const auto piece : std::views::split(routes, '\n')) {
-    const std::string_view line(piece.begin(), piece.end());
-    if (line.empty() || !routes_through_tunnel(line)) {
+/// The tunnel interface names in `names`, the kMaxEntries smallest of them, without duplicates. getifaddrs lists an
+/// interface once per address, so a tunnel with several addresses would otherwise appear more than once.
+[[nodiscard]] std::vector<std::string> tunnel_names(const std::vector<std::string>& names) {
+  std::set<std::string> tunnels;
+  for (const std::string& name : names) {
+    if (!is_tunnel(name)) {
       continue;
     }
-    lines.emplace_back(line);
-    if (lines.size() == kMaxEntries) {
-      break;
+    tunnels.insert(name);
+    if (tunnels.size() > kMaxEntries) {
+      tunnels.erase(std::prev(tunnels.end()));
     }
   }
-  return lines;
+  return std::vector<std::string>(tunnels.begin(), tunnels.end());
+}
+
+/// The names of this process's network interfaces, read through getifaddrs, or nothing when getifaddrs fails. An
+/// interface appears once per address it holds; the caller removes the duplicates. getifaddrs reads the interfaces over
+/// a netlink socket, which an untrusted app process can open, unlike `/proc/net/route`, which Android denies it.
+[[nodiscard]] std::optional<std::vector<std::string>> interface_names() {
+  ifaddrs* list = nullptr;
+  if (getifaddrs(&list) != 0) {
+    return std::nullopt;
+  }
+  std::vector<std::string> names;
+  for (const ifaddrs* entry = list; entry != nullptr; entry = entry->ifa_next) {
+    if (entry->ifa_name != nullptr) {
+      names.emplace_back(entry->ifa_name);
+    }
+  }
+  freeifaddrs(list);
+  return names;
 }
 
 /// The names of the regular files directly in `directory`, the kMaxEntries smallest of them, sorted, or nothing when
@@ -125,21 +122,10 @@ constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"tun", "tap"})
   return std::vector<std::string>(names.begin(), names.end());
 }
 
-/// The user trust store path for this process, with its Android user id spliced in, so a work or secondary profile,
-/// whose user id isn't 0, reads its own store rather than the primary user's.
-[[nodiscard]] std::string user_cacerts_dir() {
-  const uid_t user_id = getuid() / kUidsPerUser;
-  return std::string(kUserCacertsPrefix) + std::to_string(user_id) + std::string(kUserCacertsSuffix);
-}
-
 }  // namespace
 
-Observation observe_tunnels(std::string_view route_path) {
-  const std::optional<std::string> routes = util::read_file(route_path, kMaxRouteSize);
-  if (!routes) {
-    return failed(kTunnelsSignal, kTunnelsSource);
-  }
-  return observed(kTunnelsSignal, kTunnelsSource, tunnel_routes(*routes));
+Observation observe_tunnels(const std::vector<std::string>& interface_names) {
+  return observed(kTunnelsSignal, kTunnelsSource, tunnel_names(interface_names));
 }
 
 Observation observe_user_cas(std::string_view cacerts_dir) {
@@ -154,7 +140,12 @@ std::vector<Observation> mitm() {
   if (!kOnAndroid) {
     return {unsupported(kTunnelsSignal, kTunnelsSource), unsupported(kUserCasSignal, kUserCasSource)};
   }
-  return {observe_tunnels(kRoutePath), observe_user_cas(user_cacerts_dir())};
+  const std::optional<std::vector<std::string>> names = interface_names();
+  const Observation tunnels = names ? observe_tunnels(*names) : failed(kTunnelsSignal, kTunnelsSource);
+  // The user trust store (`/data/misc/user/<id>/cacerts-added`) is labeled system_data_file under SELinux and there is
+  // no public SDK API that exposes user-installed CAs, so an untrusted app process can't enumerate them: report
+  // unsupported rather than a perpetual error.
+  return {tunnels, unsupported(kUserCasSignal, kUserCasSource)};
 }
 
 }  // namespace rasp::android::checks
