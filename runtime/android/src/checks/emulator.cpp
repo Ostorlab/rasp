@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -16,6 +15,7 @@
 #include "rasp/observation.h"
 
 #ifdef __ANDROID__
+#include <cstdint>
 #include <sys/system_properties.h>
 #endif
 
@@ -49,19 +49,21 @@ constexpr auto kEmulatorProperties = std::to_array<std::string_view>({
     "ro.build.characteristics",
 });
 
-/// The substrings that mark a property value as an emulator's. `=1` isn't needed: the QEMU flags are reported whenever
-/// they are set at all, which only an emulator does.
+/// The substrings that mark a property value as an emulator's. `generic` is left out: it is matched as a whole token
+/// instead, because real AOSP-based devices use product values such as `aosp_generic_x86` that only contain it.
 constexpr auto kEmulatorMarkers = std::to_array<std::string_view>({
     "goldfish",
     "ranchu",
     "emulator",
-    "generic",
     "sdk_gphone",
     "sdk_google",
     "sdk built for",
     "vbox",
     "genymotion",
 });
+
+/// The emulator marker matched as a whole token rather than a substring.
+constexpr std::string_view kGenericMarker = "generic";
 
 /// The QEMU flag properties, which a real device leaves unset: any value at all is a tell.
 constexpr auto kQemuProperties = std::to_array<std::string_view>({
@@ -74,14 +76,42 @@ constexpr auto kQemuProperties = std::to_array<std::string_view>({
   return std::ranges::any_of(kQemuProperties, [name](std::string_view flag) { return flag == name; });
 }
 
-/// Whether the property `value` holds an emulator marker, compared case-insensitively.
+/// Whether `character` is part of an identifier token: a letter, a digit or an underscore. A product value joins its
+/// parts with underscores, so `generic` inside `aosp_generic_x86` is one token with its neighbours, not a token on its
+/// own. A marker that is a whole token is bounded by characters that aren't token characters, or by the ends of the
+/// string.
+[[nodiscard]] bool is_token_character(char character) {
+  const auto byte = static_cast<unsigned char>(character);
+  return std::isalnum(byte) != 0 || character == '_';
+}
+
+/// Whether `text` holds `token` bounded by non-token characters or the ends of the string, so `generic` matches
+/// `vbox generic` but not `aosp_generic_x86`.
+[[nodiscard]] bool holds_token(std::string_view text, std::string_view token) {
+  std::size_t position = text.find(token);
+  while (position != std::string_view::npos) {
+    const bool left = position == 0 || !is_token_character(text[position - 1]);
+    const std::size_t after = position + token.size();
+    const bool right = after == text.size() || !is_token_character(text[after]);
+    if (left && right) {
+      return true;
+    }
+    position = text.find(token, position + 1);
+  }
+  return false;
+}
+
+/// Whether the property `value` holds an emulator marker, compared case-insensitively. The substring markers match
+/// anywhere; `generic` matches only as a whole token.
 [[nodiscard]] bool holds_marker(std::string_view value) {
   std::string lowered(value);
   std::ranges::transform(lowered, lowered.begin(), [](char character) {
     return static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
   });
-  return std::ranges::any_of(kEmulatorMarkers,
-                             [&lowered](std::string_view marker) { return lowered.contains(marker); });
+  if (std::ranges::any_of(kEmulatorMarkers, [&lowered](std::string_view marker) { return lowered.contains(marker); })) {
+    return true;
+  }
+  return holds_token(lowered, kGenericMarker);
 }
 
 }  // namespace
@@ -103,7 +133,8 @@ Observation observe_emulator_props(PropertyReader read_property) {
 namespace {
 
 #ifdef __ANDROID__
-/// Reads the system property `name` through the property store, or nothing when it is unset.
+/// Reads the system property `name` through the property store, or nothing when it is unset. A property that is set but
+/// empty returns the empty string, not nothing, so a bare QEMU flag is still reported.
 [[nodiscard]] std::optional<std::string> read_system_property(std::string_view name) {
   const std::string key(name);
   const prop_info* const info = __system_property_find(key.c_str());
@@ -117,9 +148,6 @@ namespace {
         *static_cast<std::string*>(cookie) = property_value;
       },
       &value);
-  if (value.empty()) {
-    return std::nullopt;
-  }
   return value;
 }
 #else

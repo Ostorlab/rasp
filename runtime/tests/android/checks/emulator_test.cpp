@@ -68,6 +68,33 @@ namespace {
   return std::nullopt;
 }
 
+/// A property reader for a real AOSP-based device: its product values contain `generic` only inside a larger token.
+[[nodiscard]] std::optional<std::string> aosp_generic(std::string_view name) {
+  if (name == "ro.product.name") {
+    return "aosp_generic_x86";
+  }
+  if (name == "ro.product.device") {
+    return "generic_x86_64";
+  }
+  return std::nullopt;
+}
+
+/// A property reader whose QEMU boot flag is set but empty, as a bare flag can be.
+[[nodiscard]] std::optional<std::string> empty_qemu_flag(std::string_view name) {
+  if (name == "ro.boot.qemu") {
+    return "";
+  }
+  return std::nullopt;
+}
+
+/// A property reader for the emulator's classic `generic` device, where `generic` is a whole token.
+[[nodiscard]] std::optional<std::string> generic_device(std::string_view name) {
+  if (name == "ro.product.device") {
+    return "generic";
+  }
+  return std::nullopt;
+}
+
 TEST(Emulator, observeEmulatorProps_whenOnARealDevice_reportsNothing) {
   EXPECT_EQ(observe_emulator_props(real_device), props({}));
 }
@@ -83,6 +110,18 @@ TEST(Emulator, observeEmulatorProps_whenATellIsUppercase_matchesCaseInsensitivel
 
 TEST(Emulator, observeEmulatorProps_whenOnlyAQemuFlagIsSet_reportsIt) {
   EXPECT_EQ(observe_emulator_props(qemu_flag_only), props({"ro.boot.qemu=1"}));
+}
+
+TEST(Emulator, observeEmulatorProps_whenGenericIsInsideALargerToken_doesNotMatch) {
+  EXPECT_EQ(observe_emulator_props(aosp_generic), props({}));
+}
+
+TEST(Emulator, observeEmulatorProps_whenTheDeviceIsGeneric_reportsIt) {
+  EXPECT_EQ(observe_emulator_props(generic_device), props({"ro.product.device=generic"}));
+}
+
+TEST(Emulator, observeEmulatorProps_whenAQemuFlagIsSetButEmpty_reportsItWithoutAValue) {
+  EXPECT_EQ(observe_emulator_props(empty_qemu_flag), props({"ro.boot.qemu="}));
 }
 
 TEST(Emulator, emulator_whenOffAndroid_reportsTheCheckAsUnsupported) {
