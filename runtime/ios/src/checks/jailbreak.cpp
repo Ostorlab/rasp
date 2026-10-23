@@ -132,7 +132,10 @@ Observation observe_fork() {
     _exit(0);
   }
   if (child < 0) {
-    return observed(kForkSignal, "fork", false);
+    if (errno == EPERM) {
+      return observed(kForkSignal, "fork", false);
+    }
+    return failed(kForkSignal, "fork");
   }
   int status = 0;
   while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
