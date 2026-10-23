@@ -21,6 +21,10 @@ class MissingRuntimeArtifactError(Error):
     """A prebuilt runtime artifact the packer needs is not present."""
 
 
+class MissingPackerToolError(Error):
+    """A tool the packer bundles and runs is not present in this build."""
+
+
 class UnsupportedAbiError(Error):
     """The app ships native libraries for an ABI the runtime is not built for."""
 
