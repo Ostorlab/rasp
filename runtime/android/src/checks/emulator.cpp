@@ -146,7 +146,9 @@ namespace {
   __system_property_read_callback(
       info,
       [](void* cookie, const char* /*name*/, const char* property_value, std::uint32_t /*serial*/) {
-        *static_cast<std::string*>(cookie) = property_value;
+        if (property_value != nullptr) {
+          *static_cast<std::string*>(cookie) = property_value;
+        }
       },
       &value);
   return value;

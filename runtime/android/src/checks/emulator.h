@@ -3,18 +3,14 @@
 
 #pragma once
 
-#include <optional>
-#include <string>
-#include <string_view>
 #include <vector>
 
+#include "checks/root.h"
 #include "rasp/observation.h"
 
 namespace rasp::android::checks {
 
-/// A function that reads the system property `name`, returning its value or nothing when it is unset. The probe takes
-/// one so a test can supply the property values without a device.
-using PropertyReader = std::optional<std::string> (*)(std::string_view name);
+// PropertyReader is declared in checks/root.h and shared across the property-reading checks, so it stays one type.
 
 /// Runs the emulator checks and returns what they observed.
 ///
