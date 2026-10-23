@@ -313,11 +313,11 @@ Observation observe_signer_jni(JNIEnv* env) {
 
 std::vector<Observation> identity(JNIEnv* env) {
   if (env == nullptr) {
-    return {failed(kPackageSignal, kSignerSource), failed(kSignerSignal, kSignerSource)};
+    return {failed(kPackageSignal, kPackageSource), failed(kSignerSignal, kSignerSource)};
   }
   jobject context = current_application(env);
   if (context == nullptr) {
-    return {failed(kPackageSignal, kSignerSource), failed(kSignerSignal, kSignerSource)};
+    return {failed(kPackageSignal, kPackageSource), failed(kSignerSignal, kSignerSource)};
   }
   // The application package from the Context is authoritative even for a process with a global or private name, where
   // the process name in /proc/self/cmdline isn't the package.
@@ -325,7 +325,7 @@ std::vector<Observation> identity(JNIEnv* env) {
   const std::vector<std::uint8_t> certificate = signing_certificate(env, context);
   env->DeleteLocalRef(context);
   Observation package_observation =
-      package.empty() ? failed(kPackageSignal, kSignerSource) : observed(kPackageSignal, kSignerSource, package);
+      package.empty() ? failed(kPackageSignal, kPackageSource) : observed(kPackageSignal, kPackageSource, package);
   return {std::move(package_observation), observe_signer(certificate)};
 }
 

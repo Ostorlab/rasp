@@ -71,13 +71,15 @@ namespace rasp::android::checks {
 
 /// Runs the app-identity checks that need a JNIEnv and returns what they observed.
 ///
-/// Called from a JNI context such as JNI_OnLoad, it reads the app's Context and reports the authoritative package name
-/// from `getPackageName()` and the signing-certificate hash from the PackageManager. The package from the Context is
-/// correct even for a process whose name isn't the package, which the constructor's `/proc/self/cmdline` reading can't
-/// tell. The caller appends these to the observations the constructor's `identity()` already produced.
+/// Called from a JNI context such as JNI_OnLoad, it reads the app's Context and reports both identity signals: the
+/// authoritative package name from `getPackageName()` and the signing-certificate hash from the PackageManager. The
+/// package from the Context is correct even for a process whose name isn't the package, which a `/proc/self/cmdline`
+/// reading can't tell. This is the runtime's identity entry point; the no-arg `identity()` stays for off-Android builds
+/// and tests. When the Context can't be reached yet, both observations have an error status, so the server still sees
+/// the check ran.
 ///
 /// @param env The JNI environment of the calling thread.
-/// @return Two observations through package_manager: id.package, then id.signer_sha256.
+/// @return Two observations: id.package through proc_cmdline, then id.signer_sha256 through package_manager.
 [[nodiscard]] std::vector<Observation> identity(JNIEnv* env);
 
 #endif
