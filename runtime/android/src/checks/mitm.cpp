@@ -51,9 +51,19 @@ constexpr std::size_t kMaxEntries = 100;
 /// match.
 constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"tun", "tap"});
 
-/// Whether the interface `name` is a tunnel: its name starts with a tunnel prefix.
+/// Whether the interface `name` is a TUN/TAP device: a tunnel prefix followed by a run of digits and nothing else, as
+/// the kernel names them (`tun0`, `tap3`). Requiring the digits keeps a differently-named interface that merely starts
+/// with the prefix, such as the IPIP tunnel `tunl0`, from matching.
 [[nodiscard]] bool is_tunnel(std::string_view name) {
-  return std::ranges::any_of(kTunnelPrefixes, [name](std::string_view prefix) { return name.starts_with(prefix); });
+  const auto matches_prefix = [name](std::string_view prefix) {
+    if (!name.starts_with(prefix)) {
+      return false;
+    }
+    const std::string_view rest = name.substr(prefix.size());
+    return !rest.empty() &&
+           std::ranges::all_of(rest, [](char character) { return character >= '0' && character <= '9'; });
+  };
+  return std::ranges::any_of(kTunnelPrefixes, matches_prefix);
 }
 
 /// The tunnel interface names in `names`, the kMaxEntries smallest of them, without duplicates. getifaddrs lists an
@@ -141,11 +151,15 @@ std::vector<Observation> mitm() {
     return {unsupported(kTunnelsSignal, kTunnelsSource), unsupported(kUserCasSignal, kUserCasSource)};
   }
   const std::optional<std::vector<std::string>> names = interface_names();
-  const Observation tunnels = names ? observe_tunnels(*names) : failed(kTunnelsSignal, kTunnelsSource);
+  Observation tunnels = names ? observe_tunnels(*names) : failed(kTunnelsSignal, kTunnelsSource);
   // The user trust store (`/data/misc/user/<id>/cacerts-added`) is labeled system_data_file under SELinux and there is
   // no public SDK API that exposes user-installed CAs, so an untrusted app process can't enumerate them: report
   // unsupported rather than a perpetual error.
-  return {tunnels, unsupported(kUserCasSignal, kUserCasSource)};
+  std::vector<Observation> observations;
+  observations.reserve(2);
+  observations.push_back(std::move(tunnels));
+  observations.push_back(unsupported(kUserCasSignal, kUserCasSource));
+  return observations;
 }
 
 }  // namespace rasp::android::checks

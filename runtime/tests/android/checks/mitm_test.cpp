@@ -68,6 +68,14 @@ TEST(Mitm, observeTunnels_whenAPppInterfaceIsPresent_doesNotReportIt) {
   EXPECT_EQ(observe_tunnels(names), tunnels({}));
 }
 
+TEST(Mitm, observeTunnels_whenAnIpipTunnelIsPresent_doesNotReportIt) {
+  // tunl0 is the kernel's IPIP tunnel interface; it starts with `tun` but isn't a TUN/TAP device, so it must not match.
+  std::vector<std::string> names = kCleanInterfaces;
+  names.emplace_back("tunl0");
+
+  EXPECT_EQ(observe_tunnels(names), tunnels({}));
+}
+
 TEST(Mitm, observeTunnels_whenATunnelAppearsTwice_reportsItOnce) {
   // getifaddrs lists an interface once per address it holds, so a tunnel with an IPv4 and an IPv6 address appears
   // twice.
