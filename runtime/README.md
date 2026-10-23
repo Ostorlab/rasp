@@ -34,6 +34,9 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
       - `root.rw_mounts`: the lines of `/proc/self/mounts` that mount a system folder writable.
       - `root.selinux_enforcing`: whether SELinux enforces its policy, read from `/sys/fs/selinux/enforce`.
       - `root.build_props`: the build properties that reveal a debuggable or test-signed build, or an unlocked bootloader.
+  - `src/loader/`: the class loaders.
+    - `GeneratingClassLoader.java`: the on-demand class loader. Its only logic is `findClass`, a native method.
+    - `loader_dex.h`: `loader_dex`, the dex of `GeneratingClassLoader.java`, which the build embeds in the library.
   - `src/payload/`: recovering the app's dex files, which the packer encrypted.
     - `cipher.h`: `decrypt`, which decrypts a frame of the packer's Android cipher: ChaCha20-Poly1305 (RFC 8439), from TF-PSA-Crypto. It refuses a frame whose tag doesn't match.
     - `payload.h`: `Dex`, one dex file of the protected app, and `unpack`, which decrypts the payload and reads the app's dex files from it, in load order. A payload holds at most 1024 dex files.
@@ -88,7 +91,7 @@ The framework is written to `build/ios/ios/RaspRuntime.framework`. Its install n
 
 The framework supports iOS 12.0 and later. It doesn't use the libc++ that comes with iOS, which only supports iOS 15 and later. Instead it links a static libc++ built from LLVM 23.1.3 for the same minimum iOS version, with all its symbols hidden. That library is built once and committed under `third_party/libcxx/`, and `cmake/libcxx.cmake` checks its hash and links it. The build steps, the one-line source change it needs, and the CI job that proves the committed library matches the source are described in `third_party/libcxx/README.md`.
 
-For an Android device (arm64-v8a), with the Android NDK. Set `ANDROID_NDK_HOME` to the NDK's folder first:
+For an Android device (arm64-v8a), with the Android NDK, the Android SDK and a JDK. Set `ANDROID_NDK_HOME` to the NDK's folder and `ANDROID_HOME` to the SDK's folder first:
 
 ```
 cd runtime
@@ -99,6 +102,8 @@ cmake --build --preset android
 The library is written to `build/android/android/librasp.so`. It exports no entry point of its own: the checks run from a load-time constructor, and the stub calls no native method, so the library exports no `Java_...` symbol. The only symbol it may export is the JVM's `JNI_OnLoad` hook, which the runtime uses to publish the decrypted class loader to the stub. A release build is also stripped (`-Wl,--strip-all`), so it carries no symbol table and no debug sections. Every other symbol, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 12 (API 31) and later, so the stub can load the decrypted code from memory with `InMemoryDexClassLoader`, and the code is never written to disk.
 
 The payload decryption uses ChaCha20-Poly1305 from TF-PSA-Crypto, the cryptography library of the Mbed TLS project. Its source is committed as an archive under `third_party/tf-psa-crypto/`, and `cmake/tf_psa_crypto.cmake` checks the archive's hash, extracts it and builds it as a static library, for Android and for the builds with tests. Its symbols are hidden in `librasp.so` like every other one. Why it is built this way, its configuration, and the CI job that proves the archive is the official release are described in `third_party/tf-psa-crypto/README.md`.
+
+The on-demand class loader, `android/src/loader/GeneratingClassLoader.java`, is Java, but the packer doesn't ship it as a dex of the app. When CMake configures the build, `cmake/loader_dex.cmake` compiles it with `javac` and the SDK's `d8`, and writes the dex as a byte array into a generated header, so the dex is embedded in `librasp.so`. It takes the newest platform's `android.jar` and the newest build-tools' `d8` from the SDK, which it finds through `ANDROID_HOME`, `ANDROID_SDK_ROOT` or `-DRASP_ANDROID_SDK=<folder>`, and `javac` from `JAVA_HOME` or `PATH`. The Android builds stop when one is missing. The builds with tests compile it the same way when they find all three, and leave out the test of the dex when they don't.
 
 The stub is Java, not C++, so CMake doesn't build it. `android/stub/build.sh` compiles it with `javac` against the platform's `android.jar`, so the Java classes it uses are Android's, and converts it with `d8`. It takes two files from the Android SDK:
 
