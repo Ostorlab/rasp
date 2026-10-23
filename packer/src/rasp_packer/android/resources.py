@@ -15,8 +15,10 @@ MissingRuntimeArtifactError naming the path it looked in.
 """
 
 import collections.abc
+import contextlib
 import dataclasses
 import importlib.resources
+import os
 import pathlib
 
 from rasp_packer import errors
@@ -26,6 +28,32 @@ RUNTIME_LIBRARY = "librasp.so"
 
 _STUB_DEX = "stub.dex"
 _LIBRARY_DIRECTORY = "lib"
+_SPLIT_DEX_TOOL = "split-dex"
+
+
+@contextlib.contextmanager
+def split_dex_tool() -> collections.abc.Iterator[pathlib.Path]:
+    """Yields the path of the on-demand packer's bundled split-dex tool.
+
+    The prebuilt tool ships inside the packer, next to the stub dex and the runtime libraries, the
+    same way: the release build places it at ``resources/split-dex``, and a checkout without it, such
+    as ``main``, has none. The path is valid only inside the ``with`` block.
+
+    Yields:
+        The path of the split-dex executable.
+
+    Raises:
+        MissingPackerToolError: The tool is not bundled in this build.
+    """
+    resource = (
+        importlib.resources.files("rasp_packer.android") / "resources" / _SPLIT_DEX_TOOL
+    )
+    with importlib.resources.as_file(resource) as path:
+        if path.is_file() is False:
+            raise errors.MissingPackerToolError(f"split-dex tool not found at {path}")
+        if os.access(path, os.X_OK) is False:
+            path.chmod(0o755)
+        yield path
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
