@@ -69,7 +69,7 @@ constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"tun", "tap"})
       tunnels.erase(std::prev(tunnels.end()));
     }
   }
-  return std::vector<std::string>(tunnels.begin(), tunnels.end());
+  return {tunnels.begin(), tunnels.end()};
 }
 
 /// The names of this process's network interfaces, read through getifaddrs, or nothing when getifaddrs fails. An
@@ -119,7 +119,7 @@ constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"tun", "tap"})
       return std::nullopt;
     }
   }
-  return std::vector<std::string>(names.begin(), names.end());
+  return std::vector<std::string>{names.begin(), names.end()};
 }
 
 }  // namespace

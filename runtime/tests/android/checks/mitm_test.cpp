@@ -79,6 +79,8 @@ TEST(Mitm, observeTunnels_whenATunnelAppearsTwice_reportsItOnce) {
 TEST(Mitm, observeTunnels_whenMoreThan100Tunnels_reportsThe100Smallest) {
   std::vector<std::string> names;
   std::vector<std::string> expected;
+  names.reserve(110);
+  expected.reserve(100);
   // Add the names from the largest to the smallest, so a probe that kept the first 100 encountered rather than the 100
   // smallest would fail this test.
   for (int index = 109; index >= 0; --index) {
@@ -130,6 +132,7 @@ TEST(Mitm, observeUserCas_whenMoreThan100AuthoritiesAreInstalled_reportsThe100Sm
     ASSERT_TRUE(write_file(directory.path() + "/" + authority_name(index), "cert"));
   }
   std::vector<std::string> expected;
+  expected.reserve(100);
   for (int index = 0; index < 100; ++index) {
     expected.push_back(authority_name(index));
   }
