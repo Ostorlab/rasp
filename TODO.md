@@ -30,5 +30,6 @@ Work that is known and not done yet. Each item says what is missing and why it m
 
 ## Packer: Android
 
+- **One key encrypts the class map and every business dex.** Recovering that key opens all of them. Each should have its own key.
 - **The packer doesn't take Android App Bundles (AAB), only APKs.** Since August 2021, Google Play requires new apps to be published as AABs, so a customer who publishes on Google Play builds an AAB, not an APK, and has nothing the packer can protect.
 - **The payload key is in clear text in the protected APK.** `assets/rasp/config.json` holds, as a hex string, the key that decrypts `assets/rasp/payload.bin`. Anyone who unzips the APK can decrypt the app's code without running it. The same key also makes the payload's authentication tag, so they can also replace the app's code with their own and give it a valid tag.
