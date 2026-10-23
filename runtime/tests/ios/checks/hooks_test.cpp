@@ -1,6 +1,6 @@
 /// Tests for the iOS hooking checks: the loaded-image probe that reports images of instrumentation and hooking
-/// frameworks, the probe that reports the value of `DYLD_INSERT_LIBRARIES`, and the probe that connects to a loopback
-/// port.
+/// frameworks, the probe that reports the value of `DYLD_INSERT_LIBRARIES`, the probe that connects to a loopback
+/// port, and the probe that reports memory regions that are both writable and executable.
 
 #include "checks/hooks.h"
 
@@ -12,13 +12,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "rasp/observation.h"
-
-#ifdef __APPLE__
-#include <variant>
-#endif
 
 namespace rasp::ios::checks {
 namespace {
@@ -83,6 +80,29 @@ class LoopbackSocket {
   /// The port the socket is bound to, in host byte order.
   std::uint16_t port_ = 0;
 };
+
+/// The protection that allows every access.
+constexpr std::uint32_t kReadWriteExecute = kProtectionRead | kProtectionWrite | kProtectionExecute;
+/// The protection of code: read and run.
+constexpr std::uint32_t kReadExecute = kProtectionRead | kProtectionExecute;
+/// The protection of data: read and write.
+constexpr std::uint32_t kReadWrite = kProtectionRead | kProtectionWrite;
+
+/// The regions of a clean app: its code, its data, its heap, a guard page and the shared region.
+[[nodiscard]] std::vector<MemoryRegion> clean_regions() {
+  return {
+      {.start = 0x104a3c000, .end = 0x104a40000, .protection = kReadExecute, .max_protection = kReadExecute},
+      {.start = 0x104a40000, .end = 0x104a44000, .protection = kReadWrite, .max_protection = kReadWrite},
+      {.start = 0x105000000, .end = 0x105800000, .protection = kReadWrite, .max_protection = kReadWriteExecute},
+      {.start = 0x16f000000, .end = 0x16f004000, .protection = 0, .max_protection = kReadWriteExecute},
+      {.start = 0x180000000, .end = 0x200000000, .protection = kReadExecute, .max_protection = kReadExecute},
+  };
+}
+
+/// The hook.rwx_regions observation that reports `regions`.
+[[nodiscard]] Observation rwx_regions(std::vector<std::string> regions) {
+  return {.signal = "hook.rwx_regions", .source = "vm_region", .status = Status::kOk, .value = std::move(regions)};
+}
 
 /// The hook.maps_hits observation that reports `paths`.
 [[nodiscard]] Observation maps_hits(std::vector<std::string> paths) {
@@ -275,12 +295,115 @@ TEST(Hooks, observeLoopbackPort_whenNothingListensOnThePort_reportsFalse) {
             (Observation{.signal = "hook.frida_port", .source = "connect", .status = Status::kOk, .value = false}));
 }
 
+TEST(Hooks, observeRegions_whenNoRegionIsWritableAndExecutable_reportsAnEmptyList) {
+  EXPECT_EQ(observe_regions(clean_regions()), rwx_regions({}));
+}
+
+TEST(Hooks, observeRegions_whenOnlyTheMaximumProtectionIsWritableAndExecutable_reportsAnEmptyList) {
+  const std::vector<MemoryRegion> regions = {
+      {.start = 0x105000000, .end = 0x105800000, .protection = kReadWrite, .max_protection = kReadWriteExecute},
+      {.start = 0x106000000, .end = 0x106004000, .protection = kReadExecute, .max_protection = kReadWriteExecute},
+  };
+
+  EXPECT_EQ(observe_regions(regions), rwx_regions({}));
+}
+
+TEST(Hooks, observeRegions_whenRegionsAreWritableAndExecutable_reportsTheirAddressesAndProtectionsInOrder) {
+  const MemoryRegion read_write_execute = {
+      .start = 0x104a44000,
+      .end = 0x104a48000,
+      .protection = kReadWriteExecute,
+      .max_protection = kReadWriteExecute,
+  };
+  const MemoryRegion write_execute = {
+      .start = 0x280000000,
+      .end = 0x280100000,
+      .protection = kProtectionWrite | kProtectionExecute,
+      .max_protection = kReadWriteExecute,
+  };
+  std::vector<MemoryRegion> regions = clean_regions();
+  regions.insert(regions.begin() + 1, read_write_execute);
+  regions.push_back(write_execute);
+
+  EXPECT_EQ(observe_regions(regions), rwx_regions({
+                                          "0000000104a44000-0000000104a48000 rwx/rwx",
+                                          "0000000280000000-0000000280100000 -wx/rwx",
+                                      }));
+}
+
+TEST(Hooks, observeRegions_whenAnAddressUsesEveryDigit_writesAll16Digits) {
+  const std::vector<MemoryRegion> regions = {
+      {
+          .start = 0xfedcba9876543000,
+          .end = 0xffffffffffffffff,
+          .protection = kReadWriteExecute,
+          .max_protection = kReadWriteExecute,
+      },
+  };
+
+  EXPECT_EQ(observe_regions(regions), rwx_regions({"fedcba9876543000-ffffffffffffffff rwx/rwx"}));
+}
+
+TEST(Hooks, observeRegions_whenAProtectionHasOtherBits_writesOnlyReadWriteAndExecute) {
+  constexpr std::uint32_t kCopy = 0x10;
+  const std::vector<MemoryRegion> regions = {
+      {
+          .start = 0x104a44000,
+          .end = 0x104a48000,
+          .protection = kReadWriteExecute | kCopy,
+          .max_protection = kReadWriteExecute | kCopy,
+      },
+  };
+
+  EXPECT_EQ(observe_regions(regions), rwx_regions({"0000000104a44000-0000000104a48000 rwx/rwx"}));
+}
+
+TEST(Hooks, observeRegions_whenMoreThan32RegionsMatch_reportsTheFirst32) {
+  constexpr std::size_t kRegionCount = 40;
+  constexpr std::uint64_t kPageSize = 0x4000;
+  std::vector<MemoryRegion> regions;
+  regions.reserve(kRegionCount);
+  for (std::size_t index = 0; index < kRegionCount; ++index) {
+    const std::uint64_t start = 0x300000000 + (index * kPageSize);
+    regions.push_back({
+        .start = start,
+        .end = start + kPageSize,
+        .protection = kReadWriteExecute,
+        .max_protection = kReadWriteExecute,
+    });
+  }
+
+  const Observation observation = observe_regions(regions);
+  ASSERT_TRUE(std::holds_alternative<std::vector<std::string>>(observation.value));
+  const auto& reported = std::get<std::vector<std::string>>(observation.value);
+  ASSERT_EQ(reported.size(), 32U);
+  EXPECT_EQ(reported.front(), "0000000300000000-0000000300004000 rwx/rwx");
+  EXPECT_EQ(reported.back(), "000000030007c000-0000000300080000 rwx/rwx");
+}
+
+#ifdef __APPLE__
+TEST(Hooks, observeMemoryRegions_whenTheTaskCanBeRead_reportsAListOfRegions) {
+  const Observation observation = observe_memory_regions();
+  EXPECT_EQ(observation.signal, "hook.rwx_regions");
+  EXPECT_EQ(observation.source, "vm_region");
+  EXPECT_EQ(observation.status, Status::kOk);
+  EXPECT_TRUE(std::holds_alternative<std::vector<std::string>>(observation.value));
+}
+#else
+TEST(Hooks, observeMemoryRegions_whenTheSystemHasNoMach_reportsUnsupported) {
+  EXPECT_EQ(
+      observe_memory_regions(),
+      (Observation{.signal = "hook.rwx_regions", .source = "vm_region", .status = Status::kUnsupported, .value = {}}));
+}
+#endif
+
 TEST(Hooks, hooks_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(hooks("/usr/lib/systemhook.dylib"),
             (std::vector<Observation>{
                 {.signal = "hook.maps_hits", .source = "dyld", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.dyld_env", .source = "getenv", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.frida_port", .source = "connect", .status = Status::kUnsupported, .value = {}},
+                {.signal = "hook.rwx_regions", .source = "vm_region", .status = Status::kUnsupported, .value = {}},
             }));
 }
 
