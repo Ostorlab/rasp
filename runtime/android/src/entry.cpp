@@ -101,6 +101,7 @@ __attribute__((constructor)) void rasp_start() noexcept {
   std::ranges::move(rasp::android::checks::hooks(), std::back_inserter(observations));
   std::ranges::move(rasp::android::checks::integrity(), std::back_inserter(observations));
   std::ranges::move(rasp::android::checks::mitm(), std::back_inserter(observations));
+  std::ranges::move(rasp::android::checks::identity(), std::back_inserter(observations));
   log_observations(observations);
 
   const std::optional<std::string> apk = rasp::android::apk::self_apk_path();
@@ -133,7 +134,6 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     return JNI_VERSION_1_6;
   }
   auto* env = static_cast<JNIEnv*>(raw_env);
-  log_observations(rasp::android::checks::identity(env));
   Pending& state = pending();
   if (state.dexes.has_value()) {
     if (rasp::android::loader::publish(env, *state.dexes, state.library_dir)) {

@@ -1,9 +1,7 @@
-/// Tests for the Android app-identity self-check: the package-name probe that reads the process's command line and the
-/// signing-certificate probe that hashes the certificate bytes.
+/// Tests for the Android app-identity self-check: the package-name probe that reads the process's command line.
 
 #include "checks/identity.h"
 
-#include <cstdint>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
@@ -27,16 +25,6 @@ using test_support::write_file;
 /// The id.package observation that failed.
 [[nodiscard]] Observation unreadable_package() {
   return {.signal = "id.package", .source = "proc_cmdline", .status = Status::kError, .value = {}};
-}
-
-/// The id.signer_sha256 observation that reports `hash`.
-[[nodiscard]] Observation signer(std::string hash) {
-  return {.signal = "id.signer_sha256", .source = "package_manager", .status = Status::kOk, .value = std::move(hash)};
-}
-
-/// The id.signer_sha256 observation that failed.
-[[nodiscard]] Observation unreadable_signer() {
-  return {.signal = "id.signer_sha256", .source = "package_manager", .status = Status::kError, .value = {}};
 }
 
 /// Writes `content` to a cmdline file in `directory` and returns its path.
@@ -91,21 +79,11 @@ TEST(Identity, observePackage_whenTheFileIsMissing_reportsAnError) {
   EXPECT_EQ(observe_package(directory.path() + "/missing"), unreadable_package());
 }
 
-TEST(Identity, observeSigner_whenGivenCertificateBytes_reportsTheirSha256) {
-  // The SHA-256 of the three bytes {'a', 'b', 'c'} is the published vector for "abc".
-  const std::vector<std::uint8_t> certificate = {'a', 'b', 'c'};
-
-  EXPECT_EQ(observe_signer(certificate), signer("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
-}
-
-TEST(Identity, observeSigner_whenGivenNoBytes_reportsAnError) { EXPECT_EQ(observe_signer({}), unreadable_signer()); }
-
-TEST(Identity, identity_whenOffAndroid_reportsEveryCheckAsUnsupported) {
+TEST(Identity, identity_whenOffAndroid_reportsTheCheckAsUnsupported) {
   EXPECT_EQ(
       identity(),
       (std::vector<Observation>{
           {.signal = "id.package", .source = "proc_cmdline", .status = Status::kUnsupported, .value = {}},
-          {.signal = "id.signer_sha256", .source = "package_manager", .status = Status::kUnsupported, .value = {}},
       }));
 }
 
