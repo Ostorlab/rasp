@@ -17,6 +17,8 @@ inline constexpr std::size_t kKeySize = 32;
 ///
 /// A frame is the 12-byte nonce, then the encrypted bytes, then the 16-byte Poly1305 tag. It has no associated data.
 /// The packer makes it with the `cryptography` package, and this decrypts it with TF-PSA-Crypto, through the PSA API.
+/// Several threads can call it at once: TF-PSA-Crypto is built with its own locking (`MBEDTLS_THREADING_C`, see
+/// third_party/tf-psa-crypto/README.md).
 ///
 /// @param key The payload key. It must be exactly kKeySize bytes long.
 /// @param frame The frame to decrypt.

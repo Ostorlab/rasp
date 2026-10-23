@@ -1,6 +1,6 @@
-/// The TF-PSA-Crypto configuration of the runtime: ChaCha20-Poly1305 for the Android payload, and what PSA crypto
-/// needs to start. The build passes it to TF-PSA-Crypto as TF_PSA_CRYPTO_CONFIG_FILE, in place of its default
-/// configuration. See README.md next to it.
+/// The TF-PSA-Crypto configuration of the runtime: ChaCha20-Poly1305 for the Android payload, what PSA crypto needs to
+/// start, and the library's own locking, so several threads can decrypt at once. The build passes it to TF-PSA-Crypto
+/// as TF_PSA_CRYPTO_CONFIG_FILE, in place of its default configuration. See README.md next to it.
 
 #pragma once
 
@@ -14,3 +14,6 @@
 #define MBEDTLS_HMAC_DRBG_C
 #define MBEDTLS_PSA_BUILTIN_GET_ENTROPY
 #define MBEDTLS_PLATFORM_DEV_RANDOM "/dev/urandom"
+
+#define MBEDTLS_THREADING_C
+#define MBEDTLS_THREADING_PTHREAD

@@ -65,6 +65,16 @@ if(TARGET rasp_loader_dex)
   gtest_discover_tests(rasp_android_loader_dex_test)
 endif()
 
+add_executable(rasp_android_dex_store_test android/payload/dex_store_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/payload/dex_store.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp)
+target_include_directories(rasp_android_dex_store_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_android_dex_store_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
+  GTest::gtest_main)
+gtest_discover_tests(rasp_android_dex_store_test)
+
 add_executable(rasp_android_cipher_test android/payload/cipher_test.cpp ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp)
 target_include_directories(rasp_android_cipher_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
 target_link_libraries(rasp_android_cipher_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
