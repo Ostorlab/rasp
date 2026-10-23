@@ -142,16 +142,24 @@ TEST(Identity, observeUid_whenGivenASecondaryUserUid_reportsIt) {
   EXPECT_EQ(observe_uid(110123), uid(110123));
 }
 
-TEST(Identity, observeCodePath_whenGivenAGenuineInstallPath_reportsIt) {
-  // A genuine install loads the library from a path that carries the app's own package name.
-  const std::string path = "/data/app/~~abc==/co.ostorlab.app-xyz==/lib/arm64";
+TEST(Identity, observeCodePath_whenGivenAnExtractedInstallPath_reportsIt) {
+  // A genuine install with an extracted library loads it from a path that carries the app's own package name.
+  const std::string path = "/data/app/~~abc==/co.ostorlab.app-xyz==/lib/arm64/librasp.so";
+
+  EXPECT_EQ(observe_code_path(path), code_path(path));
+}
+
+TEST(Identity, observeCodePath_whenGivenAnApkEmbeddedPath_reportsItUnchanged) {
+  // With android:extractNativeLibs="false" (the default on API 30+) the library is mapped straight from the APK, so
+  // dladdr gives a `base.apk!/` path. It still carries the app's package and is reported as-is, not split.
+  const std::string path = "/data/app/~~abc==/co.ostorlab.app-xyz==/base.apk!/lib/arm64/librasp.so";
 
   EXPECT_EQ(observe_code_path(path), code_path(path));
 }
 
 TEST(Identity, observeCodePath_whenGivenAVirtualizedPath_reportsIt) {
   // A virtualizer loads the library from the host app's directory, whose path carries the host's package instead.
-  const std::string path = "/data/data/com.parallel.intl/virtual/data/user/0/co.ostorlab.app/lib/arm64";
+  const std::string path = "/data/data/com.parallel.intl/virtual/data/user/0/co.ostorlab.app/lib/arm64/librasp.so";
 
   EXPECT_EQ(observe_code_path(path), code_path(path));
 }

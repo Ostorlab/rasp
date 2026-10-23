@@ -53,13 +53,14 @@ namespace rasp::android::checks {
 
 /// Reports the path the runtime's own library loads from, `code_path`.
 ///
-/// A genuine install loads librasp.so from the app's own install directory, whose path carries the app's package name,
-/// such as `/data/app/~~.../com.example-<suffix>/lib/<abi>`. A third-party virtualizer (such as Parallel Space or
-/// VirtualApp) runs the guest app inside its own process and redirects its files, so the library loads from the host
-/// app's directory instead, whose path carries the host's package, not the guest's. The uid is the host's normal uid,
-/// so id.uid can't see this; the load path can. The probe reports the path as a fact and the server checks whether it
-/// belongs to the package the packer recorded. A sophisticated virtualizer can fake the path, so this is a signal, not
-/// proof.
+/// A genuine install loads librasp.so from the app's own install directory, whose path carries the app's package name:
+/// `/data/app/~~.../com.example-<suffix>/lib/<abi>/librasp.so` when the library is extracted, or
+/// `/data/app/~~.../com.example-<suffix>/base.apk!/lib/<abi>/librasp.so` when it is mapped straight from the APK (the
+/// default on API 30+). A third-party virtualizer (such as Parallel Space or VirtualApp) runs the guest app inside its
+/// own process and redirects its files, so the library loads from the host app's directory instead, whose path carries
+/// the host's package, not the guest's. The uid is the host's normal uid, so id.uid can't see this; the load path can.
+/// The probe reports the raw loader path as a fact and the server checks whether it belongs to the package the packer
+/// recorded. A sophisticated virtualizer can fake the path, so this is a signal, not proof.
 ///
 /// @param code_path The load path of the runtime's library, from the dynamic loader on a device.
 /// @return One id.code_path observation through dladdr: the path. It has an error status when the path can't be read.
