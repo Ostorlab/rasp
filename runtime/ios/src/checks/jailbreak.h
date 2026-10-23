@@ -46,10 +46,11 @@ namespace rasp::ios::checks {
 /// Reports whether the app can start a child process with fork.
 ///
 /// The iOS sandbox forbids fork, so a child that starts means the sandbox is not in force. A child that does start is
-/// reaped at once, so no zombie process is left behind.
+/// reaped at once, so no zombie process is left behind. A refusal the sandbox explains (operation not permitted) is
+/// reported as false; any other failure, such as too many processes or too little memory, is reported as an error.
 ///
 /// @return One jb.fork_ok observation read through fork: true when a child process started, false when fork was
-/// refused.
+/// refused, and an error status when fork failed for another reason.
 [[nodiscard]] Observation observe_fork();
 
 }  // namespace rasp::ios::checks
