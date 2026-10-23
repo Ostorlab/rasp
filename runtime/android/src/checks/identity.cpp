@@ -1,13 +1,18 @@
-/// The Android app-identity self-check: the package-name probe over the process's command line, and its unsupported
-/// result off Android.
+/// The Android app-identity self-check: the package-name probe over the process's command line, the user-id probe over
+/// the process's own uid, and their unsupported results off Android.
 
 #include "checks/identity.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#ifdef __ANDROID__
+#include <unistd.h>
+#endif
 
 #include "rasp/observation.h"
 #include "util/read_file.h"
@@ -16,18 +21,15 @@ namespace rasp::android::checks {
 
 namespace {
 
-#ifdef __ANDROID__
-/// Whether this build runs on Android, the only place the probe means anything.
-constexpr bool kOnAndroid = true;
-#else
-/// Whether this build runs on Android, the only place the probe means anything.
-constexpr bool kOnAndroid = false;
-#endif
-
 /// The signal of the package-name probe.
 constexpr std::string_view kPackageSignal = "id.package";
 /// The source of the package-name probe read at load time, from the process's command line.
 constexpr std::string_view kPackageSource = "proc_cmdline";
+
+/// The signal of the user-id probe.
+constexpr std::string_view kUidSignal = "id.uid";
+/// The source of the user-id probe, the process's own uid.
+constexpr std::string_view kUidSource = "getuid";
 
 /// The process's command line, whose first NUL-separated argument is the package name.
 constexpr std::string_view kCmdlinePath = "/proc/self/cmdline";
@@ -59,11 +61,14 @@ Observation observe_package(std::string_view cmdline_path) {
   return observed(kPackageSignal, kPackageSource, std::string(package));
 }
 
+Observation observe_uid(std::int64_t uid) { return observed(kUidSignal, kUidSource, uid); }
+
 std::vector<Observation> identity() {
-  if (!kOnAndroid) {
-    return {unsupported(kPackageSignal, kPackageSource)};
-  }
-  return {observe_package(kCmdlinePath)};
+#ifdef __ANDROID__
+  return {observe_package(kCmdlinePath), observe_uid(static_cast<std::int64_t>(getuid()))};
+#else
+  return {unsupported(kPackageSignal, kPackageSource), unsupported(kUidSignal, kUidSource)};
+#endif
 }
 
 }  // namespace rasp::android::checks

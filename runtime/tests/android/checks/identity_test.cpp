@@ -1,7 +1,9 @@
-/// Tests for the Android app-identity self-check: the package-name probe that reads the process's command line.
+/// Tests for the Android app-identity self-check: the package-name probe that reads the process's command line and the
+/// user-id probe over the process's own uid.
 
 #include "checks/identity.h"
 
+#include <cstdint>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
@@ -25,6 +27,11 @@ using test_support::write_file;
 /// The id.package observation that failed.
 [[nodiscard]] Observation unreadable_package() {
   return {.signal = "id.package", .source = "proc_cmdline", .status = Status::kError, .value = {}};
+}
+
+/// The id.uid observation that reports `uid`.
+[[nodiscard]] Observation uid(std::int64_t value) {
+  return {.signal = "id.uid", .source = "getuid", .status = Status::kOk, .value = value};
 }
 
 /// Writes `content` to a cmdline file in `directory` and returns its path.
@@ -79,10 +86,21 @@ TEST(Identity, observePackage_whenTheFileIsMissing_reportsAnError) {
   EXPECT_EQ(observe_package(directory.path() + "/missing"), unreadable_package());
 }
 
-TEST(Identity, identity_whenOffAndroid_reportsTheCheckAsUnsupported) {
+TEST(Identity, observeUid_whenGivenAMainUserUid_reportsIt) {
+  // A normal app on the main user has a uid in 10000-19999; the server reads user 0 from it.
+  EXPECT_EQ(observe_uid(10123), uid(10123));
+}
+
+TEST(Identity, observeUid_whenGivenASecondaryUserUid_reportsIt) {
+  // An app in user 1 (an OEM clone or a work profile) has a uid of 1 * 100000 + the app id; the server reads user 1.
+  EXPECT_EQ(observe_uid(110123), uid(110123));
+}
+
+TEST(Identity, identity_whenOffAndroid_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(identity(),
             (std::vector<Observation>{
                 {.signal = "id.package", .source = "proc_cmdline", .status = Status::kUnsupported, .value = {}},
+                {.signal = "id.uid", .source = "getuid", .status = Status::kUnsupported, .value = {}},
             }));
 }
 
