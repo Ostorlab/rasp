@@ -2,12 +2,15 @@
 
 #include "monitoring.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <iterator>
 #include <pthread.h>
 #include <thread>
 #include <vector>
 
+#include "checks/debugger.h"
 #include "checks/jailbreak.h"
 #include "rasp/observation.h"
 #include "rasp/util/logging.h"
@@ -22,10 +25,11 @@ constexpr std::size_t kThreadStackSize = std::size_t{256} * 1024;
 /// How long the thread waits between two runs of the checks.
 constexpr std::chrono::seconds kCheckInterval{60};
 
-/// The thread: runs the checks, then again every kCheckInterval, until the process exits.
+/// The thread: runs the jailbreak and debugger checks, then again every kCheckInterval, until the process exits.
 void* monitor(void* /*argument*/) {
   while (true) {
-    const std::vector<Observation> observations = checks::jailbreak();
+    std::vector<Observation> observations = checks::jailbreak();
+    std::ranges::move(checks::debugger(), std::back_inserter(observations));
     if constexpr (kLoggingEnabled) {
       for (const Observation& observation : observations) {
         rasp::log(describe(observation));

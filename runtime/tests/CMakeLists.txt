@@ -23,10 +23,14 @@ foreach(test observation)
   gtest_discover_tests(rasp_core_${name}_test)
 endforeach()
 
-add_executable(rasp_ios_jailbreak_test ios/checks/jailbreak_test.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/jailbreak.cpp)
-target_include_directories(rasp_ios_jailbreak_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(rasp_ios_jailbreak_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
-gtest_discover_tests(rasp_ios_jailbreak_test)
+foreach(check debugger jailbreak)
+  add_executable(rasp_ios_${check}_test ios/checks/${check}_test.cpp
+    ${PROJECT_SOURCE_DIR}/ios/src/checks/${check}.cpp)
+  target_include_directories(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_ios_${check}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_ios_${check}_test)
+endforeach()
 
 foreach(check debugger hooks mitm root)
   add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
