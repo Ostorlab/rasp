@@ -6,7 +6,9 @@
 #include <chrono>
 #include <cstddef>
 #include <iterator>
+#include <memory>
 #include <pthread.h>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -28,11 +30,16 @@ constexpr std::chrono::seconds kCheckInterval{60};
 
 /// The thread: runs the jailbreak, debugger and hooking checks, then again every kCheckInterval, until the process
 /// exits.
-void* monitor(void* /*argument*/) {
+///
+/// @param argument The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, a `std::string` allocated with `new`
+/// that the thread takes and keeps until the process exits.
+/// @return Never returns.
+void* monitor(void* argument) {
+  const std::unique_ptr<const std::string> inserted_libraries(static_cast<std::string*>(argument));
   while (true) {
     std::vector<Observation> observations = checks::jailbreak();
     std::ranges::move(checks::debugger(), std::back_inserter(observations));
-    std::ranges::move(checks::hooks(), std::back_inserter(observations));
+    std::ranges::move(checks::hooks(*inserted_libraries), std::back_inserter(observations));
     if constexpr (kLoggingEnabled) {
       for (const Observation& observation : observations) {
         rasp::log(describe(observation));
@@ -45,6 +52,7 @@ void* monitor(void* /*argument*/) {
 }  // namespace
 
 void start_monitoring() noexcept {
+  auto inserted_libraries = std::make_unique<std::string>(checks::read_inserted_libraries());
   pthread_attr_t attributes{};
   if (pthread_attr_init(&attributes) != 0) {
     return;
@@ -52,7 +60,9 @@ void start_monitoring() noexcept {
   if (pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED) == 0 &&
       pthread_attr_setstacksize(&attributes, kThreadStackSize) == 0) {
     pthread_t thread{};
-    static_cast<void>(pthread_create(&thread, &attributes, monitor, nullptr));
+    if (pthread_create(&thread, &attributes, monitor, inserted_libraries.get()) == 0) {
+      static_cast<void>(inserted_libraries.release());
+    }
   }
   static_cast<void>(pthread_attr_destroy(&attributes));
 }

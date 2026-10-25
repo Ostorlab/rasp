@@ -1,5 +1,5 @@
 /// Tests for the iOS hooking checks: the loaded-image probe that reports images of instrumentation and hooking
-/// frameworks.
+/// frameworks, and the probe that reports the value of `DYLD_INSERT_LIBRARIES`.
 
 #include "checks/hooks.h"
 
@@ -181,10 +181,34 @@ TEST(Hooks, observeLoadedImages_whenTheSystemHasNoDyld_reportsUnsupported) {
 }
 #endif
 
+TEST(Hooks, observeInsertedLibraries_whenTheVariableIsUnset_reportsAnEmptyString) {
+  EXPECT_EQ(
+      observe_inserted_libraries(""),
+      (Observation{.signal = "hook.dyld_env", .source = "getenv", .status = Status::kOk, .value = std::string()}));
+}
+
+TEST(Hooks, observeInsertedLibraries_whenLibrariesAreInserted_reportsTheValueAsItIs) {
+  const std::string value = "/usr/lib/systemhook.dylib:/var/jb/usr/lib/ellekit/libinjector.dylib";
+
+  EXPECT_EQ(observe_inserted_libraries(value),
+            (Observation{.signal = "hook.dyld_env", .source = "getenv", .status = Status::kOk, .value = value}));
+}
+
+TEST(Hooks, observeInsertedLibraries_whenTheValueIsLongerThan4096Bytes_reportsTheFirst4096) {
+  const std::string value = std::string(4096, 'a') + "/usr/lib/libhooker.dylib";
+
+  EXPECT_EQ(
+      observe_inserted_libraries(value),
+      (Observation{
+          .signal = "hook.dyld_env", .source = "getenv", .status = Status::kOk, .value = std::string(4096, 'a')}));
+}
+
 TEST(Hooks, hooks_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
-  EXPECT_EQ(hooks(), (std::vector<Observation>{
-                         {.signal = "hook.maps_hits", .source = "dyld", .status = Status::kUnsupported, .value = {}},
-                     }));
+  EXPECT_EQ(hooks("/usr/lib/systemhook.dylib"),
+            (std::vector<Observation>{
+                {.signal = "hook.maps_hits", .source = "dyld", .status = Status::kUnsupported, .value = {}},
+                {.signal = "hook.dyld_env", .source = "getenv", .status = Status::kUnsupported, .value = {}},
+            }));
 }
 
 }  // namespace
