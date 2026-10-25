@@ -32,6 +32,11 @@ foreach(check debugger hooks jailbreak mitm)
   gtest_discover_tests(rasp_ios_${check}_test)
 endforeach()
 
+if(APPLE)
+  target_link_libraries(rasp_ios_mitm_test PRIVATE
+    "$<LINK_LIBRARY:FRAMEWORK,CFNetwork>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
+endif()
+
 foreach(check debugger hooks mitm root)
   add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
     ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp

@@ -1,5 +1,5 @@
 /// Tests for the iOS network-interception checks: the tunnel probe that reports the tunnel interfaces that are up and
-/// carry an IPv4 address.
+/// carry an IPv4 address, and the proxy probe that reports the proxies of the system's proxy settings.
 
 #include "checks/mitm.h"
 
@@ -63,6 +63,50 @@ constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"utun", "ipsec
 /// @return The observation, with status kOk.
 [[nodiscard]] Observation tunnels(std::vector<std::string> names) {
   return {.signal = "mitm.tunnels", .source = "getifaddrs", .status = Status::kOk, .value = std::move(names)};
+}
+
+/// Returns the mitm.proxies observation that reports `proxies`.
+///
+/// @param proxies The proxies reported.
+/// @return The observation, with status kOk.
+[[nodiscard]] Observation proxies(std::vector<std::string> proxies) {
+  return {
+      .signal = "mitm.proxies",
+      .source = "CFNetworkCopySystemProxySettings",
+      .status = Status::kOk,
+      .value = std::move(proxies),
+  };
+}
+
+/// Returns proxy settings with only a manual HTTP proxy, and proxy auto-config disabled.
+///
+/// @param enabled Whether the HTTP proxy is enabled.
+/// @param host The HTTP proxy's host, or empty for none.
+/// @param port The HTTP proxy's port, or 0 for none.
+/// @return The settings.
+[[nodiscard]] ProxySettings http_proxy(bool enabled, std::string host, std::uint16_t port) {
+  return {
+      .http_enabled = enabled,
+      .http_host = std::move(host),
+      .http_port = port,
+      .auto_config_enabled = false,
+      .auto_config_url = "",
+  };
+}
+
+/// Returns proxy settings with only proxy auto-config, and the manual HTTP proxy disabled.
+///
+/// @param enabled Whether proxy auto-config is enabled.
+/// @param url The auto-config file's URL, or empty for none.
+/// @return The settings.
+[[nodiscard]] ProxySettings auto_config(bool enabled, std::string url) {
+  return {
+      .http_enabled = false,
+      .http_host = "",
+      .http_port = 0,
+      .auto_config_enabled = enabled,
+      .auto_config_url = std::move(url),
+  };
 }
 
 /// Whether `name` is one of the tunnel prefixes followed by a run of digits and nothing else.
@@ -168,9 +212,80 @@ TEST(Mitm, observeInterfaces_whenGetifaddrsSucceeds_reportsOnlyTunnelNamesSorted
   EXPECT_EQ(std::ranges::adjacent_find(names), names.end());
 }
 
-TEST(Mitm, mitm_whenOffAPhysicalDevice_reportsUnsupported) {
+TEST(Mitm, observeProxies_whenNoProxyIsEnabled_reportsAnEmptyList) {
+  EXPECT_EQ(observe_proxies(http_proxy(false, "", 0)), proxies({}));
+}
+
+TEST(Mitm, observeProxies_whenTheHttpProxyIsEnabled_reportsItsHostAndPort) {
+  EXPECT_EQ(observe_proxies(http_proxy(true, "192.168.1.10", 8080)), proxies({"http 192.168.1.10:8080"}));
+}
+
+TEST(Mitm, observeProxies_whenTheHttpProxyHasNoPort_reportsItsHostAlone) {
+  EXPECT_EQ(observe_proxies(http_proxy(true, "proxy.example", 0)), proxies({"http proxy.example"}));
+}
+
+TEST(Mitm, observeProxies_whenTheHttpProxyHostIsAnIPv6Address_reportsItBetweenBrackets) {
+  EXPECT_EQ(observe_proxies(http_proxy(true, "fd00::2", 8080)), proxies({"http [fd00::2]:8080"}));
+}
+
+TEST(Mitm, observeProxies_whenTheHttpProxyIsDisabled_doesNotReportIt) {
+  EXPECT_EQ(observe_proxies(http_proxy(false, "192.168.1.10", 8080)), proxies({}));
+}
+
+TEST(Mitm, observeProxies_whenTheHttpProxyHasNoHost_doesNotReportIt) {
+  EXPECT_EQ(observe_proxies(http_proxy(true, "", 8080)), proxies({}));
+}
+
+TEST(Mitm, observeProxies_whenAutoConfigIsEnabled_reportsItsUrl) {
+  EXPECT_EQ(observe_proxies(auto_config(true, "http://wpad.example/proxy.pac")),
+            proxies({"pac http://wpad.example/proxy.pac"}));
+}
+
+TEST(Mitm, observeProxies_whenAutoConfigIsEnabledWithNoUrl_reportsPacAlone) {
+  EXPECT_EQ(observe_proxies(auto_config(true, "")), proxies({"pac"}));
+}
+
+TEST(Mitm, observeProxies_whenAutoConfigIsDisabled_doesNotReportIt) {
+  EXPECT_EQ(observe_proxies(auto_config(false, "http://wpad.example/proxy.pac")), proxies({}));
+}
+
+TEST(Mitm, observeProxies_whenBothAreEnabled_reportsTheHttpProxyFirst) {
+  const ProxySettings settings = {
+      .http_enabled = true,
+      .http_host = "10.0.0.2",
+      .http_port = 3128,
+      .auto_config_enabled = true,
+      .auto_config_url = "http://wpad.example/proxy.pac",
+  };
+
+  EXPECT_EQ(observe_proxies(settings), proxies({"http 10.0.0.2:3128", "pac http://wpad.example/proxy.pac"}));
+}
+
+#ifdef __APPLE__
+TEST(Mitm, observeSystemProxies_whenTheSettingsCanBeRead_reportsAtMostTwoProxies) {
+  const Observation observation = observe_system_proxies();
+  ASSERT_EQ(observation.signal, "mitm.proxies");
+  ASSERT_EQ(observation.source, "CFNetworkCopySystemProxySettings");
+  ASSERT_EQ(observation.status, Status::kOk);
+  ASSERT_TRUE(std::holds_alternative<std::vector<std::string>>(observation.value));
+  EXPECT_LE(std::get<std::vector<std::string>>(observation.value).size(), std::size_t{2});
+}
+#else
+TEST(Mitm, observeSystemProxies_whenTheSystemHasNoCFNetwork_reportsUnsupported) {
+  EXPECT_EQ(observe_system_proxies(), (Observation{.signal = "mitm.proxies",
+                                                   .source = "CFNetworkCopySystemProxySettings",
+                                                   .status = Status::kUnsupported,
+                                                   .value = {}}));
+}
+#endif
+
+TEST(Mitm, mitm_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(mitm(), (std::vector<Observation>{
                         {.signal = "mitm.tunnels", .source = "getifaddrs", .status = Status::kUnsupported, .value = {}},
+                        {.signal = "mitm.proxies",
+                         .source = "CFNetworkCopySystemProxySettings",
+                         .status = Status::kUnsupported,
+                         .value = {}},
                     }));
 }
 
