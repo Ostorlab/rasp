@@ -1,18 +1,26 @@
 /// The iOS hooking checks: the loaded-image probe, the read of `DYLD_INSERT_LIBRARIES` at load time and the probe that
-/// reports it, and their unsupported result off a physical device. The markers and folders draw on the names and
-/// places Frida, Cycript, Substrate, the tweak loaders and SSL Kill Switch install their libraries under, on rootful
-/// and rootless jailbreaks.
+/// reports it, the probe that connects to Frida's default port, and their unsupported result off a physical device. The
+/// markers and folders draw on the names and places Frida, Cycript, Substrate, the tweak loaders and SSL Kill Switch
+/// install their libraries under, on rootful and rootless jailbreaks.
 
 #include "checks/hooks.h"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <sys/poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -20,7 +28,6 @@
 
 #ifdef __APPLE__
 #include <TargetConditionals.h>
-#include <cstdint>
 #include <mach-o/dyld.h>
 #endif
 
@@ -49,6 +56,15 @@ constexpr std::string_view kGetenvSource = "getenv";
 constexpr const char* kInsertLibrariesVariable = "DYLD_INSERT_LIBRARIES";
 /// The most bytes of the variable's value the probe reports.
 constexpr std::size_t kMaxInsertedLibrariesSize = 4096;
+
+/// The signal of the probe that reports whether Frida's default port accepts a connection.
+constexpr std::string_view kFridaPortSignal = "hook.frida_port";
+/// The source of the probe.
+constexpr std::string_view kConnectSource = "connect";
+/// The TCP port that frida-server and Frida Gadget listen on by default.
+constexpr std::uint16_t kFridaPort = 27042;
+/// The most milliseconds the probe waits for its connection to be accepted or refused.
+constexpr int kConnectTimeoutMilliseconds = 250;
 
 #ifdef __APPLE__
 /// The most images the probe reads from dyld's list. A real app loads far fewer.
@@ -175,6 +191,93 @@ constexpr std::string_view kProcursusFolder = "/procursus/";
   return std::ranges::any_of(kFrameworkMarkers, [name](std::string_view marker) { return name.contains(marker); });
 }
 
+/// Makes `descriptor` a socket that doesn't block and, on Apple systems, one that never raises `SIGPIPE`.
+///
+/// @param descriptor The socket to set up.
+/// @return Whether every option was set.
+[[nodiscard]] bool prepare_socket(int descriptor) {
+#ifdef __APPLE__
+  const int enabled = 1;
+  if (setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled)) != 0) {
+    return false;
+  }
+#endif
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
+  const int flags = fcntl(descriptor, F_GETFL);
+  if (flags < 0) {
+    return false;
+  }
+  const auto non_blocking = static_cast<int>(static_cast<unsigned int>(flags) | static_cast<unsigned int>(O_NONBLOCK));
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
+  return fcntl(descriptor, F_SETFL, non_blocking) == 0;
+}
+
+/// Returns what a connection's error code says about the connection.
+///
+/// @param error The error code of the connection: 0 when it was accepted, or an `errno` value.
+/// @return true when the connection was accepted, false when it was refused with `ECONNREFUSED`, and nothing for any
+/// other error.
+[[nodiscard]] std::optional<bool> connection_accepted(int error) {
+  if (error == 0) {
+    return true;
+  }
+  if (error == ECONNREFUSED) {
+    return false;
+  }
+  return std::nullopt;
+}
+
+/// Waits at most kConnectTimeoutMilliseconds for the connection that `descriptor` started to be accepted or refused.
+///
+/// @param descriptor A socket that doesn't block, whose connection is in progress.
+/// @return true when the connection was accepted, false when it was refused, and nothing when the wait timed out, poll
+/// or getsockopt failed, or the connection failed with another error.
+[[nodiscard]] std::optional<bool> wait_for_connection(int descriptor) {
+  pollfd request{.fd = descriptor, .events = POLLOUT, .revents = 0};
+  if (poll(&request, 1, kConnectTimeoutMilliseconds) != 1) {
+    return std::nullopt;
+  }
+  int error = 0;
+  socklen_t size = sizeof(error);
+  if (getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &error, &size) != 0 || size != sizeof(error)) {
+    return std::nullopt;
+  }
+  return connection_accepted(error);
+}
+
+/// Returns the address of `port` on the loopback address, 127.0.0.1.
+///
+/// @param port The TCP port, in host byte order.
+/// @return The IPv4 socket address, in network byte order.
+[[nodiscard]] sockaddr_in loopback_address(std::uint16_t port) {
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_port = htons(port);
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  return address;
+}
+
+/// Connects `descriptor` to `address`, and waits for the connection to be accepted or refused.
+///
+/// @param descriptor A TCP socket that is not connected yet.
+/// @param address The address to connect to.
+/// @return true when the connection was accepted, false when it was refused, and nothing when a system call failed or
+/// the connection was neither accepted nor refused within kConnectTimeoutMilliseconds.
+[[nodiscard]] std::optional<bool> connect_socket(int descriptor, const sockaddr_in& address) {
+  if (!prepare_socket(descriptor)) {
+    return std::nullopt;
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  if (connect(descriptor, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0) {
+    return true;
+  }
+  const int error = errno;
+  if (error == EINPROGRESS) {
+    return wait_for_connection(descriptor);
+  }
+  return connection_accepted(error);
+}
+
 }  // namespace
 
 Observation observe_images(std::span<const std::string> image_paths) {
@@ -221,11 +324,27 @@ Observation observe_inserted_libraries(std::string_view inserted_libraries) {
   return observed(kDyldEnvSignal, kGetenvSource, std::string(inserted_libraries.substr(0, kMaxInsertedLibrariesSize)));
 }
 
+Observation observe_loopback_port(std::uint16_t port) {
+  const int descriptor = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (descriptor < 0) {
+    return failed(kFridaPortSignal, kConnectSource);
+  }
+  const std::optional<bool> accepted = connect_socket(descriptor, loopback_address(port));
+  if (close(descriptor) != 0 || !accepted.has_value()) {
+    return failed(kFridaPortSignal, kConnectSource);
+  }
+  return observed(kFridaPortSignal, kConnectSource, *accepted);
+}
+
 std::vector<Observation> hooks(std::string_view inserted_libraries) {
   if (!kPhysicalDevice) {
-    return {unsupported(kMapsHitsSignal, kDyldSource), unsupported(kDyldEnvSignal, kGetenvSource)};
+    return {
+        unsupported(kMapsHitsSignal, kDyldSource),
+        unsupported(kDyldEnvSignal, kGetenvSource),
+        unsupported(kFridaPortSignal, kConnectSource),
+    };
   }
-  return {observe_loaded_images(), observe_inserted_libraries(inserted_libraries)};
+  return {observe_loaded_images(), observe_inserted_libraries(inserted_libraries), observe_loopback_port(kFridaPort)};
 }
 
 }  // namespace rasp::ios::checks
