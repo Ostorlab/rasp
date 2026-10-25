@@ -1,5 +1,5 @@
-/// The iOS debugger checks: the traced-flag and parent-process probes, and their unsupported result off a physical
-/// device.
+/// The iOS debugger checks: the traced-flag, parent-process and exception-port probes, and their unsupported result off
+/// a physical device.
 
 #include "checks/debugger.h"
 
@@ -14,6 +14,15 @@
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #include <cstddef>
+#include <mach/exception_types.h>
+#include <mach/kern_return.h>
+#include <mach/mach_init.h>
+#include <mach/mach_port.h>
+#include <mach/message.h>
+#include <mach/port.h>
+#include <mach/task.h>
+#include <mach/thread_status.h>
+#include <ranges>
 #include <sys/proc.h>
 #include <sys/sysctl.h>
 #endif
@@ -38,6 +47,10 @@ constexpr std::string_view kTracedSource = "sysctl";
 constexpr std::string_view kParentSignal = "dbg.parent";
 /// The source of the parent-process probe.
 constexpr std::string_view kParentSource = "getppid";
+/// The signal of the exception-port probe.
+constexpr std::string_view kExceptionPortsSignal = "dbg.exception_ports";
+/// The source of the exception-port probe.
+constexpr std::string_view kExceptionPortsSource = "task_get_exception_ports";
 
 /// One debugger probe: the signal and source it reports, and the function that observes them.
 struct Probe {
@@ -53,6 +66,7 @@ struct Probe {
 constexpr std::array kProbes = {
     Probe{.signal = kTracedSignal, .source = kTracedSource, .observe = observe_traced},
     Probe{.signal = kParentSignal, .source = kParentSource, .observe = observe_parent},
+    Probe{.signal = kExceptionPortsSignal, .source = kExceptionPortsSource, .observe = observe_exception_ports},
 };
 
 }  // namespace
@@ -74,6 +88,37 @@ Observation observe_traced() {
 }
 
 Observation observe_parent() { return observed(kParentSignal, kParentSource, static_cast<std::int64_t>(getppid())); }
+
+Observation observe_exception_ports() {
+#ifdef __APPLE__
+  std::array<exception_mask_t, EXC_TYPES_COUNT> masks{};
+  std::array<mach_port_t, EXC_TYPES_COUNT> ports{};
+  std::array<exception_behavior_t, EXC_TYPES_COUNT> behaviors{};
+  std::array<thread_state_flavor_t, EXC_TYPES_COUNT> flavors{};
+  auto count = static_cast<mach_msg_type_number_t>(masks.size());
+  if (task_get_exception_ports(mach_task_self(), EXC_MASK_ALL, masks.data(), &count, ports.data(), behaviors.data(),
+                               flavors.data()) != KERN_SUCCESS ||
+      count > masks.size()) {
+    return failed(kExceptionPortsSignal, kExceptionPortsSource);
+  }
+  exception_mask_t masks_with_port = 0;
+  bool released = true;
+  for (const auto [mask, port] : std::views::zip(masks, ports) | std::views::take(count)) {
+    if (MACH_PORT_VALID(port)) {
+      masks_with_port |= mask;
+      if (mach_port_deallocate(mach_task_self(), port) != KERN_SUCCESS) {
+        released = false;
+      }
+    }
+  }
+  if (!released) {
+    return failed(kExceptionPortsSignal, kExceptionPortsSource);
+  }
+  return observed(kExceptionPortsSignal, kExceptionPortsSource, static_cast<std::int64_t>(masks_with_port));
+#else
+  return unsupported(kExceptionPortsSignal, kExceptionPortsSource);
+#endif
+}
 
 std::vector<Observation> debugger() {
   std::vector<Observation> observations;
