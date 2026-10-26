@@ -40,6 +40,10 @@ endforeach()
 target_compile_definitions(rasp_ios_identity_test PRIVATE
   RASP_TEST_SIGNATURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/ios/checks/data/arm64_app_signed.superblob")
 
+if(APPLE)
+  target_link_libraries(rasp_ios_identity_test PRIVATE "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
+endif()
+
 foreach(check debugger hooks mitm)
   add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
     ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp)

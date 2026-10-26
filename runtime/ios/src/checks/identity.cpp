@@ -1,14 +1,17 @@
-/// The iOS app-identity self-check: the Team ID and cdhash probe that reads the code signature of the main executable,
-/// with its code-signature reader, and its unsupported result off a physical device. The Mach-O file is read through
+/// The iOS app-identity self-check: the bundle-identifier probes through CFBundle and through the main bundle's
+/// Info.plist file, the Team ID and cdhash probe that reads the code signature of the main executable, with its
+/// code-signature reader, and their unsupported result off a physical device. The Mach-O file is read through
 /// util/macho.h; the code-signature reader draws only on the code-signature layout of xnu's `osfmk/kern/cs_blobs.h`.
 
 #include "checks/identity.h"
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <fcntl.h>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -22,8 +25,16 @@
 #include "util/sha256.h"
 
 #ifdef __APPLE__
+#include <CoreFoundation/CFBase.h>
+#include <CoreFoundation/CFBundle.h>
+#include <CoreFoundation/CFData.h>
+#include <CoreFoundation/CFDictionary.h>
+#include <CoreFoundation/CFPropertyList.h>
+#include <CoreFoundation/CFString.h>
+#include <CoreFoundation/CFURL.h>
 #include <TargetConditionals.h>
 #include <mach-o/dyld.h>
+#include <sys/stat.h>
 #include <sys/syslimits.h>
 #endif
 
@@ -38,6 +49,13 @@ constexpr bool kPhysicalDevice = true;
 /// Whether this build runs on a physical iOS device, the only place the probes mean anything.
 constexpr bool kPhysicalDevice = false;
 #endif
+
+/// The signal of the bundle-identifier probes.
+constexpr std::string_view kBundleIdSignal = "id.bundle_id";
+/// The source of the bundle-identifier probe that asks CoreFoundation, through CFBundleGetIdentifier.
+constexpr std::string_view kBundleSource = "CFBundle";
+/// The source of the bundle-identifier probe that reads the main bundle's Info.plist file itself.
+constexpr std::string_view kInfoPlistSource = "Info.plist";
 
 /// The signal of the Team ID in the main executable's code signature.
 constexpr std::string_view kTeamIdSignal = "id.team_id";
@@ -364,7 +382,185 @@ struct CodeDirectory {
   return {failed(kTeamIdSignal, kCodeSignatureSource), failed(kCdhashSignal, kCodeSignatureSource)};
 }
 
+#ifdef __APPLE__
+/// The path of the Info.plist file inside the directory of an iOS app bundle, which keeps it at its top level.
+constexpr std::string_view kInfoPlistPath = "/Info.plist";
+
+/// The largest Info.plist file the probe reads, in bytes. A real one is well under this.
+constexpr std::size_t kMaxInfoPlistSize = std::size_t{1} << 20U;
+
+/// The most bytes of UTF-8 the probes accept of a bundle identifier, so a forged value can't grow the observation
+/// without bound.
+constexpr std::size_t kMaxIdentifierBytes = 1024;
+
+/// Converts `value` to UTF-8 text, when it is a CFString of at most kMaxIdentifierBytes bytes of UTF-8.
+///
+/// The value is not released: the caller owns it, or gets it under the Get rule.
+///
+/// @param value The value to convert, or null.
+/// @return The text, or nothing when `value` is null or not a CFString, when its UTF-8 is longer than
+/// kMaxIdentifierBytes bytes, or when it holds a character UTF-8 can't encode, a lone UTF-16 surrogate.
+[[nodiscard]] std::optional<std::string> read_text(CFTypeRef value) {
+  if (value == nullptr || CFGetTypeID(value) != CFStringGetTypeID()) {
+    return std::nullopt;
+  }
+  const auto* const string = static_cast<CFStringRef>(value);
+  const CFIndex length = CFStringGetLength(string);
+  std::array<std::uint8_t, kMaxIdentifierBytes> buffer{};
+  CFIndex used = 0;
+  if (CFStringGetBytes(string, CFRangeMake(0, length), kCFStringEncodingUTF8, 0, 0, buffer.data(),
+                       static_cast<CFIndex>(buffer.size()), &used) != length) {
+    return std::nullopt;
+  }
+  return std::string(buffer.begin(), std::next(buffer.begin(), used));
+}
+
+/// Reads `file` to its end, or gives nothing when a read fails or the content is longer than kMaxInfoPlistSize bytes.
+/// A read that a signal interrupts is retried.
+///
+/// @param file The open file to read.
+/// @return The content of the file, or nothing when a read fails or the content is too long.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_all(int file) {
+  std::vector<std::uint8_t> content;
+  std::array<std::uint8_t, 1024> chunk{};
+  while (true) {
+    const ssize_t count = read(file, chunk.data(), chunk.size());
+    if (count < 0 && errno == EINTR) {
+      continue;
+    }
+    if (count < 0 || static_cast<std::size_t>(count) > kMaxInfoPlistSize - content.size()) {
+      return std::nullopt;
+    }
+    if (count == 0) {
+      return content;
+    }
+    content.insert(content.end(), chunk.begin(), std::next(chunk.begin(), count));
+  }
+}
+
+/// Reads the regular file at `path` to its end, when it holds at most kMaxInfoPlistSize bytes.
+///
+/// The file is opened with close-on-exec, so it never leaks into a process the app starts, and without blocking, so a
+/// FIFO can't stall the open before the regular-file check refuses it.
+///
+/// @param path The file to read.
+/// @return The content of the file, or nothing when it can't be opened, inspected, read or closed, isn't a regular
+/// file, or is longer than kMaxInfoPlistSize bytes.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_file(const std::string& path) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
+  const int file = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+  if (file < 0) {
+    return std::nullopt;
+  }
+  struct stat status{};
+  std::optional<std::vector<std::uint8_t>> content =
+      fstat(file, &status) == 0 && S_ISREG(status.st_mode) ? read_all(file) : std::nullopt;
+  if (close(file) != 0) {
+    return std::nullopt;
+  }
+  return content;
+}
+
+/// Reads the bundle identifier, the value of the `CFBundleIdentifier` key, from `content`, the bytes of a property
+/// list in the binary or the XML format.
+///
+/// The CFData that wraps the bytes and the property list parsed from it are created here, under the Create rule, so
+/// both are released on every path. The identifier is owned by the property list, under the Get rule, so it is
+/// converted before the property list is released and is not released itself.
+///
+/// @param content The property list's bytes.
+/// @return The identifier, or nothing when `content` isn't a property list, when the property list isn't a
+/// dictionary or has no `CFBundleIdentifier` key, or when the identifier can't be read as read_text reads it.
+[[nodiscard]] std::optional<std::string> read_plist_identifier(std::span<const std::uint8_t> content) {
+  const CFDataRef data = CFDataCreate(kCFAllocatorDefault, content.data(), static_cast<CFIndex>(content.size()));
+  if (data == nullptr) {
+    return std::nullopt;
+  }
+  const CFPropertyListRef plist =
+      CFPropertyListCreateWithData(kCFAllocatorDefault, data, kCFPropertyListImmutable, nullptr, nullptr);
+  std::optional<std::string> identifier;
+  if (plist != nullptr) {
+    if (CFGetTypeID(plist) == CFDictionaryGetTypeID()) {
+      identifier = read_text(CFDictionaryGetValue(static_cast<CFDictionaryRef>(plist), kCFBundleIdentifierKey));
+    }
+    CFRelease(plist);
+  }
+  CFRelease(data);
+  return identifier;
+}
+
+/// Reads the file system path of the main bundle's directory.
+///
+/// The main bundle is owned by CoreFoundation, under the Get rule, so it is not released. Its URL is created here,
+/// under the Copy rule, so it is released on every path.
+///
+/// @return The path, or nothing when there is no main bundle or URL, or when the path doesn't fit in PATH_MAX bytes
+/// with its terminating NUL.
+[[nodiscard]] std::optional<std::string> main_bundle_directory() {
+  auto* const bundle = CFBundleGetMainBundle();
+  if (bundle == nullptr) {
+    return std::nullopt;
+  }
+  const CFURLRef url = CFBundleCopyBundleURL(bundle);
+  if (url == nullptr) {
+    return std::nullopt;
+  }
+  std::array<std::uint8_t, PATH_MAX> buffer{};
+  const bool converted =
+      CFURLGetFileSystemRepresentation(url, 1, buffer.data(), static_cast<CFIndex>(buffer.size())) != 0;
+  CFRelease(url);
+  if (!converted) {
+    return std::nullopt;
+  }
+  return std::string(buffer.begin(), std::ranges::find(buffer, std::uint8_t{0}));
+}
+#endif
+
 }  // namespace
+
+Observation observe_bundle_identifier() {
+#ifdef __APPLE__
+  auto* const bundle = CFBundleGetMainBundle();
+  if (bundle == nullptr) {
+    return failed(kBundleIdSignal, kBundleSource);
+  }
+  std::optional<std::string> identifier = read_text(CFBundleGetIdentifier(bundle));
+  if (!identifier.has_value() || identifier->empty()) {
+    return failed(kBundleIdSignal, kBundleSource);
+  }
+  return observed(kBundleIdSignal, kBundleSource, std::move(*identifier));
+#else
+  return unsupported(kBundleIdSignal, kBundleSource);
+#endif
+}
+
+Observation observe_info_plist([[maybe_unused]] std::string_view plist_path) {
+#ifdef __APPLE__
+  const std::optional<std::vector<std::uint8_t>> content = read_file(std::string(plist_path));
+  if (!content.has_value()) {
+    return failed(kBundleIdSignal, kInfoPlistSource);
+  }
+  std::optional<std::string> identifier = read_plist_identifier(*content);
+  if (!identifier.has_value() || identifier->empty()) {
+    return failed(kBundleIdSignal, kInfoPlistSource);
+  }
+  return observed(kBundleIdSignal, kInfoPlistSource, std::move(*identifier));
+#else
+  return unsupported(kBundleIdSignal, kInfoPlistSource);
+#endif
+}
+
+Observation observe_main_info_plist() {
+#ifdef __APPLE__
+  const std::optional<std::string> directory = main_bundle_directory();
+  if (!directory.has_value()) {
+    return failed(kBundleIdSignal, kInfoPlistSource);
+  }
+  return observe_info_plist(*directory + std::string(kInfoPlistPath));
+#else
+  return unsupported(kBundleIdSignal, kInfoPlistSource);
+#endif
+}
 
 std::vector<Observation> observe_executable_signature(std::string_view executable_path) {
   const std::optional<std::vector<std::uint8_t>> signature = read_executable_signature(std::string(executable_path));
@@ -401,11 +597,15 @@ std::vector<Observation> observe_main_executable_signature() {
 std::vector<Observation> identity() {
   if (!kPhysicalDevice) {
     return {
+        unsupported(kBundleIdSignal, kBundleSource),
+        unsupported(kBundleIdSignal, kInfoPlistSource),
         unsupported(kTeamIdSignal, kCodeSignatureSource),
         unsupported(kCdhashSignal, kCodeSignatureSource),
     };
   }
-  return observe_main_executable_signature();
+  std::vector<Observation> observations = {observe_bundle_identifier(), observe_main_info_plist()};
+  std::ranges::move(observe_main_executable_signature(), std::back_inserter(observations));
+  return observations;
 }
 
 }  // namespace rasp::ios::checks
