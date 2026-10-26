@@ -12,7 +12,7 @@
 #include <string_view>
 #include <vector>
 
-#include "util/read_file.h"
+#include "rasp/util/read_file.h"
 
 namespace rasp::android::util {
 
@@ -172,7 +172,7 @@ struct ApkEntryPath {
 
 /// Reads the entry named by `target` from its APK file, or nothing when it can't be read or found.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_apk_entry(const ApkEntryPath& target, std::size_t limit) {
-  const std::optional<std::string> file = read_file(target.apk_path, limit);
+  const std::optional<std::string> file = rasp::util::read_file(target.apk_path, limit);
   if (!file) {
     return std::nullopt;
   }
@@ -197,7 +197,7 @@ struct ApkEntryPath {
 std::optional<std::vector<std::uint8_t>> read_library_file(std::string_view loader_path, std::size_t limit) {
   const std::size_t separator = loader_path.find(kApkEntrySeparator);
   if (separator == std::string_view::npos) {
-    const std::optional<std::string> file = read_file(loader_path, limit);
+    const std::optional<std::string> file = rasp::util::read_file(loader_path, limit);
     if (!file) {
       return std::nullopt;
     }

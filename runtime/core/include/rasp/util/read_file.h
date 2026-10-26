@@ -1,5 +1,4 @@
-/// read_file, which reads a whole file up to a size limit, for the Android checks that read files under /proc and
-/// /sys.
+/// read_file, which reads a whole file up to a size limit.
 
 #pragma once
 
@@ -8,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-namespace rasp::android::util {
+namespace rasp::util {
 
 /// Reads the file at `path` to its end.
 ///
@@ -21,4 +20,4 @@ namespace rasp::android::util {
 /// bytes.
 [[nodiscard]] std::optional<std::string> read_file(std::string_view path, std::size_t limit);
 
-}  // namespace rasp::android::util
+}  // namespace rasp::util

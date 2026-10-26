@@ -1,6 +1,6 @@
 /// read_file, which reads a whole file up to a size limit.
 
-#include "util/read_file.h"
+#include "rasp/util/read_file.h"
 
 #include <array>
 #include <cstddef>
@@ -18,7 +18,7 @@ using owner = T;
 
 }  // namespace gsl
 
-namespace rasp::android::util {
+namespace rasp::util {
 
 namespace {
 
@@ -56,4 +56,4 @@ std::optional<std::string> read_file(std::string_view path, std::size_t limit) {
   return content;
 }
 
-}  // namespace rasp::android::util
+}  // namespace rasp::util
