@@ -42,8 +42,7 @@ target_compile_definitions(rasp_ios_identity_test PRIVATE
 
 foreach(check debugger hooks mitm)
   add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
-    ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp
-    ${PROJECT_SOURCE_DIR}/android/src/util/read_file.cpp)
+    ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp)
   target_include_directories(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
     ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(rasp_android_${check}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
@@ -55,7 +54,6 @@ endforeach()
 foreach(check emulator root)
   add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
     ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp
-    ${PROJECT_SOURCE_DIR}/android/src/util/read_file.cpp
     ${PROJECT_SOURCE_DIR}/android/src/util/system_property.cpp)
   target_include_directories(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
     ${CMAKE_CURRENT_SOURCE_DIR})
@@ -65,8 +63,7 @@ endforeach()
 
 add_executable(rasp_android_integrity_test android/checks/integrity_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/read_file.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
 target_include_directories(rasp_android_integrity_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_integrity_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
@@ -74,8 +71,7 @@ target_link_libraries(rasp_android_integrity_test PRIVATE rasp_core rasp_tfpsacr
 gtest_discover_tests(rasp_android_integrity_test)
 
 add_executable(rasp_android_identity_test android/checks/identity_test.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/read_file.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp)
 target_include_directories(rasp_android_identity_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_identity_test PRIVATE rasp_core rasp_warnings rasp_language
@@ -83,8 +79,7 @@ target_link_libraries(rasp_android_identity_test PRIVATE rasp_core rasp_warnings
 gtest_discover_tests(rasp_android_identity_test)
 
 add_executable(rasp_android_apk_file_test android/util/apk_file_test.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/read_file.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
 target_include_directories(rasp_android_apk_file_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_apk_file_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
