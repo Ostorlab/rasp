@@ -87,7 +87,7 @@ TEST(Identity, observePackage_whenTheFileIsMissing_reportsAnError) {
 }
 
 TEST(Identity, observeUid_whenGivenAMainUserUid_reportsIt) {
-  // A normal app on the main user has a uid in 10000-99999; the server reads user 0 from it.
+  // A normal app on the main user has a uid in 10000-19999; the server reads user 0 from it.
   EXPECT_EQ(observe_uid(10123), uid(10123));
 }
 
