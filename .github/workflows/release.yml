@@ -12,6 +12,7 @@ concurrency:
 
 env:
   CMAKE_VERSION: "4.4.4"
+  ANDROID_NDK_VERSION: "29.0.14206865"
 
 jobs:
   version:
@@ -113,7 +114,10 @@ jobs:
           "$RUNNER_TEMP/build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
           echo "$RUNNER_TEMP/build-tools/bin" >> "$GITHUB_PATH"
       - name: Select the NDK
-        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+        run: |
+          ndk="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          test -d "$ndk" || { echo "NDK $ANDROID_NDK_VERSION is not installed on this runner"; exit 1; }
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
       - name: Log the Android toolchain versions
         run: |
           echo "NDK: $(sed -n 's/^Pkg.Revision = //p' "$ANDROID_NDK_HOME/source.properties") ($ANDROID_NDK_HOME)"

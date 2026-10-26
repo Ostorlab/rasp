@@ -11,6 +11,7 @@ permissions:
 env:
   LLVM_VERSION: "23"
   CMAKE_VERSION: "4.4.4"
+  ANDROID_NDK_VERSION: "29.0.14206865"
 
 jobs:
   format:
@@ -241,7 +242,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends "clang-tidy-${LLVM_VERSION}"
           echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
       - name: Select the NDK
-        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+        run: |
+          ndk="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          test -d "$ndk" || { echo "NDK $ANDROID_NDK_VERSION is not installed on this runner"; exit 1; }
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
       - name: Configure
         run: cmake --preset android
       - name: Build
