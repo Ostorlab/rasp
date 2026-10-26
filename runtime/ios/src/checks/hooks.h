@@ -1,8 +1,10 @@
 /// The iOS hooking checks: whether an instrumentation or hooking framework has loaded its code into the app's process,
-/// and which libraries the app's environment asks dyld to insert into it.
+/// which libraries the app's environment asks dyld to insert into it, and whether a server listens on Frida's default
+/// port.
 
 #pragma once
 
+#include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
@@ -17,15 +19,17 @@ namespace rasp::ios::checks {
 /// It reads the list of images loaded in the process and reports the ones that look like a known instrumentation or
 /// hooking framework (Frida, Cycript, Substrate and the tweak loaders that replace it, SSL Kill Switch and the like).
 /// It also reports `inserted_libraries`, the value of `DYLD_INSERT_LIBRARIES` that read_inserted_libraries read when
-/// the runtime loaded. The checks report the raw paths and the raw value; the server decides.
+/// the runtime loaded, and whether a TCP connection to port 27042 of the loopback address is accepted, the port that
+/// frida-server and Frida Gadget listen on by default. The checks report the raw paths and the raw values; the server
+/// decides.
 ///
 /// On a physical iOS device it runs the probes. Anywhere else, on a simulator, a Mac or a Linux host, every observation
 /// is unsupported instead, so the result still shows that the check ran.
 ///
 /// @param inserted_libraries The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, as read_inserted_libraries
 /// returns it.
-/// @return One observation per signal and source, in this order: hook.maps_hits read through dyld, then hook.dyld_env
-/// read through getenv.
+/// @return One observation per signal and source, in this order: hook.maps_hits read through dyld, hook.dyld_env read
+/// through getenv, then hook.frida_port read through connect.
 [[nodiscard]] std::vector<Observation> hooks(std::string_view inserted_libraries);
 
 /// Reports the paths of `image_paths` that name a known instrumentation or hooking framework.
@@ -83,5 +87,22 @@ namespace rasp::ios::checks {
 /// @param inserted_libraries The value of the variable, as read_inserted_libraries returns it.
 /// @return One hook.dyld_env observation read through getenv, with the value as a string.
 [[nodiscard]] Observation observe_inserted_libraries(std::string_view inserted_libraries);
+
+/// Reports whether a TCP connection to `port` of the loopback address, 127.0.0.1, is accepted.
+///
+/// frida-server, and Frida Gadget when it waits for a client, listen on port 27042 of the loopback address by default,
+/// and hooks passes that port. The probe opens a TCP socket that doesn't block, connects it to the port, waits at most
+/// 250 milliseconds for the connection to be accepted or refused, and closes the socket without sending anything. It
+/// reports what it saw and doesn't judge it: another program listening on the port is reported the same way, and a
+/// Frida server listening on another port isn't seen. The connection is tried again on every call, so the probe also
+/// sees a server started after the app. The loopback address is not on a local network, so on iOS 14 and later the
+/// connection doesn't bring up the local network permission alert. The probe uses only POSIX sockets, so it also runs
+/// on a Mac or a Linux host.
+///
+/// @param port The TCP port to connect to, in host byte order.
+/// @return One hook.frida_port observation read through connect: true when the connection is accepted, false when it
+/// is refused. It has an error status when a system call fails, or when the connection is neither accepted nor refused
+/// within 250 milliseconds.
+[[nodiscard]] Observation observe_loopback_port(std::uint16_t port);
 
 }  // namespace rasp::ios::checks
