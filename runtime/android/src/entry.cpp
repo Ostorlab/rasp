@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "checks/debugger.h"
+#include "checks/emulator.h"
 #include "checks/hooks.h"
 #include "checks/identity.h"
 #include "checks/integrity.h"
@@ -51,6 +52,7 @@ __attribute__((constructor)) void rasp_start() noexcept {
   std::ranges::move(rasp::android::checks::integrity(), std::back_inserter(observations));
   std::ranges::move(rasp::android::checks::mitm(), std::back_inserter(observations));
   std::ranges::move(rasp::android::checks::identity(), std::back_inserter(observations));
+  std::ranges::move(rasp::android::checks::emulator(), std::back_inserter(observations));
   log_observations(observations);
 }
 
