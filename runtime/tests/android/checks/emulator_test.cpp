@@ -95,6 +95,22 @@ namespace {
   return std::nullopt;
 }
 
+/// A property reader for the classic emulator, whose product name and model are the bare token `sdk`.
+[[nodiscard]] std::optional<std::string> sdk_device(std::string_view name) {
+  if (name == "ro.product.name") {
+    return "sdk";
+  }
+  return std::nullopt;
+}
+
+/// A property reader for a real device whose product value only contains `sdk` inside a larger token.
+[[nodiscard]] std::optional<std::string> sdk_in_larger_token(std::string_view name) {
+  if (name == "ro.product.name") {
+    return "sdkmobile";
+  }
+  return std::nullopt;
+}
+
 TEST(Emulator, observeEmulatorProps_whenOnARealDevice_reportsNothing) {
   EXPECT_EQ(observe_emulator_props(real_device), props({}));
 }
@@ -118,6 +134,14 @@ TEST(Emulator, observeEmulatorProps_whenGenericIsInsideALargerToken_doesNotMatch
 
 TEST(Emulator, observeEmulatorProps_whenTheDeviceIsGeneric_reportsIt) {
   EXPECT_EQ(observe_emulator_props(generic_device), props({"ro.product.device=generic"}));
+}
+
+TEST(Emulator, observeEmulatorProps_whenTheProductIsBareSdk_reportsIt) {
+  EXPECT_EQ(observe_emulator_props(sdk_device), props({"ro.product.name=sdk"}));
+}
+
+TEST(Emulator, observeEmulatorProps_whenSdkIsInsideALargerToken_doesNotMatch) {
+  EXPECT_EQ(observe_emulator_props(sdk_in_larger_token), props({}));
 }
 
 TEST(Emulator, observeEmulatorProps_whenAQemuFlagIsSetButEmpty_reportsItWithoutAValue) {

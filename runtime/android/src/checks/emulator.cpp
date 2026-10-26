@@ -46,8 +46,8 @@ constexpr auto kEmulatorProperties = std::to_array<std::string_view>({
     "ro.build.characteristics",
 });
 
-/// The substrings that mark a property value as an emulator's. `generic` is left out: it is matched as a whole token
-/// instead, because real AOSP-based devices use product values such as `aosp_generic_x86` that only contain it.
+/// The substrings that mark a property value as an emulator's. `generic` and `sdk` are left out: they are matched as
+/// whole tokens instead (see kTokenMarkers), because real values embed them in longer words such as `aosp_generic_x86`.
 constexpr auto kEmulatorMarkers = std::to_array<std::string_view>({
     "goldfish",
     "ranchu",
@@ -59,8 +59,13 @@ constexpr auto kEmulatorMarkers = std::to_array<std::string_view>({
     "genymotion",
 });
 
-/// The emulator marker matched as a whole token rather than a substring.
-constexpr std::string_view kGenericMarker = "generic";
+/// The emulator markers matched as whole tokens rather than substrings. `generic` is the stock emulator's product name,
+/// but `aosp_generic_x86` on a real AOSP device only contains it; `sdk` is the classic emulator's product name and
+/// model, but a real value can embed it in a longer token. Matching them bounded by non-token characters avoids both.
+constexpr auto kTokenMarkers = std::to_array<std::string_view>({
+    "generic",
+    "sdk",
+});
 
 /// The QEMU flag properties, which a real device leaves unset: any value at all is a tell.
 constexpr auto kQemuProperties = std::to_array<std::string_view>({
@@ -99,7 +104,7 @@ constexpr auto kQemuProperties = std::to_array<std::string_view>({
 }
 
 /// Whether the property `value` holds an emulator marker, compared case-insensitively. The substring markers match
-/// anywhere; `generic` matches only as a whole token.
+/// anywhere; the token markers (`generic`, `sdk`) match only as whole tokens.
 [[nodiscard]] bool holds_marker(std::string_view value) {
   std::string lowered(value);
   std::ranges::transform(lowered, lowered.begin(), [](char character) {
@@ -108,7 +113,8 @@ constexpr auto kQemuProperties = std::to_array<std::string_view>({
   if (std::ranges::any_of(kEmulatorMarkers, [&lowered](std::string_view marker) { return lowered.contains(marker); })) {
     return true;
   }
-  return holds_token(lowered, kGenericMarker);
+  return std::ranges::any_of(kTokenMarkers,
+                             [&lowered](std::string_view marker) { return holds_token(lowered, marker); });
 }
 
 }  // namespace
