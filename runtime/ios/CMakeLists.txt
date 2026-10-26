@@ -1,6 +1,7 @@
 add_library(RaspRuntime SHARED
   src/entry.cpp
   src/monitoring.cpp
+  src/checks/debugger.cpp
   src/checks/jailbreak.cpp
   src/plugins/load.cpp)
 target_include_directories(RaspRuntime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

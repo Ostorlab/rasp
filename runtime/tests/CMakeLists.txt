@@ -43,14 +43,30 @@ target_compile_definitions(rasp_core_plugins_loader_test PRIVATE
 add_dependencies(rasp_core_plugins_loader_test rasp_plugin_example rasp_test_not_a_plugin)
 gtest_discover_tests(rasp_core_plugins_loader_test)
 
-add_executable(rasp_ios_jailbreak_test ios/checks/jailbreak_test.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/jailbreak.cpp)
-target_include_directories(rasp_ios_jailbreak_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(rasp_ios_jailbreak_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
-gtest_discover_tests(rasp_ios_jailbreak_test)
+foreach(check debugger jailbreak)
+  add_executable(rasp_ios_${check}_test ios/checks/${check}_test.cpp
+    ${PROJECT_SOURCE_DIR}/ios/src/checks/${check}.cpp)
+  target_include_directories(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_ios_${check}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_ios_${check}_test)
+endforeach()
 
-foreach(check debugger hooks mitm root)
+foreach(check debugger hooks mitm)
   add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
     ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp)
+  target_include_directories(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_android_${check}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_android_${check}_test)
+endforeach()
+
+# The emulator and root checks read system properties through the shared util/system_property helper, so their tests
+# link it too.
+foreach(check emulator root)
+  add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/system_property.cpp)
   target_include_directories(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
     ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(rasp_android_${check}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
@@ -65,6 +81,14 @@ target_include_directories(rasp_android_integrity_test PRIVATE ${PROJECT_SOURCE_
 target_link_libraries(rasp_android_integrity_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
   GTest::gtest_main)
 gtest_discover_tests(rasp_android_integrity_test)
+
+add_executable(rasp_android_identity_test android/checks/identity_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp)
+target_include_directories(rasp_android_identity_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_android_identity_test PRIVATE rasp_core rasp_warnings rasp_language
+  GTest::gtest_main)
+gtest_discover_tests(rasp_android_identity_test)
 
 add_executable(rasp_android_apk_file_test android/util/apk_file_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)

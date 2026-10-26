@@ -2,12 +2,16 @@
 
 #include "monitoring.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <iterator>
 #include <pthread.h>
 #include <thread>
+#include <utility>
 #include <vector>
 
+#include "checks/debugger.h"
 #include "checks/jailbreak.h"
 #include "plugins/load.h"
 #include "rasp/observation.h"
@@ -31,7 +35,9 @@ void* monitor(void* /*argument*/) {
   const std::vector<rasp::plugins::Listed> listed = plugins::load_plugins();
   rasp::plugins::Host host(listed);
   while (true) {
-    const std::vector<Observation> observations = host.run_pass(checks::jailbreak());
+    std::vector<Observation> builtin = checks::jailbreak();
+    std::ranges::move(checks::debugger(), std::back_inserter(builtin));
+    const std::vector<Observation> observations = host.run_pass(std::move(builtin));
     if constexpr (kLoggingEnabled) {
       for (const Observation& observation : observations) {
         rasp::log(describe(observation));

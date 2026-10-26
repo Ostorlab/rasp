@@ -11,7 +11,9 @@
 #include <vector>
 
 #include "checks/debugger.h"
+#include "checks/emulator.h"
 #include "checks/hooks.h"
+#include "checks/identity.h"
 #include "checks/integrity.h"
 #include "checks/mitm.h"
 #include "checks/root.h"
@@ -39,6 +41,8 @@ constexpr std::chrono::seconds kCheckInterval{60};
   std::ranges::move(checks::hooks(), std::back_inserter(observations));
   std::ranges::move(checks::integrity(), std::back_inserter(observations));
   std::ranges::move(checks::mitm(), std::back_inserter(observations));
+  std::ranges::move(checks::identity(), std::back_inserter(observations));
+  std::ranges::move(checks::emulator(), std::back_inserter(observations));
   return observations;
 }
 
