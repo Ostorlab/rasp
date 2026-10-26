@@ -1,7 +1,8 @@
 /// The iOS hooking checks: the loaded-image probe, the read of `DYLD_INSERT_LIBRARIES` at load time and the probe that
-/// reports it, the probe that connects to Frida's default port, and their unsupported result off a physical device. The
-/// markers and folders draw on the names and places Frida, Cycript, Substrate, the tweak loaders and SSL Kill Switch
-/// install their libraries under, on rootful and rootless jailbreaks.
+/// reports it, the probe that connects to Frida's default port, the probe that walks the app's memory regions for ones
+/// that are both writable and executable, and their unsupported result off a physical device. The markers and folders
+/// draw on the names and places Frida, Cycript, Substrate, the tweak loaders and SSL Kill Switch install their
+/// libraries under, on rootful and rootless jailbreaks.
 
 #include "checks/hooks.h"
 
@@ -29,6 +30,15 @@
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #include <mach-o/dyld.h>
+#include <mach/kern_return.h>
+#include <mach/mach_init.h>
+#include <mach/mach_port.h>
+#include <mach/message.h>
+#include <mach/port.h>
+#include <mach/vm_map.h>
+#include <mach/vm_prot.h>
+#include <mach/vm_region.h>
+#include <mach/vm_types.h>
 #endif
 
 namespace rasp::ios::checks {
@@ -66,13 +76,30 @@ constexpr std::uint16_t kFridaPort = 27042;
 /// The most milliseconds the probe waits for its connection to be accepted or refused.
 constexpr int kConnectTimeoutMilliseconds = 250;
 
+/// The signal of the probe that reports the regions of the app's memory that are both writable and executable.
+constexpr std::string_view kRwxRegionsSignal = "hook.rwx_regions";
+/// The source of the probe.
+constexpr std::string_view kVmRegionSource = "vm_region";
+
 #ifdef __APPLE__
 /// The most images the probe reads from dyld's list. A real app loads far fewer.
 constexpr std::uint32_t kMaxImages = 4096;
+/// The most regions the probe reads from the task's address space. A real app has far fewer.
+constexpr std::size_t kMaxRegions = 65536;
+
+static_assert(kProtectionRead == static_cast<std::uint32_t>(VM_PROT_READ));
+static_assert(kProtectionWrite == static_cast<std::uint32_t>(VM_PROT_WRITE));
+static_assert(kProtectionExecute == static_cast<std::uint32_t>(VM_PROT_EXECUTE));
 #endif
 
 /// The most paths reported in the list.
 constexpr std::size_t kMaxPaths = 32;
+/// The most regions reported in the list.
+constexpr std::size_t kMaxRegionsReported = 32;
+/// The number of hexadecimal digits an address is written with.
+constexpr std::size_t kAddressDigits = 16;
+/// The hexadecimal digits, in order of value.
+constexpr std::string_view kHexDigits = "0123456789abcdef";
 
 /// The text that marks the file name of an image of a known instrumentation or hooking framework, in lowercase, matched
 /// anywhere in the last component of the path without regard to case. Each one is part of the name of a file these
@@ -278,6 +305,130 @@ constexpr std::string_view kProcursusFolder = "/procursus/";
   return connection_accepted(error);
 }
 
+/// Whether `region`'s current protection allows both writing and running its memory.
+///
+/// @param region The region to look at.
+/// @return Whether its protection has both kProtectionWrite and kProtectionExecute.
+[[nodiscard]] bool writable_executable(const MemoryRegion& region) {
+  constexpr std::uint32_t kWritableExecutable = kProtectionWrite | kProtectionExecute;
+  return (region.protection & kWritableExecutable) == kWritableExecutable;
+}
+
+/// Appends `address` to `text` as kAddressDigits lowercase hexadecimal digits, with leading zeros.
+///
+/// @param text The text to append to.
+/// @param address The address to write.
+void append_address(std::string& text, std::uint64_t address) {
+  for (std::size_t digit = kAddressDigits; digit > 0; --digit) {
+    const std::uint64_t shift = (digit - 1) * 4;
+    text.push_back(kHexDigits[static_cast<std::size_t>((address >> shift) & 0xFU)]);
+  }
+}
+
+/// Appends `protection` to `text` as the three letters `r`, `w` and `x`, with a dash in place of each access it
+/// doesn't allow.
+///
+/// @param text The text to append to.
+/// @param protection The protection to write, as Mach protection bits.
+void append_protection(std::string& text, std::uint32_t protection) {
+  text.push_back((protection & kProtectionRead) != 0 ? 'r' : '-');
+  text.push_back((protection & kProtectionWrite) != 0 ? 'w' : '-');
+  text.push_back((protection & kProtectionExecute) != 0 ? 'x' : '-');
+}
+
+/// Returns the text observe_regions reports for `region`: its start and end addresses, its current protection and its
+/// maximum protection.
+///
+/// @param region The region to describe.
+/// @return The text, such as `0000000104a3c000-0000000104a40000 rwx/rwx`.
+[[nodiscard]] std::string describe_region(const MemoryRegion& region) {
+  std::string text;
+  append_address(text, region.start);
+  text.push_back('-');
+  append_address(text, region.end);
+  text.push_back(' ');
+  append_protection(text, region.protection);
+  text.push_back('/');
+  append_protection(text, region.max_protection);
+  return text;
+}
+
+#ifdef __APPLE__
+/// What read_region found at an address.
+enum class RegionLookup : std::uint8_t {
+  /// A region holds the address or comes after it.
+  kRegion,
+  /// No region is left at or above the address.
+  kEnd,
+  /// vm_region_64 failed, returned values that can't describe a region, or returned a port right that couldn't be
+  /// released.
+  kFailed,
+};
+
+/// Reads the region of the app's task that holds `address` or, when no region holds it, the first region above it.
+///
+/// It calls vm_region_64 with the `VM_REGION_BASIC_INFO_64` flavor, and releases the port right the call returns in
+/// `object_name`, if any. The region must not be empty, must not wrap around the end of the address space, and must
+/// end above `address`.
+///
+/// @param address The address to look from.
+/// @param region Set to the region found, when the result is RegionLookup::kRegion.
+/// @return RegionLookup::kRegion when a region was found, RegionLookup::kEnd when vm_region_64 reports
+/// `KERN_INVALID_ADDRESS`, and RegionLookup::kFailed for any other failure.
+[[nodiscard]] RegionLookup read_region(std::uint64_t address, MemoryRegion& region) {
+  auto region_address = static_cast<vm_address_t>(address);
+  vm_size_t size = 0;
+  vm_region_basic_info_data_64_t info{};
+  mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+  mach_port_t object_name = MACH_PORT_NULL;
+  // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
+  const kern_return_t result = vm_region_64(mach_task_self(), &region_address, &size, VM_REGION_BASIC_INFO_64,
+                                            reinterpret_cast<vm_region_info_t>(&info), &count, &object_name);
+  // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
+  if (MACH_PORT_VALID(object_name) && mach_port_deallocate(mach_task_self(), object_name) != KERN_SUCCESS) {
+    return RegionLookup::kFailed;
+  }
+  if (result == KERN_INVALID_ADDRESS) {
+    return RegionLookup::kEnd;
+  }
+  const auto start = static_cast<std::uint64_t>(region_address);
+  const auto length = static_cast<std::uint64_t>(size);
+  if (result != KERN_SUCCESS || count != VM_REGION_BASIC_INFO_COUNT_64 || length == 0 || start > UINT64_MAX - length ||
+      start + length <= address) {
+    return RegionLookup::kFailed;
+  }
+  region = {
+      .start = start,
+      .end = start + length,
+      .protection = static_cast<std::uint32_t>(info.protection),
+      .max_protection = static_cast<std::uint32_t>(info.max_protection),
+  };
+  return RegionLookup::kRegion;
+}
+
+/// Reads every region of the app's task, from address 0 up, with read_region.
+///
+/// @return The regions in order of address, or nothing when read_region failed or the task has more than kMaxRegions
+/// regions.
+[[nodiscard]] std::optional<std::vector<MemoryRegion>> read_regions() {
+  std::vector<MemoryRegion> regions;
+  std::uint64_t address = 0;
+  for (std::size_t index = 0; index <= kMaxRegions; ++index) {
+    MemoryRegion region;
+    const RegionLookup lookup = read_region(address, region);
+    if (lookup == RegionLookup::kEnd) {
+      return regions;
+    }
+    if (lookup == RegionLookup::kFailed || index == kMaxRegions) {
+      return std::nullopt;
+    }
+    regions.push_back(region);
+    address = region.end;
+  }
+  return std::nullopt;
+}
+#endif
+
 }  // namespace
 
 Observation observe_images(std::span<const std::string> image_paths) {
@@ -336,15 +487,47 @@ Observation observe_loopback_port(std::uint16_t port) {
   return observed(kFridaPortSignal, kConnectSource, *accepted);
 }
 
+Observation observe_regions(std::span<const MemoryRegion> regions) {
+  std::vector<std::string> descriptions;
+  for (const MemoryRegion& region : regions) {
+    if (!writable_executable(region)) {
+      continue;
+    }
+    descriptions.push_back(describe_region(region));
+    if (descriptions.size() == kMaxRegionsReported) {
+      break;
+    }
+  }
+  return observed(kRwxRegionsSignal, kVmRegionSource, std::move(descriptions));
+}
+
+Observation observe_memory_regions() {
+#ifdef __APPLE__
+  const std::optional<std::vector<MemoryRegion>> regions = read_regions();
+  if (!regions) {
+    return failed(kRwxRegionsSignal, kVmRegionSource);
+  }
+  return observe_regions(*regions);
+#else
+  return unsupported(kRwxRegionsSignal, kVmRegionSource);
+#endif
+}
+
 std::vector<Observation> hooks(std::string_view inserted_libraries) {
   if (!kPhysicalDevice) {
     return {
         unsupported(kMapsHitsSignal, kDyldSource),
         unsupported(kDyldEnvSignal, kGetenvSource),
         unsupported(kFridaPortSignal, kConnectSource),
+        unsupported(kRwxRegionsSignal, kVmRegionSource),
     };
   }
-  return {observe_loaded_images(), observe_inserted_libraries(inserted_libraries), observe_loopback_port(kFridaPort)};
+  return {
+      observe_loaded_images(),
+      observe_inserted_libraries(inserted_libraries),
+      observe_loopback_port(kFridaPort),
+      observe_memory_regions(),
+  };
 }
 
 }  // namespace rasp::ios::checks

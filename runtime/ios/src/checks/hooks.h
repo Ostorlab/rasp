@@ -1,6 +1,6 @@
 /// The iOS hooking checks: whether an instrumentation or hooking framework has loaded its code into the app's process,
-/// which libraries the app's environment asks dyld to insert into it, and whether a server listens on Frida's default
-/// port.
+/// which libraries the app's environment asks dyld to insert into it, whether a server listens on Frida's default
+/// port, and which regions of the app's memory are both writable and executable.
 
 #pragma once
 
@@ -14,14 +14,33 @@
 
 namespace rasp::ios::checks {
 
+/// The bit of a Mach protection that allows reading the memory, `VM_PROT_READ`.
+constexpr std::uint32_t kProtectionRead = 1;
+/// The bit of a Mach protection that allows writing the memory, `VM_PROT_WRITE`.
+constexpr std::uint32_t kProtectionWrite = 2;
+/// The bit of a Mach protection that allows running the memory as code, `VM_PROT_EXECUTE`.
+constexpr std::uint32_t kProtectionExecute = 4;
+
+/// One region of a task's address space, as the Mach region API describes it.
+struct MemoryRegion {
+  /// The address of the region's first byte.
+  std::uint64_t start = 0;
+  /// The address right after the region's last byte.
+  std::uint64_t end = 0;
+  /// The protection the region has now, as a combination of kProtectionRead, kProtectionWrite and kProtectionExecute.
+  std::uint32_t protection = 0;
+  /// The most protection the region can ever be given, as the same bits.
+  std::uint32_t max_protection = 0;
+};
+
 /// Runs the hooking checks and returns what they observed.
 ///
 /// It reads the list of images loaded in the process and reports the ones that look like a known instrumentation or
 /// hooking framework (Frida, Cycript, Substrate and the tweak loaders that replace it, SSL Kill Switch and the like).
 /// It also reports `inserted_libraries`, the value of `DYLD_INSERT_LIBRARIES` that read_inserted_libraries read when
 /// the runtime loaded, and whether a TCP connection to port 27042 of the loopback address is accepted, the port that
-/// frida-server and Frida Gadget listen on by default. The checks report the raw paths and the raw values; the server
-/// decides.
+/// frida-server and Frida Gadget listen on by default, and the regions of the app's memory that are both writable and
+/// executable now. The checks report the raw paths and the raw values; the server decides.
 ///
 /// On a physical iOS device it runs the probes. Anywhere else, on a simulator, a Mac or a Linux host, every observation
 /// is unsupported instead, so the result still shows that the check ran.
@@ -29,7 +48,7 @@ namespace rasp::ios::checks {
 /// @param inserted_libraries The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, as read_inserted_libraries
 /// returns it.
 /// @return One observation per signal and source, in this order: hook.maps_hits read through dyld, hook.dyld_env read
-/// through getenv, then hook.frida_port read through connect.
+/// through getenv, hook.frida_port read through connect, then hook.rwx_regions read through vm_region.
 [[nodiscard]] std::vector<Observation> hooks(std::string_view inserted_libraries);
 
 /// Reports the paths of `image_paths` that name a known instrumentation or hooking framework.
@@ -104,5 +123,40 @@ namespace rasp::ios::checks {
 /// is refused. It has an error status when a system call fails, or when the connection is neither accepted nor refused
 /// within 250 milliseconds.
 [[nodiscard]] Observation observe_loopback_port(std::uint16_t port);
+
+/// Reports the regions of `regions` whose current protection is both writable and executable.
+///
+/// A region is reported when its current protection has both kProtectionWrite and kProtectionExecute. Its maximum
+/// protection is not matched: memory the app allocates, such as its heap, is given a maximum that allows every access,
+/// so the maximum would match almost every region. Each region is reported as one string: its start and end addresses
+/// as 16 lowercase hexadecimal digits each, joined by a dash, then a space, its current protection, a slash and its
+/// maximum protection. A protection is written as the three letters `r`, `w` and `x`, with a dash in place of each
+/// access it doesn't allow, such as `0000000104a3c000-0000000104a40000 rwx/rwx`. Other bits of a protection are not
+/// written.
+///
+/// The list holds at most the first 32 matching regions, in the order of `regions`. An empty list is a real answer, not
+/// a failure.
+///
+/// @param regions The regions to look at, such as the regions of the app's task.
+/// @return One hook.rwx_regions observation read through vm_region, with one string per matching region.
+[[nodiscard]] Observation observe_regions(std::span<const MemoryRegion> regions);
+
+/// Reports the regions of the app's own task whose current protection is both writable and executable.
+///
+/// The probe walks the task's address space from address 0 with vm_region_64 and its `VM_REGION_BASIC_INFO_64` flavor,
+/// one region at a time, and passes the regions to observe_regions. The walk ends when vm_region_64 reports
+/// `KERN_INVALID_ADDRESS`, which it does when no region is left at or above the address, or when the next region ends
+/// above the highest address of the task. It reads at most 65536 regions; a real app has far fewer. vm_region_64
+/// doesn't look inside a submap, such as the shared region that holds the dyld shared cache: it reports the submap as
+/// one region, with the protection of the submap's own entry. The address space is read again on every call, so the
+/// probe also sees a region made writable and executable after the app started. Another thread can map, unmap or
+/// protect memory during the walk, so a region it changes during the walk may be missed, or seen as it was, until the
+/// next call. On a system without Mach, such as Linux, there is nothing to read.
+///
+/// @return One hook.rwx_regions observation read through vm_region, as observe_regions reports it. It has an error
+/// status when vm_region_64 fails for another reason, returns a region that is empty, doesn't end above the address
+/// asked for or wraps around the end of the address space, or returns a port right that can't be released, and when the
+/// task has more than 65536 regions. It has the unsupported status on a system without Mach.
+[[nodiscard]] Observation observe_memory_regions();
 
 }  // namespace rasp::ios::checks
