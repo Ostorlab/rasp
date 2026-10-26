@@ -54,16 +54,17 @@ namespace rasp::android::checks {
 /// Reports the path the runtime's own library loads from, `code_path`.
 ///
 /// A genuine install loads librasp.so from the app's own install directory under `/data/app`, whose path carries the
-/// app's package: `/data/app/~~.../com.example-<suffix>/lib/<abi>/librasp.so` when the library is extracted, or
-/// `/data/app/~~.../com.example-<suffix>/base.apk!/lib/<abi>/librasp.so` when AGP packages it uncompressed (the common
-/// modern default). A third-party virtualizer (such as Parallel Space or VirtualApp) runs the guest app inside its own
-/// process and redirects its files, so the library loads from the host app's data directory instead, such as
-/// `/data/data/com.parallel.intl/.../com.example/lib/<abi>/librasp.so`. That path still contains the guest package as a
-/// subdirectory, so the tell is the owning install directory, not a substring: a genuine install owns
-/// `/data/app/.../<guest-package>-<suffix>`, a virtualized one owns the host's data directory. The uid is the host's
-/// normal uid, so id.uid can't see this; the load path can. The probe reports the raw loader path as a fact and the
-/// server compares the owning directory against the package the packer recorded. A sophisticated virtualizer can fake
-/// the path, so this is a signal, not proof.
+/// app's package: `/data/app/~~.../com.example-<suffix>/lib/<abi>/librasp.so` when the library is extracted, or, when
+/// AGP packages it uncompressed (the common modern default), `/data/app/~~.../com.example-<suffix>/base.apk!/lib/<abi>
+/// /librasp.so` for a single APK or `/data/app/~~.../com.example-<suffix>/split_config.arm64_v8a.apk!/lib/arm64-v8a
+/// /librasp.so` for an app-bundle install. A third-party virtualizer (such as Parallel Space or VirtualApp) runs the
+/// guest app inside its own process and redirects its files, so the library loads from the host app's data directory
+/// instead, such as `/data/data/com.parallel.intl/.../com.example/lib/<abi>/librasp.so`. That path still contains the
+/// guest package as a subdirectory, so the tell is the owning directory, not a substring: a genuine install owns
+/// `/data/app/.../<guest-package>-<suffix>`, a virtualized one owns the host's `/data/data` directory. The uid is the
+/// host's normal uid, so id.uid can't see this; the load path can. The probe reports the raw loader path as a fact and
+/// the server compares the owning directory against the package the packer recorded. A sophisticated virtualizer can
+/// fake the path, so this is a signal, not proof.
 ///
 /// @param code_path The load path of the runtime's library, from the dynamic loader on a device.
 /// @return One id.code_path observation through dladdr: the path. It has an error status when the path can't be read.
