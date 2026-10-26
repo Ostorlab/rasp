@@ -25,3 +25,8 @@ if(RASP_LOGGING)
   target_sources(rasp PRIVATE src/util/logging.cpp)
   target_link_libraries(rasp PRIVATE log)
 endif()
+
+include(${PROJECT_SOURCE_DIR}/cmake/omvll.cmake)
+foreach(rasp_first_party_target rasp rasp_core)
+  rasp_obfuscate(${rasp_first_party_target})
+endforeach()

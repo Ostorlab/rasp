@@ -301,12 +301,12 @@ Observation observe_selinux(std::string_view enforce_path) {
 
 Observation observe_build_props(PropertyReader read_property) {
   std::vector<std::string> properties;
-  for (const std::string_view name : kBuildProperties) {
+  std::ranges::for_each(kBuildProperties, [&](const std::string_view name) {
     const std::optional<std::string> value = read_property(name);
     if (value) {
       properties.push_back(std::string(name) + "=" + *value);
     }
-  }
+  });
   return observed(kPropsSignal, kPropsSource, std::move(properties));
 }
 
