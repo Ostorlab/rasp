@@ -23,7 +23,7 @@ foreach(test observation)
   gtest_discover_tests(rasp_core_${name}_test)
 endforeach()
 
-foreach(check debugger hooks jailbreak)
+foreach(check debugger hooks identity jailbreak)
   add_executable(rasp_ios_${check}_test ios/checks/${check}_test.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/checks/${check}.cpp)
   target_include_directories(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src
@@ -31,6 +31,14 @@ foreach(check debugger hooks jailbreak)
   target_link_libraries(rasp_ios_${check}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
   gtest_discover_tests(rasp_ios_${check}_test)
 endforeach()
+
+foreach(check identity)
+  target_sources(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/macho.cpp
+    ${PROJECT_SOURCE_DIR}/ios/src/util/sha256.cpp)
+  target_link_libraries(rasp_ios_${check}_test PRIVATE rasp_tfpsacrypto)
+endforeach()
+target_compile_definitions(rasp_ios_identity_test PRIVATE
+  RASP_TEST_SIGNATURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/ios/checks/data/arm64_app_signed.superblob")
 
 foreach(check debugger hooks mitm)
   add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
