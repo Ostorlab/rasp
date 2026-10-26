@@ -150,8 +150,9 @@ TEST(Identity, observeCodePath_whenGivenAnExtractedInstallPath_reportsIt) {
 }
 
 TEST(Identity, observeCodePath_whenGivenAnApkEmbeddedPath_reportsItUnchanged) {
-  // With android:extractNativeLibs="false" (the default on API 30+) the library is mapped straight from the APK, so
-  // dladdr gives a `base.apk!/` path. It still carries the app's package and is reported as-is, not split.
+  // When AGP packages the library uncompressed (android:extractNativeLibs="false", the common modern default) it is
+  // mapped straight from the APK, so dladdr gives a `base.apk!/` path. It still carries the app's package and is
+  // reported as-is, not split.
   const std::string path = "/data/app/~~abc==/co.ostorlab.app-xyz==/base.apk!/lib/arm64/librasp.so";
 
   EXPECT_EQ(observe_code_path(path), code_path(path));
