@@ -11,8 +11,9 @@
 #include <vector>
 
 #ifdef __ANDROID__
-#include <dlfcn.h>
 #include <unistd.h>
+
+#include "apk/location.h"
 #endif
 
 #include "rasp/observation.h"
@@ -41,22 +42,6 @@ constexpr std::string_view kCodePathSource = "dladdr";
 /// The process's command line, whose first NUL-separated argument is the package name. Only identity() reads it, on a
 /// device, so it is guarded; observe_package takes the path from its caller.
 constexpr std::string_view kCmdlinePath = "/proc/self/cmdline";
-
-/// An object in this library, used only for its address, so dladdr can name the file librasp.so loaded from.
-constexpr char kAnchor = 0;
-
-/// The raw load path of the runtime's library, as the dynamic linker records it for an address inside the library, or
-/// nothing when it can't be read. This is the unmodified `dli_fname`. An extracted library gives a plain path, and a
-/// library mapped straight from the APK (the default on API 30+, with `android:extractNativeLibs="false"`) gives a
-/// `.../base.apk!/lib/<abi>/librasp.so` path with the `!/` separator; both carry the app's package, so the raw path is
-/// reported as-is rather than split into a directory, which would mangle the APK-embedded form.
-[[nodiscard]] std::optional<std::string> library_path() {
-  Dl_info info = {};
-  if (dladdr(&kAnchor, &info) == 0 || info.dli_fname == nullptr) {
-    return std::nullopt;
-  }
-  return std::string(info.dli_fname);
-}
 #endif
 
 /// The largest command line read. A real one is well under this.
@@ -101,7 +86,7 @@ Observation observe_code_path(std::string_view code_path) {
 
 std::vector<Observation> identity() {
 #ifdef __ANDROID__
-  const std::optional<std::string> code_path = library_path();
+  const std::optional<std::string> code_path = apk::self_library_path();
   return {
       observe_package(kCmdlinePath),
       observe_uid(static_cast<std::int64_t>(getuid())),
