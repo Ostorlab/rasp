@@ -2,7 +2,7 @@
 
 The packer encrypts the app's original code with ChaCha20-Poly1305, as RFC 8439
 defines it, using the `cryptography` package. The native runtime decrypts it
-with the same algorithm from TF-PSA-Crypto, after its pre-decryption checks pass.
+with the same algorithm from TF-PSA-Crypto.
 
 Each protected app gets one random 32-byte key, which encrypts all of its frames:
 the class map and every business dex. Each frame gets its own random nonce,
