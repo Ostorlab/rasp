@@ -1,11 +1,16 @@
 /// Tests for the iOS hooking checks: the loaded-image probe that reports images of instrumentation and hooking
-/// frameworks, and the probe that reports the value of `DYLD_INSERT_LIBRARIES`.
+/// frameworks, the probe that reports the value of `DYLD_INSERT_LIBRARIES`, and the probe that connects to a loopback
+/// port.
 
 #include "checks/hooks.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <gtest/gtest.h>
+#include <netinet/in.h>
 #include <string>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -28,6 +33,56 @@ namespace {
       "/private/preboot/Cryptexes/OS/System/Library/Frameworks/WebKit.framework/WebKit",
   };
 }
+
+/// A TCP socket bound to a free port of the loopback address, 127.0.0.1, closed when the object goes away.
+class LoopbackSocket {
+ public:
+  /// Opens the socket and binds it to a port the system picks. bound is false when either step failed.
+  LoopbackSocket() : descriptor_(socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) {
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    socklen_t size = sizeof(address);
+    // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
+    bound_ = descriptor_ >= 0 && bind(descriptor_, reinterpret_cast<const sockaddr*>(&address), size) == 0 &&
+             getsockname(descriptor_, reinterpret_cast<sockaddr*>(&address), &size) == 0;
+    // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
+    port_ = ntohs(address.sin_port);
+  }
+  /// Deleted: a copy would close the same socket twice.
+  LoopbackSocket(const LoopbackSocket&) = delete;
+  /// Deleted: a copy would close the same socket twice.
+  LoopbackSocket& operator=(const LoopbackSocket&) = delete;
+  /// Deleted: a moved-from object would still close the socket.
+  LoopbackSocket(LoopbackSocket&&) = delete;
+  /// Deleted: a moved-from object would still close the socket.
+  LoopbackSocket& operator=(LoopbackSocket&&) = delete;
+  /// Closes the socket.
+  ~LoopbackSocket() {
+    if (descriptor_ >= 0) {
+      static_cast<void>(close(descriptor_));
+    }
+  }
+
+  /// Whether the socket was opened and bound to a port.
+  [[nodiscard]] bool bound() const { return bound_; }
+
+  /// Makes the socket accept connections on its port.
+  ///
+  /// @return Whether listen succeeded.
+  [[nodiscard]] bool listen() const { return ::listen(descriptor_, 1) == 0; }
+
+  /// The port the socket is bound to, in host byte order.
+  [[nodiscard]] std::uint16_t port() const { return port_; }
+
+ private:
+  /// The socket's file descriptor, negative when it couldn't be opened.
+  int descriptor_;
+  /// Whether the socket was bound to a port.
+  bool bound_ = false;
+  /// The port the socket is bound to, in host byte order.
+  std::uint16_t port_ = 0;
+};
 
 /// The hook.maps_hits observation that reports `paths`.
 [[nodiscard]] Observation maps_hits(std::vector<std::string> paths) {
@@ -203,11 +258,29 @@ TEST(Hooks, observeInsertedLibraries_whenTheValueIsLongerThan4096Bytes_reportsTh
           .signal = "hook.dyld_env", .source = "getenv", .status = Status::kOk, .value = std::string(4096, 'a')}));
 }
 
+TEST(Hooks, observeLoopbackPort_whenAServerListensOnThePort_reportsTrue) {
+  const LoopbackSocket server;
+  ASSERT_TRUE(server.bound());
+  ASSERT_TRUE(server.listen());
+
+  EXPECT_EQ(observe_loopback_port(server.port()),
+            (Observation{.signal = "hook.frida_port", .source = "connect", .status = Status::kOk, .value = true}));
+}
+
+TEST(Hooks, observeLoopbackPort_whenNothingListensOnThePort_reportsFalse) {
+  const LoopbackSocket closed_port;
+  ASSERT_TRUE(closed_port.bound());
+
+  EXPECT_EQ(observe_loopback_port(closed_port.port()),
+            (Observation{.signal = "hook.frida_port", .source = "connect", .status = Status::kOk, .value = false}));
+}
+
 TEST(Hooks, hooks_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(hooks("/usr/lib/systemhook.dylib"),
             (std::vector<Observation>{
                 {.signal = "hook.maps_hits", .source = "dyld", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.dyld_env", .source = "getenv", .status = Status::kUnsupported, .value = {}},
+                {.signal = "hook.frida_port", .source = "connect", .status = Status::kUnsupported, .value = {}},
             }));
 }
 
