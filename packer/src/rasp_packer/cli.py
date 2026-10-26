@@ -48,6 +48,14 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="where to write the protected app",
     )
+    pack.add_argument(
+        "--plugin",
+        type=pathlib.Path,
+        action="append",
+        default=[],
+        dest="plugins",
+        help="a plugin bundle directory to add; repeat it for several, in load order",
+    )
     return parser
 
 
@@ -59,6 +67,7 @@ def _pack(arguments: argparse.Namespace) -> int:
             platform=arguments.platform,
             output=arguments.output,
             build_id=arguments.build_id,
+            plugins=arguments.plugins,
         )
     except errors.Error as error:
         print(f"rasp pack: {error}", file=sys.stderr)

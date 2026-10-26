@@ -50,6 +50,7 @@ if(RASP_LOGGING)
 endif()
 
 add_subdirectory(core)
+include(cmake/rasp_plugin.cmake)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Android" OR RASP_BUILD_TESTS)
   include(cmake/tf_psa_crypto.cmake)
@@ -62,6 +63,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
   add_subdirectory(android)
 endif()
+
+add_subdirectory(plugins/example)
 
 if(RASP_BUILD_TESTS)
   enable_testing()

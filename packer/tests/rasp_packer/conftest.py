@@ -1,6 +1,8 @@
-"""Fixtures: arm64 iOS executables, IPAs and a runtime framework."""
+"""Fixtures: arm64 iOS executables, IPAs, a runtime framework and plugin bundles."""
 
 import collections.abc
+import itertools
+import json
 import pathlib
 import plistlib
 import shutil
@@ -75,3 +77,47 @@ def make_ipa(tmp_path: pathlib.Path) -> collections.abc.Callable[..., pathlib.Pa
 @pytest.fixture
 def ipa_file(make_ipa: collections.abc.Callable[..., pathlib.Path]) -> pathlib.Path:
     return make_ipa()
+
+
+@pytest.fixture
+def make_plugin(
+    tmp_path: pathlib.Path,
+) -> collections.abc.Callable[..., pathlib.Path]:
+    """Gives a function that writes a plugin bundle and returns its directory.
+
+    The library of each ABI holds `<name> <abi>`, and the framework binary `<name> ios`.
+    """
+    counter = itertools.count()
+
+    def make(
+        *,
+        name: str = "example",
+        abis: collections.abc.Sequence[str] = ("arm64-v8a",),
+        ios: bool = True,
+        config: bytes | None = None,
+        manifest: collections.abc.Mapping[str, object] | None = None,
+    ) -> pathlib.Path:
+        directory = tmp_path / "plugins" / f"{next(counter)}-{name}"
+        directory.mkdir(parents=True)
+        document = (
+            {"name": name, "version": "1.0.0", "api_version": 1}
+            if manifest is None
+            else manifest
+        )
+        (directory / "plugin.json").write_text(json.dumps(document))
+        for abi in abis:
+            library = directory / "android" / abi / f"librasp_plugin_{name}.so"
+            library.parent.mkdir(parents=True)
+            library.write_bytes(f"{name} {abi}".encode())
+        if ios is True:
+            framework = directory / "ios" / f"rasp_plugin_{name}.framework"
+            framework.mkdir(parents=True)
+            (framework / f"rasp_plugin_{name}").write_bytes(f"{name} ios".encode())
+            (framework / "Info.plist").write_bytes(
+                plistlib.dumps({"CFBundleExecutable": f"rasp_plugin_{name}"})
+            )
+        if config is not None:
+            (directory / "config").write_bytes(config)
+        return directory
+
+    return make

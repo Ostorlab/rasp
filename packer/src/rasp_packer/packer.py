@@ -1,5 +1,6 @@
 """The packer's entry point: protects a built app."""
 
+import collections.abc
 import dataclasses
 import pathlib
 import re
@@ -7,6 +8,7 @@ import re
 from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import platforms
+from rasp_packer import plugins as plugins_module
 from rasp_packer.android import packer as android_packer
 from rasp_packer.ios import packer as ios_packer
 
@@ -38,6 +40,7 @@ def pack(
     platform: platforms.Platform,
     output: pathlib.Path,
     build_id: str,
+    plugins: collections.abc.Sequence[pathlib.Path] = (),
 ) -> PackResult:
     """Protects a built app: adds the runtime and writes the protected app to `output`.
 
@@ -51,6 +54,7 @@ def pack(
         platform: The platform of the app.
         output: Path to write the protected app to. It must not exist.
         build_id: The id of the protected build, written into the app.
+        plugins: Plugin bundle directories to add, in the order the runtime loads them.
 
     Returns:
         The protected app, the app's package name and version, and the build id.
@@ -59,19 +63,23 @@ def pack(
         InvalidBuildIdError: The build id is empty or has control characters.
         OutputExistsError: `output` already exists.
         InvalidAppError: The app file cannot be read.
+        InvalidPluginError: A plugin bundle is malformed, or lacks a build for the app.
         Error: The app cannot be packed; see the platform's packer.
     """
     _check_build_id(build_id)
     if output.exists() is True:
         raise errors.OutputExistsError(f"{output} already exists")
+    bundles = plugins_module.load_all(plugins)
     app_identity: identity.AppIdentity
     match platform:
         case platforms.Platform.ANDROID:
             app_identity = android_packer.pack(
-                app=app, output=output, build_id=build_id
+                app=app, output=output, build_id=build_id, plugins=bundles
             )
         case platforms.Platform.IOS:
-            app_identity = ios_packer.pack(app=app, output=output, build_id=build_id)
+            app_identity = ios_packer.pack(
+                app=app, output=output, build_id=build_id, plugins=bundles
+            )
     return PackResult(
         output=output,
         package_name=app_identity.package_name,

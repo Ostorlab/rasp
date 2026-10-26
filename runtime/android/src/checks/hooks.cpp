@@ -14,13 +14,13 @@
 #include <vector>
 
 #include "rasp/observation.h"
-#include "util/read_file.h"
+#include "rasp/util/read_file.h"
 
 namespace rasp::android::checks {
 
 namespace {
 
-using util::read_file;
+using rasp::util::read_file;
 
 #ifdef __ANDROID__
 /// Whether this build runs on Android, the only place the probe means anything.

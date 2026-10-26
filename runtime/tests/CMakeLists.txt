@@ -23,6 +23,26 @@ foreach(test observation)
   gtest_discover_tests(rasp_core_${name}_test)
 endforeach()
 
+add_library(rasp_test_c_plugin OBJECT core/plugins/c_plugin.c)
+target_include_directories(rasp_test_c_plugin PRIVATE ${PROJECT_SOURCE_DIR}/core/include)
+set_target_properties(rasp_test_c_plugin PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+target_compile_options(rasp_test_c_plugin PRIVATE -Wall -Wextra -Werror -Wpedantic)
+
+add_executable(rasp_core_plugins_host_test core/plugins/host_test.cpp $<TARGET_OBJECTS:rasp_test_c_plugin>)
+target_link_libraries(rasp_core_plugins_host_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_core_plugins_host_test)
+
+add_library(rasp_test_not_a_plugin SHARED core/plugins/not_a_plugin.cpp)
+target_link_libraries(rasp_test_not_a_plugin PRIVATE rasp_warnings rasp_language)
+
+add_executable(rasp_core_plugins_loader_test core/plugins/loader_test.cpp)
+target_link_libraries(rasp_core_plugins_loader_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+target_compile_definitions(rasp_core_plugins_loader_test PRIVATE
+  RASP_EXAMPLE_PLUGIN="$<TARGET_FILE:rasp_plugin_example>"
+  RASP_NOT_A_PLUGIN="$<TARGET_FILE:rasp_test_not_a_plugin>")
+add_dependencies(rasp_core_plugins_loader_test rasp_plugin_example rasp_test_not_a_plugin)
+gtest_discover_tests(rasp_core_plugins_loader_test)
+
 add_executable(rasp_ios_jailbreak_test ios/checks/jailbreak_test.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/jailbreak.cpp)
 target_include_directories(rasp_ios_jailbreak_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_ios_jailbreak_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
@@ -30,8 +50,7 @@ gtest_discover_tests(rasp_ios_jailbreak_test)
 
 foreach(check debugger hooks mitm root)
   add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
-    ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp
-    ${PROJECT_SOURCE_DIR}/android/src/util/read_file.cpp)
+    ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp)
   target_include_directories(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
     ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(rasp_android_${check}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
@@ -40,8 +59,7 @@ endforeach()
 
 add_executable(rasp_android_integrity_test android/checks/integrity_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/read_file.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
 target_include_directories(rasp_android_integrity_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_integrity_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
@@ -49,8 +67,7 @@ target_link_libraries(rasp_android_integrity_test PRIVATE rasp_core rasp_tfpsacr
 gtest_discover_tests(rasp_android_integrity_test)
 
 add_executable(rasp_android_apk_file_test android/util/apk_file_test.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/read_file.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
 target_include_directories(rasp_android_apk_file_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_apk_file_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)

@@ -1,10 +1,15 @@
 configure_file(include/rasp/version.h.in ${CMAKE_CURRENT_BINARY_DIR}/include/rasp/version.h @ONLY)
 
-add_library(rasp_core STATIC src/observation.cpp)
+add_library(rasp_core STATIC
+  src/observation.cpp
+  src/plugins/host.cpp
+  src/plugins/loader.cpp
+  src/util/read_file.cpp)
 target_include_directories(rasp_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_BINARY_DIR}/include)
 target_link_libraries(rasp_core PRIVATE rasp_warnings rasp_language rasp_shipped)
+target_link_libraries(rasp_core PUBLIC ${CMAKE_DL_LIBS})
 
 if(RASP_LOGGING)
   target_compile_definitions(rasp_core PUBLIC RASP_LOGGING_ENABLED=true)

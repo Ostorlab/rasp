@@ -1,5 +1,6 @@
 """Tests of the packer's entry point."""
 
+import collections.abc
 import pathlib
 
 import pytest
@@ -8,6 +9,7 @@ from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import packer
 from rasp_packer import platforms
+from rasp_packer import plugins
 from rasp_packer.android import packer as android_packer
 from rasp_packer.ios import packer as ios_packer
 
@@ -157,3 +159,53 @@ def testPack_whenAndroidApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
         version="1.2.3",
         build_id=_BUILD_ID,
     )
+
+
+@pytest.mark.parametrize(
+    ("platform", "packer_module"),
+    [
+        (platforms.Platform.IOS, ios_packer),
+        (platforms.Platform.ANDROID, android_packer),
+    ],
+)
+def testPack_whenPluginsAreGiven_passesTheLoadedBundlesInOrder(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_plugin: collections.abc.Callable[..., pathlib.Path],
+    platform: platforms.Platform,
+    packer_module: object,
+) -> None:
+    bundles = [make_plugin(name="zeta"), make_plugin(name="alpha")]
+    received: list[collections.abc.Sequence[plugins.Plugin]] = []
+
+    def fake_pack(
+        *, plugins: collections.abc.Sequence[plugins.Plugin], **_: object
+    ) -> identity.AppIdentity:
+        received.append(plugins)
+        return _IDENTITY
+
+    monkeypatch.setattr(packer_module, "pack", fake_pack)
+    packer.pack(
+        app=tmp_path / "app",
+        platform=platform,
+        output=tmp_path / "out",
+        build_id=_BUILD_ID,
+        plugins=bundles,
+    )
+
+    assert [[plugin.name for plugin in given] for given in received] == [
+        ["zeta", "alpha"]
+    ]
+
+
+def testPack_whenAPluginBundleIsInvalid_raisesInvalidPluginError(
+    tmp_path: pathlib.Path,
+) -> None:
+    with pytest.raises(errors.InvalidPluginError):
+        packer.pack(
+            app=tmp_path / "app.ipa",
+            platform=platforms.Platform.IOS,
+            output=tmp_path / "out.ipa",
+            build_id=_BUILD_ID,
+            plugins=[tmp_path / "missing"],
+        )

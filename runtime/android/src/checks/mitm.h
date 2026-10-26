@@ -17,9 +17,9 @@ namespace rasp::android::checks {
 /// On Android it reads the process's own network interfaces through getifaddrs and reports the tunnels among them.
 /// Anywhere else, such as on a Linux host, the observation is unsupported instead, so the server still sees that the
 /// check ran. The user-authority probe reports unsupported on a device from this path: the trust store directory is
-/// labeled system_data_file under SELinux, so it can't be listed, and a load-time constructor has no JNIEnv or Context
-/// to reach the Java APIs that do expose user CAs (such as the `AndroidCAStore` KeyStore). A later JNI-aware path can
-/// enumerate them; observe_user_cas stays the tested listing helper for a readable directory.
+/// labeled system_data_file under SELinux, so it can't be listed, and the runtime's native thread has no JNIEnv or
+/// Context to reach the Java APIs that do expose user CAs (such as the `AndroidCAStore` KeyStore). A later JNI-aware
+/// path can enumerate them; observe_user_cas stays the tested listing helper for a readable directory.
 ///
 /// @return One observation per signal and source, in this order: mitm.tunnels through getifaddrs, then mitm.user_cas
 /// through user_cacerts.

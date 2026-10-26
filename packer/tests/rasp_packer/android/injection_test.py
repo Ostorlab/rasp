@@ -5,6 +5,7 @@ import collections.abc
 import pytest
 
 from rasp_packer import errors
+from rasp_packer import plugins
 from rasp_packer.android import injection
 from rasp_packer.android import resources
 from rasp_packer.android.apk import archive
@@ -63,6 +64,60 @@ def testLibraryEntries_whenAppAbiHasNoRuntime_raisesUnsupportedAbiError() -> Non
     apk = _apk(["lib/riscv64/libapp.so"])
     with pytest.raises(errors.UnsupportedAbiError):
         injection.library_entries(apk, _artifacts(["arm64-v8a"]))
+
+
+def _plugin(
+    name: str, abis: collections.abc.Sequence[str], config: bytes = b""
+) -> plugins.Plugin:
+    return plugins.Plugin(
+        name=name,
+        version="1.0.0",
+        api_version=1,
+        android_libraries={abi: f"{name} {abi}".encode() for abi in abis},
+        ios_framework=None,
+        config=config,
+    )
+
+
+def testRuntimeAbis_whenAppHasAbis_returnsTheAppsAbis() -> None:
+    apk = _apk(["lib/arm64-v8a/libapp.so"])
+    assert injection.runtime_abis(apk, _artifacts(["arm64-v8a", "x86_64"])) == {
+        "arm64-v8a"
+    }
+
+
+def testRuntimeAbis_whenAppHasNoAbis_returnsEveryRuntimeAbi() -> None:
+    assert injection.runtime_abis(_apk([]), _artifacts(["a", "b"])) == {"a", "b"}
+
+
+def testPluginEntries_whenNoPlugin_returnsNoEntry() -> None:
+    assert injection.plugin_entries([], {"arm64-v8a"}) == {}
+
+
+def testPluginEntries_whenPluginsAreGiven_addsLibrariesConfigsAndTheList() -> None:
+    entries = injection.plugin_entries(
+        [
+            _plugin("zeta", ["arm64-v8a", "x86_64", "riscv64"], b"zeta config"),
+            _plugin("alpha", ["arm64-v8a", "x86_64"]),
+        ],
+        {"arm64-v8a", "x86_64"},
+    )
+
+    assert entries == {
+        "lib/arm64-v8a/librasp_plugin_zeta.so": b"zeta arm64-v8a",
+        "lib/x86_64/librasp_plugin_zeta.so": b"zeta x86_64",
+        "lib/arm64-v8a/librasp_plugin_alpha.so": b"alpha arm64-v8a",
+        "lib/x86_64/librasp_plugin_alpha.so": b"alpha x86_64",
+        f"{injection.PLUGIN_CONFIG_DIRECTORY}/zeta": b"zeta config",
+        injection.PLUGIN_LIST_ENTRY: b"zeta\nalpha\n",
+    }
+
+
+def testPluginEntries_whenAPluginLacksAnAbi_raisesInvalidPluginError() -> None:
+    with pytest.raises(errors.InvalidPluginError, match=r"alpha .* x86_64"):
+        injection.plugin_entries(
+            [_plugin("alpha", ["arm64-v8a"])], {"arm64-v8a", "x86_64"}
+        )
 
 
 def testStaleSignatureEntries_whenV1SignaturePresent_returnsThem() -> None:

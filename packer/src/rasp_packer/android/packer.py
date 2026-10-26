@@ -15,6 +15,9 @@ runtime's ``payload/dex_store.*``, ``payload/assets.h`` and ``loader/loader_dex.
 - the framework dexes and the stub, in the clear, as ``classes.dex`` … ``classesN.dex``.
 - ``lib/<abi>/librasp.so`` — the runtime library, one per ABI, unmodified. The loader's own dex is
   already embedded in it at the runtime's build, so the packer does not touch the ``.so``.
+- for each plugin, ``lib/<abi>/librasp_plugin_<name>.so`` next to the runtime library, its config
+  as ``assets/rasp/plugin-config/<name>`` when it has one, and ``assets/rasp/plugins.list``, which
+  names the plugins in load order.
 
 It sets the manifest's appComponentFactory to the stub, raises minSdk to the runtime's floor (API 31,
 which the in-memory loader and ``JNI_GetCreatedJavaVMs`` need), drops the app's original dexes and v1
@@ -27,6 +30,7 @@ import pathlib
 
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer import plugins as plugins_module
 from rasp_packer.android import cipher
 from rasp_packer.android import injection
 from rasp_packer.android import loader_map
@@ -54,6 +58,7 @@ def pack(
     build_id: str,
     artifacts: resources_module.Artifacts | None = None,
     splitter: Splitter = split_module.split,
+    plugins: collections.abc.Sequence[plugins_module.Plugin] = (),
 ) -> identity.AppIdentity:
     """Packs an Android app, writing the protected APK to output.
 
@@ -64,6 +69,8 @@ def pack(
         artifacts: The prebuilt stub and libraries. Loaded from the package resources when not given.
         splitter: Splits the app's classes into framework and business dexes. The default runs the
             bundled splitter; a test passes a recorded split.
+        plugins: The plugins to add, in load order. Each one's library goes next to the runtime for
+            every ABI the app gets the runtime for, stored like it.
 
     Returns:
         The app's package name and version, read from its manifest.
@@ -76,6 +83,8 @@ def pack(
         UnsupportedAbiError: The app ships native libraries for an ABI the runtime is not built for.
         AlreadyProtectedError: The app already holds the map, or its manifest already names the stub.
         SplitError: The app's classes cannot be read or split.
+        InvalidPluginError: A plugin has no library for one of the ABIs the app gets the runtime
+            for.
     """
     if artifacts is None:
         artifacts = resources_module.load()
@@ -92,6 +101,9 @@ def pack(
     ):
         raise errors.AlreadyProtectedError("the app is already protected")
 
+    plugin_entries = injection.plugin_entries(
+        plugins, injection.runtime_abis(apk, artifacts)
+    )
     result = splitter(app, app_identity.package_name)
 
     patched_manifest = manifest_module.set_app_component_factory(
@@ -115,6 +127,7 @@ def pack(
             **business_entries,
             **base_dexes,
             **injection.library_entries(apk, artifacts),
+            **plugin_entries,
         },
         remove=set(dex_names) | injection.stale_signature_entries(apk),
     )

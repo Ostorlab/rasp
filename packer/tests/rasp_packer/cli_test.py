@@ -106,3 +106,53 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
         f"packed ios app: {tmp_path / 'out.ipa'} "
         f"(package dev.ostorlab.demo, version 1.2.3, build {_BUILD_ID})"
     )
+
+
+def testMain_whenPluginsAreGiven_packsThemInTheOrderGiven(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    received: list[object] = []
+
+    def fake_pack(*, plugins: object, **_: object) -> packer.PackResult:
+        received.append(plugins)
+        return packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+        )
+
+    monkeypatch.setattr(packer, "pack", fake_pack)
+
+    exit_code = cli.main(
+        [
+            *_pack_arguments(tmp_path),
+            "--plugin",
+            str(tmp_path / "zeta"),
+            "--plugin",
+            str(tmp_path / "alpha"),
+        ]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert received == [[tmp_path / "zeta", tmp_path / "alpha"]]
+
+
+def testMain_whenNoPluginIsGiven_packsNone(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    received: list[object] = []
+
+    def fake_pack(*, plugins: object, **_: object) -> packer.PackResult:
+        received.append(plugins)
+        return packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+        )
+
+    monkeypatch.setattr(packer, "pack", fake_pack)
+
+    assert cli.main(_pack_arguments(tmp_path)) == cli.EXIT_OK
+    assert received == [[]]

@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
-#include "util/read_file.h"
+#include "rasp/util/read_file.h"
 
 #ifdef __ANDROID__
 #include <cstdint>
@@ -29,7 +29,7 @@ namespace rasp::android::checks {
 
 namespace {
 
-using util::read_file;
+using rasp::util::read_file;
 
 /// The signal of the root-file probe.
 constexpr std::string_view kPathsSignal = "root.fs_paths";

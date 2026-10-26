@@ -11,6 +11,7 @@ import pytest
 
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer import plugins
 from rasp_packer.ios import macho
 from rasp_packer.ios import packer
 from tests.rasp_packer import conftest
@@ -114,3 +115,97 @@ def testPack_whenRuntimeIsNotTheFramework_raisesInvalidRuntimeError(
             runtime=tmp_path,
             build_id=_BUILD_ID,
         )
+
+
+def _pack_with_plugins(
+    app: pathlib.Path,
+    runtime: pathlib.Path,
+    output: pathlib.Path,
+    bundles: collections.abc.Sequence[pathlib.Path],
+) -> zipfile.ZipFile:
+    """Packs the app with the given plugin bundles and opens the protected IPA."""
+    packer.pack(
+        app=app,
+        output=output,
+        runtime=runtime,
+        build_id=_BUILD_ID,
+        plugins=plugins.load_all(bundles),
+    )
+    return zipfile.ZipFile(output)
+
+
+def testPack_whenPluginsAreGiven_embedsTheirFrameworks(
+    ipa_file: pathlib.Path,
+    runtime: pathlib.Path,
+    tmp_path: pathlib.Path,
+    make_plugin: collections.abc.Callable[..., pathlib.Path],
+) -> None:
+    with _pack_with_plugins(
+        ipa_file, runtime, tmp_path / "out.ipa", [make_plugin(name="example")]
+    ) as archive:
+        framework = f"{_APP}/Frameworks/rasp_plugin_example.framework"
+        binary = archive.read(f"{framework}/rasp_plugin_example")
+        info = plistlib.loads(archive.read(f"{framework}/Info.plist"))
+
+    assert binary == b"example ios"
+    assert info["CFBundleExecutable"] == "rasp_plugin_example"
+
+
+def testPack_whenPluginsAreGiven_writesTheListAndConfigsIntoTheRuntime(
+    ipa_file: pathlib.Path,
+    runtime: pathlib.Path,
+    tmp_path: pathlib.Path,
+    make_plugin: collections.abc.Callable[..., pathlib.Path],
+) -> None:
+    bundles = [make_plugin(name="zeta", config=b"z=1"), make_plugin(name="alpha")]
+
+    with _pack_with_plugins(
+        ipa_file, runtime, tmp_path / "out.ipa", bundles
+    ) as archive:
+        names = archive.namelist()
+        plugin_list = archive.read(f"{_FRAMEWORK}/plugins.list")
+        zeta_config = archive.read(f"{_FRAMEWORK}/plugin-config/zeta")
+
+    assert plugin_list == b"zeta\nalpha\n"
+    assert zeta_config == b"z=1"
+    assert f"{_FRAMEWORK}/plugin-config/alpha" not in names
+
+
+def testPack_whenNoPluginIsGiven_writesNoPluginList(
+    ipa_file: pathlib.Path, runtime: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    with _pack(ipa_file, runtime, tmp_path / "out.ipa") as archive:
+        names = archive.namelist()
+
+    assert f"{_FRAMEWORK}/plugins.list" not in names
+
+
+def testPack_whenAPluginHasNoIosBuild_raisesInvalidPluginError(
+    ipa_file: pathlib.Path,
+    runtime: pathlib.Path,
+    tmp_path: pathlib.Path,
+    make_plugin: collections.abc.Callable[..., pathlib.Path],
+) -> None:
+    with pytest.raises(
+        errors.InvalidPluginError, match="without an iOS build: example"
+    ):
+        _pack_with_plugins(
+            ipa_file, runtime, tmp_path / "out.ipa", [make_plugin(ios=False)]
+        )
+    assert (tmp_path / "out.ipa").exists() is False
+
+
+def testPack_whenTheAppAlreadyEmbedsThePluginsFramework_raisesInvalidPluginError(
+    make_ipa: collections.abc.Callable[..., pathlib.Path],
+    runtime: pathlib.Path,
+    tmp_path: pathlib.Path,
+    make_plugin: collections.abc.Callable[..., pathlib.Path],
+) -> None:
+    app = make_ipa(
+        extra_entries={
+            f"{_APP}/Frameworks/rasp_plugin_example.framework/rasp_plugin_example": b""
+        }
+    )
+
+    with pytest.raises(errors.InvalidPluginError, match="already embeds"):
+        _pack_with_plugins(app, runtime, tmp_path / "out.ipa", [make_plugin()])

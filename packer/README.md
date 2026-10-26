@@ -24,6 +24,17 @@ rasp pack app.ipa --platform ios --build-id e6a8373149e83d008a5212b34bdd23bf637a
 
 `pack` returns the path of the protected app, the app's package name and version (on iOS, `CFBundleIdentifier` and `CFBundleShortVersionString` from its `Info.plist`; on Android, the `package` and `android:versionName` of its manifest), and the build id.
 
+## Plugins
+
+`pack(..., plugins=[...])`, or `rasp pack ... --plugin <dir>` repeated, adds plugins to the protected app, in the order given, which is the order the runtime loads them. A plugin adds checks to the runtime and sees each pass's observations; `runtime/core/include/rasp/plugin.h` is its API. A plugin bundle is a directory with:
+
+- `plugin.json`: `{"name": ..., "version": ..., "api_version": ...}`. The name matches `[a-z][a-z0-9_]{0,31}`, and the API version must be one the runtime supports (`plugins.PLUGIN_API_VERSION`).
+- `android/<abi>/librasp_plugin_<name>.so`: the Android library for each ABI. Every ABI the app gets `librasp.so` for needs one.
+- `ios/rasp_plugin_<name>.framework`: the iOS framework, with its binary `rasp_plugin_<name>`. Packing an IPA needs it.
+- `config`, optional: bytes the runtime gives the plugin when it starts it, at most 64 KiB.
+
+On Android, the packer adds each library next to `librasp.so`, stored and aligned the same way, and writes the stored assets `assets/rasp/plugins.list` (one name per line) and `assets/rasp/plugin-config/<name>`. On iOS, it copies each framework into the app's `Frameworks/` and writes `plugins.list` and `plugin-config/<name>` into `RaspRuntime.framework`. The protected app is unsigned: the customer signs it, the plugin frameworks included. A bundle that is malformed or lacks a build the app needs raises `InvalidPluginError`.
+
 The runtime is bundled in the packer.
 
 ## Android
@@ -39,7 +50,7 @@ For Android the packer protects the app's code:
 
 It reads the app's package and version from the `<manifest>` element. An APK whose manifest has no package, or no literal `android:versionName` (for example an `android:versionName` set to a `@string` resource), is refused with `InvalidApkError`, and so is one without a literal `android:minSdkVersion` on `<uses-sdk>`. An APK that already holds a payload, or whose manifest already names the stub as its component factory, is refused with `AlreadyProtectedError`.
 
-At run time Android loads the stub as the app's component factory; the stub loads the runtime; the runtime runs its pre-decryption checks and, if they pass, decrypts the dex files; the stub then serves them from memory, and Android creates the app's own Application and components from them.
+At run time Android loads the stub as the app's component factory; the stub loads the runtime, which starts the thread that runs the checks, and asks it for the on-demand loader, which decrypts each of the app's own dex files in memory the first time one of its classes is needed.
 
 The stub and the native runtime are prebuilt by the runtime build and live under `src/rasp_packer/android/resources/` (see the README there). Without them the packer raises `MissingRuntimeArtifactError`.
 
@@ -73,6 +84,7 @@ Only a release has the prebuilt runtime in it: the iOS framework, and the Androi
 - `src/rasp_packer/packer.py`: `pack`, the entry point.
 - `src/rasp_packer/platforms.py`: the platforms, Android and iOS.
 - `src/rasp_packer/identity.py`: `AppIdentity`, the package name and version read from the app.
+- `src/rasp_packer/plugins.py`: reading and checking plugin bundles.
 - `src/rasp_packer/protection_versions.py`: the protection version of each platform, part of every build id. It is public: the caller reads it to compute the build id.
 - `src/rasp_packer/cli.py`: the `rasp` command line.
 - `src/rasp_packer/ios/`: packing of IPAs.

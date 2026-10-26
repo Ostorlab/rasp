@@ -2,12 +2,15 @@
 
 import collections.abc
 import pathlib
+import struct
 import zipfile
 
 import pytest
 
 from rasp_packer import errors
+from rasp_packer import plugins
 from rasp_packer.android import cipher
+from rasp_packer.android import injection
 from rasp_packer.android import packer
 from rasp_packer.android import resources
 from rasp_packer.android import split
@@ -265,3 +268,104 @@ def testPack_whenValidApk_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     )
     assert app_identity.package_name == _PACKAGE
     assert app_identity.version == "2.4.1"
+
+
+_X86_64_SO = b"x86_64 librasp.so bytes"
+
+
+def _data_offset(path: pathlib.Path, name: str) -> int:
+    with zipfile.ZipFile(path) as archive:
+        header = archive.getinfo(name).header_offset
+    with path.open("rb") as stream:
+        stream.seek(header + 26)
+        name_length, extra_length = struct.unpack("<HH", stream.read(4))
+    return int(header + 30 + name_length + extra_length)
+
+
+def _pack_with_plugins(
+    tmp_path: pathlib.Path,
+    bundles: collections.abc.Sequence[pathlib.Path],
+    native_libraries: collections.abc.Sequence[str] = (),
+) -> pathlib.Path:
+    app = tmp_path / "app.apk"
+    output = tmp_path / "protected.apk"
+    _make_apk(app, native_libraries=native_libraries)
+    packer.pack(
+        app=app,
+        output=output,
+        build_id=_BUILD_ID,
+        artifacts=resources.Artifacts(
+            stub_dex=_STUB_DEX,
+            libraries={"arm64-v8a": _ARM64_SO, "x86_64": _X86_64_SO},
+        ),
+        splitter=_recorded_split(),
+        plugins=plugins.load_all(bundles),
+    )
+    return output
+
+
+def testPack_whenPluginsAreGiven_addsTheirLibrariesNextToTheRuntime(
+    tmp_path: pathlib.Path, make_plugin: collections.abc.Callable[..., pathlib.Path]
+) -> None:
+    output = _pack_with_plugins(
+        tmp_path, [make_plugin(name="example", abis=("arm64-v8a", "x86_64"))]
+    )
+
+    with zipfile.ZipFile(output) as archive:
+        arm64 = archive.getinfo("lib/arm64-v8a/librasp_plugin_example.so")
+        assert archive.read(arm64) == b"example arm64-v8a"
+        assert archive.read("lib/x86_64/librasp_plugin_example.so") == b"example x86_64"
+    assert arm64.compress_type == zipfile.ZIP_STORED
+    assert _data_offset(output, "lib/arm64-v8a/librasp_plugin_example.so") % 16384 == 0
+    assert _data_offset(output, "lib/x86_64/librasp_plugin_example.so") % 16384 == 0
+
+
+def testPack_whenPluginsAreGiven_writesTheListAndTheConfigsAsStoredAssets(
+    tmp_path: pathlib.Path, make_plugin: collections.abc.Callable[..., pathlib.Path]
+) -> None:
+    output = _pack_with_plugins(
+        tmp_path,
+        [
+            make_plugin(name="zeta", abis=("arm64-v8a", "x86_64"), config=b"z=1"),
+            make_plugin(name="alpha", abis=("arm64-v8a", "x86_64")),
+        ],
+    )
+
+    with zipfile.ZipFile(output) as archive:
+        names = archive.namelist()
+        plugin_list = archive.getinfo(injection.PLUGIN_LIST_ENTRY)
+        assert archive.read(plugin_list) == b"zeta\nalpha\n"
+        assert archive.read(f"{injection.PLUGIN_CONFIG_DIRECTORY}/zeta") == b"z=1"
+    assert plugin_list.compress_type == zipfile.ZIP_STORED
+    assert f"{injection.PLUGIN_CONFIG_DIRECTORY}/alpha" not in names
+
+
+def testPack_whenNoPluginIsGiven_writesNoPluginList(tmp_path: pathlib.Path) -> None:
+    output = _pack_with_plugins(tmp_path, [])
+
+    with zipfile.ZipFile(output) as archive:
+        names = archive.namelist()
+    assert injection.PLUGIN_LIST_ENTRY not in names
+    assert not any("librasp_plugin_" in name for name in names)
+
+
+def testPack_whenAPluginLacksAnAbiTheAppGetsTheRuntimeFor_raisesInvalidPluginError(
+    tmp_path: pathlib.Path, make_plugin: collections.abc.Callable[..., pathlib.Path]
+) -> None:
+    with pytest.raises(errors.InvalidPluginError, match="x86_64"):
+        _pack_with_plugins(tmp_path, [make_plugin(abis=("arm64-v8a",))])
+
+
+def testPack_whenAPluginLacksOnlyAnAbiTheAppDoesNotShip_packs(
+    tmp_path: pathlib.Path, make_plugin: collections.abc.Callable[..., pathlib.Path]
+) -> None:
+    output = _pack_with_plugins(
+        tmp_path,
+        [make_plugin(abis=("arm64-v8a",))],
+        native_libraries=["lib/arm64-v8a/libapp.so"],
+    )
+
+    with zipfile.ZipFile(output) as archive:
+        names = archive.namelist()
+    assert "lib/arm64-v8a/librasp_plugin_example.so" in names
+    assert "lib/x86_64/librasp_plugin_example.so" not in names
