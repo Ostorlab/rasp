@@ -1,5 +1,5 @@
-/// Tests for the Android app-identity self-check: the package-name probe that reads the process's command line and the
-/// user-id probe over the process's own uid.
+/// Tests for the Android app-identity self-check: the package-name probe that reads the process's command line, the
+/// user-id probe over the process's own uid, and the code-path probe over the runtime's own library load path.
 
 #include "checks/identity.h"
 
@@ -36,6 +36,16 @@ constexpr std::size_t kCmdlineLimit = std::size_t{64} << 10U;
 /// The id.uid observation that reports `uid`.
 [[nodiscard]] Observation uid(std::int64_t value) {
   return {.signal = "id.uid", .source = "getuid", .status = Status::kOk, .value = value};
+}
+
+/// The id.code_path observation that reports `path`.
+[[nodiscard]] Observation code_path(std::string path) {
+  return {.signal = "id.code_path", .source = "dladdr", .status = Status::kOk, .value = std::move(path)};
+}
+
+/// The id.code_path observation that failed.
+[[nodiscard]] Observation unreadable_code_path() {
+  return {.signal = "id.code_path", .source = "dladdr", .status = Status::kError, .value = {}};
 }
 
 /// Writes `content` to a cmdline file in `directory` and returns its path.
@@ -132,11 +142,39 @@ TEST(Identity, observeUid_whenGivenASecondaryUserUid_reportsIt) {
   EXPECT_EQ(observe_uid(110123), uid(110123));
 }
 
+TEST(Identity, observeCodePath_whenGivenAnExtractedInstallPath_reportsIt) {
+  // A genuine install with an extracted library loads it from a path that carries the app's own package name.
+  const std::string path = "/data/app/~~abc==/co.ostorlab.app-xyz==/lib/arm64/librasp.so";
+
+  EXPECT_EQ(observe_code_path(path), code_path(path));
+}
+
+TEST(Identity, observeCodePath_whenGivenAnApkEmbeddedPath_reportsItUnchanged) {
+  // When AGP packages the library uncompressed (android:extractNativeLibs="false", the common modern default) it is
+  // mapped straight from the APK, so dladdr gives a `base.apk!/` path. It still carries the app's package and is
+  // reported as-is, not split.
+  const std::string path = "/data/app/~~abc==/co.ostorlab.app-xyz==/base.apk!/lib/arm64/librasp.so";
+
+  EXPECT_EQ(observe_code_path(path), code_path(path));
+}
+
+TEST(Identity, observeCodePath_whenGivenAVirtualizedPath_reportsIt) {
+  // A virtualizer loads the library from the host app's directory, whose path carries the host's package instead.
+  const std::string path = "/data/data/com.parallel.intl/virtual/data/user/0/co.ostorlab.app/lib/arm64/librasp.so";
+
+  EXPECT_EQ(observe_code_path(path), code_path(path));
+}
+
+TEST(Identity, observeCodePath_whenGivenNoPath_reportsAnError) {
+  EXPECT_EQ(observe_code_path(""), unreadable_code_path());
+}
+
 TEST(Identity, identity_whenOffAndroid_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(identity(),
             (std::vector<Observation>{
                 {.signal = "id.package", .source = "proc_cmdline", .status = Status::kUnsupported, .value = {}},
                 {.signal = "id.uid", .source = "getuid", .status = Status::kUnsupported, .value = {}},
+                {.signal = "id.code_path", .source = "dladdr", .status = Status::kUnsupported, .value = {}},
             }));
 }
 

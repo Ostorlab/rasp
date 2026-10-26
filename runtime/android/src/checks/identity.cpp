@@ -1,5 +1,6 @@
 /// The Android app-identity self-check: the package-name probe over the process's command line, the user-id probe over
-/// the process's own uid, and their unsupported results off Android.
+/// the process's own uid, the code-path probe over the runtime's own library load path, and their unsupported results
+/// off Android.
 
 #include "checks/identity.h"
 
@@ -12,6 +13,8 @@
 
 #ifdef __ANDROID__
 #include <unistd.h>
+
+#include "apk/location.h"
 #endif
 
 #include "rasp/observation.h"
@@ -30,6 +33,11 @@ constexpr std::string_view kPackageSource = "proc_cmdline";
 constexpr std::string_view kUidSignal = "id.uid";
 /// The source of the user-id probe, the process's own uid.
 constexpr std::string_view kUidSource = "getuid";
+
+/// The signal of the code-path probe.
+constexpr std::string_view kCodePathSignal = "id.code_path";
+/// The source of the code-path probe, the load path of the runtime's own library.
+constexpr std::string_view kCodePathSource = "dladdr";
 
 #ifdef __ANDROID__
 /// The process's command line, whose first NUL-separated argument is the package name. Only identity() reads it, on a
@@ -70,11 +78,27 @@ Observation observe_package(std::string_view cmdline_path) {
 
 Observation observe_uid(std::int64_t uid) { return observed(kUidSignal, kUidSource, uid); }
 
+Observation observe_code_path(std::string_view code_path) {
+  if (code_path.empty()) {
+    return failed(kCodePathSignal, kCodePathSource);
+  }
+  return observed(kCodePathSignal, kCodePathSource, std::string(code_path));
+}
+
 std::vector<Observation> identity() {
 #ifdef __ANDROID__
-  return {observe_package(kCmdlinePath), observe_uid(static_cast<std::int64_t>(getuid()))};
+  const std::optional<std::string> code_path = apk::self_library_path();
+  return {
+      observe_package(kCmdlinePath),
+      observe_uid(static_cast<std::int64_t>(getuid())),
+      observe_code_path(code_path.value_or(std::string())),
+  };
 #else
-  return {unsupported(kPackageSignal, kPackageSource), unsupported(kUidSignal, kUidSource)};
+  return {
+      unsupported(kPackageSignal, kPackageSource),
+      unsupported(kUidSignal, kUidSource),
+      unsupported(kCodePathSignal, kCodePathSource),
+  };
 #endif
 }
 
