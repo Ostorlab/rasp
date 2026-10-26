@@ -1,6 +1,7 @@
-/// The iOS hooking checks: the loaded-image probe, and its unsupported result off a physical device. The markers and
-/// folders draw on the names and places Frida, Cycript, Substrate, the tweak loaders and SSL Kill Switch install their
-/// libraries under, on rootful and rootless jailbreaks.
+/// The iOS hooking checks: the loaded-image probe, the read of `DYLD_INSERT_LIBRARIES` at load time and the probe that
+/// reports it, and their unsupported result off a physical device. The markers and folders draw on the names and
+/// places Frida, Cycript, Substrate, the tweak loaders and SSL Kill Switch install their libraries under, on rootful
+/// and rootless jailbreaks.
 
 #include "checks/hooks.h"
 
@@ -8,6 +9,7 @@
 #include <array>
 #include <cctype>
 #include <cstddef>
+#include <cstdlib>
 #include <span>
 #include <string>
 #include <string_view>
@@ -38,6 +40,15 @@ constexpr bool kPhysicalDevice = false;
 constexpr std::string_view kMapsHitsSignal = "hook.maps_hits";
 /// The source of the probe.
 constexpr std::string_view kDyldSource = "dyld";
+
+/// The signal of the probe that reports the value of `DYLD_INSERT_LIBRARIES`.
+constexpr std::string_view kDyldEnvSignal = "hook.dyld_env";
+/// The source of the probe.
+constexpr std::string_view kGetenvSource = "getenv";
+/// The environment variable that asks dyld to insert libraries into the process.
+constexpr const char* kInsertLibrariesVariable = "DYLD_INSERT_LIBRARIES";
+/// The most bytes of the variable's value the probe reports.
+constexpr std::size_t kMaxInsertedLibrariesSize = 4096;
 
 #ifdef __APPLE__
 /// The most images the probe reads from dyld's list. A real app loads far fewer.
@@ -200,11 +211,21 @@ Observation observe_loaded_images() {
 #endif
 }
 
-std::vector<Observation> hooks() {
+std::string read_inserted_libraries() {
+  // NOLINTNEXTLINE(concurrency-mt-unsafe)
+  const char* const value = std::getenv(kInsertLibrariesVariable);
+  return value == nullptr ? std::string() : std::string(std::string_view(value).substr(0, kMaxInsertedLibrariesSize));
+}
+
+Observation observe_inserted_libraries(std::string_view inserted_libraries) {
+  return observed(kDyldEnvSignal, kGetenvSource, std::string(inserted_libraries.substr(0, kMaxInsertedLibrariesSize)));
+}
+
+std::vector<Observation> hooks(std::string_view inserted_libraries) {
   if (!kPhysicalDevice) {
-    return {unsupported(kMapsHitsSignal, kDyldSource)};
+    return {unsupported(kMapsHitsSignal, kDyldSource), unsupported(kDyldEnvSignal, kGetenvSource)};
   }
-  return {observe_loaded_images()};
+  return {observe_loaded_images(), observe_inserted_libraries(inserted_libraries)};
 }
 
 }  // namespace rasp::ios::checks

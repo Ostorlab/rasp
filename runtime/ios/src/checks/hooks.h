@@ -1,9 +1,11 @@
-/// The iOS hooking checks: whether an instrumentation or hooking framework has loaded its code into the app's process.
+/// The iOS hooking checks: whether an instrumentation or hooking framework has loaded its code into the app's process,
+/// and which libraries the app's environment asks dyld to insert into it.
 
 #pragma once
 
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "rasp/observation.h"
@@ -14,13 +16,17 @@ namespace rasp::ios::checks {
 ///
 /// It reads the list of images loaded in the process and reports the ones that look like a known instrumentation or
 /// hooking framework (Frida, Cycript, Substrate and the tweak loaders that replace it, SSL Kill Switch and the like).
-/// The check reports the raw paths; the server decides.
+/// It also reports `inserted_libraries`, the value of `DYLD_INSERT_LIBRARIES` that read_inserted_libraries read when
+/// the runtime loaded. The checks report the raw paths and the raw value; the server decides.
 ///
-/// On a physical iOS device it runs the probe. Anywhere else, on a simulator, a Mac or a Linux host, the observation is
-/// unsupported instead, so the result still shows that the check ran.
+/// On a physical iOS device it runs the probes. Anywhere else, on a simulator, a Mac or a Linux host, every observation
+/// is unsupported instead, so the result still shows that the check ran.
 ///
-/// @return One observation: hook.maps_hits read through dyld.
-[[nodiscard]] std::vector<Observation> hooks();
+/// @param inserted_libraries The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, as read_inserted_libraries
+/// returns it.
+/// @return One observation per signal and source, in this order: hook.maps_hits read through dyld, then hook.dyld_env
+/// read through getenv.
+[[nodiscard]] std::vector<Observation> hooks(std::string_view inserted_libraries);
 
 /// Reports the paths of `image_paths` that name a known instrumentation or hooking framework.
 ///
@@ -53,5 +59,29 @@ namespace rasp::ios::checks {
 /// @return One hook.maps_hits observation read through dyld, as observe_images reports it. It has an error status when
 /// the process has more than 4096 images, and the unsupported status on a system without dyld.
 [[nodiscard]] Observation observe_loaded_images();
+
+/// Returns the value of `DYLD_INSERT_LIBRARIES` in the app's environment, the variable that asks dyld to load extra
+/// libraries into the process before the app's own code.
+///
+/// It reads the variable with getenv and returns a copy of at most its first 4096 bytes. getenv isn't safe while
+/// another thread changes the environment with setenv or unsetenv, and the environment belongs to the app, whose
+/// threads may do so at any moment. So it must only be called while the runtime loads, on the app's main thread, before
+/// the app's own code runs, and the copy is what the checks report from then on. A change the app makes to the variable
+/// later is not seen.
+///
+/// @return The value of the variable, at most its first 4096 bytes, or an empty string when it is unset.
+[[nodiscard]] std::string read_inserted_libraries();
+
+/// Reports `inserted_libraries`, the value of `DYLD_INSERT_LIBRARIES` when the runtime loaded.
+///
+/// The value is reported as it is, a list of paths separated by colons, and the probe doesn't judge it. At most its
+/// first 4096 bytes are reported. An empty value is a real answer, not a failure: the variable was unset, or was set to
+/// an empty value. dyld reads the variable before the runtime loads, and code that ran before the runtime, such as a
+/// library the variable inserted, can remove it from the environment, so an empty value doesn't mean that no library
+/// was inserted.
+///
+/// @param inserted_libraries The value of the variable, as read_inserted_libraries returns it.
+/// @return One hook.dyld_env observation read through getenv, with the value as a string.
+[[nodiscard]] Observation observe_inserted_libraries(std::string_view inserted_libraries);
 
 }  // namespace rasp::ios::checks
