@@ -2,7 +2,9 @@
 
 #include "checks/debugger.h"
 
+#include <cstdint>
 #include <gtest/gtest.h>
+#include <unistd.h>
 #include <vector>
 
 #include "rasp/observation.h"
@@ -22,9 +24,17 @@ TEST(Debugger, observeTraced_whenTheSystemHasNoProcessFlags_reportsUnsupported) 
 }
 #endif
 
+TEST(Debugger, observeParent_whenCalled_reportsTheParentProcessId) {
+  EXPECT_EQ(observe_parent(), (Observation{.signal = "dbg.parent",
+                                           .source = "getppid",
+                                           .status = Status::kOk,
+                                           .value = static_cast<std::int64_t>(getppid())}));
+}
+
 TEST(Debugger, debugger_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(debugger(), (std::vector<Observation>{
                             {.signal = "dbg.traced", .source = "sysctl", .status = Status::kUnsupported, .value = {}},
+                            {.signal = "dbg.parent", .source = "getppid", .status = Status::kUnsupported, .value = {}},
                         }));
 }
 

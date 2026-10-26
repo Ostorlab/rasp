@@ -1,9 +1,12 @@
-/// The iOS debugger checks: the traced-flag probe, and its unsupported result off a physical device.
+/// The iOS debugger checks: the traced-flag and parent-process probes, and their unsupported result off a physical
+/// device.
 
 #include "checks/debugger.h"
 
 #include <array>
+#include <cstdint>
 #include <string_view>
+#include <unistd.h>
 #include <vector>
 
 #include "rasp/observation.h"
@@ -11,10 +14,8 @@
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #include <cstddef>
-#include <cstdint>
 #include <sys/proc.h>
 #include <sys/sysctl.h>
-#include <unistd.h>
 #endif
 
 namespace rasp::ios::checks {
@@ -33,6 +34,10 @@ constexpr bool kPhysicalDevice = false;
 constexpr std::string_view kTracedSignal = "dbg.traced";
 /// The source of the traced-flag probe.
 constexpr std::string_view kTracedSource = "sysctl";
+/// The signal of the parent-process probe.
+constexpr std::string_view kParentSignal = "dbg.parent";
+/// The source of the parent-process probe.
+constexpr std::string_view kParentSource = "getppid";
 
 /// One debugger probe: the signal and source it reports, and the function that observes them.
 struct Probe {
@@ -47,6 +52,7 @@ struct Probe {
 /// The probes the debugger checks run, in the order their observations are reported.
 constexpr std::array kProbes = {
     Probe{.signal = kTracedSignal, .source = kTracedSource, .observe = observe_traced},
+    Probe{.signal = kParentSignal, .source = kParentSource, .observe = observe_parent},
 };
 
 }  // namespace
@@ -66,6 +72,8 @@ Observation observe_traced() {
   return unsupported(kTracedSignal, kTracedSource);
 #endif
 }
+
+Observation observe_parent() { return observed(kParentSignal, kParentSource, static_cast<std::int64_t>(getppid())); }
 
 std::vector<Observation> debugger() {
   std::vector<Observation> observations;
