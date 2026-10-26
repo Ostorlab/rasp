@@ -23,7 +23,7 @@ foreach(test observation)
   gtest_discover_tests(rasp_core_${name}_test)
 endforeach()
 
-foreach(check debugger jailbreak)
+foreach(check debugger hooks jailbreak)
   add_executable(rasp_ios_${check}_test ios/checks/${check}_test.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/checks/${check}.cpp)
   target_include_directories(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src
