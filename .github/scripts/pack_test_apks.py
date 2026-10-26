@@ -12,14 +12,16 @@ import sys
 import tempfile
 import zipfile
 
-from rasp_packer.android import config
+from rasp_packer.android import cipher
+from rasp_packer.android import injection
+from rasp_packer.android import packer
 from rasp_packer.android import resources
-from rasp_packer.android.apk import archive as apk_archive
+from rasp_packer.android import split
 from rasp_packer.android.apk import axml
 
 # A fixed build id: on main the runtime does not compute it, the caller passes it (see Ostorlab/rasp#47).
 _BUILD_ID = "0" * 64
-_PRIMARY_DEX = "classes.dex"
+_DEX_MAGIC = b"dex\n"
 
 
 def main(argv: collections.abc.Sequence[str] | None = None) -> int:
@@ -116,9 +118,7 @@ def _protected_app_problems(
         problems.extend(_library_problems(archive, names, artifacts))
         problems.extend(_payload_problems(archive, names))
         problems.extend(_manifest_problems(archive, names))
-        problems.extend(
-            _leftover_problems(names, apk_archive.Apk.read(protected).dex_names())
-        )
+        problems.extend(_signature_problems(names))
     return problems
 
 
@@ -127,12 +127,21 @@ def _stub_problems(
     names: collections.abc.Set[str],
     artifacts: resources.Artifacts,
 ) -> list[str]:
-    """Checks that the primary dex is the shipped stub loader."""
-    if _PRIMARY_DEX not in names:
-        return [f"the protected app has no {_PRIMARY_DEX}"]
-    if archive.read(_PRIMARY_DEX) != artifacts.stub_dex:
-        return [f"{_PRIMARY_DEX} is not the stub the packer ships"]
+    """Checks that the last base dex, the one Android loads after the app's framework dexes, is the shipped stub."""
+    base = _base_dex_names(names)
+    if len(base) == 0:
+        return [f"the protected app has no {injection.primary_dex_name(0)}"]
+    if archive.read(base[-1]) != artifacts.stub_dex:
+        return [f"{base[-1]}, the last base dex, is not the stub the packer ships"]
     return []
+
+
+def _base_dex_names(names: collections.abc.Set[str]) -> list[str]:
+    """Gives the base dex entries in load order: classes.dex, classes2.dex and on, up to the first one missing."""
+    base: list[str] = []
+    while injection.primary_dex_name(len(base)) in names:
+        base.append(injection.primary_dex_name(len(base)))
+    return base
 
 
 def _library_problems(
@@ -154,20 +163,50 @@ def _library_problems(
 def _payload_problems(
     archive: zipfile.ZipFile, names: collections.abc.Set[str]
 ) -> list[str]:
-    """Checks that the runtime config and the encrypted payload are present and well-formed."""
-    if config.CONFIG_ENTRY not in names or config.PAYLOAD_ENTRY not in names:
-        return ["the runtime config or payload is missing"]
+    """Checks the key, the build id, the class map and the encrypted business dexes the runtime reads."""
+    entries = (packer.KEY_ENTRY, packer.MAP_ENTRY, packer.BUILD_ID_ENTRY)
+    missing = [entry for entry in entries if entry not in names]
+    if len(missing) > 0:
+        return [f"missing: {', '.join(missing)}"]
+    key = archive.read(packer.KEY_ENTRY)
+    if len(key) != cipher.KEY_SIZE:
+        return [f"the key is {len(key)} bytes, not {cipher.KEY_SIZE}"]
     problems: list[str] = []
-    runtime_config = config.RuntimeConfig.from_json(
-        archive.read(config.CONFIG_ENTRY).decode("utf-8")
-    )
-    if runtime_config.build_id != _BUILD_ID:
+    build_id = archive.read(packer.BUILD_ID_ENTRY).decode("utf-8")
+    if build_id != _BUILD_ID:
         problems.append(
-            f"the runtime config records {runtime_config.build_id!r}, not the build id passed to the packer"
+            f"the protected app records {build_id!r}, not the build id passed to the packer"
         )
-    if len(archive.read(config.PAYLOAD_ENTRY)) == 0:
-        problems.append("the encrypted payload is empty")
+    if _decrypted(archive, packer.MAP_ENTRY, key) is None:
+        problems.append("the class map does not decrypt with the app's key")
+    problems.extend(_business_problems(archive, names, key))
     return problems
+
+
+def _business_problems(
+    archive: zipfile.ZipFile, names: collections.abc.Set[str], key: bytes
+) -> list[str]:
+    """Checks that there is a business dex and that each one decrypts, with the app's key, to a dex file."""
+    prefix = f"{packer.ASSET_PREFIX}{split.BUSINESS_DIRECTORY}/"
+    business = sorted(name for name in names if name.startswith(prefix))
+    if len(business) == 0:
+        return [f"no encrypted business dex under {prefix}"]
+    problems: list[str] = []
+    for entry in business:
+        plaintext = _decrypted(archive, entry, key)
+        if plaintext is None:
+            problems.append(f"{entry} does not decrypt with the app's key")
+        elif plaintext.startswith(_DEX_MAGIC) is False:
+            problems.append(f"{entry} is not a dex file once decrypted")
+    return problems
+
+
+def _decrypted(archive: zipfile.ZipFile, entry: str, key: bytes) -> bytes | None:
+    """Decrypts the frame stored at `entry` with `key`, or gives None when its tag does not verify."""
+    try:
+        return cipher.decrypt(key, archive.read(entry))
+    except cipher.CipherError:
+        return None
 
 
 def _manifest_problems(
@@ -183,18 +222,12 @@ def _manifest_problems(
     return []
 
 
-def _leftover_problems(
-    names: collections.abc.Set[str], dex_names: collections.abc.Sequence[str]
-) -> list[str]:
-    """Checks that the v1 signature files and the original secondary dexes, the entries the packer removes, are gone."""
-    problems: list[str] = []
+def _signature_problems(names: collections.abc.Set[str]) -> list[str]:
+    """Checks that the v1 signature files, which the packer removes, are gone."""
     signature = sorted(name for name in names if _is_v1_signature(name) is True)
     if len(signature) > 0:
-        problems.append(f"v1 signature files are still there: {', '.join(signature)}")
-    secondary = sorted(name for name in dex_names if name != _PRIMARY_DEX)
-    if len(secondary) > 0:
-        problems.append(f"original dexes are still present: {', '.join(secondary)}")
-    return problems
+        return [f"v1 signature files are still there: {', '.join(signature)}"]
+    return []
 
 
 def _is_v1_signature(name: str) -> bool:
