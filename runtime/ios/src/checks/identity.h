@@ -1,6 +1,7 @@
 /// The iOS app-identity self-check: whether the app still has the identity it shipped with, which a repackaged or
-/// re-signed build changes. It reports the Team ID and the cdhash of the code signature of the app's main executable;
-/// the server checks that they agree with the values the customer registered, and decides.
+/// re-signed build changes. It reports the app's bundle identifier, read through two independent sources, and the Team
+/// ID and the cdhash of the code signature of the app's main executable; the server checks that they agree with each
+/// other and with the values the customer registered, and decides.
 
 #pragma once
 
@@ -13,12 +14,56 @@ namespace rasp::ios::checks {
 
 /// Runs the app-identity check and returns what it observed.
 ///
-/// On a physical iOS device it reports the Team ID and the cdhash of the code signature of the app's main executable,
-/// as observe_main_executable_signature does. Anywhere else, on a simulator, a Mac or a Linux host, every observation
-/// is unsupported instead, so the result still shows that the check ran.
+/// On a physical iOS device it reports the bundle identifier of the app's main bundle twice: once as CFBundle reports
+/// it, as observe_bundle_identifier does, and once as the main bundle's Info.plist file on disk holds it, as
+/// observe_main_info_plist does. It then reports the Team ID and the cdhash of the code signature of the app's main
+/// executable, as observe_main_executable_signature does. Anywhere else, on a simulator, a Mac or a Linux host, every
+/// observation is unsupported instead, so the result still shows that the check ran.
 ///
-/// @return Two observations through code_signature, in this order: id.team_id, then id.cdhash.
+/// @return Four observations, in this order: id.bundle_id through CFBundle, id.bundle_id through Info.plist, then
+/// id.team_id and id.cdhash through code_signature.
 [[nodiscard]] std::vector<Observation> identity();
+
+/// Reports the bundle identifier of the app's main bundle, as CFBundle reports it.
+///
+/// The probe asks CoreFoundation for the main bundle with CFBundleGetMainBundle and for its identifier with
+/// CFBundleGetIdentifier, the value an app reads when it asks who it is. A repackaged app published under another
+/// identifier reports that identifier. A hook on CFBundleGetIdentifier can make it report the original one instead,
+/// so the same value is also read from the Info.plist file, as observe_main_info_plist does, and a hook shows as two
+/// values that disagree. CoreFoundation exists only on Apple systems, so anywhere else the observation is unsupported.
+///
+/// @return One id.bundle_id observation through CFBundle: the identifier as a string. It has an error status when
+/// there is no main bundle or no identifier, when the identifier is not a string, is empty, is longer than 1024 bytes
+/// of UTF-8 or holds a character UTF-8 can't encode, and the unsupported status on a system without CoreFoundation.
+[[nodiscard]] Observation observe_bundle_identifier();
+
+/// Reports the bundle identifier that the property list file at `plist_path` holds, the value of its
+/// `CFBundleIdentifier` key.
+///
+/// The probe reads the file itself, without CFBundle, so a hook on CFBundle's functions doesn't change what it reads.
+/// The file must be a regular file of at most 1 MiB; it is opened with close-on-exec and without blocking, so a file
+/// that isn't a regular one, such as a FIFO, can't stall the probe. Its content is parsed with
+/// CFPropertyListCreateWithData, which reads both the binary and the XML property list formats. CoreFoundation exists
+/// only on Apple systems, so anywhere else the observation is unsupported.
+///
+/// @param plist_path The property list file to read, the main bundle's Info.plist on a device.
+/// @return One id.bundle_id observation through Info.plist: the identifier as a string. It has an error status when
+/// the file can't be opened, read or closed, isn't a regular file, is larger than 1 MiB or isn't a property list, when
+/// the property list isn't a dictionary or has no `CFBundleIdentifier` key, and when the identifier is not a string,
+/// is empty, is longer than 1024 bytes of UTF-8 or holds a character UTF-8 can't encode. It has the unsupported
+/// status on a system without CoreFoundation.
+[[nodiscard]] Observation observe_info_plist(std::string_view plist_path);
+
+/// Reports the bundle identifier that the main bundle's Info.plist file on disk holds.
+///
+/// The probe asks CoreFoundation for the main bundle's directory with CFBundleCopyBundleURL, turns it into a file
+/// system path that fits in PATH_MAX, 1024 bytes, with its terminating NUL, and reads the `Info.plist` file at the top
+/// of that directory, where an iOS app bundle keeps it, as observe_info_plist does. CoreFoundation exists only on Apple
+/// systems, so anywhere else the observation is unsupported.
+///
+/// @return One id.bundle_id observation through Info.plist, as observe_info_plist reports it. It also has an error
+/// status when there is no main bundle, or when its directory has no file system path that fits in PATH_MAX bytes.
+[[nodiscard]] Observation observe_main_info_plist();
 
 /// Reports the Team ID and the cdhash of the code signature of the Mach-O executable file at `executable_path`.
 ///

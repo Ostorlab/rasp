@@ -1,5 +1,6 @@
-/// Tests for the iOS app-identity self-check: the Team ID and cdhash probe that reads an executable's code signature,
-/// against the signature codesign made in data/ and against signatures built here.
+/// Tests for the iOS app-identity self-check: the bundle-identifier probes through CFBundle and through the main
+/// bundle's Info.plist file, and the Team ID and cdhash probe that reads an executable's code signature, against the
+/// signature codesign made in data/ and against signatures built here.
 
 #include "checks/identity.h"
 
@@ -530,7 +531,211 @@ TEST(Identity, observeExecutableSignature_whenThePathIsAFifo_reportsAnError) {
   EXPECT_EQ(observe_executable_signature(path), unreadable_signature());
 }
 
-#ifndef __APPLE__
+#ifdef __APPLE__
+/// The largest Info.plist file the probe reads, in bytes.
+constexpr std::size_t kMaxInfoPlistSize = std::size_t{1} << 20U;
+
+/// A binary property list whose `CFBundleIdentifier` key holds `co.ostorlab.app`, as Xcode writes an app's Info.plist.
+constexpr std::string_view kBinaryPlist{
+    "\x62\x70\x6c\x69\x73\x74\x30\x30\xd1\x01\x02\x5f\x10\x12\x43\x46\x42\x75\x6e\x64\x6c\x65\x49\x64\x65\x6e\x74\x69"
+    "\x66\x69\x65\x72\x5f\x10\x0f\x63\x6f\x2e\x6f\x73\x74\x6f\x72\x6c\x61\x62\x2e\x61\x70\x70\x08\x0b\x20\x00\x00\x00"
+    "\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+    "\x32",
+    85};
+
+/// Returns an XML property list whose top-level dictionary holds `entries`.
+///
+/// @param entries The keys and values of the dictionary, written as XML property list elements.
+/// @return The property list's text.
+[[nodiscard]] std::string xml_plist(std::string_view entries) {
+  std::string plist =
+      R"(<?xml version="1.0" encoding="UTF-8"?>)"
+      R"(<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">)"
+      R"(<plist version="1.0"><dict>)";
+  plist += entries;
+  plist += "</dict></plist>";
+  return plist;
+}
+
+/// Returns the id.bundle_id observation through Info.plist that reports `identifier`.
+///
+/// @param identifier The bundle identifier reported.
+/// @return The observation, with status kOk.
+[[nodiscard]] Observation plist_identifier(std::string identifier) {
+  return {.signal = "id.bundle_id", .source = "Info.plist", .status = Status::kOk, .value = std::move(identifier)};
+}
+
+/// Returns the id.bundle_id observation through Info.plist that failed.
+///
+/// @return The observation, with status kError and no value.
+[[nodiscard]] Observation unreadable_plist() {
+  return {.signal = "id.bundle_id", .source = "Info.plist", .status = Status::kError, .value = {}};
+}
+
+/// Writes `content` to an Info.plist file in `directory` and returns its path.
+///
+/// @param directory The directory to write the file in.
+/// @param content What the file holds.
+/// @return The file's path, or empty when it couldn't be written.
+[[nodiscard]] std::string write_plist(const TemporaryDirectory& directory, std::string_view content) {
+  const std::string path = directory.path() + "/Info.plist";
+  return write_file(path, content) ? path : std::string();
+}
+
+TEST(Identity, observeInfoPlist_whenTheFileIsAnXmlPlist_reportsTheIdentifier) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string path =
+      write_plist(directory, xml_plist("<key>CFBundleName</key><string>App</string>"
+                                       "<key>CFBundleIdentifier</key><string>co.ostorlab.app</string>"));
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_info_plist(path), plist_identifier("co.ostorlab.app"));
+}
+
+TEST(Identity, observeInfoPlist_whenTheFileIsABinaryPlist_reportsTheIdentifier) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string path = write_plist(directory, kBinaryPlist);
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_info_plist(path), plist_identifier("co.ostorlab.app"));
+}
+
+TEST(Identity, observeInfoPlist_whenTheIdentifierIsNotAscii_reportsItAsUtf8) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string path =
+      write_plist(directory, xml_plist("<key>CFBundleIdentifier</key><string>co.ostorlab.caf\xc3\xa9</string>"));
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_info_plist(path), plist_identifier("co.ostorlab.caf\xc3\xa9"));
+}
+
+TEST(Identity, observeInfoPlist_whenTheIdentifierIsAtTheLimit_reportsIt) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string identifier(1024, 'a');
+  const std::string path =
+      write_plist(directory, xml_plist("<key>CFBundleIdentifier</key><string>" + identifier + "</string>"));
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_info_plist(path), plist_identifier(identifier));
+}
+
+TEST(Identity, observeInfoPlist_whenTheIdentifierIsTooLong_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string path =
+      write_plist(directory, xml_plist("<key>CFBundleIdentifier</key><string>" + std::string(1025, 'a') + "</string>"));
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_info_plist(path), unreadable_plist());
+}
+
+TEST(Identity, observeInfoPlist_whenTheIdentifierIsEmpty_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string path = write_plist(directory, xml_plist("<key>CFBundleIdentifier</key><string></string>"));
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_info_plist(path), unreadable_plist());
+}
+
+TEST(Identity, observeInfoPlist_whenTheIdentifierIsNotAString_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string path = write_plist(directory, xml_plist("<key>CFBundleIdentifier</key><integer>7</integer>"));
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_info_plist(path), unreadable_plist());
+}
+
+TEST(Identity, observeInfoPlist_whenThereIsNoIdentifier_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string path = write_plist(directory, xml_plist("<key>CFBundleName</key><string>App</string>"));
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_info_plist(path), unreadable_plist());
+}
+
+TEST(Identity, observeInfoPlist_whenThePlistIsNotADictionary_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string path =
+      write_plist(directory, R"(<?xml version="1.0" encoding="UTF-8"?>)"
+                             R"(<plist version="1.0"><array><string>co.ostorlab.app</string></array></plist>)");
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_info_plist(path), unreadable_plist());
+}
+
+TEST(Identity, observeInfoPlist_whenTheFileIsNotAPlist_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string path = write_plist(directory, "CFBundleIdentifier = co.ostorlab.app <");
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_info_plist(path), unreadable_plist());
+}
+
+TEST(Identity, observeInfoPlist_whenTheFileIsTooLarge_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  std::string content = xml_plist("<key>CFBundleIdentifier</key><string>co.ostorlab.app</string>");
+  content.append(kMaxInfoPlistSize + 1 - content.size(), ' ');
+  const std::string path = write_plist(directory, content);
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_info_plist(path), unreadable_plist());
+}
+
+TEST(Identity, observeInfoPlist_whenTheFileIsMissing_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+
+  EXPECT_EQ(observe_info_plist(directory.path() + "/Info.plist"), unreadable_plist());
+}
+
+TEST(Identity, observeInfoPlist_whenThePathIsAFifo_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string path = directory.path() + "/Info.plist";
+  ASSERT_TRUE(make_fifo(path));
+
+  EXPECT_EQ(observe_info_plist(path), unreadable_plist());
+}
+
+TEST(Identity, observeBundleIdentifier_whenRunUnhooked_agreesWithTheInfoPlist) {
+  const Observation bundle = observe_bundle_identifier();
+  const Observation plist = observe_main_info_plist();
+
+  EXPECT_EQ(bundle.signal, "id.bundle_id");
+  EXPECT_EQ(bundle.source, "CFBundle");
+  EXPECT_EQ(plist.signal, "id.bundle_id");
+  EXPECT_EQ(plist.source, "Info.plist");
+  EXPECT_EQ(bundle.status, plist.status);
+  EXPECT_EQ(bundle.value, plist.value);
+}
+#else
+TEST(Identity, observeBundleIdentifier_whenTheSystemHasNoCoreFoundation_reportsUnsupported) {
+  EXPECT_EQ(observe_bundle_identifier(),
+            (Observation{.signal = "id.bundle_id", .source = "CFBundle", .status = Status::kUnsupported, .value = {}}));
+}
+
+TEST(Identity, observeInfoPlist_whenTheSystemHasNoCoreFoundation_reportsUnsupported) {
+  EXPECT_EQ(
+      observe_info_plist("/Info.plist"),
+      (Observation{.signal = "id.bundle_id", .source = "Info.plist", .status = Status::kUnsupported, .value = {}}));
+}
+
+TEST(Identity, observeMainInfoPlist_whenTheSystemHasNoCoreFoundation_reportsUnsupported) {
+  EXPECT_EQ(
+      observe_main_info_plist(),
+      (Observation{.signal = "id.bundle_id", .source = "Info.plist", .status = Status::kUnsupported, .value = {}}));
+}
+
 TEST(Identity, observeMainExecutableSignature_whenTheSystemHasNoDyld_reportsUnsupported) {
   EXPECT_EQ(observe_main_executable_signature(),
             (std::vector<Observation>{
@@ -543,6 +748,8 @@ TEST(Identity, observeMainExecutableSignature_whenTheSystemHasNoDyld_reportsUnsu
 TEST(Identity, identity_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(identity(),
             (std::vector<Observation>{
+                {.signal = "id.bundle_id", .source = "CFBundle", .status = Status::kUnsupported, .value = {}},
+                {.signal = "id.bundle_id", .source = "Info.plist", .status = Status::kUnsupported, .value = {}},
                 {.signal = "id.team_id", .source = "code_signature", .status = Status::kUnsupported, .value = {}},
                 {.signal = "id.cdhash", .source = "code_signature", .status = Status::kUnsupported, .value = {}},
             }));
