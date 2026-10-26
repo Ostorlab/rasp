@@ -38,13 +38,13 @@ namespace rasp::android::checks {
 
 /// Reports the process's own user id `uid`.
 ///
-/// Android gives every app a uid of `user_id * 100000 + app_id`, where app_id is 10000-19999 for a normal app, so the
-/// uid of the main user's apps is 10000-99999 and a secondary user's apps (a work profile, an OEM "Dual Apps" clone, or
-/// an added user) start at 100000. The uid alone therefore tells which user the app runs under: `uid / 100000` is 0 for
-/// the main install and 1 or more for a copy running in a separate user. This probe reports the raw uid as a fact; the
-/// server does the arithmetic and decides, since a work profile is legitimate while a cloned banking app may not be. It
-/// doesn't catch a third-party cloner (such as Parallel Space) that runs under the host's own uid; that needs the data
-/// path, left to a later probe.
+/// Android gives every app a uid of `user_id * 100000 + app_id`, where app_id is 10000-99999 (99000-99999 are isolated
+/// processes), so the uid of the main user's apps is 10000-99999 and a secondary user's apps (a work profile, an OEM
+/// "Dual Apps" clone, or an added user) start at 100000. The uid alone therefore tells which user the app runs under:
+/// `uid / 100000` is 0 for the main install and 1 or more for a copy running in a separate user. This probe reports the
+/// raw uid as a fact; the server does the arithmetic and decides, since a work profile is legitimate while a cloned
+/// banking app may not be. It doesn't catch a third-party cloner (such as Parallel Space) that runs under the host's
+/// own uid; that needs the data path, left to a later probe.
 ///
 /// @param uid The process's own user id, from getuid on a device.
 /// @return One id.uid observation through getuid: the uid as an integer.
