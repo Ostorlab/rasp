@@ -1,5 +1,5 @@
-/// Tests for the Android app-identity self-check: the package-name probe that reads the process's command line and the
-/// user-id probe over the process's own uid.
+/// Tests for the Android app-identity self-check: the package-name probe that reads the process's command line, the
+/// user-id probe over the process's own uid, and the code-path probe over the runtime's own library load path.
 
 #include "checks/identity.h"
 

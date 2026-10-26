@@ -41,11 +41,11 @@ namespace rasp::android::checks {
 ///
 /// Android gives every app a uid of `user_id * 100000 + app_id`, where app_id is 10000-19999 (with 99000-99999 reserved
 /// for isolated processes), so the uid of the main user's apps is 10000-19999 and a secondary user's apps (a work
-/// profile, an OEM "Dual Apps" clone, or an added user) start at 100000. The uid alone therefore tells which user the
-/// app runs under: `uid / 100000` is 0 for the main install and 1 or more for a copy running in a separate user. This
-/// probe reports the raw uid as a fact; the server does the arithmetic and decides, since a work profile is legitimate
-/// while a cloned banking app may not be. It doesn't catch a third-party virtualizer (such as Parallel Space) that runs
-/// under the host's own uid; id.code_path does.
+/// profile, an OEM "Dual Apps" clone, or an added user) land in that user's 100000-wide block (110000-119999 for user
+/// 1, and so on). The uid alone therefore tells which user the app runs under: `uid / 100000` is 0 for the main install
+/// and 1 or more for a copy running in a separate user. This probe reports the raw uid as a fact; the server does the
+/// arithmetic and decides, since a work profile is legitimate while a cloned banking app may not be. It doesn't catch a
+/// third-party virtualizer (such as Parallel Space) that runs under the host's own uid; id.code_path does.
 ///
 /// @param uid The process's own user id, from getuid on a device.
 /// @return One id.uid observation through getuid: the uid as an integer.

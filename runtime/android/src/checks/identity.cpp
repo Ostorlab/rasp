@@ -1,5 +1,6 @@
 /// The Android app-identity self-check: the package-name probe over the process's command line, the user-id probe over
-/// the process's own uid, and their unsupported results off Android.
+/// the process's own uid, the code-path probe over the runtime's own library load path, and their unsupported results
+/// off Android.
 
 #include "checks/identity.h"
 
