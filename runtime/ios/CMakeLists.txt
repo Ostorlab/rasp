@@ -4,6 +4,7 @@ add_library(RaspRuntime SHARED
   src/checks/debugger.cpp
   src/checks/hooks.cpp
   src/checks/identity.cpp
+  src/checks/integrity.cpp
   src/checks/jailbreak.cpp
   src/util/macho.cpp
   src/util/sha256.cpp)

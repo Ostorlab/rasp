@@ -35,7 +35,7 @@ target_link_libraries(rasp_plugins_example_test PRIVATE rasp_test_plugins rasp_c
   GTest::gtest_main)
 gtest_discover_tests(rasp_plugins_example_test)
 
-foreach(check debugger hooks identity jailbreak)
+foreach(check debugger hooks identity integrity jailbreak)
   add_executable(rasp_ios_${check}_test ios/checks/${check}_test.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/checks/${check}.cpp)
   target_include_directories(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src
@@ -44,13 +44,16 @@ foreach(check debugger hooks identity jailbreak)
   gtest_discover_tests(rasp_ios_${check}_test)
 endforeach()
 
-foreach(check identity)
+foreach(check identity integrity)
   target_sources(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/macho.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/util/sha256.cpp)
   target_link_libraries(rasp_ios_${check}_test PRIVATE rasp_tfpsacrypto)
 endforeach()
 target_compile_definitions(rasp_ios_identity_test PRIVATE
   RASP_TEST_SIGNATURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/ios/checks/data/arm64_app_signed.superblob")
+target_compile_definitions(rasp_ios_integrity_test PRIVATE
+  RASP_TEST_EXECUTABLE_PATH="${PROJECT_SOURCE_DIR}/../packer/tests/rasp_packer/ios/data/arm64_app"
+  RASP_TEST_SIGNED_EXECUTABLE_PATH="${PROJECT_SOURCE_DIR}/../packer/tests/rasp_packer/ios/data/arm64_app_signed")
 
 if(APPLE)
   target_link_libraries(rasp_ios_identity_test PRIVATE "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
