@@ -4,9 +4,10 @@ The packer encrypts the app's original code with ChaCha20-Poly1305, as RFC 8439
 defines it, using the `cryptography` package. The native runtime decrypts it
 with the same algorithm from TF-PSA-Crypto, after its pre-decryption checks pass.
 
-Every payload gets its own random 32-byte key, so a key never encrypts more than
-one frame. The nonce is random as well, and is stored at the start of the frame
-so the runtime can read it. There is no associated data.
+Each protected app gets one random 32-byte key, which encrypts all of its frames:
+the class map and every business dex. Each frame gets its own random nonce,
+stored at the start of the frame so the runtime can read it. There is no
+associated data.
 
 Frame layout, in order:
 

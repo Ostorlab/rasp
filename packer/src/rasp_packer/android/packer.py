@@ -1,37 +1,50 @@
-"""Packing of Android apps: adds the runtime to a built APK.
+"""Packing of Android apps: adds the runtime to a built APK, for on-demand loading.
 
-The packer encrypts the app's dex files, adds the stub and the native runtime,
-and sets the manifest's appComponentFactory to the stub. At run time Android loads
-the stub, whose static initializer loads the runtime; as it loads, the runtime
-reads the key and payload from the APK, runs its pre-decryption checks, decrypts
-the dex files, and builds a class loader over them that it hands back to the stub;
-the stub returns that loader so Android runs the app's own code.
+The packer keeps the app's framework and library dexes in the clear and encrypts only the app's own
+("business") dexes, each on its own, so the runtime decrypts one business dex the first time a class
+in it is needed. A screen the user never opens is never decrypted, and a decrypted dex is held no
+longer than it is used.
 
-The stub and the native runtime are prebuilt artifacts from the runtime build;
-see resources. This module writes the protected APK unsigned, so the customer
-signs it.
+It produces the entries the runtime reads from the app's own APK (names and rules taken from the
+runtime's ``payload/dex_store.*``, ``payload/assets.h`` and ``loader/loader_dex.*``):
 
-The decrypted dex files are loaded from memory, which Android supports from
-Android 8.0, but the runtime does so through an AppComponentFactory (the stub) and
-a class loader with a native-library path that need API 31. So the packer raises
-the app's minSdkVersion to MINIMUM_API_LEVEL when it is lower, and the protected
-app does not install on older devices.
+- ``assets/rasp/key.bin`` — the raw 32-byte key, stored. It decrypts the map and every business dex.
+- ``assets/rasp/map.bin`` — the class map (see loader_map), encrypted under the key, stored.
+- ``assets/rasp/build_id`` — the build id, as UTF-8 text.
+- ``assets/business/<i>.dex`` — one encrypted business dex per file, stored.
+- the framework dexes and the stub, in the clear, as ``classes.dex`` … ``classesN.dex``.
+- ``lib/<abi>/librasp.so`` — the runtime library, one per ABI, unmodified. The loader's own dex is
+  already embedded in it at the runtime's build, so the packer does not touch the ``.so``.
+
+It sets the manifest's appComponentFactory to the stub, raises minSdk to the runtime's floor (API 31,
+which the in-memory loader and ``JNI_GetCreatedJavaVMs`` need), drops the app's original dexes and v1
+signatures, and returns the protected APK unsigned, so the customer signs it. The stub and the native
+runtime are prebuilt artifacts from the runtime build; see resources.
 """
 
+import collections.abc
 import pathlib
 
 from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer.android import cipher
-from rasp_packer.android import config as config_module
 from rasp_packer.android import injection
-from rasp_packer.android import payload as payload_module
+from rasp_packer.android import loader_map
 from rasp_packer.android import resources as resources_module
+from rasp_packer.android import split as split_module
 from rasp_packer.android.apk import archive
 from rasp_packer.android.apk import manifest as manifest_module
 
 PRIMARY_DEX = "classes.dex"
 MINIMUM_API_LEVEL = 31
+
+ASSET_DIRECTORY = "assets/rasp"
+KEY_ENTRY = f"{ASSET_DIRECTORY}/key.bin"
+MAP_ENTRY = f"{ASSET_DIRECTORY}/map.bin"
+BUILD_ID_ENTRY = f"{ASSET_DIRECTORY}/build_id"
+ASSET_PREFIX = "assets/"
+
+type Splitter = collections.abc.Callable[[pathlib.Path, str], split_module.Split]
 
 
 def pack(
@@ -40,29 +53,29 @@ def pack(
     output: pathlib.Path,
     build_id: str,
     artifacts: resources_module.Artifacts | None = None,
+    splitter: Splitter = split_module.split,
 ) -> identity.AppIdentity:
     """Packs an Android app, writing the protected APK to output.
 
     Args:
         app: The built APK to protect.
         output: Where to write the protected APK. It is unsigned.
-        build_id: The deterministic id of this protected build.
-        artifacts: The prebuilt stub and libraries. Loaded from the package
-            resources when not given.
+        build_id: The id of the protected build, written into the APK.
+        artifacts: The prebuilt stub and libraries. Loaded from the package resources when not given.
+        splitter: Splits the app's classes into framework and business dexes. The default runs the
+            bundled splitter; a test passes a recorded split.
 
     Returns:
         The app's package name and version, read from its manifest.
 
     Raises:
-        InvalidApkError: The app is not a valid APK, has no dex files, or its
-            manifest has no package, no literal android:versionName or no
-            literal android:minSdkVersion.
+        InvalidApkError: The app is not a valid APK, has no dex files, or its manifest has no
+            package, no literal android:versionName or no literal android:minSdkVersion.
         ManifestError: The app's manifest cannot be read or edited.
         MissingRuntimeArtifactError: A prebuilt runtime artifact is missing.
-        UnsupportedAbiError: The app ships native libraries for an ABI the
-            runtime is not built for.
-        AlreadyProtectedError: The app already holds a payload, or its
-            manifest already names the stub as its component factory.
+        UnsupportedAbiError: The app ships native libraries for an ABI the runtime is not built for.
+        AlreadyProtectedError: The app already holds the map, or its manifest already names the stub.
+        SplitError: The app's classes cannot be read or split.
     """
     if artifacts is None:
         artifacts = resources_module.load()
@@ -73,40 +86,36 @@ def pack(
     manifest = apk.manifest()
     app_identity = manifest_module.app_identity(manifest)
     if (
-        config_module.PAYLOAD_ENTRY in apk.names()
+        MAP_ENTRY in apk.names()
         or manifest_module.app_component_factory(manifest)
         == resources_module.STUB_FACTORY_CLASS
     ):
         raise errors.AlreadyProtectedError("the app is already protected")
+
+    result = splitter(app, app_identity.package_name)
+
     patched_manifest = manifest_module.set_app_component_factory(
         manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
         resources_module.STUB_FACTORY_CLASS,
     )
-    libraries = injection.library_entries(apk, artifacts)
-    dexes = [
-        payload_module.Dex(name=name, data=injection.entry(apk, name))
-        for name in dex_names
-    ]
     key = cipher.new_key()
-    payload = payload_module.build(key, dexes)
-    config = config_module.RuntimeConfig(
-        build_id=build_id,
-        key_hex=key.hex(),
-        dex_names=tuple(dex_names),
-    )
+    map_frame = cipher.encrypt(key, loader_map.build(result.business).encode("utf-8"))
+    business_entries = {
+        ASSET_PREFIX + dex.path: cipher.encrypt(key, dex.data)
+        for dex in result.business
+    }
+    base_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
     apk.write(
         output,
-        replace={
-            archive.MANIFEST_ENTRY: patched_manifest,
-            PRIMARY_DEX: artifacts.stub_dex,
-        },
+        replace={archive.MANIFEST_ENTRY: patched_manifest},
         add={
-            config_module.CONFIG_ENTRY: config.to_json().encode("utf-8"),
-            config_module.KEY_ENTRY: key,
-            config_module.PAYLOAD_ENTRY: payload,
-            **libraries,
+            KEY_ENTRY: key,
+            MAP_ENTRY: map_frame,
+            BUILD_ID_ENTRY: build_id.encode("utf-8"),
+            **business_entries,
+            **base_dexes,
+            **injection.library_entries(apk, artifacts),
         },
-        remove={name for name in dex_names if name != PRIMARY_DEX}
-        | injection.stale_signature_entries(apk),
+        remove=set(dex_names) | injection.stale_signature_entries(apk),
     )
     return app_identity
