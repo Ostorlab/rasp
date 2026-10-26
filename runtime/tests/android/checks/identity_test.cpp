@@ -3,6 +3,7 @@
 
 #include "checks/identity.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <string>
@@ -18,6 +19,9 @@ namespace {
 
 using test_support::TemporaryDirectory;
 using test_support::write_file;
+
+/// The size limit observe_package reads the command line with, 64 KiB.
+constexpr std::size_t kCmdlineLimit = std::size_t{64} << 10U;
 
 /// The id.package observation that reports `package`.
 [[nodiscard]] Observation package(std::string package_name) {
@@ -84,6 +88,38 @@ TEST(Identity, observePackage_whenTheFileIsMissing_reportsAnError) {
   ASSERT_FALSE(directory.path().empty());
 
   EXPECT_EQ(observe_package(directory.path() + "/missing"), unreadable_package());
+}
+
+TEST(Identity, observePackage_whenTheCommandLineIsExactly64KiB_readsThePackage) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  // The package is the first NUL-separated field; the rest of the file pads it out to exactly the limit.
+  const std::string first = "co.ostorlab.app";
+  const std::string content = first + '\0' + std::string(kCmdlineLimit - first.size() - 1, 'a');
+  ASSERT_EQ(content.size(), kCmdlineLimit);
+  const std::string path = write_cmdline(directory, content);
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_package(path), package("co.ostorlab.app"));
+}
+
+TEST(Identity, observePackage_whenTheCommandLineIsLargerThan64KiB_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string first = "co.ostorlab.app";
+  const std::string content = first + '\0' + std::string(kCmdlineLimit - first.size(), 'a');
+  ASSERT_EQ(content.size(), kCmdlineLimit + 1);
+  const std::string path = write_cmdline(directory, content);
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_package(path), unreadable_package());
+}
+
+TEST(Identity, observePackage_whenThePathCantBeRead_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  // Reading a directory as a file fails.
+  EXPECT_EQ(observe_package(directory.path()), unreadable_package());
 }
 
 TEST(Identity, observeUid_whenGivenAMainUserUid_reportsIt) {

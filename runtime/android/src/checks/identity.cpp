@@ -41,9 +41,12 @@ constexpr std::string_view kCmdlinePath = "/proc/self/cmdline";
 constexpr std::size_t kMaxCmdlineSize = std::size_t{64} << 10U;
 
 /// The package name in `cmdline`, the process's command line. Android sets the command line to the process name, whose
-/// first NUL-separated field is the package, optionally followed by `:<name>` for a process an app declares with
-/// `android:process` (such as `com.example:remote`). The package is the part before that colon, so every process of a
-/// multi-process app reports the same package. The view is empty when there is no name.
+/// first NUL-separated field is the package, optionally followed by a private `:<name>` suffix for a process an app
+/// declares with a private `android:process` (such as `com.example:remote`). Taking the part before that colon gives
+/// the same package for every private process of a multi-process app. A global `android:process` name (such as
+/// `com.other:remote`) has a different process name before the colon, not the package, so for those this read isn't the
+/// package; observe_package reports whatever the command line holds and the server weighs it. The view is empty when
+/// there is no name.
 [[nodiscard]] std::string_view package_name(std::string_view cmdline) {
   const std::size_t nul = cmdline.find('\0');
   const std::string_view process = cmdline.substr(0, nul == std::string_view::npos ? cmdline.size() : nul);
