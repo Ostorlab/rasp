@@ -28,10 +28,23 @@ target_include_directories(rasp_ios_jailbreak_test PRIVATE ${PROJECT_SOURCE_DIR}
 target_link_libraries(rasp_ios_jailbreak_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_ios_jailbreak_test)
 
-foreach(check debugger emulator hooks mitm root)
+foreach(check debugger hooks mitm)
   add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
     ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp
     ${PROJECT_SOURCE_DIR}/android/src/util/read_file.cpp)
+  target_include_directories(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_android_${check}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_android_${check}_test)
+endforeach()
+
+# The emulator and root checks read system properties through the shared util/system_property helper, so their tests
+# link it too.
+foreach(check emulator root)
+  add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/read_file.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/system_property.cpp)
   target_include_directories(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
     ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(rasp_android_${check}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)

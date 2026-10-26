@@ -13,13 +13,8 @@
 #include <utility>
 #include <vector>
 
-#include "checks/root.h"
 #include "rasp/observation.h"
-
-#ifdef __ANDROID__
-#include <cstdint>
-#include <sys/system_properties.h>
-#endif
+#include "util/system_property.h"
 
 namespace rasp::android::checks {
 
@@ -118,7 +113,7 @@ constexpr auto kQemuProperties = std::to_array<std::string_view>({
 
 }  // namespace
 
-Observation observe_emulator_props(PropertyReader read_property) {
+Observation observe_emulator_props(util::PropertyReader read_property) {
   std::vector<std::string> properties;
   for (const std::string_view name : kEmulatorProperties) {
     const std::optional<std::string> value = read_property(name);
@@ -132,42 +127,11 @@ Observation observe_emulator_props(PropertyReader read_property) {
   return observed(kPropsSignal, kPropsSource, std::move(properties));
 }
 
-namespace {
-
-#ifdef __ANDROID__
-/// Reads the system property `name` through the property store, or nothing when it is unset. A property that is set but
-/// empty returns the empty string, not nothing, so a bare QEMU flag is still reported.
-[[nodiscard]] std::optional<std::string> read_system_property(std::string_view name) {
-  const std::string key(name);
-  const prop_info* const info = __system_property_find(key.c_str());
-  if (info == nullptr) {
-    return std::nullopt;
-  }
-  std::string value;
-  __system_property_read_callback(
-      info,
-      [](void* cookie, const char* /*name*/, const char* property_value, std::uint32_t /*serial*/) {
-        if (property_value != nullptr) {
-          *static_cast<std::string*>(cookie) = property_value;
-        }
-      },
-      &value);
-  return value;
-}
-#else
-/// Off Android there is no property store.
-[[nodiscard]] std::optional<std::string> read_system_property([[maybe_unused]] std::string_view name) {
-  return std::nullopt;
-}
-#endif
-
-}  // namespace
-
 std::vector<Observation> emulator() {
   if (!kOnAndroid) {
     return {unsupported(kPropsSignal, kPropsSource)};
   }
-  return {observe_emulator_props(read_system_property)};
+  return {observe_emulator_props(util::read_system_property)};
 }
 
 }  // namespace rasp::android::checks

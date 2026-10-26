@@ -5,12 +5,10 @@
 
 #include <vector>
 
-#include "checks/root.h"
 #include "rasp/observation.h"
+#include "util/system_property.h"
 
 namespace rasp::android::checks {
-
-// PropertyReader is declared in checks/root.h and shared across the property-reading checks, so it stays one type.
 
 /// Runs the emulator checks and returns what they observed.
 ///
@@ -31,6 +29,6 @@ namespace rasp::android::checks {
 /// @param read_property The function that reads a property's value, the system property store on a device.
 /// @return One emu.props observation read through system_property: the matching `name=value` pairs. It never has an
 /// error status; a property that is unset or doesn't carry a tell is simply left out.
-[[nodiscard]] Observation observe_emulator_props(PropertyReader read_property);
+[[nodiscard]] Observation observe_emulator_props(util::PropertyReader read_property);
 
 }  // namespace rasp::android::checks
