@@ -22,6 +22,15 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
     - `jailbreak.h`: the jailbreak checks. `jb.fs_paths` (do known jailbreak files exist, read through access and stat), `jb.sandbox_escape` (can the app write outside its sandbox) and `jb.fork_ok` (can the app start a child process). Off a physical device every one is unsupported.
     - `emulator.h`: the emulator check, which reports whether the app runs on the iOS Simulator rather than a physical device. Unlike the other iOS checks it is useful on the Simulator — the thing it detects — so it reports a real `true` there rather than `unsupported`; on a physical device both sources read normally and report `false`, and only off Apple platforms, where `TargetConditionals.h` and the `hw.machine` MIB don't exist, is every observation `unsupported`.
       - `emu.simulator`: whether the app runs on the Simulator, read through two sources. `target_conditionals` is the compile-time `TARGET_OS_SIMULATOR` flag, baked into the slice when it was built, so a correctly built device binary can't carry a `true`. `sysctl` reads `hw.machine`: on a device it is the model identifier such as `iPhone15,2`, on the Simulator it is the host Mac's architecture (`x86_64` or `arm64`), which no physical device reports. The second source confirms the first at runtime, so a repacked binary can't simply report `false`, and the server weighs the two.
+    - `virtualizer.h`: the virtualizer check, which reports whether the app runs as a guest inside another app (an app virtualizer) rather than installed as a standalone app. Off a physical device every observation is unsupported.
+      - `virt.exec_path`: whether the main executable's path, read through dyld, lies outside the system's app-container layout `/private/var/containers/Bundle/Application/<UUID>/<App>.app/`. A genuine install sits inside it; a virtualizer loads the guest from its own data container (under `/private/var/mobile/Containers/Data/Application/`) instead of a system bundle path, so the executable path lies outside the layout. The probe reports the boolean and the server decides.
+      - `virt.foreign_images`: the loaded images, read through dyld, whose path lies outside the legitimate roots:
+        - the app's own bundle directory
+        - `/usr/lib`
+        - `/System`
+        - the cryptex OS images under `/private/preboot/.../Cryptexes/OS/System/`, where modern iOS keeps stock frameworks such as WebKit
+
+        A virtualizer maps its own runtime into the guest from its data container, so that image shows up here (at most 64 are reported). A clean process reports an empty list.
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
 - `android/`: `librasp.so`, the runtime for Android, and the stub that loads it. The library runs its checks when it loads, and returns the app's decrypted dex files to the stub.
   - `src/entry.cpp`: a load-time constructor that runs the checks and decrypts the app's dex files, and `JNI_OnLoad`, which builds the class loader over them and stores it in the stub's field.
