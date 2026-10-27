@@ -17,6 +17,7 @@
 #include "checks/hooks.h"
 #include "checks/identity.h"
 #include "checks/jailbreak.h"
+#include "checks/virtualizer.h"
 #include "rasp/observation.h"
 #include "rasp/plugins/registry.h"
 #include "rasp/util/logging.h"
@@ -28,8 +29,8 @@ namespace {
 /// How long the thread waits between two runs of the checks.
 constexpr std::chrono::seconds kCheckInterval{60};
 
-/// The thread: runs the jailbreak, debugger, hooking, app-identity and emulator checks and the plugins, then again
-/// every kCheckInterval, until the process exits.
+/// The thread: runs the jailbreak, debugger, hooking, app-identity, emulator and virtualizer checks and the plugins,
+/// then again every kCheckInterval, until the process exits.
 ///
 /// @param argument The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, a `std::string` allocated with `new`
 /// that the thread takes and keeps until the process exits.
@@ -42,6 +43,7 @@ void* monitor(void* argument) {
     std::ranges::move(checks::hooks(*inserted_libraries), std::back_inserter(builtin));
     std::ranges::move(checks::identity(), std::back_inserter(builtin));
     std::ranges::move(checks::emulator(), std::back_inserter(builtin));
+    std::ranges::move(checks::virtualizer(), std::back_inserter(builtin));
     const std::vector<Observation> observations =
         rasp::plugins::run_plugins(rasp::plugins::compiled_in(), std::move(builtin));
     if constexpr (kLoggingEnabled) {
