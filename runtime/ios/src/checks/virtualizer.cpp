@@ -72,7 +72,14 @@ constexpr std::size_t kMaxForeignImages = 64;
 /// Whether `path` lies under `directory`, matched on a path boundary rather than as a raw string prefix: `path` is the
 /// directory itself, or `path` continues with a `/` right after it. This refuses a sibling such as `Example.app.backup`
 /// for a directory of `Example.app`, which a raw prefix test would wrongly accept.
+///
+/// Trailing slashes on `directory` (except a lone `/`) are stripped first: `CFBundleCopyBundleURL` yields the bundle
+/// directory with a trailing `/`, and without stripping it the boundary check would reject every child, so the app's
+/// own images would be reported as foreign.
 [[nodiscard]] bool under_directory(std::string_view path, std::string_view directory) {
+  while (directory.size() > 1 && directory.back() == '/') {
+    directory.remove_suffix(1);
+  }
   if (!path.starts_with(directory)) {
     return false;
   }

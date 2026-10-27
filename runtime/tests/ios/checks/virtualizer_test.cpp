@@ -55,6 +55,17 @@ TEST(Virtualizer, observeForeignImages_whenBundleUnknown_doesNotExcuseBundlePath
             (Observation{.signal = "virt.foreign_images", .source = "dyld", .status = Status::kOk, .value = expected}));
 }
 
+TEST(Virtualizer, observeForeignImages_whenBundleDirectoryHasTrailingSlash_treatsItsImagesAsLegitimate) {
+  // CFBundleCopyBundleURL yields the bundle directory with a trailing slash; images under it must still be legitimate.
+  const std::string bundle_with_slash = "/private/var/containers/Bundle/Application/1234/Example.app/";
+  const std::string app_image = "/private/var/containers/Bundle/Application/1234/Example.app/Example";
+  const std::array<std::string, 1> images = {app_image};
+
+  const std::vector<std::string> none;
+  EXPECT_EQ(observe_foreign_images(images, bundle_with_slash),
+            (Observation{.signal = "virt.foreign_images", .source = "dyld", .status = Status::kOk, .value = none}));
+}
+
 TEST(Virtualizer, observeForeignImages_whenCryptexSystemImage_treatsItAsLegitimate) {
   // Modern iOS serves stock OS frameworks from a cryptex path that does not start with /System/.
   const std::array<std::string, 2> images = {
