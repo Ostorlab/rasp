@@ -29,7 +29,7 @@ constexpr std::string_view kSysctlSource = "sysctl";
 
 #ifdef __APPLE__
 /// The `hw.machine` name the sysctl tell reads.
-constexpr std::string_view kMachineName = "hw.machine";
+constexpr const char* kMachineName = "hw.machine";
 /// The most bytes of `hw.machine` the probe accepts. A real model identifier is far shorter.
 constexpr std::size_t kMaxMachineSize = 64;
 #endif
@@ -46,7 +46,7 @@ constexpr auto kSimulatorMachines = std::to_array<std::string_view>({
 
 Observation observe_target_conditionals() {
 #ifdef __APPLE__
-  return observed(kSimulatorSignal, kTargetConditionalsSource, static_cast<bool>(TARGET_OS_SIMULATOR));
+  return observed(kSimulatorSignal, kTargetConditionalsSource, TARGET_OS_SIMULATOR != 0);
 #else
   return unsupported(kSimulatorSignal, kTargetConditionalsSource);
 #endif
@@ -62,11 +62,15 @@ Observation observe_machine() {
 #ifdef __APPLE__
   std::array<char, kMaxMachineSize> buffer{};
   std::size_t size = buffer.size();
-  const bool read_failed = sysctlbyname(kMachineName.data(), buffer.data(), &size, nullptr, 0) != 0;
-  if (read_failed || size == 0 || size > buffer.size() || buffer[size - 1] != '\0') {
+  const bool read_failed = sysctlbyname(kMachineName, buffer.data(), &size, nullptr, 0) != 0;
+  if (read_failed || size == 0 || size > buffer.size()) {
     return failed(kSimulatorSignal, kSysctlSource);
   }
-  return observe_machine_tell(std::string_view(buffer.data(), size - 1));
+  const auto terminator = std::ranges::find(buffer, '\0');
+  if (terminator == buffer.end()) {
+    return failed(kSimulatorSignal, kSysctlSource);
+  }
+  return observe_machine_tell(std::string_view(buffer.begin(), terminator));
 #else
   return unsupported(kSimulatorSignal, kSysctlSource);
 #endif
