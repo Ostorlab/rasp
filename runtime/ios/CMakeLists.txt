@@ -2,6 +2,7 @@ add_library(RaspRuntime SHARED
   src/entry.cpp
   src/monitoring.cpp
   src/checks/debugger.cpp
+  src/checks/emulator.cpp
   src/checks/hooks.cpp
   src/checks/identity.cpp
   src/checks/jailbreak.cpp
