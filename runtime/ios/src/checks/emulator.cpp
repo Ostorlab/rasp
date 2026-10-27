@@ -66,7 +66,7 @@ Observation observe_machine() {
   if (read_failed || size == 0 || size > buffer.size()) {
     return failed(kSimulatorSignal, kSysctlSource);
   }
-  const auto terminator = std::ranges::find(buffer, '\0');
+  auto* const terminator = std::ranges::find(buffer, '\0');
   if (terminator == buffer.end()) {
     return failed(kSimulatorSignal, kSysctlSource);
   }
