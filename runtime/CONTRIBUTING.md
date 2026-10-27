@@ -74,7 +74,7 @@ The runtime starts from a function that runs while the app loads, on the app's m
 For the same reason, CI enforces three rules on the code that ships:
 
 - **No global objects with a constructor or a destructor.** Their constructors run during that same load, in an order no one controls, so one global can use another before it exists. Their destructors run while the app exits, possibly while our thread still uses them. Use `constexpr` constants instead: a `std::string_view` for text, a `std::array` for a list. The entry point is the only load-time function.
-- **No function uses more than 4 KB of stack.** At load time we run on the app's main thread and use its stack. Our own threads have small stacks.
+- **No function uses more than 4 KB of stack.** At load time we run on the app's main thread and use its stack.
 - **No recursion.** How deep a recursion goes depends on its input. A deep enough input could use up the stack.
 
 ### The process belongs to the app
