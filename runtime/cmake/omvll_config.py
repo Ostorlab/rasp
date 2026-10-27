@@ -119,6 +119,10 @@ class RaspConfig(omvll.ObfuscationConfig):
         # A heavy pass is on for certain for any HEAVY_FUNCTIONS name (our sensitive code and the
         # decryption path), and on for our other code with `probability`. Inside tf-psa-crypto the
         # probability is forced to zero, so nothing but the named decryption functions is ever touched.
+        # default_config matches names against the mangled IR name, which never contains a C++
+        # namespace written as `a::b::`, so our sensitive functions are matched on the demangled name.
+        if any(entry in func.demangled_name for entry in SENSITIVE_FUNCTIONS):
+            return True
         reach = 0 if self._in_crypto_module(mod, func) else probability
         return omvll.ObfuscationConfig.default_config(self, mod, func, [], [], HEAVY_FUNCTIONS, reach)
 

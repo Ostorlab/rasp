@@ -123,6 +123,11 @@ jobs:
           echo "NDK: $(sed -n 's/^Pkg.Revision = //p' "$ANDROID_NDK_HOME/source.properties") ($ANDROID_NDK_HOME)"
           echo "android.jar: $(ls -d "$ANDROID_HOME"/platforms/android-*/android.jar | sort -V | tail -1)"
           echo "d8: $(ls "$ANDROID_HOME"/build-tools/*/d8 | sort -V | tail -1)"
+      - name: Pick this release's obfuscation seed
+        run: |
+          seed="$(python3 -c 'import secrets; print(secrets.randbits(63))')"
+          echo "::add-mask::$seed"
+          echo "RASP_OMVLL_SEED=$seed" >> "$GITHUB_ENV"
       - name: Configure
         run: cmake --preset android
       - name: Build
