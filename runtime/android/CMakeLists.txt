@@ -14,6 +14,7 @@ add_library(rasp SHARED
   src/loader/loader_dex.cpp
   src/payload/cipher.cpp
   src/payload/dex_store.cpp
+  src/plugins/config.cpp
   src/util/apk_file.cpp
   src/util/system_property.cpp)
 target_include_directories(rasp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

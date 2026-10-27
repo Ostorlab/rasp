@@ -101,9 +101,10 @@ struct LocalEntry {
   return std::vector<std::uint8_t>(data.begin(), data.end());
 }
 
-/// The bytes of the stored entry named `name`, found by walking the archive's central directory.
+/// The bytes of the stored entry named `name`, found by walking the archive's central directory, when it holds at most
+/// `limit` bytes.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> find_stored_entry(std::span<const std::uint8_t> file,
-                                                                         std::string_view name) {
+                                                                         std::string_view name, std::size_t limit) {
   const std::optional<std::span<const std::uint8_t>> record = find_end_record(file);
   if (!record.has_value()) {
     return std::nullopt;
@@ -129,7 +130,7 @@ struct LocalEntry {
       return std::nullopt;
     }
     if (equals(rest.subspan(kCentralEntrySize, name_length), name)) {
-      if (method != kStored) {
+      if (method != kStored || stored_size > limit) {
         return std::nullopt;
       }
       return read_local_data(file, LocalEntry{.local_offset = local_offset, .data_size = stored_size});
@@ -145,7 +146,8 @@ struct LocalEntry {
 
 }  // namespace
 
-std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& apk_path, std::string_view name) {
+std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& apk_path, std::string_view name,
+                                                           std::size_t limit) {
   // open is a libc variadic function, and its flags come from the included <fcntl.h>.
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
   const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
@@ -165,7 +167,7 @@ std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& ap
     return std::nullopt;
   }
   const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
-  const std::optional<std::vector<std::uint8_t>> data = find_stored_entry(file, name);
+  const std::optional<std::vector<std::uint8_t>> data = find_stored_entry(file, name, limit);
   munmap(mapping, size);
   return data;
 }

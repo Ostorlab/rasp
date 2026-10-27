@@ -1,4 +1,4 @@
-/// start_monitoring: the runtime's own thread on Android, which runs the checks.
+/// start_monitoring: the runtime's own thread on Android, which runs the checks and the plugins.
 
 #include "monitoring.h"
 
@@ -17,7 +17,10 @@
 #include "checks/integrity.h"
 #include "checks/mitm.h"
 #include "checks/root.h"
+#include "plugins/config.h"
 #include "rasp/observation.h"
+#include "rasp/plugins/host.h"
+#include "rasp/plugins/registry.h"
 #include "rasp/util/logging.h"
 
 namespace rasp::android {
@@ -44,12 +47,14 @@ constexpr std::chrono::seconds kCheckInterval{60};
   return observations;
 }
 
-/// The thread: runs the checks, then again every kCheckInterval, until the process exits.
+/// The thread: initialises the plugins, then runs the built-in checks and the plugins, then again every kCheckInterval,
+/// until the process exits.
 ///
 /// @return Never returns.
 void* monitor(void* /*argument*/) {
+  const rasp::plugins::Host host(rasp::plugins::compiled_in(), plugins::read_config);
   while (true) {
-    const std::vector<Observation> observations = run_checks();
+    const std::vector<Observation> observations = host.run(run_checks());
     if constexpr (kLoggingEnabled) {
       for (const Observation& observation : observations) {
         rasp::log(describe(observation));

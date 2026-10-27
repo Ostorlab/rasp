@@ -1,4 +1,4 @@
-/// start_monitoring: the runtime's own thread on iOS, which runs the checks.
+/// start_monitoring: the runtime's own thread on iOS, which runs the checks and the plugins.
 
 #include "monitoring.h"
 
@@ -10,13 +10,17 @@
 #include <pthread.h>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "checks/debugger.h"
 #include "checks/hooks.h"
 #include "checks/identity.h"
 #include "checks/jailbreak.h"
+#include "plugins/config.h"
 #include "rasp/observation.h"
+#include "rasp/plugins/host.h"
+#include "rasp/plugins/registry.h"
 #include "rasp/util/logging.h"
 
 namespace rasp::ios {
@@ -29,19 +33,21 @@ constexpr std::size_t kThreadStackSize = std::size_t{256} * 1024;
 /// How long the thread waits between two runs of the checks.
 constexpr std::chrono::seconds kCheckInterval{60};
 
-/// The thread: runs the jailbreak, debugger, hooking and app-identity checks, then again every kCheckInterval, until
-/// the process exits.
+/// The thread: initialises the plugins, then runs the jailbreak, debugger, hooking and app-identity checks and the
+/// plugins, then again every kCheckInterval, until the process exits.
 ///
 /// @param argument The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, a `std::string` allocated with `new`
 /// that the thread takes and keeps until the process exits.
 /// @return Never returns.
 void* monitor(void* argument) {
   const std::unique_ptr<const std::string> inserted_libraries(static_cast<std::string*>(argument));
+  const rasp::plugins::Host host(rasp::plugins::compiled_in(), plugins::read_config);
   while (true) {
-    std::vector<Observation> observations = checks::jailbreak();
-    std::ranges::move(checks::debugger(), std::back_inserter(observations));
-    std::ranges::move(checks::hooks(*inserted_libraries), std::back_inserter(observations));
-    std::ranges::move(checks::identity(), std::back_inserter(observations));
+    std::vector<Observation> builtin = checks::jailbreak();
+    std::ranges::move(checks::debugger(), std::back_inserter(builtin));
+    std::ranges::move(checks::hooks(*inserted_libraries), std::back_inserter(builtin));
+    std::ranges::move(checks::identity(), std::back_inserter(builtin));
+    const std::vector<Observation> observations = host.run(std::move(builtin));
     if constexpr (kLoggingEnabled) {
       for (const Observation& observation : observations) {
         rasp::log(describe(observation));
