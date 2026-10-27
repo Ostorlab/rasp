@@ -1,10 +1,9 @@
-/// start_monitoring: the runtime's own thread on Android, which runs the checks.
+/// start_monitoring: the runtime's own thread on Android, which runs the checks and the plugins.
 
 #include "monitoring.h"
 
 #include <algorithm>
 #include <chrono>
-#include <cstddef>
 #include <iterator>
 #include <pthread.h>
 #include <thread>
@@ -18,14 +17,12 @@
 #include "checks/mitm.h"
 #include "checks/root.h"
 #include "rasp/observation.h"
+#include "rasp/plugins/registry.h"
 #include "rasp/util/logging.h"
 
 namespace rasp::android {
 
 namespace {
-
-/// The stack size of the thread, a whole number of pages.
-constexpr std::size_t kThreadStackSize = std::size_t{256} * 1024;
 
 /// How long the thread waits between two runs of the checks.
 constexpr std::chrono::seconds kCheckInterval{60};
@@ -44,12 +41,13 @@ constexpr std::chrono::seconds kCheckInterval{60};
   return observations;
 }
 
-/// The thread: runs the checks, then again every kCheckInterval, until the process exits.
+/// The thread: runs the built-in checks and the plugins, then again every kCheckInterval, until the process exits.
 ///
 /// @return Never returns.
 void* monitor(void* /*argument*/) {
   while (true) {
-    const std::vector<Observation> observations = run_checks();
+    const std::vector<Observation> observations =
+        rasp::plugins::run_plugins(rasp::plugins::compiled_in(), run_checks());
     if constexpr (kLoggingEnabled) {
       for (const Observation& observation : observations) {
         rasp::log(describe(observation));
@@ -66,8 +64,7 @@ void start_monitoring() noexcept {
   if (pthread_attr_init(&attributes) != 0) {
     return;
   }
-  if (pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED) == 0 &&
-      pthread_attr_setstacksize(&attributes, kThreadStackSize) == 0) {
+  if (pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED) == 0) {
     pthread_t thread{};
     static_cast<void>(pthread_create(&thread, &attributes, monitor, nullptr));
   }
