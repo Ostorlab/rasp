@@ -29,6 +29,10 @@ if(RASP_LOGGING)
 endif()
 
 include(${PROJECT_SOURCE_DIR}/cmake/omvll.cmake)
-foreach(rasp_first_party_target rasp rasp_core)
+# rasp and rasp_core hold our own code. rasp_builtin and rasp_tfpsacrypto are the two tf-psa-crypto
+# targets that compile the decryption path: rasp_builtin has the ChaCha20, Poly1305, ChaChaPoly and PSA
+# AEAD builtin sources, rasp_tfpsacrypto has core/psa_crypto.c with the public psa_aead_decrypt. The
+# omvll scheme obfuscates only the named decryption functions inside the two crypto targets.
+foreach(rasp_first_party_target rasp rasp_core rasp_builtin rasp_tfpsacrypto)
   rasp_obfuscate(${rasp_first_party_target})
 endforeach()

@@ -37,7 +37,11 @@ function(rasp_obfuscate target)
     return()
   endif()
   target_compile_options(${target} PRIVATE -fpass-plugin=${RASP_OMVLL_RESOLVED_PLUGIN})
-  set_target_properties(${target} PROPERTIES CXX_COMPILER_LAUNCHER "${RASP_OMVLL_LAUNCHER}")
+  # The launcher puts the NDK toolchain's libc++ on LD_LIBRARY_PATH so the plugin loads. Set it for both
+  # languages: our own targets are C++, but tf-psa-crypto's decryption path is C.
+  set_target_properties(${target} PROPERTIES
+    C_COMPILER_LAUNCHER "${RASP_OMVLL_LAUNCHER}"
+    CXX_COMPILER_LAUNCHER "${RASP_OMVLL_LAUNCHER}")
   message(STATUS "O-MVLL on; ${target} is obfuscated with ${RASP_OMVLL_RESOLVED_PLUGIN}")
 endfunction()
 
