@@ -6,6 +6,9 @@ add_library(rasp_core STATIC
   src/reporting/base32hex.cpp
   src/reporting/cbor.cpp
   src/reporting/dns_frame.cpp
+  src/reporting/dns_report.cpp
+  src/reporting/dns_resolve.cpp
+  src/reporting/dns_transport.cpp
   src/util/read_file.cpp)
 target_include_directories(rasp_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
