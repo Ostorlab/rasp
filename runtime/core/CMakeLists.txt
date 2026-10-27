@@ -4,6 +4,7 @@ add_library(rasp_core STATIC
   src/observation.cpp
   src/plugins/run_plugins.cpp
   src/reporting/base32hex.cpp
+  src/reporting/cbor.cpp
   src/util/read_file.cpp)
 target_include_directories(rasp_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
