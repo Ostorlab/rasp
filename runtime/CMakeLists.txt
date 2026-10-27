@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.4)
 
-project(rasp_runtime VERSION 0.2.0 LANGUAGES CXX)
+project(rasp_runtime VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -35,6 +35,8 @@ target_compile_options(rasp_language INTERFACE -fno-exceptions -fno-rtti)
 
 option(RASP_BUILD_TESTS "Build the tests that run on a development machine" OFF)
 option(RASP_LOGGING "Write development logs" OFF)
+set(RASP_PLUGINS "" CACHE STRING
+  "The directories of the plugins to compile into the runtime, in order; a relative one is relative to runtime/")
 
 if(RASP_LOGGING)
   get_property(rasp_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
@@ -50,9 +52,13 @@ if(RASP_LOGGING)
 endif()
 
 add_subdirectory(core)
+include(cmake/plugins.cmake)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Android" OR CMAKE_SYSTEM_NAME STREQUAL "iOS" OR RASP_BUILD_TESTS)
+  include(cmake/tf_psa_crypto.cmake)
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Android" OR RASP_BUILD_TESTS)
-  include(cmake/tf_psa_crypto.cmake)
   include(cmake/loader_dex.cmake)
 endif()
 

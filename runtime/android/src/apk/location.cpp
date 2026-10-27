@@ -15,16 +15,6 @@ namespace rasp::android::apk {
 
 namespace {
 
-/// The load path of librasp.so, as the dynamic linker records it for an address inside the library.
-[[nodiscard]] std::optional<std::string> library_path() {
-  Dl_info info = {};
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-  if (dladdr(reinterpret_cast<const void*>(&library_path), &info) == 0 || info.dli_fname == nullptr) {
-    return std::nullopt;
-  }
-  return std::string(info.dli_fname);
-}
-
 /// The path with its last component removed, or nothing when it has no directory part.
 [[nodiscard]] std::optional<std::string> parent_dir(std::string_view path) {
   const std::size_t slash = path.find_last_of('/');
@@ -114,8 +104,17 @@ namespace {
 
 }  // namespace
 
+std::optional<std::string> self_library_path() {
+  Dl_info info = {};
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  if (dladdr(reinterpret_cast<const void*>(&self_library_path), &info) == 0 || info.dli_fname == nullptr) {
+    return std::nullopt;
+  }
+  return std::string(info.dli_fname);
+}
+
 std::optional<std::string> self_apk_path() {
-  const std::optional<std::string> path = library_path();
+  const std::optional<std::string> path = self_library_path();
   if (path.has_value()) {
     const std::size_t bang = path->find("!/");
     if (bang != std::string::npos) {
@@ -130,7 +129,7 @@ std::optional<std::string> self_apk_path() {
 }
 
 std::optional<std::string> self_library_dir() {
-  const std::optional<std::string> path = library_path();
+  const std::optional<std::string> path = self_library_path();
   if (!path.has_value()) {
     return std::nullopt;
   }

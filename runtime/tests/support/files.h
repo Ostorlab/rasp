@@ -1,12 +1,15 @@
-/// File helpers for the tests: a temporary directory that removes itself, and a function that writes a file.
+/// File helpers for the tests: a temporary directory that removes itself, and functions that write and read a file and
+/// create a FIFO.
 
 #pragma once
 
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 #include <fcntl.h>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
@@ -76,6 +79,44 @@ class TemporaryDirectory {
   }
   const bool closed = close(descriptor) == 0;
   return written && closed;
+}
+
+/// Creates a FIFO, a named pipe, at `path`, that only its owner can read and write.
+///
+/// @param path The FIFO to create.
+/// @return `true` when it was created.
+[[nodiscard]] inline bool make_fifo(const std::string& path) { return mkfifo(path.c_str(), S_IRUSR | S_IWUSR) == 0; }
+
+/// Reads the whole file at `path`.
+///
+/// A read that a signal interrupts is retried.
+///
+/// @param path The file to read.
+/// @return What the file holds, or nothing when it couldn't be opened, read or closed.
+[[nodiscard]] inline std::optional<std::string> read_file(const std::string& path) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
+  const int descriptor = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (descriptor < 0) {
+    return std::nullopt;
+  }
+  std::optional<std::string> content = std::string();
+  std::array<char, 4096> chunk{};
+  while (true) {
+    const ssize_t count = read(descriptor, chunk.data(), chunk.size());
+    if (count < 0 && errno == EINTR) {
+      continue;
+    }
+    if (count < 0) {
+      content.reset();
+      break;
+    }
+    if (count == 0) {
+      break;
+    }
+    content->append(chunk.data(), static_cast<std::size_t>(count));
+  }
+  const bool closed = close(descriptor) == 0;
+  return closed ? content : std::nullopt;
 }
 
 }  // namespace rasp::test_support

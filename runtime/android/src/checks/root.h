@@ -4,13 +4,12 @@
 
 #pragma once
 
-#include <optional>
 #include <span>
-#include <string>
 #include <string_view>
 #include <vector>
 
 #include "rasp/observation.h"
+#include "util/system_property.h"
 
 namespace rasp::android::checks {
 
@@ -64,9 +63,6 @@ namespace rasp::android::checks {
 /// status when the file can't be read or holds anything else.
 [[nodiscard]] Observation observe_selinux(std::string_view enforce_path);
 
-/// Reads one system property, or gives nothing when the device doesn't set it.
-using PropertyReader = std::optional<std::string> (*)(std::string_view name);
-
 /// Reports the build properties that tell a debuggable build, a test-signed build or an unlocked bootloader.
 ///
 /// They are `ro.debuggable`, `ro.secure`, `ro.build.type`, `ro.build.tags`, `ro.boot.verifiedbootstate`,
@@ -75,6 +71,6 @@ using PropertyReader = std::optional<std::string> (*)(std::string_view name);
 /// @param read_property The function that reads each property. On a device, it reads the system properties.
 /// @return One root.build_props observation read through system_property: each set property as `name=value`, in the
 /// order above.
-[[nodiscard]] Observation observe_build_props(PropertyReader read_property);
+[[nodiscard]] Observation observe_build_props(util::PropertyReader read_property);
 
 }  // namespace rasp::android::checks

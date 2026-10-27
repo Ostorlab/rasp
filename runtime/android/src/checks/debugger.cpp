@@ -14,7 +14,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
-#include "util/read_file.h"
+#include "rasp/util/read_file.h"
 
 namespace rasp::android::checks {
 
@@ -71,7 +71,7 @@ constexpr std::string_view kTracerPidField = "TracerPid:";
 }  // namespace
 
 Observation observe_tracer_pid(std::string_view status_path) {
-  const std::optional<std::string> status = util::read_file(status_path, kMaxStatusSize);
+  const std::optional<std::string> status = rasp::util::read_file(status_path, kMaxStatusSize);
   if (!status) {
     return failed(kTracerPidSignal, kTracerPidSource);
   }

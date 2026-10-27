@@ -69,12 +69,12 @@ When a choice exists, use the function that can't fail.
 
 ### Load time and the main thread
 
-The runtime starts from a function that runs while the app loads, on the app's main thread, before the app's own code. Anything slow there delays the app's launch, and if launch takes too long, the system kills the app. On iOS, that function only starts work: the checks and the waiting happen on our own thread. On Android, a load-time constructor runs the checks when the linker loads `librasp.so`, on the main thread, before the app's own code, and the stub then asks the library to decrypt the app's code on the same thread, so both must stay fast.
+The runtime starts from a function that runs while the app loads, on the app's main thread, before the app's own code. Anything slow there delays the app's launch, and if launch takes too long, the system kills the app. That function only starts work: the checks and the waiting happen on our own thread. On Android, the stub then asks the library for the on-demand loader on the main thread, before the app's own code, so that must stay fast too.
 
 For the same reason, CI enforces three rules on the code that ships:
 
 - **No global objects with a constructor or a destructor.** Their constructors run during that same load, in an order no one controls, so one global can use another before it exists. Their destructors run while the app exits, possibly while our thread still uses them. Use `constexpr` constants instead: a `std::string_view` for text, a `std::array` for a list. The entry point is the only load-time function.
-- **No function uses more than 4 KB of stack.** At load time we run on the app's main thread and use its stack. Our own threads have small stacks.
+- **No function uses more than 4 KB of stack.** At load time we run on the app's main thread and use its stack.
 - **No recursion.** How deep a recursion goes depends on its input. A deep enough input could use up the stack.
 
 ### The process belongs to the app
@@ -126,9 +126,9 @@ During development, write log lines only with `rasp::log`, and only inside `if c
 
 ## Android
 
-The packer sets the app's manifest `android:appComponentFactory` to `co.ostorlab.rasp.RaspStub`, the component factory in `android/stub/`. When the app starts, Android loads that factory, which loads `librasp.so`. A load-time constructor in the library runs the checks then, the way iOS starts from a constructor, so there is no exported entry point to run them. The constructor also decrypts the payload, and a minimal `JNI_OnLoad`, which the platform calls moments later, publishes the decrypted class loader to the stub. The stub calls no native method, so the library exports no `Java_...` symbol either. Decryption happens in native code, never in Java, and the decrypted dex files are never written to disk.
+The packer sets the app's manifest `android:appComponentFactory` to `co.ostorlab.rasp.RaspStub`, the component factory in `android/stub/`. When the app starts, Android loads that factory, which loads `librasp.so`. A load-time constructor in the library starts the thread that runs the checks, the way iOS starts from a constructor, so there is no exported entry point to run them. A minimal `JNI_OnLoad`, which the platform calls moments later, binds the stub's native `install` with RegisterNatives, and `install` returns the on-demand loader, so the library exports no `Java_...` symbol either. Decryption happens in native code, never in Java, and the decrypted dex files are never written to disk.
 
-- **`librasp.so` has no exported entry point.** The checks run from a load-time constructor, and the stub calls no native method, so no `Java_...` symbol is exported (see No exported symbols above). Everything, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. A release build is stripped (`-Wl,--strip-all`), so it keeps no symbol table and no debug sections. The only exported symbol is the JVM's `JNI_OnLoad` hook, whose fixed name `android/.clang-tidy` lets break the naming rule.
+- **`librasp.so` has no exported entry point.** A load-time constructor starts the checks, and the stub's native method is bound with RegisterNatives, so no `Java_...` symbol is exported (see No exported symbols above). Everything, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. A release build is stripped (`-Wl,--strip-all`), so it keeps no symbol table and no debug sections. The only exported symbol is the JVM's `JNI_OnLoad` hook, whose fixed name `android/.clang-tidy` lets break the naming rule.
 - **The payload is decrypted with ChaCha20-Poly1305 from TF-PSA-Crypto, never with crypto code of our own.** The packer encrypts it with ChaCha20-Poly1305 too, from the `cryptography` package, so both sides use a standard algorithm through a reviewed library. TF-PSA-Crypto is vendored in `third_party/tf-psa-crypto/` (see the README there). The tests decrypt a frame and a payload that the packer made, and a Project Wycheproof test vector, which the packer's tests check too. If you change the frame on either side, change the other side and these tests with it.
 - **The minimum is API 31**, Android 12, so the stub can load the app's decrypted dex files from memory with `InMemoryDexClassLoader`, instead of writing them to disk.
 

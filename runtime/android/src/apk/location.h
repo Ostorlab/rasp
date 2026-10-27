@@ -7,6 +7,19 @@
 
 namespace rasp::android::apk {
 
+/// The raw load path of librasp.so, as the dynamic linker records it for an address inside the library.
+///
+/// This is the unmodified `dli_fname` from `dladdr`. An extracted library gives a plain path such as
+/// `/data/app/~~.../com.example-<suffix>/lib/<abi>/librasp.so`, and a library mapped straight from the APK (when AGP
+/// packages it uncompressed, with `android:extractNativeLibs="false"`, the common modern default) gives a path with the
+/// `!/` separator: `.../base.apk!/lib/<abi>/librasp.so` for a single APK, or
+/// `.../split_config.arm64_v8a.apk!/lib/arm64-v8a/librasp.so` for an app-bundle install. `self_apk_path`,
+/// `self_library_dir` and the identity check's id.code_path all build on it, so the anchor choice, the null handling
+/// and the `!/` form stay in one place.
+///
+/// @return The load path, or nothing when it cannot be read.
+[[nodiscard]] std::optional<std::string> self_library_path();
+
 /// The filesystem path of the APK this process runs from.
 ///
 /// librasp.so ships inside the protected APK. When the library is mapped straight from the APK, because the app sets

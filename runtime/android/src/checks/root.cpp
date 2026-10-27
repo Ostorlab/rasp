@@ -18,18 +18,14 @@
 #include <vector>
 
 #include "rasp/observation.h"
-#include "util/read_file.h"
-
-#ifdef __ANDROID__
-#include <cstdint>
-#include <sys/system_properties.h>
-#endif
+#include "rasp/util/read_file.h"
+#include "util/system_property.h"
 
 namespace rasp::android::checks {
 
 namespace {
 
-using util::read_file;
+using rasp::util::read_file;
 
 /// The signal of the root-file probe.
 constexpr std::string_view kPathsSignal = "root.fs_paths";
@@ -148,33 +144,9 @@ constexpr auto kBuildProperties = std::to_array<std::string_view>({
 #ifdef __ANDROID__
 /// Whether this build runs on Android, the only place the probes mean anything.
 constexpr bool kOnAndroid = true;
-
-/// Reads the system property `name`, or gives nothing when the device doesn't set it.
-[[nodiscard]] std::optional<std::string> read_system_property(std::string_view name) {
-  const std::string key(name);
-  const prop_info* const info = __system_property_find(key.c_str());
-  if (info == nullptr) {
-    return std::nullopt;
-  }
-  std::string value;
-  __system_property_read_callback(
-      info,
-      [](void* cookie, const char* /*name*/, const char* text, std::uint32_t /*serial*/) {
-        if (text != nullptr) {
-          *static_cast<std::string*>(cookie) = text;
-        }
-      },
-      &value);
-  return value;
-}
 #else
 /// Whether this build runs on Android, the only place the probes mean anything.
 constexpr bool kOnAndroid = false;
-
-/// Reads nothing: off Android there are no system properties, and root() never calls it there.
-[[nodiscard]] std::optional<std::string> read_system_property([[maybe_unused]] std::string_view name) {
-  return std::nullopt;
-}
 #endif
 
 /// Whether access finds a file at `path`.
@@ -299,7 +271,7 @@ Observation observe_selinux(std::string_view enforce_path) {
   return failed(kSelinuxSignal, kSelinuxSource);
 }
 
-Observation observe_build_props(PropertyReader read_property) {
+Observation observe_build_props(util::PropertyReader read_property) {
   std::vector<std::string> properties;
   std::ranges::for_each(kBuildProperties, [&](const std::string_view name) {
     const std::optional<std::string> value = read_property(name);
@@ -327,7 +299,7 @@ std::vector<Observation> root() {
   std::vector<Observation> observations = observe_paths(kArtifactPaths);
   std::ranges::move(observe_mounts(kMountsPath), std::back_inserter(observations));
   observations.push_back(observe_selinux(kEnforcePath));
-  observations.push_back(observe_build_props(read_system_property));
+  observations.push_back(observe_build_props(util::read_system_property));
   return observations;
 }
 
