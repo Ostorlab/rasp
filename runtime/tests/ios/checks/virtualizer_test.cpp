@@ -102,7 +102,6 @@ TEST(Virtualizer, observeForeignImages_whenMoreThanTheCap_reportsOnlyTheFirst64I
             (Observation{.signal = "virt.foreign_images", .source = "dyld", .status = Status::kOk, .value = expected}));
 }
 
-#ifndef __APPLE__
 TEST(Virtualizer, virtualizer_whenOffAPhysicalDevice_reportsEveryProbeAsUnsupported) {
   EXPECT_EQ(virtualizer(),
             (std::vector<Observation>{
@@ -110,7 +109,6 @@ TEST(Virtualizer, virtualizer_whenOffAPhysicalDevice_reportsEveryProbeAsUnsuppor
                 {.signal = "virt.foreign_images", .source = "dyld", .status = Status::kUnsupported, .value = {}},
             }));
 }
-#endif
 
 }  // namespace
 }  // namespace rasp::ios::checks

@@ -30,7 +30,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
         - `/System`
         - the cryptex OS images under `/private/preboot/.../Cryptexes/OS/System/`, where modern iOS keeps stock frameworks such as WebKit
 
-        A virtualizer maps its own runtime into the guest from its data container, so that image shows up here (at most 64 are reported). A clean process reports an empty list.
+        A virtualizer maps its own runtime into the guest from its data container, so those images show up here (at most 64 such images are reported). A clean process reports an empty list.
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
 - `android/`: `librasp.so`, the runtime for Android, and the stub that loads it. The library runs its checks when it loads, and returns the app's decrypted dex files to the stub.
   - `src/entry.cpp`: a load-time constructor that runs the checks and decrypts the app's dex files, and `JNI_OnLoad`, which builds the class loader over them and stores it in the stub's field.
