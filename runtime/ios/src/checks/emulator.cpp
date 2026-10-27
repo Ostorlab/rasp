@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cstddef>
 #include <string_view>
 #include <vector>
 
@@ -13,6 +12,7 @@
 
 #ifdef __APPLE__
 #include <TargetConditionals.h>
+#include <cstddef>
 #include <sys/sysctl.h>
 #endif
 
@@ -62,8 +62,8 @@ Observation observe_machine() {
 #ifdef __APPLE__
   std::array<char, kMaxMachineSize> buffer{};
   std::size_t size = buffer.size();
-  if (sysctlbyname(kMachineName.data(), buffer.data(), &size, nullptr, 0) != 0 || size == 0 ||
-      size > buffer.size() || buffer[size - 1] != '\0') {
+  const bool read_failed = sysctlbyname(kMachineName.data(), buffer.data(), &size, nullptr, 0) != 0;
+  if (read_failed || size == 0 || size > buffer.size() || buffer[size - 1] != '\0') {
     return failed(kSimulatorSignal, kSysctlSource);
   }
   return observe_machine_tell(std::string_view(buffer.data(), size - 1));

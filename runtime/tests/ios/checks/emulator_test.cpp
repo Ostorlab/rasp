@@ -36,10 +36,12 @@ TEST(Emulator, observeMachineTell_whenModelEmbedsArchitecture_reportsFalse) {
 
 #ifndef __APPLE__
 TEST(Emulator, emulator_whenOffAnAppleHost_reportsEveryTellAsUnsupported) {
-  EXPECT_EQ(emulator(), (std::vector<Observation>{
-                            {.signal = "emu.simulator", .source = "target_conditionals", .status = Status::kUnsupported},
-                            {.signal = "emu.simulator", .source = "sysctl", .status = Status::kUnsupported},
-                        }));
+  EXPECT_EQ(
+      emulator(),
+      (std::vector<Observation>{
+          {.signal = "emu.simulator", .source = "target_conditionals", .status = Status::kUnsupported, .value = {}},
+          {.signal = "emu.simulator", .source = "sysctl", .status = Status::kUnsupported, .value = {}},
+      }));
 }
 #endif
 
