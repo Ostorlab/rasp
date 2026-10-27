@@ -2,6 +2,7 @@ configure_file(include/rasp/version.h.in ${CMAKE_CURRENT_BINARY_DIR}/include/ras
 
 add_library(rasp_core STATIC
   src/observation.cpp
+  src/plugins/host.cpp
   src/util/read_file.cpp)
 target_include_directories(rasp_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
