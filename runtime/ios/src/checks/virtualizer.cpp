@@ -190,8 +190,6 @@ std::vector<Observation> virtualizer() {
   const Observation foreign =
       images ? observe_foreign_images(*images, main_bundle_directory()) : failed(kForeignImagesSignal, kDyldSource);
   return {container, foreign};
-#else
-  return {unsupported(kContainerSignal, kDyldSource), unsupported(kForeignImagesSignal, kDyldSource)};
 #endif
 }
 
