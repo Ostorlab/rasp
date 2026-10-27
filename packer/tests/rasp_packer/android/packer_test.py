@@ -7,6 +7,7 @@ import zipfile
 import pytest
 
 from rasp_packer import errors
+from rasp_packer import plugin_configs
 from rasp_packer.android import cipher
 from rasp_packer.android import packer
 from rasp_packer.android import resources
@@ -265,3 +266,37 @@ def testPack_whenValidApk_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     )
     assert app_identity.package_name == _PACKAGE
     assert app_identity.version == "2.4.1"
+
+
+def testPack_whenPluginConfigsAreGiven_writesEachAsAStoredAsset(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "app.apk"
+    output = tmp_path / "out.apk"
+    _make_apk(app)
+
+    packer.pack(
+        app=app,
+        output=output,
+        build_id=_BUILD_ID,
+        artifacts=_artifacts(),
+        splitter=_recorded_split(),
+        plugin_configs=[
+            plugin_configs.PluginConfig(name="zeta", data=b"z=1"),
+            plugin_configs.PluginConfig(name="alpha", data=b""),
+        ],
+    )
+
+    with zipfile.ZipFile(output) as archive:
+        zeta = archive.getinfo(f"{packer.PLUGIN_CONFIG_DIRECTORY}/zeta")
+        assert archive.read(zeta) == b"z=1"
+        assert archive.read(f"{packer.PLUGIN_CONFIG_DIRECTORY}/alpha") == b""
+    assert zeta.compress_type == zipfile.ZIP_STORED
+
+
+def testPack_whenNoPluginConfigIsGiven_writesNone(tmp_path: pathlib.Path) -> None:
+    output = _pack(tmp_path)
+
+    with zipfile.ZipFile(output) as archive:
+        names = archive.namelist()
+    assert all(not name.startswith(packer.PLUGIN_CONFIG_DIRECTORY) for name in names)

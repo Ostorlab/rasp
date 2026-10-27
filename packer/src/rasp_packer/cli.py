@@ -9,6 +9,7 @@ from importlib import metadata
 from rasp_packer import errors
 from rasp_packer import packer
 from rasp_packer import platforms
+from rasp_packer import plugin_configs
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -48,6 +49,14 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="where to write the protected app",
     )
+    pack.add_argument(
+        "--plugin-config",
+        action="append",
+        default=[],
+        dest="plugin_configs",
+        metavar="NAME=FILE",
+        help="the config of the plugin NAME of the runtime, read from FILE; repeat it for several plugins",
+    )
     return parser
 
 
@@ -59,6 +68,7 @@ def _pack(arguments: argparse.Namespace) -> int:
             platform=arguments.platform,
             output=arguments.output,
             build_id=arguments.build_id,
+            plugin_configs=plugin_configs.read(arguments.plugin_configs),
         )
     except errors.Error as error:
         print(f"rasp pack: {error}", file=sys.stderr)

@@ -1,10 +1,12 @@
 """Packing of an IPA: adds the runtime framework to the app.
 
 The packer unpacks the IPA, makes the main executable load the runtime, embeds
-`RaspRuntime.framework` with the build id in its `Info.plist`, removes the app's code
-signature, and repacks the IPA. The result is unsigned: the customer signs it.
+`RaspRuntime.framework` with the build id in its `Info.plist` and the configs of its plugins,
+removes the app's code signature, and repacks the IPA. The result is unsigned: the customer
+signs it.
 """
 
+import collections.abc
 import pathlib
 import plistlib
 import shutil
@@ -12,11 +14,13 @@ import tempfile
 
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer import plugin_configs as plugin_configs_module
 from rasp_packer.ios import ipa
 from rasp_packer.ios import macho
 from rasp_packer.ios import resources
 
 RASP_BUILD_ID_KEY = "RaspBuildId"
+PLUGIN_CONFIG_DIRECTORY = "plugin-config"
 _CODE_SIGNATURE_DIR = "_CodeSignature"
 
 
@@ -26,6 +30,7 @@ def pack(
     output: pathlib.Path,
     build_id: str,
     runtime: pathlib.Path | None = None,
+    plugin_configs: collections.abc.Sequence[plugin_configs_module.PluginConfig] = (),
 ) -> identity.AppIdentity:
     """Protects an IPA and writes the protected IPA to `output`.
 
@@ -34,6 +39,8 @@ def pack(
         output: Path to write the protected IPA to.
         build_id: The id of the build, written into the framework's `Info.plist`.
         runtime: The `RaspRuntime.framework` to embed. Defaults to the one bundled in the packer.
+        plugin_configs: The configs of the plugins of the runtime, each written into the framework
+            as `plugin-config/<name>`.
 
     Returns:
         The app's bundle identifier and short version string, from its `Info.plist`.
@@ -59,8 +66,22 @@ def pack(
         shutil.rmtree(bundle.app_dir / _CODE_SIGNATURE_DIR, ignore_errors=True)
         shutil.copytree(framework_dir, embedded)
         _write_build_id(embedded / "Info.plist", build_id)
+        _write_plugin_configs(embedded, plugin_configs)
         ipa.archive(bundle.payload_dir, output)
     return bundle.identity
+
+
+def _write_plugin_configs(
+    framework: pathlib.Path,
+    plugin_configs: collections.abc.Sequence[plugin_configs_module.PluginConfig],
+) -> None:
+    """Writes each plugin config into the runtime framework, as `plugin-config/<name>`."""
+    if len(plugin_configs) == 0:
+        return
+    directory = framework / PLUGIN_CONFIG_DIRECTORY
+    directory.mkdir(exist_ok=True)
+    for config in plugin_configs:
+        (directory / config.name).write_bytes(config.data)
 
 
 def _write_build_id(info_plist: pathlib.Path, build_id: str) -> None:

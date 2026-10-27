@@ -51,3 +51,7 @@ class AlreadyProtectedError(Error):
 
 class InvalidRuntimeError(Error):
     """The runtime to add is missing or malformed."""
+
+
+class InvalidPluginConfigError(Error):
+    """A plugin config cannot be read, or cannot be written into the app."""

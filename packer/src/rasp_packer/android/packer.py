@@ -11,6 +11,8 @@ runtime's ``payload/dex_store.*``, ``payload/assets.h`` and ``loader/loader_dex.
 - ``assets/rasp/key.bin`` — the raw 32-byte key, stored. It decrypts the map and every business dex.
 - ``assets/rasp/map.bin`` — the class map (see loader_map), encrypted under the key, stored.
 - ``assets/rasp/build_id`` — the build id, as UTF-8 text.
+- ``assets/rasp/plugin-config/<name>`` — the config the packer is given for the runtime's plugin
+  ``<name>``, stored.
 - ``assets/business/<i>.dex`` — one encrypted business dex per file, stored.
 - the framework dexes and the stub, in the clear, as ``classes.dex`` … ``classesN.dex``.
 - ``lib/<abi>/librasp.so`` — the runtime library, one per ABI, unmodified. The loader's own dex is
@@ -27,6 +29,7 @@ import pathlib
 
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer import plugin_configs as plugin_configs_module
 from rasp_packer.android import cipher
 from rasp_packer.android import injection
 from rasp_packer.android import loader_map
@@ -42,6 +45,7 @@ ASSET_DIRECTORY = "assets/rasp"
 KEY_ENTRY = f"{ASSET_DIRECTORY}/key.bin"
 MAP_ENTRY = f"{ASSET_DIRECTORY}/map.bin"
 BUILD_ID_ENTRY = f"{ASSET_DIRECTORY}/build_id"
+PLUGIN_CONFIG_DIRECTORY = f"{ASSET_DIRECTORY}/plugin-config"
 ASSET_PREFIX = "assets/"
 
 type Splitter = collections.abc.Callable[[pathlib.Path, str], split_module.Split]
@@ -54,6 +58,7 @@ def pack(
     build_id: str,
     artifacts: resources_module.Artifacts | None = None,
     splitter: Splitter = split_module.split,
+    plugin_configs: collections.abc.Sequence[plugin_configs_module.PluginConfig] = (),
 ) -> identity.AppIdentity:
     """Packs an Android app, writing the protected APK to output.
 
@@ -64,6 +69,7 @@ def pack(
         artifacts: The prebuilt stub and libraries. Loaded from the package resources when not given.
         splitter: Splits the app's classes into framework and business dexes. The default runs the
             bundled splitter; a test passes a recorded split.
+        plugin_configs: The configs of the plugins of the runtime, each written as a stored asset.
 
     Returns:
         The app's package name and version, read from its manifest.
@@ -105,6 +111,10 @@ def pack(
         for dex in result.business
     }
     base_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
+    config_entries = {
+        f"{PLUGIN_CONFIG_DIRECTORY}/{config.name}": config.data
+        for config in plugin_configs
+    }
     apk.write(
         output,
         replace={archive.MANIFEST_ENTRY: patched_manifest},
@@ -115,6 +125,7 @@ def pack(
             **business_entries,
             **base_dexes,
             **injection.library_entries(apk, artifacts),
+            **config_entries,
         },
         remove=set(dex_names) | injection.stale_signature_entries(apk),
     )

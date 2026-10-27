@@ -7,6 +7,7 @@ import pytest
 
 from rasp_packer import cli
 from rasp_packer import packer
+from rasp_packer import plugin_configs
 
 _BUILD_ID = "a" * 64
 _USAGE_ERROR = 2
@@ -106,3 +107,77 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
         f"packed ios app: {tmp_path / 'out.ipa'} "
         f"(package dev.ostorlab.demo, version 1.2.3, build {_BUILD_ID})"
     )
+
+
+def _record_pack(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> list[object]:
+    """Replaces packer.pack with a fake that succeeds, and returns the plugin configs of each call."""
+    received: list[object] = []
+
+    def fake_pack(*, plugin_configs: object, **_: object) -> packer.PackResult:
+        received.append(plugin_configs)
+        return packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+        )
+
+    monkeypatch.setattr(packer, "pack", fake_pack)
+    return received
+
+
+def testMain_whenPluginConfigsAreGiven_packsThemInTheOrderGiven(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    received = _record_pack(tmp_path, monkeypatch)
+    (tmp_path / "zeta.conf").write_bytes(b"z=1")
+    (tmp_path / "alpha.conf").write_bytes(b"a=2")
+
+    exit_code = cli.main(
+        [
+            *_pack_arguments(tmp_path),
+            "--plugin-config",
+            f"zeta={tmp_path / 'zeta.conf'}",
+            "--plugin-config",
+            f"alpha={tmp_path / 'alpha.conf'}",
+        ]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert received == [
+        (
+            plugin_configs.PluginConfig(name="zeta", data=b"z=1"),
+            plugin_configs.PluginConfig(name="alpha", data=b"a=2"),
+        )
+    ]
+
+
+def testMain_whenNoPluginConfigIsGiven_packsNone(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    received = _record_pack(tmp_path, monkeypatch)
+
+    assert cli.main(_pack_arguments(tmp_path)) == cli.EXIT_OK
+    assert received == [()]
+
+
+def testMain_whenAPluginConfigCannotBeRead_printsTheErrorAndReturnsFailed(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received = _record_pack(tmp_path, monkeypatch)
+
+    exit_code = cli.main(
+        [
+            *_pack_arguments(tmp_path),
+            "--plugin-config",
+            f"example={tmp_path / 'missing.conf'}",
+        ]
+    )
+
+    assert exit_code == cli.EXIT_FAILED
+    assert capsys.readouterr().err.startswith("rasp pack: cannot read the config")
+    assert received == []

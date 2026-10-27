@@ -11,6 +11,7 @@ import pytest
 
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer import plugin_configs
 from rasp_packer.ios import macho
 from rasp_packer.ios import packer
 from tests.rasp_packer import conftest
@@ -114,3 +115,34 @@ def testPack_whenRuntimeIsNotTheFramework_raisesInvalidRuntimeError(
             runtime=tmp_path,
             build_id=_BUILD_ID,
         )
+
+
+def testPack_whenPluginConfigsAreGiven_writesEachIntoTheRuntime(
+    ipa_file: pathlib.Path, runtime: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    packer.pack(
+        app=ipa_file,
+        output=tmp_path / "out.ipa",
+        runtime=runtime,
+        build_id=_BUILD_ID,
+        plugin_configs=[
+            plugin_configs.PluginConfig(name="zeta", data=b"z=1"),
+            plugin_configs.PluginConfig(name="alpha", data=b""),
+        ],
+    )
+
+    with zipfile.ZipFile(tmp_path / "out.ipa") as archive:
+        zeta = archive.read(f"{_FRAMEWORK}/plugin-config/zeta")
+        alpha = archive.read(f"{_FRAMEWORK}/plugin-config/alpha")
+
+    assert zeta == b"z=1"
+    assert alpha == b""
+
+
+def testPack_whenNoPluginConfigIsGiven_writesNone(
+    ipa_file: pathlib.Path, runtime: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    with _pack(ipa_file, runtime, tmp_path / "out.ipa") as archive:
+        names = archive.namelist()
+
+    assert all("plugin-config" not in name for name in names)

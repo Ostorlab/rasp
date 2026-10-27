@@ -1,5 +1,6 @@
 """The packer's entry point: protects a built app."""
 
+import collections.abc
 import dataclasses
 import pathlib
 import re
@@ -7,6 +8,7 @@ import re
 from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import platforms
+from rasp_packer import plugin_configs as plugin_configs_module
 from rasp_packer.android import packer as android_packer
 from rasp_packer.ios import packer as ios_packer
 
@@ -38,6 +40,7 @@ def pack(
     platform: platforms.Platform,
     output: pathlib.Path,
     build_id: str,
+    plugin_configs: collections.abc.Sequence[plugin_configs_module.PluginConfig] = (),
 ) -> PackResult:
     """Protects a built app: adds the runtime and writes the protected app to `output`.
 
@@ -51,6 +54,8 @@ def pack(
         platform: The platform of the app.
         output: Path to write the protected app to. It must not exist.
         build_id: The id of the protected build, written into the app.
+        plugin_configs: The configs of the plugins compiled into the runtime, written into the
+            app for the runtime to give them.
 
     Returns:
         The protected app, the app's package name and version, and the build id.
@@ -68,10 +73,18 @@ def pack(
     match platform:
         case platforms.Platform.ANDROID:
             app_identity = android_packer.pack(
-                app=app, output=output, build_id=build_id
+                app=app,
+                output=output,
+                build_id=build_id,
+                plugin_configs=plugin_configs,
             )
         case platforms.Platform.IOS:
-            app_identity = ios_packer.pack(app=app, output=output, build_id=build_id)
+            app_identity = ios_packer.pack(
+                app=app,
+                output=output,
+                build_id=build_id,
+                plugin_configs=plugin_configs,
+            )
     return PackResult(
         output=output,
         package_name=app_identity.package_name,

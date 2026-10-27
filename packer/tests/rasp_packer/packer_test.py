@@ -1,5 +1,6 @@
 """Tests of the packer's entry point."""
 
+import collections.abc
 import pathlib
 
 import pytest
@@ -8,6 +9,7 @@ from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import packer
 from rasp_packer import platforms
+from rasp_packer import plugin_configs as plugin_configs_module
 from rasp_packer.android import packer as android_packer
 from rasp_packer.ios import packer as ios_packer
 
@@ -157,3 +159,42 @@ def testPack_whenAndroidApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
         version="1.2.3",
         build_id=_BUILD_ID,
     )
+
+
+@pytest.mark.parametrize(
+    ("platform", "packer_module"),
+    [
+        (platforms.Platform.IOS, ios_packer),
+        (platforms.Platform.ANDROID, android_packer),
+    ],
+)
+def testPack_whenPluginConfigsAreGiven_passesThemToThePlatformPacker(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: platforms.Platform,
+    packer_module: object,
+) -> None:
+    configs = (
+        plugin_configs_module.PluginConfig(name="zeta", data=b"z=1"),
+        plugin_configs_module.PluginConfig(name="alpha", data=b""),
+    )
+    received: list[collections.abc.Sequence[plugin_configs_module.PluginConfig]] = []
+
+    def fake_pack(
+        *,
+        plugin_configs: collections.abc.Sequence[plugin_configs_module.PluginConfig],
+        **_: object,
+    ) -> identity.AppIdentity:
+        received.append(plugin_configs)
+        return _IDENTITY
+
+    monkeypatch.setattr(packer_module, "pack", fake_pack)
+    packer.pack(
+        app=tmp_path / "app",
+        platform=platform,
+        output=tmp_path / "out",
+        build_id=_BUILD_ID,
+        plugin_configs=configs,
+    )
+
+    assert received == [configs]
