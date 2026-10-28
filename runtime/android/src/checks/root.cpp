@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "rasp/util/obfuscation.h"
 #include "rasp/util/read_file.h"
 #include "util/system_property.h"
 
@@ -29,6 +30,10 @@ using rasp::util::read_file;
 
 /// The signal of the root-file probe.
 constexpr std::string_view kPathsSignal = "root.fs_paths";
+/// The source of the root-file probe that asks through access().
+constexpr std::string_view kAccessSource = "access";
+/// The source of the root-file probe that asks through stat().
+constexpr std::string_view kStatSource = "stat";
 /// The signal of the mount-table probe that reports the mounts a root tool made.
 constexpr std::string_view kMountsSignal = "root.mounts";
 /// The signal of the mount-table probe that reports the system folders mounted writable.
@@ -168,8 +173,8 @@ struct PathSource {
 
 /// The sources root.fs_paths reads each path through, in the order their observations are reported.
 constexpr std::array kPathSources = {
-    PathSource{.name = "access", .exists = found_by_access},
-    PathSource{.name = "stat", .exists = found_by_stat},
+    PathSource{.name = kAccessSource, .exists = found_by_access},
+    PathSource{.name = kStatSource, .exists = found_by_stat},
 };
 
 /// The fields of a mount table line that the probes read.
@@ -283,6 +288,11 @@ Observation observe_build_props(util::PropertyReader read_property) {
 }
 
 std::vector<Observation> root() {
+  static constexpr std::array kObfuscatedLiterals = {
+      kPathsSignal,   kAccessSource,  kStatSource,  kMountsSignal, kRwMountsSignal, kMountsSource,
+      kSelinuxSignal, kSelinuxSource, kPropsSignal, kPropsSource,  kMountsPath,     kEnforcePath,
+  };
+  rasp::util::anchor_literals(kObfuscatedLiterals);
   if (!kOnAndroid) {
     // Off Android the files, mounts and properties are not Android ones: report every probe as unsupported.
     std::vector<Observation> observations;
