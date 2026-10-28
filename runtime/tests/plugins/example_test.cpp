@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <string>
 #include <vector>
 
 #include "rasp/observation.h"
@@ -25,15 +26,18 @@ TEST(ExamplePlugin, compiledIn_whenTheRegistryHoldsTheExample_returnsIt) {
   EXPECT_EQ(compiled_in().front(), &example::kPlugin);
 }
 
-TEST(ExamplePlugin, runPlugins_whenRunTwice_reportsItsRunsThenWhatThePreviousRunHeld) {
+TEST(ExamplePlugin, runPlugins_whenInitialisedThenRunTwice_reportsTheBuildIdItsRunsThenWhatThePreviousRunHeld) {
   const Observation builtin = observed("jb.fork_ok", "fork", false);
+  const Observation build_id = observed("example.build_id", "init", std::string("build-7"));
 
+  init_plugins(compiled_in(), {.build_id = "build-7"});
   const std::vector<Observation> first = run_plugins(compiled_in(), {builtin});
   const std::vector<Observation> second = run_plugins(compiled_in(), {builtin});
 
-  EXPECT_EQ(first, (std::vector<Observation>{builtin, observed("example.runs", "counter", std::int64_t{1})}));
+  EXPECT_EQ(first, (std::vector<Observation>{builtin, build_id, observed("example.runs", "counter", std::int64_t{1})}));
   EXPECT_EQ(second, (std::vector<Observation>{
                         builtin,
+                        build_id,
                         observed("example.runs", "counter", std::int64_t{2}),
                         observed("example.seen", "on_observations", static_cast<std::int64_t>(first.size())),
                     }));

@@ -41,10 +41,12 @@ constexpr std::chrono::seconds kCheckInterval{60};
   return observations;
 }
 
-/// The thread: runs the built-in checks and the plugins, then again every kCheckInterval, until the process exits.
+/// The thread: initialises the plugins, then runs the built-in checks and the plugins, then again every kCheckInterval,
+/// until the process exits.
 ///
 /// @return Never returns.
 void* monitor(void* /*argument*/) {
+  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), {});
   while (true) {
     const std::vector<Observation> observations =
         rasp::plugins::run_plugins(rasp::plugins::compiled_in(), run_checks());
