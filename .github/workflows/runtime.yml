@@ -274,6 +274,14 @@ jobs:
           lib=build/android/android/librasp.so
           test -z "$("$nm" -D -u "$lib" | grep __android_log)"
           test -z "$(strings -a "$lib" | grep -F RaspRuntime)"
+      - name: Check the library shows no signal name or probed path
+        run: |
+          lib=build/android/android/librasp.so
+          test -s "$lib"
+          literals="$(grep -rhoE '"((root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+|/(proc|sys)/[^"]+)"' android/src | tr -d '"' | sort -u)"
+          test -n "$literals"
+          readable="$(strings -a "$lib" | grep -xF -- "$literals" || true)"
+          if [ -n "$readable" ]; then echo "readable in the release library:"; echo "$readable"; exit 1; fi
       - name: Configure the development build
         run: cmake --preset android-dev
       - name: Build the development build
