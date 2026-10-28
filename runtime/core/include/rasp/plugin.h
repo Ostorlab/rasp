@@ -5,6 +5,7 @@
 #include <span>
 #include <vector>
 
+#include "rasp/config.h"
 #include "rasp/observation.h"
 
 namespace rasp::plugins {
@@ -16,6 +17,11 @@ using Check = std::vector<Observation> (*)();
 
 /// A plugin compiled into the runtime.
 struct Plugin {
+  /// Initialises the plugin. The runtime calls it once, when it starts, before the plugin's checks and its
+  /// `on_observations`.
+  ///
+  /// @param config The runtime's config, valid only during the call.
+  void (*init)(const Config& config);
   /// The plugin's checks.
   std::span<const Check> checks;
   /// Receives all the observations. May be null.

@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "rasp/config.h"
 #include "rasp/observation.h"
 #include "rasp/plugin.h"
 #include "rasp/plugins/registry.h"
@@ -34,6 +35,9 @@ using Received = std::vector<std::pair<std::string, std::vector<Observation>>>;
 void observe(std::string_view plugin, std::span<const Observation> observations) {
   received().emplace_back(std::string(plugin), std::vector<Observation>(observations.begin(), observations.end()));
 }
+
+/// An init that does nothing.
+void ignore(const Config& /*config*/) {}
 
 /// The first check of the alpha plugin.
 ///
@@ -66,11 +70,11 @@ constexpr std::array<Check, 2> kAlphaChecks{alpha_first, alpha_second};
 constexpr std::array<Check, 1> kBetaChecks{beta_only};
 
 /// A plugin with two checks and an observer.
-constexpr Plugin kAlpha{.checks = kAlphaChecks, .on_observations = observe_alpha};
+constexpr Plugin kAlpha{.init = ignore, .checks = kAlphaChecks, .on_observations = observe_alpha};
 /// A plugin with one check and an observer.
-constexpr Plugin kBeta{.checks = kBetaChecks, .on_observations = observe_beta};
+constexpr Plugin kBeta{.init = ignore, .checks = kBetaChecks, .on_observations = observe_beta};
 /// A plugin with no check and no observer.
-constexpr Plugin kSilent{.checks = {}};
+constexpr Plugin kSilent{.init = ignore, .checks = {}};
 
 /// The observation of the built-in checks that every test gives `run_plugins`.
 ///

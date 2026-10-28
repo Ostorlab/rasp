@@ -30,14 +30,15 @@ namespace {
 /// How long the thread waits between two runs of the checks.
 constexpr std::chrono::seconds kCheckInterval{60};
 
-/// The thread: runs the jailbreak, debugger, hooking, app-identity, emulator, virtualizer and network-interception
-/// checks and the plugins, then again every kCheckInterval, until the process exits.
+/// The thread: initialises the plugins, then runs the jailbreak, debugger, hooking, app-identity, emulator, virtualizer
+/// and network-interception checks and the plugins, then again every kCheckInterval, until the process exits.
 ///
 /// @param argument The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, a `std::string` allocated with `new`
 /// that the thread takes and keeps until the process exits.
 /// @return Never returns.
 void* monitor(void* argument) {
   const std::unique_ptr<const std::string> inserted_libraries(static_cast<std::string*>(argument));
+  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), {});
   while (true) {
     std::vector<Observation> builtin = checks::jailbreak();
     std::ranges::move(checks::debugger(), std::back_inserter(builtin));

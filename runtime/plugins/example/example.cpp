@@ -1,11 +1,13 @@
-/// The example plugin. It reports how many times its checks have run, and from its second run on, how many
-/// observations the previous run held.
+/// The example plugin. It reports the build id the runtime gave its init, how many times its checks have run, and from
+/// its second run on, how many observations the previous run held.
 
 #include <array>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
+#include "rasp/config.h"
 #include "rasp/observation.h"
 #include "rasp/plugin.h"
 
@@ -15,6 +17,8 @@ namespace {
 
 /// What the plugin remembers between runs.
 struct Memory {
+  /// The build id the runtime gave `remember`.
+  std::string build_id;
   /// How many times `runs` was called.
   std::int64_t runs = 0;
   /// How many observations the last call of `count` received, or -1 before the first call.
@@ -23,11 +27,24 @@ struct Memory {
 
 /// The plugin's memory.
 ///
+/// The first call builds it. It is never destroyed, so there is no exit-time destructor.
+///
 /// @return The memory, which lives as long as the process.
 [[nodiscard]] Memory& memory() {
-  static Memory value;
-  return value;
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+  static auto* const kMemory = new Memory();
+  return *kMemory;
 }
+
+/// Remembers the build id.
+///
+/// @param config The runtime's config. Only its build id is read.
+void remember(const Config& config) { memory().build_id = config.build_id; }
+
+/// Reports the build id.
+///
+/// @return One example.build_id observation read through init: the build id the runtime gave the plugin.
+[[nodiscard]] std::vector<Observation> build_id() { return {observed("example.build_id", "init", memory().build_id)}; }
 
 /// Counts the runs.
 ///
@@ -57,11 +74,11 @@ void count(std::span<const Observation> observations) {
 }
 
 /// The plugin's checks.
-constexpr std::array<Check, 2> kChecks{runs, seen};
+constexpr std::array<Check, 3> kChecks{build_id, runs, seen};
 
 }  // namespace
 
 /// The example plugin.
-extern constexpr Plugin kPlugin{.checks = kChecks, .on_observations = count};
+extern constexpr Plugin kPlugin{.init = remember, .checks = kChecks, .on_observations = count};
 
 }  // namespace rasp::plugins::example
