@@ -10,7 +10,7 @@ runtime's ``payload/dex_store.*``, ``payload/assets.h`` and ``loader/loader_dex.
 
 - ``assets/rasp/key.bin`` — the raw 32-byte key, stored. It decrypts the map and every business dex.
 - ``assets/rasp/map.bin`` — the class map (see loader_map), encrypted under the key, stored.
-- ``assets/rasp/build_id`` — the build id, as UTF-8 text.
+- ``assets/rasp/config.json`` — the runtime's config (see runtime_config), stored.
 - ``assets/business/<i>.dex`` — one encrypted business dex per file, stored.
 - the framework dexes and the stub, in the clear, as ``classes.dex`` … ``classesN.dex``.
 - ``lib/<abi>/librasp.so`` — the runtime library, one per ABI, unmodified. The loader's own dex is
@@ -27,6 +27,7 @@ import pathlib
 
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer import runtime_config
 from rasp_packer.android import cipher
 from rasp_packer.android import injection
 from rasp_packer.android import loader_map
@@ -41,7 +42,7 @@ MINIMUM_API_LEVEL = 31
 ASSET_DIRECTORY = "assets/rasp"
 KEY_ENTRY = f"{ASSET_DIRECTORY}/key.bin"
 MAP_ENTRY = f"{ASSET_DIRECTORY}/map.bin"
-BUILD_ID_ENTRY = f"{ASSET_DIRECTORY}/build_id"
+CONFIG_ENTRY = f"{ASSET_DIRECTORY}/{runtime_config.FILE_NAME}"
 ASSET_PREFIX = "assets/"
 
 type Splitter = collections.abc.Callable[[pathlib.Path, str], split_module.Split]
@@ -51,7 +52,7 @@ def pack(
     *,
     app: pathlib.Path,
     output: pathlib.Path,
-    build_id: str,
+    config: runtime_config.RuntimeConfig,
     artifacts: resources_module.Artifacts | None = None,
     splitter: Splitter = split_module.split,
 ) -> identity.AppIdentity:
@@ -60,7 +61,7 @@ def pack(
     Args:
         app: The built APK to protect.
         output: Where to write the protected APK. It is unsigned.
-        build_id: The id of the protected build, written into the APK.
+        config: The runtime's config, written into the APK.
         artifacts: The prebuilt stub and libraries. Loaded from the package resources when not given.
         splitter: Splits the app's classes into framework and business dexes. The default runs the
             bundled splitter; a test passes a recorded split.
@@ -111,7 +112,7 @@ def pack(
         add={
             KEY_ENTRY: key,
             MAP_ENTRY: map_frame,
-            BUILD_ID_ENTRY: build_id.encode("utf-8"),
+            CONFIG_ENTRY: config.to_json(),
             **business_entries,
             **base_dexes,
             **injection.library_entries(apk, artifacts),

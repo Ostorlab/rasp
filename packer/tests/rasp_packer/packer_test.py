@@ -8,6 +8,7 @@ from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import packer
 from rasp_packer import platforms
+from rasp_packer import runtime_config
 from rasp_packer.android import packer as android_packer
 from rasp_packer.ios import packer as ios_packer
 
@@ -15,17 +16,17 @@ _BUILD_ID = "a" * 64
 _IDENTITY = identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
 
 
-def testPack_whenIosApp_packsWithTheGivenBuildId(
+def testPack_whenIosApp_packsWithAConfigHoldingTheGivenBuildId(
     ipa_file: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: dict[str, object] = {}
 
     def fake_pack(
-        *, app: pathlib.Path, output: pathlib.Path, build_id: object, **_: object
+        *, app: pathlib.Path, output: pathlib.Path, config: object, **_: object
     ) -> identity.AppIdentity:
         calls["app"] = app
         calls["output"] = output
-        calls["build_id"] = build_id
+        calls["config"] = config
         return _IDENTITY
 
     monkeypatch.setattr(ios_packer, "pack", fake_pack)
@@ -39,7 +40,7 @@ def testPack_whenIosApp_packsWithTheGivenBuildId(
     assert calls == {
         "app": ipa_file,
         "output": tmp_path / "out.ipa",
-        "build_id": _BUILD_ID,
+        "config": runtime_config.RuntimeConfig(build_id=_BUILD_ID),
     }
 
 
@@ -107,7 +108,7 @@ def testPack_whenOutputExists_raisesOutputExistsError(tmp_path: pathlib.Path) ->
         )
 
 
-def testPack_whenAndroidApp_packsWithTheGivenBuildId(
+def testPack_whenAndroidApp_packsWithAConfigHoldingTheGivenBuildId(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app = tmp_path / "app.apk"
@@ -115,11 +116,11 @@ def testPack_whenAndroidApp_packsWithTheGivenBuildId(
     calls: dict[str, object] = {}
 
     def fake_pack(
-        *, app: pathlib.Path, output: pathlib.Path, build_id: object, **_: object
+        *, app: pathlib.Path, output: pathlib.Path, config: object, **_: object
     ) -> identity.AppIdentity:
         calls["app"] = app
         calls["output"] = output
-        calls["build_id"] = build_id
+        calls["config"] = config
         return _IDENTITY
 
     monkeypatch.setattr(android_packer, "pack", fake_pack)
@@ -133,7 +134,7 @@ def testPack_whenAndroidApp_packsWithTheGivenBuildId(
     assert calls == {
         "app": app,
         "output": tmp_path / "out.apk",
-        "build_id": _BUILD_ID,
+        "config": runtime_config.RuntimeConfig(build_id=_BUILD_ID),
     }
 
 

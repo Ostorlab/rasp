@@ -1,22 +1,21 @@
 """Packing of an IPA: adds the runtime framework to the app.
 
 The packer unpacks the IPA, makes the main executable load the runtime, embeds
-`RaspRuntime.framework` with the build id in its `Info.plist`, removes the app's code
-signature, and repacks the IPA. The result is unsigned: the customer signs it.
+`RaspRuntime.framework` with the runtime's config in it, removes the app's code signature, and
+repacks the IPA. The result is unsigned: the customer signs it.
 """
 
 import pathlib
-import plistlib
 import shutil
 import tempfile
 
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer import runtime_config
 from rasp_packer.ios import ipa
 from rasp_packer.ios import macho
 from rasp_packer.ios import resources
 
-RASP_BUILD_ID_KEY = "RaspBuildId"
 _CODE_SIGNATURE_DIR = "_CodeSignature"
 
 
@@ -24,7 +23,7 @@ def pack(
     *,
     app: pathlib.Path,
     output: pathlib.Path,
-    build_id: str,
+    config: runtime_config.RuntimeConfig,
     runtime: pathlib.Path | None = None,
 ) -> identity.AppIdentity:
     """Protects an IPA and writes the protected IPA to `output`.
@@ -32,7 +31,7 @@ def pack(
     Args:
         app: Path to the IPA.
         output: Path to write the protected IPA to.
-        build_id: The id of the build, written into the framework's `Info.plist`.
+        config: The runtime's config, written into the embedded framework.
         runtime: The `RaspRuntime.framework` to embed. Defaults to the one bundled in the packer.
 
     Returns:
@@ -58,19 +57,6 @@ def pack(
         macho.add_runtime(bundle.executable)
         shutil.rmtree(bundle.app_dir / _CODE_SIGNATURE_DIR, ignore_errors=True)
         shutil.copytree(framework_dir, embedded)
-        _write_build_id(embedded / "Info.plist", build_id)
+        (embedded / runtime_config.FILE_NAME).write_bytes(config.to_json())
         ipa.archive(bundle.payload_dir, output)
     return bundle.identity
-
-
-def _write_build_id(info_plist: pathlib.Path, build_id: str) -> None:
-    """Writes the build id into the framework's `Info.plist`, keeping the plist's format."""
-    content = info_plist.read_bytes()
-    plist_format = (
-        plistlib.FMT_BINARY
-        if content.startswith(b"bplist") is True
-        else plistlib.FMT_XML
-    )
-    info = plistlib.loads(content)
-    info[RASP_BUILD_ID_KEY] = build_id
-    info_plist.write_bytes(plistlib.dumps(info, fmt=plist_format))

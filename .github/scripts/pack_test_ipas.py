@@ -16,11 +16,12 @@ import zipfile
 
 import lief
 
+from rasp_packer import runtime_config
+
 _RUNTIME_DIR = "Frameworks/RaspRuntime.framework"
 _RUNTIME_BINARY = "RaspRuntime"
 _RUNTIME_INSTALL_NAME = "@rpath/RaspRuntime.framework/RaspRuntime"
 _FRAMEWORKS_RPATH = "@executable_path/Frameworks"
-_BUILD_ID_KEY = "RaspBuildId"
 _BUILD_ID = "0" * 64
 
 
@@ -112,16 +113,16 @@ def _protected_app_problems(protected: pathlib.Path, runtime: bytes) -> list[str
         if not isinstance(executable_name, str) or executable_path not in names:
             return ["the app's main executable is missing"]
         runtime_path = f"{app_dir}{_RUNTIME_DIR}/{_RUNTIME_BINARY}"
-        runtime_info_path = f"{app_dir}{_RUNTIME_DIR}/Info.plist"
-        if runtime_path not in names or runtime_info_path not in names:
+        runtime_config_path = f"{app_dir}{_RUNTIME_DIR}/{runtime_config.FILE_NAME}"
+        if runtime_path not in names or runtime_config_path not in names:
             return ["the runtime framework is not embedded"]
         problems = []
         if archive.read(runtime_path) != runtime:
             problems.append("the embedded runtime is not the one the packer ships")
-        build_id = plistlib.loads(archive.read(runtime_info_path)).get(_BUILD_ID_KEY)
-        if build_id != _BUILD_ID:
+        config = archive.read(runtime_config_path)
+        if config != runtime_config.RuntimeConfig(build_id=_BUILD_ID).to_json():
             problems.append(
-                f"the runtime's Info.plist does not have {_BUILD_ID_KEY} {_BUILD_ID}"
+                f"the runtime's config is {config!r}, not one with the build id passed to the packer"
             )
         if any(name.startswith(f"{app_dir}_CodeSignature/") for name in names):
             problems.append("the app's _CodeSignature is still there")

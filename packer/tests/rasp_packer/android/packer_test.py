@@ -7,6 +7,7 @@ import zipfile
 import pytest
 
 from rasp_packer import errors
+from rasp_packer import runtime_config
 from rasp_packer.android import cipher
 from rasp_packer.android import packer
 from rasp_packer.android import resources
@@ -16,7 +17,7 @@ from rasp_packer.android.apk import axml
 _FIXTURES = pathlib.Path(__file__).parent / "apk" / "fixtures"
 _MANIFEST = "manifest_with_application_and_version.bin"
 _PACKAGE = "com.example.withapp"
-_BUILD_ID = "rasp-build/v1:" + "ab" * 32
+_CONFIG = runtime_config.RuntimeConfig(build_id="rasp-build/v1:" + "ab" * 32)
 _STUB_DEX = b"stub dex bytes"
 _ARM64_SO = b"arm64 librasp.so bytes"
 _ARSC = b"resources table"
@@ -93,7 +94,7 @@ def _pack(
     packer.pack(
         app=app,
         output=output,
-        build_id=_BUILD_ID,
+        config=_CONFIG,
         artifacts=artifacts or _artifacts(),
         splitter=_recorded_split(),
     )
@@ -107,7 +108,7 @@ def testPack_whenValidApk_splitsOnTheManifestPackage(tmp_path: pathlib.Path) -> 
     packer.pack(
         app=app,
         output=tmp_path / "out.apk",
-        build_id=_BUILD_ID,
+        config=_CONFIG,
         artifacts=_artifacts(),
         splitter=_recorded_split(captured),
     )
@@ -122,10 +123,12 @@ def testPack_whenValidApk_writesTheRawKey(tmp_path: pathlib.Path) -> None:
     assert info.compress_type == zipfile.ZIP_STORED
 
 
-def testPack_whenValidApk_writesTheBuildId(tmp_path: pathlib.Path) -> None:
+def testPack_whenValidApk_writesTheConfigStored(tmp_path: pathlib.Path) -> None:
     output = _pack(tmp_path)
     with zipfile.ZipFile(output) as archive:
-        assert archive.read(packer.BUILD_ID_ENTRY) == _BUILD_ID.encode("utf-8")
+        info = archive.getinfo(packer.CONFIG_ENTRY)
+        assert archive.read(packer.CONFIG_ENTRY) == _CONFIG.to_json()
+    assert info.compress_type == zipfile.ZIP_STORED
 
 
 def testPack_whenValidApk_writesAnEncryptedMapThatNamesEveryBusinessClass(
@@ -180,11 +183,10 @@ def testPack_whenValidApk_addsTheRuntimeLibraryUnmodified(
         assert archive.read("lib/arm64-v8a/librasp.so") == _ARM64_SO
 
 
-def testPack_whenValidApk_writesNoWholePayloadAssets(tmp_path: pathlib.Path) -> None:
+def testPack_whenValidApk_writesNoWholePayload(tmp_path: pathlib.Path) -> None:
     output = _pack(tmp_path)
     with zipfile.ZipFile(output) as archive:
         names = set(archive.namelist())
-    assert "assets/rasp/config.json" not in names
     assert "assets/rasp/payload.bin" not in names
 
 
@@ -220,7 +222,7 @@ def testPack_whenAppAlreadyHasTheMap_raisesAlreadyProtectedError(
         packer.pack(
             app=app,
             output=tmp_path / "out.apk",
-            build_id=_BUILD_ID,
+            config=_CONFIG,
             artifacts=_artifacts(),
             splitter=_recorded_split(),
         )
@@ -247,7 +249,7 @@ def testPack_whenNoPrimaryDex_raisesInvalidApkError(tmp_path: pathlib.Path) -> N
         packer.pack(
             app=app,
             output=output,
-            build_id=_BUILD_ID,
+            config=_CONFIG,
             artifacts=_artifacts(),
             splitter=_recorded_split(),
         )
@@ -259,7 +261,7 @@ def testPack_whenValidApk_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     app_identity = packer.pack(
         app=app,
         output=tmp_path / "out.apk",
-        build_id=_BUILD_ID,
+        config=_CONFIG,
         artifacts=_artifacts(),
         splitter=_recorded_split(),
     )

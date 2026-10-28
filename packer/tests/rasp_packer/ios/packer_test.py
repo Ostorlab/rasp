@@ -2,7 +2,6 @@
 
 import collections.abc
 import pathlib
-import plistlib
 import stat
 import zipfile
 
@@ -11,11 +10,12 @@ import pytest
 
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer import runtime_config
 from rasp_packer.ios import macho
 from rasp_packer.ios import packer
 from tests.rasp_packer import conftest
 
-_BUILD_ID = "build-1"
+_CONFIG = runtime_config.RuntimeConfig(build_id="build-1")
 _APP = "Payload/Demo.app"
 _FRAMEWORK = f"{_APP}/Frameworks/RaspRuntime.framework"
 
@@ -23,8 +23,8 @@ _FRAMEWORK = f"{_APP}/Frameworks/RaspRuntime.framework"
 def _pack(
     app: pathlib.Path, runtime: pathlib.Path, output: pathlib.Path
 ) -> zipfile.ZipFile:
-    """Packs the app with the test build id and opens the protected IPA."""
-    packer.pack(app=app, output=output, runtime=runtime, build_id=_BUILD_ID)
+    """Packs the app with the test config and opens the protected IPA."""
+    packer.pack(app=app, output=output, runtime=runtime, config=_CONFIG)
     return zipfile.ZipFile(output)
 
 
@@ -44,22 +44,22 @@ def testPack_whenValidIpa_makesTheExecutableLoadTheRuntime(
     assert mode == 0o755
 
 
-def testPack_whenValidIpa_embedsTheRuntimeWithTheBuildId(
+def testPack_whenValidIpa_embedsTheRuntimeWithTheConfig(
     ipa_file: pathlib.Path, runtime: pathlib.Path, tmp_path: pathlib.Path
 ) -> None:
     with _pack(ipa_file, runtime, tmp_path / "out.ipa") as archive:
         binary = archive.read(f"{_FRAMEWORK}/RaspRuntime")
-        info = plistlib.loads(archive.read(f"{_FRAMEWORK}/Info.plist"))
+        config = archive.read(f"{_FRAMEWORK}/{runtime_config.FILE_NAME}")
 
     assert binary == b"runtime binary"
-    assert info[packer.RASP_BUILD_ID_KEY] == _BUILD_ID
+    assert config == _CONFIG.to_json()
 
 
 def testPack_whenValidIpa_returnsTheAppIdentity(
     ipa_file: pathlib.Path, runtime: pathlib.Path, tmp_path: pathlib.Path
 ) -> None:
     app_identity = packer.pack(
-        app=ipa_file, output=tmp_path / "out.ipa", runtime=runtime, build_id=_BUILD_ID
+        app=ipa_file, output=tmp_path / "out.ipa", runtime=runtime, config=_CONFIG
     )
 
     assert app_identity == identity.AppIdentity(
@@ -85,7 +85,7 @@ def testPack_whenAppEmbedsTheRuntimeAlready_raisesAlreadyProtectedError(
 
     with pytest.raises(errors.AlreadyProtectedError):
         packer.pack(
-            app=app, output=tmp_path / "out.ipa", runtime=runtime, build_id=_BUILD_ID
+            app=app, output=tmp_path / "out.ipa", runtime=runtime, config=_CONFIG
         )
 
 
@@ -100,7 +100,7 @@ def testPack_whenRuntimeIsIncomplete_raisesInvalidRuntimeError(
             app=ipa_file,
             output=tmp_path / "out.ipa",
             runtime=runtime,
-            build_id=_BUILD_ID,
+            config=_CONFIG,
         )
 
 
@@ -112,5 +112,5 @@ def testPack_whenRuntimeIsNotTheFramework_raisesInvalidRuntimeError(
             app=ipa_file,
             output=tmp_path / "out.ipa",
             runtime=tmp_path,
-            build_id=_BUILD_ID,
+            config=_CONFIG,
         )
