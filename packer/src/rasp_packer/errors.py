@@ -9,6 +9,10 @@ class InvalidApkError(Error):
     """The app is not a valid APK, or is missing something the packer needs."""
 
 
+class InvalidAabError(Error):
+    """The app is not a valid AAB, or is missing something the packer needs."""
+
+
 class ManifestError(Error):
     """The app's AndroidManifest.xml cannot be read or edited."""
 
