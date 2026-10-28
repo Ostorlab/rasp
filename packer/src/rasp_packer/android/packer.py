@@ -1,4 +1,4 @@
-"""Packing of Android apps: adds the runtime to a built APK, for on-demand loading.
+"""Packing of Android apps: adds the runtime to a built APK or AAB, for on-demand loading.
 
 The packer keeps the app's framework and library dexes in the clear and encrypts only the app's own
 ("business") dexes, each on its own, so the runtime decrypts one business dex the first time a class
@@ -16,10 +16,14 @@ runtime's ``payload/dex_store.*``, ``payload/assets.h`` and ``loader/loader_dex.
   its ``.rasp_config`` section (see runtime_library). The loader's own dex is already embedded in it at
   the runtime's build.
 
+For AAB files, all paths live under ``base/`` (e.g. ``base/assets/rasp/key.bin``,
+``base/dex/classes.dex``, ``base/lib/<abi>/librasp.so``).  The manifest is in protobuf format
+instead of binary AXML, and no zipalign or v1 signature stripping is needed.
+
 It sets the manifest's appComponentFactory to the stub, raises minSdk to the runtime's floor (API 31,
 which the in-memory loader and ``JNI_GetCreatedJavaVMs`` need), drops the app's original dexes and v1
-signatures, and returns the protected APK unsigned, so the customer signs it. The stub and the native
-runtime are prebuilt artifacts from the runtime build; see resources.
+signatures (APK only), and returns the protected app unsigned, so the customer signs it. The stub and
+the native runtime are prebuilt artifacts from the runtime build; see resources.
 """
 
 import collections.abc
@@ -34,8 +38,10 @@ from rasp_packer.android import loader_map
 from rasp_packer.android import resources as resources_module
 from rasp_packer.android import runtime_library
 from rasp_packer.android import split as split_module
-from rasp_packer.android.apk import archive
-from rasp_packer.android.apk import manifest as manifest_module
+from rasp_packer.android.aab import archive as aab_archive
+from rasp_packer.android.aab import manifest as aab_manifest_module
+from rasp_packer.android.apk import archive as apk_archive
+from rasp_packer.android.apk import manifest as apk_manifest_module
 
 PRIMARY_DEX = "classes.dex"
 MINIMUM_API_LEVEL = 31
@@ -45,7 +51,15 @@ KEY_ENTRY = f"{ASSET_DIRECTORY}/key.bin"
 MAP_ENTRY = f"{ASSET_DIRECTORY}/map.bin"
 ASSET_PREFIX = "assets/"
 
+_AAB_BASE = "base/"
+_AAB_DEX_PREFIX = "base/dex/"
+AAB_KEY_ENTRY = f"{_AAB_BASE}{KEY_ENTRY}"
+AAB_MAP_ENTRY = f"{_AAB_BASE}{MAP_ENTRY}"
+AAB_CONFIG_ENTRY = f"{_AAB_BASE}{CONFIG_ENTRY}"
+_AAB_ASSET_PREFIX = f"{_AAB_BASE}{ASSET_PREFIX}"
+
 type Splitter = collections.abc.Callable[[pathlib.Path, str], split_module.Split]
+type AabSplitter = collections.abc.Callable[[dict[str, bytes], str], split_module.Split]
 
 
 def pack(
@@ -55,23 +69,24 @@ def pack(
     config: runtime_config.RuntimeConfig,
     artifacts: resources_module.Artifacts | None = None,
     splitter: Splitter = split_module.split,
+    aab_splitter: AabSplitter = split_module.split_from_dex_entries,
 ) -> identity.AppIdentity:
-    """Packs an Android app, writing the protected APK to output.
+    """Packs an Android app (APK or AAB), writing the protected output.
 
     Args:
-        app: The built APK to protect.
-        output: Where to write the protected APK. It is unsigned.
-        config: The runtime's config, written into each runtime library.
+        app: The built APK or AAB to protect.
+        output: Where to write the protected app. It is unsigned.
+        config: The runtime's config, written into the app.
         artifacts: The prebuilt stub and libraries. Loaded from the package resources when not given.
-        splitter: Splits the app's classes into framework and business dexes. The default runs the
-            bundled splitter; a test passes a recorded split.
+        splitter: Splits an APK's classes. The default runs the bundled splitter.
+        aab_splitter: Splits an AAB's classes from pre-extracted DEX entries.
 
     Returns:
         The app's package name and version, read from its manifest.
 
     Raises:
-        InvalidApkError: The app is not a valid APK, has no dex files, or its manifest has no
-            package, no literal android:versionName or no literal android:minSdkVersion.
+        InvalidApkError: The APK is invalid or missing required entries.
+        InvalidAabError: The AAB is invalid or missing required entries.
         ManifestError: The app's manifest cannot be read or edited.
         MissingRuntimeArtifactError: A prebuilt runtime artifact is missing.
         InvalidRuntimeError: A runtime library is not an ELF file or has no ``.rasp_config`` section.
@@ -82,23 +97,60 @@ def pack(
     """
     if artifacts is None:
         artifacts = resources_module.load()
-    apk = archive.Apk.read(app)
+    if _is_aab(app):
+        return _pack_aab(
+            app=app,
+            output=output,
+            config=config,
+            artifacts=artifacts,
+            splitter=aab_splitter,
+        )
+    return _pack_apk(
+        app=app,
+        output=output,
+        config=config,
+        artifacts=artifacts,
+        splitter=splitter,
+    )
+
+
+def _is_aab(app: pathlib.Path) -> bool:
+    """An AAB contains ``BundleConfig.pb``; an APK does not."""
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(app) as zf:
+            return "BundleConfig.pb" in zf.namelist()
+    except zipfile.BadZipFile:
+        return False
+
+
+def _pack_apk(
+    *,
+    app: pathlib.Path,
+    output: pathlib.Path,
+    config: runtime_config.RuntimeConfig,
+    artifacts: resources_module.Artifacts,
+    splitter: Splitter,
+) -> identity.AppIdentity:
+    """Packs an APK."""
+    apk = apk_archive.Apk.read(app)
     dex_names = apk.dex_names()
     if PRIMARY_DEX not in dex_names:
         raise errors.InvalidApkError(f"APK has no {PRIMARY_DEX} to protect")
     manifest = apk.manifest()
-    app_identity = manifest_module.app_identity(manifest)
+    app_identity = apk_manifest_module.app_identity(manifest)
     if (
         MAP_ENTRY in apk.names()
-        or manifest_module.app_component_factory(manifest)
+        or apk_manifest_module.app_component_factory(manifest)
         == resources_module.STUB_FACTORY_CLASS
     ):
         raise errors.AlreadyProtectedError("the app is already protected")
 
     result = splitter(app, app_identity.package_name)
 
-    patched_manifest = manifest_module.set_app_component_factory(
-        manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
+    patched_manifest = apk_manifest_module.set_app_component_factory(
+        apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
         resources_module.STUB_FACTORY_CLASS,
     )
     key = cipher.new_key()
@@ -110,7 +162,7 @@ def pack(
     base_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
     apk.write(
         output,
-        replace={archive.MANIFEST_ENTRY: patched_manifest},
+        replace={apk_archive.MANIFEST_ENTRY: patched_manifest},
         add={
             KEY_ENTRY: key,
             MAP_ENTRY: map_frame,
@@ -124,3 +176,107 @@ def pack(
         remove=set(dex_names) | injection.stale_signature_entries(apk),
     )
     return app_identity
+
+
+def _pack_aab(
+    *,
+    app: pathlib.Path,
+    output: pathlib.Path,
+    config: runtime_config.RuntimeConfig,
+    artifacts: resources_module.Artifacts,
+    splitter: AabSplitter,
+) -> identity.AppIdentity:
+    """Packs an AAB."""
+    aab = aab_archive.Aab.read(app)
+    dex_names = aab.dex_names()
+    if len(dex_names) == 0:
+        raise errors.InvalidAabError("AAB has no DEX files under base/dex/ to protect")
+    manifest = aab.manifest()
+    app_identity = aab_manifest_module.app_identity(manifest)
+    if (
+        AAB_MAP_ENTRY in aab.names()
+        or aab_manifest_module.app_component_factory(manifest)
+        == resources_module.STUB_FACTORY_CLASS
+    ):
+        raise errors.AlreadyProtectedError("the app is already protected")
+
+    dex_entries: dict[str, bytes] = {}
+    for name in dex_names:
+        data = aab.get(name)
+        if data is not None:
+            dex_entries[name.removeprefix(_AAB_DEX_PREFIX)] = data
+    result = splitter(dex_entries, app_identity.package_name)
+
+    patched_manifest = aab_manifest_module.set_app_component_factory(
+        aab_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
+        resources_module.STUB_FACTORY_CLASS,
+    )
+    key = cipher.new_key()
+    map_frame = cipher.encrypt(key, loader_map.build(result.business).encode("utf-8"))
+    business_entries = {
+        _AAB_ASSET_PREFIX + dex.path: cipher.encrypt(key, dex.data)
+        for dex in result.business
+    }
+    base_dexes = _aab_base_dex_entries(result.framework, artifacts.stub_dex)
+    lib_entries = _aab_library_entries(aab, artifacts)
+    aab.write(
+        output,
+        replace={aab_archive.MANIFEST_ENTRY: patched_manifest},
+        add={
+            AAB_KEY_ENTRY: key,
+            AAB_MAP_ENTRY: map_frame,
+            AAB_CONFIG_ENTRY: config.to_json(),
+            **business_entries,
+            **base_dexes,
+            **lib_entries,
+        },
+        remove=set(dex_names),
+    )
+    return app_identity
+
+
+def _aab_base_dex_entries(
+    framework: collections.abc.Sequence[bytes], stub_dex: bytes
+) -> dict[str, bytes]:
+    """Returns base DEX entries under ``base/dex/`` for an AAB."""
+    entries: dict[str, bytes] = {}
+    for index, data in enumerate([*framework, stub_dex]):
+        name = PRIMARY_DEX if index == 0 else f"classes{index + 1}.dex"
+        entries[f"{_AAB_DEX_PREFIX}{name}"] = data
+    return entries
+
+
+def _aab_native_abis(aab: aab_archive.Aab) -> set[str]:
+    """Returns the ABIs the AAB ships native libraries for under ``base/lib/``."""
+    abis: set[str] = set()
+    for name in aab.names():
+        parts = name.split("/")
+        if (
+            len(parts) == 4
+            and parts[0] == "base"
+            and parts[1] == "lib"
+            and parts[3].endswith(".so")
+        ):
+            abis.add(parts[2])
+    return abis
+
+
+def _aab_library_entries(
+    aab: aab_archive.Aab, artifacts: resources_module.Artifacts
+) -> dict[str, bytes]:
+    """Returns the native runtime library entries under ``base/lib/`` for an AAB."""
+    app_abis = _aab_native_abis(aab)
+    if len(app_abis) == 0:
+        abis = set(artifacts.libraries)
+    else:
+        unsupported = app_abis - set(artifacts.libraries)
+        if len(unsupported) > 0:
+            raise errors.UnsupportedAbiError(
+                "the runtime is not built for the app's ABIs: "
+                + ", ".join(sorted(unsupported))
+            )
+        abis = app_abis
+    return {
+        f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": artifacts.libraries[abi]
+        for abi in sorted(abis)
+    }
