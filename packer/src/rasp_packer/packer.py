@@ -1,4 +1,4 @@
-"""The packer's entry point: protects a built app."""
+"""The packer's entry point: protects a built app (APK, AAB, or IPA)."""
 
 import dataclasses
 import pathlib
@@ -49,7 +49,7 @@ def pack(
     one with control characters.
 
     Args:
-        app: Path to the built app: an APK for Android, an IPA for iOS.
+        app: Path to the built app: an APK or AAB for Android, an IPA for iOS.
         platform: The platform of the app.
         output: Path to write the protected app to. It must not exist.
         build_id: The id of the protected build, written into the runtime's config.
