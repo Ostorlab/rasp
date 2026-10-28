@@ -37,6 +37,10 @@ class OutputExistsError(Error):
     """The path to write the protected app to already exists."""
 
 
+class InvalidAabError(Error):
+    """The app is not a valid AAB, or is missing something the packer needs."""
+
+
 class InvalidAppError(Error):
     """The app file cannot be read, or is not a well-formed archive of a single app."""
 
