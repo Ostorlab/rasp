@@ -7,6 +7,7 @@ requires-python = ">=3.14"
 dependencies = [
     "cryptography==50.0.2",
     "lief==1.0.0",
+    "protobuf==7.36.2",
 ]
 
 [project.scripts]
@@ -17,6 +18,7 @@ dev = [
     "mypy==2.4.0",
     "pytest==9.1.1",
     "ruff==0.16.10",
+    "types-protobuf==7.35.1.20260906",
 ]
 
 [build-system]
@@ -25,6 +27,8 @@ build-backend = "hatchling.build"
 
 [tool.ruff]
 target-version = "py314"
+# Generated protobuf code (the aapt.pb schemas) is machine output, not hand-written source.
+extend-exclude = ["*_pb2.py", "*_pb2.pyi"]
 
 [tool.ruff.lint]
 select = [
@@ -51,6 +55,12 @@ files = ["src", "tests"]
 mypy_path = "src"
 warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+# The generated protobuf stubs (the aapt.pb schemas) are machine output; don't hold them to the
+# strict rules. Their types stay available to the modules that import them.
+[[tool.mypy.overrides]]
+module = ["rasp_packer.android.aab.proto.*"]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -47,7 +47,7 @@ def pack(
     packer does not check the id's format: it only refuses an id it cannot write.
 
     Args:
-        app: Path to the built app: an APK for Android, an IPA for iOS.
+        app: Path to the built app: an APK or App Bundle for Android, an IPA for iOS.
         platform: The platform of the app.
         output: Path to write the protected app to. It must not exist.
         build_id: The id of the protected build, written into the app.

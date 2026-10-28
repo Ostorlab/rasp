@@ -29,7 +29,9 @@ def _parser() -> argparse.ArgumentParser:
     pack = commands.add_parser(
         "pack", help="add the runtime to a built app (the result is unsigned)"
     )
-    pack.add_argument("app", type=pathlib.Path, help="the built app, an APK or an IPA")
+    pack.add_argument(
+        "app", type=pathlib.Path, help="the built app, an APK, an AAB or an IPA"
+    )
     pack.add_argument(
         "--platform",
         type=platforms.Platform,

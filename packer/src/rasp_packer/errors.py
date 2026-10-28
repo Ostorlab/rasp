@@ -9,6 +9,14 @@ class InvalidApkError(Error):
     """The app is not a valid APK, or is missing something the packer needs."""
 
 
+class InvalidBundleError(Error):
+    """The app is not a valid Android App Bundle, or is missing something the packer needs."""
+
+
+class UnprotectedModuleError(Error):
+    """The bundle has a module other than `base` that holds code the packer cannot protect."""
+
+
 class ManifestError(Error):
     """The app's AndroidManifest.xml cannot be read or edited."""
 

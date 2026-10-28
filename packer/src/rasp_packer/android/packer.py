@@ -1,5 +1,9 @@
 """Packing of Android apps: adds the runtime to a built APK, for on-demand loading.
 
+This module protects an APK. A built App Bundle (AAB) is detected here and handed to the sibling
+``aab.packer``, which gives the bundle the same protection in the bundle's layout; everything below
+describes the APK case.
+
 The packer keeps the app's framework and library dexes in the clear and encrypts only the app's own
 ("business") dexes, each on its own, so the runtime decrypts one business dex the first time a class
 in it is needed. A screen the user never opens is never decrypted, and a decrypted dex is held no
@@ -32,6 +36,8 @@ from rasp_packer.android import injection
 from rasp_packer.android import loader_map
 from rasp_packer.android import resources as resources_module
 from rasp_packer.android import split as split_module
+from rasp_packer.android.aab import bundle
+from rasp_packer.android.aab import packer as aab_packer
 from rasp_packer.android.apk import archive
 from rasp_packer.android.apk import manifest as manifest_module
 
@@ -55,11 +61,14 @@ def pack(
     artifacts: resources_module.Artifacts | None = None,
     splitter: Splitter = split_module.split,
 ) -> identity.AppIdentity:
-    """Packs an Android app, writing the protected APK to output.
+    """Packs an Android app, writing the protected app to output.
+
+    The app is an APK or an App Bundle (AAB); the output is the same kind, unsigned. A bundle is
+    handed to ``aab.packer``.
 
     Args:
-        app: The built APK to protect.
-        output: Where to write the protected APK. It is unsigned.
+        app: The built APK or App Bundle to protect.
+        output: Where to write the protected app. It is unsigned.
         build_id: The id of the protected build, written into the APK.
         artifacts: The prebuilt stub and libraries. Loaded from the package resources when not given.
         splitter: Splits the app's classes into framework and business dexes. The default runs the
@@ -80,6 +89,15 @@ def pack(
     if artifacts is None:
         artifacts = resources_module.load()
     apk = archive.Apk.read(app)
+    if bundle.is_bundle(apk) is True:
+        return aab_packer.pack(
+            apk=apk,
+            output=output,
+            build_id=build_id,
+            artifacts=artifacts,
+            minimum_api_level=MINIMUM_API_LEVEL,
+            splitter=splitter,
+        )
     dex_names = apk.dex_names()
     if PRIMARY_DEX not in dex_names:
         raise errors.InvalidApkError(f"APK has no {PRIMARY_DEX} to protect")

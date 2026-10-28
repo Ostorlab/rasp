@@ -49,21 +49,37 @@ def library_entries(
     Raises:
         UnsupportedAbiError: The app ships an ABI the runtime is not built for.
     """
-    app_abis = native_abis(apk)
-    if len(app_abis) == 0:
-        abis = set(artifacts.libraries)
-    else:
-        unsupported = app_abis - set(artifacts.libraries)
-        if len(unsupported) > 0:
-            raise errors.UnsupportedAbiError(
-                "the runtime is not built for the app's ABIs: "
-                + ", ".join(sorted(unsupported))
-            )
-        abis = app_abis
+    abis = select_abis(native_abis(apk), artifacts)
     return {
         f"lib/{abi}/{resources_module.RUNTIME_LIBRARY}": artifacts.libraries[abi]
         for abi in sorted(abis)
     }
+
+
+def select_abis(
+    app_abis: collections.abc.Set[str], artifacts: resources_module.Artifacts
+) -> set[str]:
+    """Returns the ABIs to add the runtime library for: the app's, or every runtime ABI when it ships none.
+
+    Args:
+        app_abis: The ABIs the app ships native libraries for.
+        artifacts: The prebuilt runtime libraries, by ABI.
+
+    Returns:
+        The ABIs to place the runtime library for.
+
+    Raises:
+        UnsupportedAbiError: The app ships an ABI the runtime is not built for.
+    """
+    if len(app_abis) == 0:
+        return set(artifacts.libraries)
+    unsupported = app_abis - set(artifacts.libraries)
+    if len(unsupported) > 0:
+        raise errors.UnsupportedAbiError(
+            "the runtime is not built for the app's ABIs: "
+            + ", ".join(sorted(unsupported))
+        )
+    return set(app_abis)
 
 
 def native_abis(apk: archive.Apk) -> set[str]:
