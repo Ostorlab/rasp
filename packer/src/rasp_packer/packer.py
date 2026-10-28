@@ -7,6 +7,7 @@ import re
 from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import platforms
+from rasp_packer import runtime_config
 from rasp_packer.android import packer as android_packer
 from rasp_packer.ios import packer as ios_packer
 
@@ -43,14 +44,15 @@ def pack(
 
     The protected app is returned unsigned: the customer signs it before shipping it.
 
-    The caller computes the build id and the packer writes it into the app as it is. The
-    packer does not check the id's format: it only refuses an id it cannot write.
+    The caller computes the build id. The packer writes it into the app as it is, in the
+    runtime's config. The packer does not check the id's format: it only refuses an empty id or
+    one with control characters.
 
     Args:
         app: Path to the built app: an APK for Android, an IPA for iOS.
         platform: The platform of the app.
         output: Path to write the protected app to. It must not exist.
-        build_id: The id of the protected build, written into the app.
+        build_id: The id of the protected build, written into the runtime's config.
 
     Returns:
         The protected app, the app's package name and version, and the build id.
@@ -64,14 +66,13 @@ def pack(
     _check_build_id(build_id)
     if output.exists() is True:
         raise errors.OutputExistsError(f"{output} already exists")
+    config = runtime_config.RuntimeConfig(build_id=build_id)
     app_identity: identity.AppIdentity
     match platform:
         case platforms.Platform.ANDROID:
-            app_identity = android_packer.pack(
-                app=app, output=output, build_id=build_id
-            )
+            app_identity = android_packer.pack(app=app, output=output, config=config)
         case platforms.Platform.IOS:
-            app_identity = ios_packer.pack(app=app, output=output, build_id=build_id)
+            app_identity = ios_packer.pack(app=app, output=output, config=config)
     return PackResult(
         output=output,
         package_name=app_identity.package_name,
@@ -81,7 +82,7 @@ def pack(
 
 
 def _check_build_id(build_id: str) -> None:
-    """Refuses a build id the packer cannot write: an empty one, or one an XML plist cannot hold."""
+    """Refuses an empty build id, or one with control characters."""
     if len(build_id) == 0:
         raise errors.InvalidBuildIdError("the build id is empty")
     if _CONTROL_CHARACTERS.search(build_id) is not None:

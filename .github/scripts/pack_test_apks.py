@@ -12,6 +12,7 @@ import sys
 import tempfile
 import zipfile
 
+from rasp_packer import runtime_config
 from rasp_packer.android import cipher
 from rasp_packer.android import injection
 from rasp_packer.android import packer
@@ -163,8 +164,8 @@ def _library_problems(
 def _payload_problems(
     archive: zipfile.ZipFile, names: collections.abc.Set[str]
 ) -> list[str]:
-    """Checks the key, the build id, the class map and the encrypted business dexes the runtime reads."""
-    entries = (packer.KEY_ENTRY, packer.MAP_ENTRY, packer.BUILD_ID_ENTRY)
+    """Checks the key, the runtime's config, the class map and the encrypted business dexes the runtime reads."""
+    entries = (packer.KEY_ENTRY, packer.MAP_ENTRY, packer.CONFIG_ENTRY)
     missing = [entry for entry in entries if entry not in names]
     if len(missing) > 0:
         return [f"missing: {', '.join(missing)}"]
@@ -172,10 +173,10 @@ def _payload_problems(
     if len(key) != cipher.KEY_SIZE:
         return [f"the key is {len(key)} bytes, not {cipher.KEY_SIZE}"]
     problems: list[str] = []
-    build_id = archive.read(packer.BUILD_ID_ENTRY).decode("utf-8")
-    if build_id != _BUILD_ID:
+    config = archive.read(packer.CONFIG_ENTRY)
+    if config != runtime_config.RuntimeConfig(build_id=_BUILD_ID).to_json():
         problems.append(
-            f"the protected app records {build_id!r}, not the build id passed to the packer"
+            f"the protected app's config is {config!r}, not one with the build id passed to the packer"
         )
     if _decrypted(archive, packer.MAP_ENTRY, key) is None:
         problems.append("the class map does not decrypt with the app's key")
