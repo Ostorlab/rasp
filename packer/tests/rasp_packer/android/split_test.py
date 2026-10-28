@@ -87,3 +87,19 @@ def testReadOutput_whenDescriptorMalformed_raisesSplitError(
     )
     with pytest.raises(split.SplitError):
         split.read_output(tmp_path)
+
+
+# ── split_from_dex_entries ───────────────────────────────────
+
+
+def testSplitFromDexEntries_whenEmpty_raisesSplitError() -> None:
+    with pytest.raises(split.SplitError, match="no DEX entries"):
+        split.split_from_dex_entries({}, "com.example")
+
+
+def testSplitFromDexEntries_whenOverrideIsNotAFile_raisesSplitError(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(split.SPLIT_DEX_ENV, str(tmp_path / "no-such-split-dex"))
+    with pytest.raises(split.SplitError):
+        split.split_from_dex_entries({"classes.dex": b"dex"}, "com.example")
