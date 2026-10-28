@@ -51,6 +51,7 @@ if(RASP_LOGGING)
   endif()
 endif()
 
+include(cmake/yyjson.cmake)
 add_subdirectory(core)
 include(cmake/plugins.cmake)
 

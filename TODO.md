@@ -11,6 +11,7 @@ Work that is known and not done yet. Each item says what is missing and why it m
 - **`run_plugins` also gives the plugins the observations.** Running the plugins' checks and handing out the observations are one function today, so the plugins' `on_observations` is called from `run_plugins`. The runtime should have its own `on_observations` step, and call the plugins' `on_observations` after its own built-in handling.
 - **The Android and iOS monitoring code is duplicated.** Both `monitoring.cpp` files start the thread, run the checks and the plugins every 60 seconds and log the observations, with the same code. The monitoring should be one shared implementation, and each platform should only provide its built-in checks.
 - **The runtime is not obfuscated.** The release binaries are easy to read, and they show what each check looks at: the paths the checks look for and the signal names are plain strings that `strings` lists, and the path list tells a bypass tool exactly which paths to hide. Encoding the strings is one example of this work.
+- **The runtime's config is a separate file in the app.** The packer writes it as `config.json` next to the runtime: the stored entry `assets/rasp/config.json` in the APK, and a file in `RaspRuntime.framework` on iOS. Anyone who unpacks the app can read the config, and can change it without touching the runtime's code. The config should be embedded in the runtime.
 
 ## Runtime: iOS
 

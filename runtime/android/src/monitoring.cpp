@@ -4,11 +4,17 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <iterator>
+#include <optional>
 #include <pthread.h>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
+#include "apk/archive.h"
+#include "apk/location.h"
 #include "checks/debugger.h"
 #include "checks/emulator.h"
 #include "checks/hooks.h"
@@ -16,7 +22,10 @@
 #include "checks/integrity.h"
 #include "checks/mitm.h"
 #include "checks/root.h"
+#include "payload/assets.h"
+#include "rasp/config.h"
 #include "rasp/observation.h"
+#include "rasp/parse_config.h"
 #include "rasp/plugins/registry.h"
 #include "rasp/util/logging.h"
 
@@ -26,6 +35,22 @@ namespace {
 
 /// How long the thread waits between two runs of the checks.
 constexpr std::chrono::seconds kCheckInterval{60};
+
+/// Reads the runtime's config, the config entry of the APK the runtime runs from.
+///
+/// @return The config. Each field is empty when the APK has no config entry or the entry can't be read.
+[[nodiscard]] Config read_config() {
+  const std::optional<std::string> apk = apk::self_apk_path();
+  if (!apk.has_value()) {
+    return {};
+  }
+  const std::optional<std::vector<std::uint8_t>> entry = apk::read_stored_entry(*apk, payload::kConfigEntry);
+  if (!entry.has_value()) {
+    return {};
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the entry's bytes are the JSON text.
+  return parse_config(std::string_view(reinterpret_cast<const char*>(entry->data()), entry->size()));
+}
 
 /// Runs the built-in checks.
 ///
@@ -46,7 +71,7 @@ constexpr std::chrono::seconds kCheckInterval{60};
 ///
 /// @return Never returns.
 void* monitor(void* /*argument*/) {
-  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), {});
+  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), read_config());
   while (true) {
     const std::vector<Observation> observations =
         rasp::plugins::run_plugins(rasp::plugins::compiled_in(), run_checks());
