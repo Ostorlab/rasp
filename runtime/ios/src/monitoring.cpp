@@ -19,7 +19,7 @@
 #include "checks/jailbreak.h"
 #include "checks/mitm.h"
 #include "checks/virtualizer.h"
-#include "config.h"
+#include "rasp/embedded_config.h"
 #include "rasp/observation.h"
 #include "rasp/plugins/registry.h"
 #include "rasp/util/logging.h"
@@ -39,7 +39,7 @@ constexpr std::chrono::seconds kCheckInterval{60};
 /// @return Never returns.
 void* monitor(void* argument) {
   const std::unique_ptr<const std::string> inserted_libraries(static_cast<std::string*>(argument));
-  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), read_config());
+  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), read_embedded_config());
   while (true) {
     std::vector<Observation> builtin = checks::jailbreak();
     std::ranges::move(checks::debugger(), std::back_inserter(builtin));
