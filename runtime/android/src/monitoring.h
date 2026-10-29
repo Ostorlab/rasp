@@ -6,7 +6,8 @@ namespace rasp::android {
 
 /// Starts the thread that runs the checks, and returns at once.
 ///
-/// The thread first initialises the plugins compiled into the runtime, with the runtime's config it reads from the APK.
+/// The thread first initialises the plugins compiled into the runtime, with the runtime's config, which the packer
+/// wrote into librasp.so.
 /// Then it runs the built-in checks and the plugins, and runs them again every 60 seconds. A development build logs
 /// each observation.
 ///
