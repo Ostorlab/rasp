@@ -46,7 +46,7 @@ _WIRE_VARINT = 0
 _WIRE_LENGTH_DELIMITED = 2
 _WIRE_FIXED32 = 5
 
-_RESOURCE_ID_APP_COMPONENT_FACTORY = 0x101042D
+_RESOURCE_ID_APP_COMPONENT_FACTORY = 0x0101057A
 _RESOURCE_ID_MIN_SDK_VERSION = 0x101020C
 
 
@@ -113,6 +113,10 @@ def _parse_fields(data: bytes) -> list[_Field]:
             )
         elif wire_type == _WIRE_LENGTH_DELIMITED:
             length, pos = _decode_varint(data, pos)
+            if pos + length > len(data):
+                raise ProtoManifestError(
+                    f"length-delimited field overruns buffer at offset {start}"
+                )
             bytes_val = data[pos : pos + length]
             pos += length
             fields.append(
@@ -125,6 +129,10 @@ def _parse_fields(data: bytes) -> list[_Field]:
                 )
             )
         elif wire_type == _WIRE_FIXED32:
+            if pos + 4 > len(data):
+                raise ProtoManifestError(
+                    f"fixed32 field overruns buffer at offset {start}"
+                )
             fixed_val = int.from_bytes(data[pos : pos + 4], "little")
             pos += 4
             fields.append(
@@ -342,15 +350,13 @@ def _build_string_attr(
 
 
 def _replace_element_in_manifest(
-    manifest: bytes, element_name: str, old_element: bytes, new_element: bytes
+    manifest: bytes, old_element: bytes, new_element: bytes
 ) -> bytes:
     """Replace one XmlElement's content inside the manifest, preserving all other bytes."""
-    return _replace_in_tree(manifest, element_name, old_element, new_element)
+    return _replace_in_tree(manifest, old_element, new_element)
 
 
-def _replace_in_tree(
-    data: bytes, element_name: str, old_element: bytes, new_element: bytes
-) -> bytes:
+def _replace_in_tree(data: bytes, old_element: bytes, new_element: bytes) -> bytes:
     """Recursively find and replace *old_element* with *new_element* inside the proto tree.
 
     Walks the same ``XmlElement(f1) > children(f5) > XmlNode > XmlElement(f1)``
@@ -371,9 +377,7 @@ def _replace_in_tree(
                 result.extend(_encode_field(field.number, field.wire_type, new_element))
                 replaced = True
                 continue
-            new_el = _replace_children_in_element(
-                field.value, element_name, old_element, new_element
-            )
+            new_el = _replace_children_in_element(field.value, old_element, new_element)
             if new_el != field.value:
                 result.extend(_encode_field(field.number, field.wire_type, new_el))
                 replaced = True
@@ -386,7 +390,6 @@ def _replace_in_tree(
 
 def _replace_children_in_element(
     element_bytes: bytes,
-    element_name: str,
     old_element: bytes,
     new_element: bytes,
 ) -> bytes:
@@ -402,9 +405,7 @@ def _replace_children_in_element(
             and field.wire_type == _WIRE_LENGTH_DELIMITED
         ):
             assert isinstance(field.value, bytes)
-            new_child = _replace_in_tree(
-                field.value, element_name, old_element, new_element
-            )
+            new_child = _replace_in_tree(field.value, old_element, new_element)
             if new_child != field.value:
                 result.extend(_encode_field(field.number, field.wire_type, new_child))
                 replaced = True
@@ -548,7 +549,9 @@ def set_min_sdk_version(manifest: bytes, version: int) -> bytes:
     new_element = _replace_attr_in_element(
         old_element, "minSdkVersion", ANDROID_NS, new_attr
     )
-    return _replace_element_in_manifest(manifest, "uses-sdk", old_element, new_element)
+    if new_element == old_element:
+        raise ProtoManifestError("no android:minSdkVersion on <uses-sdk>")
+    return _replace_element_in_manifest(manifest, old_element, new_element)
 
 
 def read_app_component_factory(manifest: bytes) -> str | None:
@@ -600,6 +603,4 @@ def set_app_component_factory(manifest: bytes, class_name: str) -> bytes:
     else:
         new_element = _add_attr_to_element(old_element, new_attr)
 
-    return _replace_element_in_manifest(
-        manifest, "application", old_element, new_element
-    )
+    return _replace_element_in_manifest(manifest, old_element, new_element)

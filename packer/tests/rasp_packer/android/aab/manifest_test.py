@@ -2,11 +2,13 @@
 
 import pathlib
 import zipfile
+from unittest import mock
 
 import pytest
 
 from rasp_packer import errors
 from rasp_packer.android.aab import manifest
+from rasp_packer.android.aab import proto_manifest
 
 _FIXTURE = (
     pathlib.Path(__file__).resolve().parents[3]
@@ -83,7 +85,6 @@ def testRaiseMinSdkVersion_whenCurrentIsLower_shouldRaise(
     manifest_bytes: bytes,
 ) -> None:
     edited = manifest.raise_min_sdk_version(manifest_bytes, 21)
-    from rasp_packer.android.aab import proto_manifest
 
     assert proto_manifest.read_min_sdk_version(edited) == 21
 
@@ -102,3 +103,36 @@ def testRaiseMinSdkVersion_whenCurrentIsEqual_shouldReturnUnchanged(
     result = manifest.raise_min_sdk_version(manifest_bytes, 15)
 
     assert result is manifest_bytes
+
+
+# ── InvalidAabError paths ───────────────────────────────────
+
+
+def testAppIdentity_whenNoVersionName_shouldRaiseInvalidAabError(
+    manifest_bytes: bytes,
+) -> None:
+    with (
+        mock.patch.object(proto_manifest, "read_version_name", return_value=None),
+        pytest.raises(errors.InvalidAabError, match="versionName"),
+    ):
+        manifest.app_identity(manifest_bytes)
+
+
+def testAppIdentity_whenNoPackage_shouldRaiseInvalidAabError(
+    manifest_bytes: bytes,
+) -> None:
+    with (
+        mock.patch.object(proto_manifest, "read_package", return_value=None),
+        pytest.raises(errors.InvalidAabError, match="package"),
+    ):
+        manifest.app_identity(manifest_bytes)
+
+
+def testRaiseMinSdkVersion_whenNoMinSdk_shouldRaiseInvalidAabError(
+    manifest_bytes: bytes,
+) -> None:
+    with (
+        mock.patch.object(proto_manifest, "read_min_sdk_version", return_value=None),
+        pytest.raises(errors.InvalidAabError, match="minSdkVersion"),
+    ):
+        manifest.raise_min_sdk_version(manifest_bytes, 31)
