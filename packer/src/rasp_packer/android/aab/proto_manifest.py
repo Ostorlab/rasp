@@ -54,6 +54,14 @@ class ProtoManifestError(Exception):
     """The protobuf manifest bytes cannot be parsed or edited."""
 
 
+def _decode_utf8(data: bytes) -> str:
+    """Decode *data* as UTF-8, raising ``ProtoManifestError`` on invalid bytes."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ProtoManifestError(f"invalid utf-8 in manifest: {exc}") from exc
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class _Field:
     """One parsed protobuf field."""
@@ -187,7 +195,7 @@ def _find_element(data: bytes, element_name: str) -> tuple[bytes, list[_Field]] 
                     and ef.wire_type == _WIRE_LENGTH_DELIMITED
                 ):
                     assert isinstance(ef.value, bytes)
-                    if ef.value.decode("utf-8") == element_name:
+                    if _decode_utf8(ef.value) == element_name:
                         return field.value, el_fields
             for ef in el_fields:
                 if (
@@ -235,21 +243,21 @@ def _read_string_attr(
         for af in attr_fields:
             if af.number == _FIELD_ATTR_NAME and af.wire_type == _WIRE_LENGTH_DELIMITED:
                 assert isinstance(af.value, bytes)
-                if af.value.decode("utf-8") == attr_name:
+                if _decode_utf8(af.value) == attr_name:
                     name_match = True
             if (
                 af.number == _FIELD_ATTR_NAMESPACE
                 and af.wire_type == _WIRE_LENGTH_DELIMITED
             ):
                 assert isinstance(af.value, bytes)
-                if af.value.decode("utf-8") == namespace:
+                if _decode_utf8(af.value) == namespace:
                     ns_match = True
             if (
                 af.number == _FIELD_ATTR_VALUE
                 and af.wire_type == _WIRE_LENGTH_DELIMITED
             ):
                 assert isinstance(af.value, bytes)
-                value = af.value.decode("utf-8")
+                value = _decode_utf8(af.value)
         if name_match is True and ns_match is True:
             return value
     return None
@@ -276,14 +284,14 @@ def _read_int_attr(
         for af in attr_fields:
             if af.number == _FIELD_ATTR_NAME and af.wire_type == _WIRE_LENGTH_DELIMITED:
                 assert isinstance(af.value, bytes)
-                if af.value.decode("utf-8") == attr_name:
+                if _decode_utf8(af.value) == attr_name:
                     name_match = True
             if (
                 af.number == _FIELD_ATTR_NAMESPACE
                 and af.wire_type == _WIRE_LENGTH_DELIMITED
             ):
                 assert isinstance(af.value, bytes)
-                if af.value.decode("utf-8") == namespace:
+                if _decode_utf8(af.value) == namespace:
                     ns_match = True
             if (
                 af.number == _FIELD_ATTR_COMPILED_ITEM
@@ -446,7 +454,7 @@ def _replace_attr_in_element(
                     and sub.wire_type == _WIRE_LENGTH_DELIMITED
                 ):
                     assert isinstance(sub.value, bytes)
-                    if sub.value.decode("utf-8") == attr_name:
+                    if _decode_utf8(sub.value) == attr_name:
                         is_target = True
             if is_target is True:
                 ns_ok = False
@@ -456,7 +464,7 @@ def _replace_attr_in_element(
                         and sub.wire_type == _WIRE_LENGTH_DELIMITED
                     ):
                         assert isinstance(sub.value, bytes)
-                        if sub.value.decode("utf-8") == namespace:
+                        if _decode_utf8(sub.value) == namespace:
                             ns_ok = True
                 if ns_ok is True:
                     result.extend(
