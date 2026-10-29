@@ -95,7 +95,9 @@ def split(app: pathlib.Path, package: str) -> Split:
     return _run_split_dex(app, package, label=str(app))
 
 
-def split_from_dex_entries(dex_entries: dict[str, bytes], package: str) -> Split:
+def split_from_dex_entries(
+    dex_entries: collections.abc.Mapping[str, bytes], package: str
+) -> Split:
     """Splits classes from pre-extracted DEX entries (e.g. from an AAB).
 
     The ``split-dex`` tool expects an APK (a ZIP with root-level DEX files).
