@@ -50,6 +50,7 @@ MINIMUM_API_LEVEL = 31
 ASSET_DIRECTORY = "assets/rasp"
 KEY_ENTRY = f"{ASSET_DIRECTORY}/key.bin"
 MAP_ENTRY = f"{ASSET_DIRECTORY}/map.bin"
+CONFIG_ENTRY = f"{ASSET_DIRECTORY}/config.json"
 ASSET_PREFIX = "assets/"
 
 _AAB_BASE = "base/"
