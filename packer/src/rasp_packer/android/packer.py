@@ -28,6 +28,7 @@ the native runtime are prebuilt artifacts from the runtime build; see resources.
 
 import collections.abc
 import pathlib
+import zipfile
 
 from rasp_packer import errors
 from rasp_packer import identity
@@ -56,7 +57,7 @@ _AAB_DEX_PREFIX = "base/dex/"
 AAB_KEY_ENTRY = f"{_AAB_BASE}{KEY_ENTRY}"
 AAB_MAP_ENTRY = f"{_AAB_BASE}{MAP_ENTRY}"
 AAB_CONFIG_ENTRY = f"{_AAB_BASE}{CONFIG_ENTRY}"
-_AAB_ASSET_PREFIX = f"{_AAB_BASE}{ASSET_PREFIX}"
+AAB_ASSET_PREFIX = f"{_AAB_BASE}{ASSET_PREFIX}"
 
 type Splitter = collections.abc.Callable[[pathlib.Path, str], split_module.Split]
 type AabSplitter = collections.abc.Callable[[dict[str, bytes], str], split_module.Split]
@@ -116,12 +117,10 @@ def pack(
 
 def _is_aab(app: pathlib.Path) -> bool:
     """An AAB contains ``BundleConfig.pb``; an APK does not."""
-    import zipfile
-
     try:
         with zipfile.ZipFile(app) as zf:
             return "BundleConfig.pb" in zf.namelist()
-    except zipfile.BadZipFile:
+    except zipfile.BadZipFile, OSError:
         return False
 
 
@@ -189,8 +188,9 @@ def _pack_aab(
     """Packs an AAB."""
     aab = aab_archive.Aab.read(app)
     dex_names = aab.dex_names()
-    if len(dex_names) == 0:
-        raise errors.InvalidAabError("AAB has no DEX files under base/dex/ to protect")
+    aab_primary_dex = f"{_AAB_DEX_PREFIX}{PRIMARY_DEX}"
+    if aab_primary_dex not in dex_names:
+        raise errors.InvalidAabError(f"AAB has no {aab_primary_dex} to protect")
     manifest = aab.manifest()
     app_identity = aab_manifest_module.app_identity(manifest)
     if (
@@ -214,11 +214,20 @@ def _pack_aab(
     key = cipher.new_key()
     map_frame = cipher.encrypt(key, loader_map.build(result.business).encode("utf-8"))
     business_entries = {
-        _AAB_ASSET_PREFIX + dex.path: cipher.encrypt(key, dex.data)
+        AAB_ASSET_PREFIX + dex.path: cipher.encrypt(key, dex.data)
         for dex in result.business
     }
-    base_dexes = _aab_base_dex_entries(result.framework, artifacts.stub_dex)
-    lib_entries = _aab_library_entries(aab, artifacts)
+    base_dexes = {
+        f"{_AAB_DEX_PREFIX}{name}": data
+        for name, data in injection.base_dex_entries(
+            result.framework, artifacts.stub_dex
+        ).items()
+    }
+    abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
+    lib_entries = {
+        f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": artifacts.libraries[abi]
+        for abi in sorted(abis)
+    }
     aab.write(
         output,
         replace={aab_archive.MANIFEST_ENTRY: patched_manifest},
@@ -235,17 +244,6 @@ def _pack_aab(
     return app_identity
 
 
-def _aab_base_dex_entries(
-    framework: collections.abc.Sequence[bytes], stub_dex: bytes
-) -> dict[str, bytes]:
-    """Returns base DEX entries under ``base/dex/`` for an AAB."""
-    entries: dict[str, bytes] = {}
-    for index, data in enumerate([*framework, stub_dex]):
-        name = PRIMARY_DEX if index == 0 else f"classes{index + 1}.dex"
-        entries[f"{_AAB_DEX_PREFIX}{name}"] = data
-    return entries
-
-
 def _aab_native_abis(aab: aab_archive.Aab) -> set[str]:
     """Returns the ABIs the AAB ships native libraries for under ``base/lib/``."""
     abis: set[str] = set()
@@ -259,24 +257,3 @@ def _aab_native_abis(aab: aab_archive.Aab) -> set[str]:
         ):
             abis.add(parts[2])
     return abis
-
-
-def _aab_library_entries(
-    aab: aab_archive.Aab, artifacts: resources_module.Artifacts
-) -> dict[str, bytes]:
-    """Returns the native runtime library entries under ``base/lib/`` for an AAB."""
-    app_abis = _aab_native_abis(aab)
-    if len(app_abis) == 0:
-        abis = set(artifacts.libraries)
-    else:
-        unsupported = app_abis - set(artifacts.libraries)
-        if len(unsupported) > 0:
-            raise errors.UnsupportedAbiError(
-                "the runtime is not built for the app's ABIs: "
-                + ", ".join(sorted(unsupported))
-            )
-        abis = app_abis
-    return {
-        f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": artifacts.libraries[abi]
-        for abi in sorted(abis)
-    }

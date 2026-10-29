@@ -155,7 +155,7 @@ def testPackAab_writesEncryptedMapThatNamesEveryBusinessClass(
         f"{_PACKAGE}.sub.C",
     }
     for path in set(mapped.values()):
-        assert f"{packer._AAB_ASSET_PREFIX}{path}" in names
+        assert f"{packer.AAB_ASSET_PREFIX}{path}" in names
 
 
 # ── encrypted business DEX ───────────────────────────────────
@@ -166,7 +166,7 @@ def testPackAab_writesEachBusinessDexEncrypted(tmp_path: pathlib.Path) -> None:
     with zipfile.ZipFile(output) as zf:
         key = zf.read(packer.AAB_KEY_ENTRY)
         for dex in _BUSINESS:
-            entry = f"{packer._AAB_ASSET_PREFIX}{dex.path}"
+            entry = f"{packer.AAB_ASSET_PREFIX}{dex.path}"
             assert cipher.decrypt(key, zf.read(entry)) == dex.data
 
 
