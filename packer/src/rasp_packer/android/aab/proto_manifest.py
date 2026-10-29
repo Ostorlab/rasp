@@ -425,9 +425,19 @@ def _replace_children_in_element(
 
 
 def _add_attr_to_element(element_bytes: bytes, attr_bytes: bytes) -> bytes:
-    """Append an XmlAttribute field to an element's serialised form."""
+    """Insert an XmlAttribute field before the first child element."""
     attr_field = _encode_field(_FIELD_ELEMENT_ATTR, _WIRE_LENGTH_DELIMITED, attr_bytes)
-    return element_bytes + attr_field
+    fields = _parse_fields(element_bytes)
+    result = bytearray()
+    inserted = False
+    for field in fields:
+        if field.number == _FIELD_ELEMENT_CHILD and inserted is False:
+            result.extend(attr_field)
+            inserted = True
+        result.extend(element_bytes[field.start : field.end])
+    if inserted is False:
+        result.extend(attr_field)
+    return bytes(result)
 
 
 def _replace_attr_in_element(
