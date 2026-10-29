@@ -16,7 +16,7 @@ target_link_libraries(rasp_core_test PRIVATE rasp_core rasp_warnings rasp_langua
 target_compile_definitions(rasp_core_test PRIVATE RASP_EXPECTED_VERSION="${PROJECT_VERSION}")
 gtest_discover_tests(rasp_core_test)
 
-foreach(test observation parse_config plugins/init_plugins plugins/plugin plugins/registry plugins/run_plugins)
+foreach(test embedded_config observation parse_config plugins/init_plugins plugins/plugin plugins/registry plugins/run_plugins)
   cmake_path(GET test FILENAME name)
   add_executable(rasp_core_${name}_test core/${test}_test.cpp)
   target_link_libraries(rasp_core_${name}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)

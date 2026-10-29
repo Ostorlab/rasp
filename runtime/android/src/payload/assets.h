@@ -1,4 +1,4 @@
-/// The APK entries the packer writes for the payload key, the on-demand loader and the runtime's config, so every
+/// The APK entries the packer writes for the payload key and the on-demand loader, so every
 /// reader takes their names from one place. The packer stores all of them uncompressed, under `assets/`, so the runtime
 /// reads them without an inflate step.
 
@@ -13,9 +13,6 @@ inline constexpr const char* kKeyEntry = "assets/rasp/key.bin";
 
 /// The APK entry that holds the encrypted class map, one `binary.class.Name,<path>` line per class.
 inline constexpr const char* kMapEntry = "assets/rasp/map.bin";
-
-/// The APK entry that holds the runtime's config, the JSON that parse_config reads.
-inline constexpr const char* kConfigEntry = "assets/rasp/config.json";
 
 /// The prefix a map `<path>` sits under, prepended to it to make a dex's full APK entry name.
 inline constexpr const char* kAssetPrefix = "assets/";

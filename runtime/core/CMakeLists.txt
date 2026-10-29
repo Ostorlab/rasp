@@ -1,6 +1,7 @@
 configure_file(include/rasp/version.h.in ${CMAKE_CURRENT_BINARY_DIR}/include/rasp/version.h @ONLY)
 
 add_library(rasp_core STATIC
+  src/embedded_config.cpp
   src/observation.cpp
   src/parse_config.cpp
   src/plugins/init_plugins.cpp
