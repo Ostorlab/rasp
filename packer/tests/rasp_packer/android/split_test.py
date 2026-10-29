@@ -97,6 +97,21 @@ def testSplitFromDexEntries_whenEmpty_raisesSplitError() -> None:
         split.split_from_dex_entries({}, "com.example")
 
 
+def testSplitFromDexEntries_whenNameContainsSlash_raisesSplitError() -> None:
+    with pytest.raises(split.SplitError, match="bare root-level"):
+        split.split_from_dex_entries({"base/dex/classes.dex": b"dex"}, "com.example")
+
+
+def testSplitFromDexEntries_whenNameContainsBackslash_raisesSplitError() -> None:
+    with pytest.raises(split.SplitError, match="bare root-level"):
+        split.split_from_dex_entries({"classes\\1.dex": b"dex"}, "com.example")
+
+
+def testSplitFromDexEntries_whenNameNotDex_raisesSplitError() -> None:
+    with pytest.raises(split.SplitError, match="bare root-level"):
+        split.split_from_dex_entries({"classes.jar": b"jar"}, "com.example")
+
+
 def testSplitFromDexEntries_whenOverrideIsNotAFile_raisesSplitError(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
