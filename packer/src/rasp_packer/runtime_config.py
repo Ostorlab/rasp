@@ -3,8 +3,7 @@
 The config is one JSON object in UTF-8. The packer writes it into a space the runtime's binary keeps for it: the JSON at
 the start of the space, and zero bytes over the rest. The runtime reads it up to the first zero byte
 (runtime/core/src/embedded_config.cpp). Each platform's module finds the space in its binary, and this one writes and
-reads it: android/runtime_library.py for `librasp.so`. On iOS, the config is a file named `config.json` in the embedded
-`RaspRuntime.framework`.
+reads it: android/runtime_library.py for `librasp.so`, and ios/runtime_binary.py for the `RaspRuntime` binary.
 """
 
 import dataclasses
@@ -12,9 +11,8 @@ import json
 
 from rasp_packer import errors
 
-# TODO: the config ships in the clear in the protected app, so anyone who unzips the app can read it.
+# TODO: the config ships in the clear in the runtime's binary, so anyone who reads the binary can read it.
 # Encrypt it.
-FILE_NAME = "config.json"
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)

@@ -1,4 +1,4 @@
-"""Fixtures: arm64 iOS executables, IPAs, a runtime framework, and a stand-in for the Android runtime library."""
+"""Fixtures: arm64 iOS executables, IPAs, a runtime framework, and stand-ins for the runtime's binaries."""
 
 import collections.abc
 import pathlib
@@ -33,7 +33,7 @@ def signed_executable(tmp_path: pathlib.Path) -> pathlib.Path:
 def runtime(tmp_path: pathlib.Path) -> pathlib.Path:
     framework = tmp_path / "runtime" / "RaspRuntime.framework"
     framework.mkdir(parents=True)
-    (framework / "RaspRuntime").write_bytes(b"runtime binary")
+    shutil.copy(RUNTIME_CONFIG_DATA / "RaspRuntime", framework / "RaspRuntime")
     (framework / "Info.plist").write_bytes(
         plistlib.dumps(
             {

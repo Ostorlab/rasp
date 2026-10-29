@@ -17,6 +17,7 @@ import zipfile
 import lief
 
 from rasp_packer import runtime_config
+from rasp_packer.ios import runtime_binary
 
 _RUNTIME_DIR = "Frameworks/RaspRuntime.framework"
 _RUNTIME_BINARY = "RaspRuntime"
@@ -113,16 +114,15 @@ def _protected_app_problems(protected: pathlib.Path, runtime: bytes) -> list[str
         if not isinstance(executable_name, str) or executable_path not in names:
             return ["the app's main executable is missing"]
         runtime_path = f"{app_dir}{_RUNTIME_DIR}/{_RUNTIME_BINARY}"
-        runtime_config_path = f"{app_dir}{_RUNTIME_DIR}/{runtime_config.FILE_NAME}"
-        if runtime_path not in names or runtime_config_path not in names:
+        if runtime_path not in names:
             return ["the runtime framework is not embedded"]
         problems = []
-        if archive.read(runtime_path) != runtime:
-            problems.append("the embedded runtime is not the one the packer ships")
-        config = archive.read(runtime_config_path)
-        if config != runtime_config.RuntimeConfig(build_id=_BUILD_ID).to_json():
+        config = runtime_config.RuntimeConfig(build_id=_BUILD_ID)
+        if archive.read(runtime_path) != runtime_binary.write_config(
+            runtime, config
+        ):
             problems.append(
-                f"the runtime's config is {config!r}, not one with the build id passed to the packer"
+                "the embedded runtime is not the one the packer ships with the config passed to the packer"
             )
         if any(name.startswith(f"{app_dir}_CodeSignature/") for name in names):
             problems.append("the app's _CodeSignature is still there")
