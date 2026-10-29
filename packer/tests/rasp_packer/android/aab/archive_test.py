@@ -286,3 +286,92 @@ def testRead_whenTheEntriesAreTooBigOnceUncompressed_raisesInvalidAabError(
 
     with pytest.raises(errors.InvalidAabError, match="once uncompressed"):
         archive.Aab.read(path)
+
+
+# ── _READ_ERRORS branch coverage ───────────────────────────
+
+
+def testRead_whenAnEntryIsEncrypted_raisesInvalidAabError(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = tmp_path / "app.aab"
+    _build(path, [("base/dex/classes.dex", b"dex", _DEFLATED)])
+    _edit_central_directory(path, 8, struct.pack("<H", 0x0001))
+
+    with pytest.raises(errors.InvalidAabError):
+        archive.Aab.read(path)
+
+
+def testRead_whenAnEntryIsCorrupt_raisesInvalidAabError(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = tmp_path / "app.aab"
+    _build(path, [("base/dex/classes.dex", bytes(range(256)) * 64, _DEFLATED)])
+    data = bytearray(path.read_bytes())
+    start = 30 + len("base/dex/classes.dex")
+    data[start : start + 16] = b"\xff" * 16
+    path.write_bytes(bytes(data))
+
+    with pytest.raises(errors.InvalidAabError):
+        archive.Aab.read(path)
+
+
+def testRead_whenAnEntryIsCutShort_raisesInvalidAabError(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = tmp_path / "app.aab"
+    _build(path, [("base/dex/classes.dex", bytes(range(256)) * 64, _DEFLATED)])
+    with zipfile.ZipFile(path) as zip_file:
+        compressed_size = zip_file.getinfo("base/dex/classes.dex").compress_size
+    _edit_central_directory(path, 20, struct.pack("<I", compressed_size // 2))
+
+    with pytest.raises(errors.InvalidAabError):
+        archive.Aab.read(path)
+
+
+# ── write compression for add entries ───────────────────────
+
+
+def testWrite_whenAddingNewEntry_storesItUncompressed(
+    tmp_path: pathlib.Path,
+) -> None:
+    source = tmp_path / "in.aab"
+    output = tmp_path / "out.aab"
+    _build(source, _minimal_aab_entries())
+
+    archive.Aab.read(source).write(
+        output,
+        replace={},
+        add={"base/assets/rasp/payload.bin": b"payload"},
+        remove=set(),
+    )
+
+    with zipfile.ZipFile(output) as zip_file:
+        assert zip_file.getinfo("base/assets/rasp/payload.bin").compress_type == _STORED
+
+
+def testWrite_whenAddCollidesWithDeflatedEntry_keepsDeflated(
+    tmp_path: pathlib.Path,
+) -> None:
+    source = tmp_path / "in.aab"
+    output = tmp_path / "out.aab"
+    _build(
+        source,
+        [
+            ("BundleConfig.pb", b"config", _STORED),
+            ("base/lib/arm64-v8a/librasp.so", b"old-lib-data", _DEFLATED),
+        ],
+    )
+
+    archive.Aab.read(source).write(
+        output,
+        replace={},
+        add={"base/lib/arm64-v8a/librasp.so": b"new-lib-data"},
+        remove=set(),
+    )
+
+    with zipfile.ZipFile(output) as zip_file:
+        assert (
+            zip_file.getinfo("base/lib/arm64-v8a/librasp.so").compress_type == _DEFLATED
+        )
+        assert zip_file.read("base/lib/arm64-v8a/librasp.so") == b"new-lib-data"

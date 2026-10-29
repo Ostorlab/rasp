@@ -92,7 +92,8 @@ class Aab:
         Raises:
             InvalidAabError: The file is not a valid ZIP, two entries share a
                 name, an entry uses a compression method Android can't read,
-                or the entries hold more than 1 GiB once uncompressed.
+                an entry is encrypted, corrupt or truncated, or the entries
+                hold more than 1 GiB once uncompressed.
         """
         try:
             with zipfile.ZipFile(path) as archive:
