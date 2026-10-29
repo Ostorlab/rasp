@@ -34,7 +34,6 @@ from rasp_packer import errors
 
 MANIFEST_ENTRY = "base/manifest/AndroidManifest.xml"
 
-_BASE_PREFIX = "base/"
 _DEX_DIRECTORY = "base/dex/"
 _DEX_PREFIX = "classes"
 _DEX_SUFFIX = ".dex"
