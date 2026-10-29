@@ -1,4 +1,4 @@
-"""Fixtures: arm64 iOS executables, IPAs and a runtime framework."""
+"""Fixtures: arm64 iOS executables, IPAs, a runtime framework, and a stand-in for the Android runtime library."""
 
 import collections.abc
 import pathlib
@@ -9,6 +9,7 @@ import zipfile
 import pytest
 
 _DATA = pathlib.Path(__file__).parent / "ios" / "data"
+RUNTIME_CONFIG_DATA = pathlib.Path(__file__).parent / "data" / "runtime_config"
 PACKAGE_NAME = "dev.ostorlab.demo"
 VERSION = "1.2.3"
 APP_INFO = {

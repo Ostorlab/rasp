@@ -11,15 +11,17 @@ from rasp_packer import runtime_config
 from rasp_packer.android import cipher
 from rasp_packer.android import packer
 from rasp_packer.android import resources
+from rasp_packer.android import runtime_library
 from rasp_packer.android import split
 from rasp_packer.android.apk import axml
+from tests.rasp_packer import conftest
 
 _FIXTURES = pathlib.Path(__file__).parent / "apk" / "fixtures"
 _MANIFEST = "manifest_with_application_and_version.bin"
 _PACKAGE = "com.example.withapp"
 _CONFIG = runtime_config.RuntimeConfig(build_id="rasp-build/v1:" + "ab" * 32)
 _STUB_DEX = b"stub dex bytes"
-_ARM64_SO = b"arm64 librasp.so bytes"
+_ARM64_SO = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _ARSC = b"resources table"
 
 _FRAMEWORK = (b"framework dex zero", b"framework dex one")
@@ -123,14 +125,6 @@ def testPack_whenValidApk_writesTheRawKey(tmp_path: pathlib.Path) -> None:
     assert info.compress_type == zipfile.ZIP_STORED
 
 
-def testPack_whenValidApk_writesTheConfigStored(tmp_path: pathlib.Path) -> None:
-    output = _pack(tmp_path)
-    with zipfile.ZipFile(output) as archive:
-        info = archive.getinfo(packer.CONFIG_ENTRY)
-        assert archive.read(packer.CONFIG_ENTRY) == _CONFIG.to_json()
-    assert info.compress_type == zipfile.ZIP_STORED
-
-
 def testPack_whenValidApk_writesAnEncryptedMapThatNamesEveryBusinessClass(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -175,12 +169,17 @@ def testPack_whenValidApk_shipsFrameworkAndStubInTheClearAsBaseDexes(
     assert "classes4.dex" not in names
 
 
-def testPack_whenValidApk_addsTheRuntimeLibraryUnmodified(
+def testPack_whenValidApk_addsTheRuntimeLibraryWithTheConfigWrittenIntoIt(
     tmp_path: pathlib.Path,
 ) -> None:
     output = _pack(tmp_path)
     with zipfile.ZipFile(output) as archive:
-        assert archive.read("lib/arm64-v8a/librasp.so") == _ARM64_SO
+        library = archive.read("lib/arm64-v8a/librasp.so")
+        names = archive.namelist()
+
+    assert library == runtime_library.write_config(_ARM64_SO, _CONFIG)
+    assert runtime_library.read_config(library) == _CONFIG.to_json()
+    assert "assets/rasp/config.json" not in names
 
 
 def testPack_whenValidApk_writesNoWholePayload(tmp_path: pathlib.Path) -> None:

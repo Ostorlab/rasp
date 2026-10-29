@@ -51,3 +51,7 @@ class AlreadyProtectedError(Error):
 
 class InvalidRuntimeError(Error):
     """The runtime to add is missing or malformed."""
+
+
+class ConfigTooLargeError(Error):
+    """The runtime's config does not fit in the space the runtime's binary keeps for it."""

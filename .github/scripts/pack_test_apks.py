@@ -17,6 +17,7 @@ from rasp_packer.android import cipher
 from rasp_packer.android import injection
 from rasp_packer.android import packer
 from rasp_packer.android import resources
+from rasp_packer.android import runtime_library
 from rasp_packer.android import split
 from rasp_packer.android.apk import axml
 
@@ -150,22 +151,25 @@ def _library_problems(
     names: collections.abc.Set[str],
     artifacts: resources.Artifacts,
 ) -> list[str]:
-    """Checks that every shipped native library is embedded unchanged, one per ABI."""
+    """Checks that every shipped native library is embedded, one per ABI, with only the runtime's config written into it."""
+    config = runtime_config.RuntimeConfig(build_id=_BUILD_ID)
     problems: list[str] = []
     for abi, data in artifacts.libraries.items():
         entry = f"lib/{abi}/{resources.RUNTIME_LIBRARY}"
         if entry not in names:
             problems.append(f"the runtime library {entry} is not embedded")
-        elif archive.read(entry) != data:
-            problems.append(f"the embedded {entry} is not the one the packer ships")
+        elif archive.read(entry) != runtime_library.write_config(data, config):
+            problems.append(
+                f"the embedded {entry} is not the one the packer ships with the config passed to the packer"
+            )
     return problems
 
 
 def _payload_problems(
     archive: zipfile.ZipFile, names: collections.abc.Set[str]
 ) -> list[str]:
-    """Checks the key, the runtime's config, the class map and the encrypted business dexes the runtime reads."""
-    entries = (packer.KEY_ENTRY, packer.MAP_ENTRY, packer.CONFIG_ENTRY)
+    """Checks the key, the class map and the encrypted business dexes the runtime reads."""
+    entries = (packer.KEY_ENTRY, packer.MAP_ENTRY)
     missing = [entry for entry in entries if entry not in names]
     if len(missing) > 0:
         return [f"missing: {', '.join(missing)}"]
@@ -173,11 +177,6 @@ def _payload_problems(
     if len(key) != cipher.KEY_SIZE:
         return [f"the key is {len(key)} bytes, not {cipher.KEY_SIZE}"]
     problems: list[str] = []
-    config = archive.read(packer.CONFIG_ENTRY)
-    if config != runtime_config.RuntimeConfig(build_id=_BUILD_ID).to_json():
-        problems.append(
-            f"the protected app's config is {config!r}, not one with the build id passed to the packer"
-        )
     if _decrypted(archive, packer.MAP_ENTRY, key) is None:
         problems.append("the class map does not decrypt with the app's key")
     problems.extend(_business_problems(archive, names, key))
