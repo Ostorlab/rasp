@@ -10,8 +10,10 @@ from rasp_packer import runtime_config
 from rasp_packer.android import cipher
 from rasp_packer.android import packer
 from rasp_packer.android import resources
+from rasp_packer.android import runtime_library
 from rasp_packer.android import split
 from rasp_packer.android.aab import proto_manifest
+from tests.rasp_packer import conftest
 
 _FIXTURE = (
     pathlib.Path(__file__).resolve().parents[3]
@@ -21,8 +23,9 @@ _FIXTURE = (
 )
 _BUILD_ID = "rasp-build/v1:" + "ab" * 32
 _STUB_DEX = b"stub dex bytes"
-_ARM64_SO = b"arm64 librasp.so bytes"
+_ARM64_SO = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _PACKAGE = "com.android.insecurebankv2"
+_CONFIG = runtime_config.RuntimeConfig(build_id=_BUILD_ID)
 
 _FRAMEWORK = (b"framework dex zero", b"framework dex one")
 _BUSINESS = (
@@ -128,11 +131,12 @@ def testPackAab_writesTheRawKey(tmp_path: pathlib.Path) -> None:
         assert len(zf.read(packer.AAB_KEY_ENTRY)) == cipher.KEY_SIZE
 
 
-def testPackAab_writesTheConfig(tmp_path: pathlib.Path) -> None:
+def testPackAab_writesTheConfigIntoLibrasp(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
-        config_bytes = zf.read(packer.AAB_CONFIG_ENTRY)
-        assert _BUILD_ID.encode("utf-8") in config_bytes
+        library = zf.read("base/lib/arm64-v8a/librasp.so")
+    assert library == runtime_library.write_config(_ARM64_SO, _CONFIG)
+    assert runtime_library.read_config(library) == _CONFIG.to_json()
 
 
 def testPackAab_writesEncryptedMapThatNamesEveryBusinessClass(
@@ -189,7 +193,9 @@ def testPackAab_shipsFrameworkAndStubUnderBaseDex(tmp_path: pathlib.Path) -> Non
 def testPackAab_addsRuntimeLibraryUnderBaseLib(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
-        assert zf.read("base/lib/arm64-v8a/librasp.so") == _ARM64_SO
+        assert zf.read("base/lib/arm64-v8a/librasp.so") == runtime_library.write_config(
+            _ARM64_SO, _CONFIG
+        )
 
 
 # ── manifest patching ────────────────────────────────────────

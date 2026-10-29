@@ -50,14 +50,12 @@ MINIMUM_API_LEVEL = 31
 ASSET_DIRECTORY = "assets/rasp"
 KEY_ENTRY = f"{ASSET_DIRECTORY}/key.bin"
 MAP_ENTRY = f"{ASSET_DIRECTORY}/map.bin"
-CONFIG_ENTRY = f"{ASSET_DIRECTORY}/config.json"
 ASSET_PREFIX = "assets/"
 
 _AAB_BASE = "base/"
 _AAB_DEX_PREFIX = "base/dex/"
 AAB_KEY_ENTRY = f"{_AAB_BASE}{KEY_ENTRY}"
 AAB_MAP_ENTRY = f"{_AAB_BASE}{MAP_ENTRY}"
-AAB_CONFIG_ENTRY = f"{_AAB_BASE}{CONFIG_ENTRY}"
 AAB_ASSET_PREFIX = f"{_AAB_BASE}{ASSET_PREFIX}"
 
 type Splitter = collections.abc.Callable[[pathlib.Path, str], split_module.Split]
@@ -226,7 +224,9 @@ def _pack_aab(
     }
     abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
     lib_entries = {
-        f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": artifacts.libraries[abi]
+        f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": runtime_library.write_config(
+            artifacts.libraries[abi], config
+        )
         for abi in sorted(abis)
     }
     aab.write(
@@ -235,7 +235,6 @@ def _pack_aab(
         add={
             AAB_KEY_ENTRY: key,
             AAB_MAP_ENTRY: map_frame,
-            AAB_CONFIG_ENTRY: config.to_json(),
             **business_entries,
             **base_dexes,
             **lib_entries,
