@@ -1,6 +1,6 @@
 /// @file The JNI layer of the on-demand loader. The runtime loads the loader's dex, which is embedded in the library,
-/// binds its native findClass, and returns a loader for the stub to install. Everything the loader does when a class is
-/// first needed lives here, in native code.
+/// binds its native findClass, creates the loader, and installs it as the parent of the app's base loader. Everything
+/// the loader does, from its install to the first time a class is needed, lives here, in native code.
 ///
 /// Only `JNI_OnLoad` is an exported symbol. It binds `RaspStub.install` with RegisterNatives; `install` in turn binds
 /// `GeneratingClassLoader.findClass` on the class it just loaded. So neither native method is a `Java_...` symbol, and
@@ -23,6 +23,7 @@
 #include "payload/assets.h"
 #include "payload/cipher.h"
 #include "payload/dex_store.h"
+#include "rasp/util/logging.h"
 
 namespace rasp::android::loader {
 
@@ -300,19 +301,18 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
   return defined;
 }
 
-/// The native body of `RaspStub.install`, which JNI_OnLoad binds with RegisterNatives.
+/// Creates the on-demand loader.
 ///
 /// It reads the class map and key from the app's own APK. Without them no business class can be served, and every
 /// findClass falls back to the base loader. It then loads the loader's dex, which is embedded in the library, under the
-/// boot loader, binds the loaded class's native findClass to find_class, and creates the loader. The `RaspStub` class
-/// it is called on is not used.
+/// boot loader, binds the loaded class's native findClass to find_class, and creates the loader.
 ///
 /// @param env The JNI environment of the calling thread.
 /// @param base The app's base class loader, which holds the framework classes.
 /// @param library_search_path Where a class defined from a business dex looks for the app's native libraries.
-/// @return A local reference to a new GeneratingClassLoader, whose parent is the boot loader. Null on any failure; the
-/// stub then keeps the base loader unchanged.
-[[nodiscard]] jobject install(JNIEnv* env, jclass /*stub*/, jobject base, jstring library_search_path) {
+/// @return A local reference to a new GeneratingClassLoader, whose parent is the boot loader. Null on any failure, with
+/// no Java exception pending.
+[[nodiscard]] jobject make_loader(JNIEnv* env, jobject base, jstring library_search_path) {
   State& current = state();
   current.library_search_path = to_string(env, library_search_path);
 
@@ -404,7 +404,37 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
     return nullptr;
   }
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): the JNI object constructors are variadic by design.
-  return env->NewObject(generating_class, generating_ctor, boot, base);
+  jobject generating = env->NewObject(generating_class, generating_ctor, boot, base);
+  if (generating == nullptr) {
+    env->ExceptionClear();
+  }
+  return generating;
+}
+
+/// The native body of `RaspStub.install`, which JNI_OnLoad binds with RegisterNatives.
+///
+/// It creates the on-demand loader and installs it as the parent of the app's base loader, by writing the base loader's
+/// `ClassLoader.parent` field, so the chain is boot <- on-demand loader (business classes) <- base (framework classes).
+/// A framework class can then reference a business class. On any failure the base loader is left unchanged, no Java
+/// exception is left pending, and a development build logs that the loader was not installed. The `RaspStub` class it
+/// is called on is not used.
+///
+/// @param env The JNI environment of the calling thread.
+/// @param base The app's base class loader, which holds the framework classes.
+/// @param library_search_path Where a class defined from a business dex looks for the app's native libraries.
+void install(JNIEnv* env, jclass /*stub*/, jobject base, jstring library_search_path) {
+  jobject generating = make_loader(env, base, library_search_path);
+  jclass class_loader = env->FindClass("java/lang/ClassLoader");
+  jfieldID parent =
+      class_loader != nullptr ? env->GetFieldID(class_loader, "parent", "Ljava/lang/ClassLoader;") : nullptr;
+  if (generating == nullptr || parent == nullptr) {
+    env->ExceptionClear();
+    if constexpr (kLoggingEnabled) {
+      rasp::log("the on-demand loader is not installed; the app keeps its base loader");
+    }
+    return;
+  }
+  env->SetObjectField(base, parent, generating);
 }
 
 }  // namespace
@@ -429,7 +459,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
   }
   const JNINativeMethod method = {
       .name = "install",
-      .signature = "(Ljava/lang/ClassLoader;Ljava/lang/String;)Ljava/lang/ClassLoader;",
+      .signature = "(Ljava/lang/ClassLoader;Ljava/lang/String;)V",
       // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
       .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::install),
   };
