@@ -225,6 +225,35 @@ def _get_application_element(data: bytes) -> tuple[bytes, list[_Field]]:
     return result
 
 
+def _has_attr(fields: list[_Field], attr_name: str, namespace: str) -> bool:
+    """Return whether the element has an attribute with the given name and namespace."""
+    for field in fields:
+        if (
+            field.number != _FIELD_ELEMENT_ATTR
+            or field.wire_type != _WIRE_LENGTH_DELIMITED
+        ):
+            continue
+        assert isinstance(field.value, bytes)
+        attr_fields = _parse_fields(field.value)
+        name_match = False
+        ns_match = False
+        for af in attr_fields:
+            if af.number == _FIELD_ATTR_NAME and af.wire_type == _WIRE_LENGTH_DELIMITED:
+                assert isinstance(af.value, bytes)
+                if _decode_utf8(af.value) == attr_name:
+                    name_match = True
+            if (
+                af.number == _FIELD_ATTR_NAMESPACE
+                and af.wire_type == _WIRE_LENGTH_DELIMITED
+            ):
+                assert isinstance(af.value, bytes)
+                if _decode_utf8(af.value) == namespace:
+                    ns_match = True
+        if name_match is True and ns_match is True:
+            return True
+    return False
+
+
 def _read_string_attr(
     fields: list[_Field], attr_name: str, namespace: str | None = None
 ) -> str | None:
@@ -606,7 +635,7 @@ def set_app_component_factory(manifest: bytes, class_name: str) -> bytes:
     """
     old_element, el_fields = _get_application_element(manifest)
 
-    existing = _read_string_attr(el_fields, "appComponentFactory", namespace=ANDROID_NS)
+    has_existing = _has_attr(el_fields, "appComponentFactory", ANDROID_NS)
     new_attr = _build_string_attr(
         ANDROID_NS,
         "appComponentFactory",
@@ -614,7 +643,7 @@ def set_app_component_factory(manifest: bytes, class_name: str) -> bytes:
         _RESOURCE_ID_APP_COMPONENT_FACTORY,
     )
 
-    if existing is not None:
+    if has_existing is True:
         new_element = _replace_attr_in_element(
             old_element, "appComponentFactory", ANDROID_NS, new_attr
         )
