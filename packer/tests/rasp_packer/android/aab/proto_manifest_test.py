@@ -179,3 +179,18 @@ def testSetMinSdkVersion_whenNoUsesSdk_shouldRaise() -> None:
     element = b"\x0a\x0a\x1a\x08manifest"
     with pytest.raises(proto_manifest.ProtoManifestError, match="no <uses-sdk>"):
         proto_manifest.set_min_sdk_version(element, 21)
+
+
+def testSetMinSdkVersion_whenUsesSdkHasNoMinSdk_shouldRaise() -> None:
+    # <manifest> with a <uses-sdk android:targetSdkVersion="30"> child but no
+    # minSdkVersion attribute.  set_min_sdk_version should raise because the
+    # replacement finds no attribute to update.
+    element = (
+        b"\nc\x1a\x08manifest*W\nU\x1a\x08uses-sdk"
+        b'"I\n*http://schemas.android.com/apk/res/android'
+        b"\x12\x10targetSdkVersion(\xf0\x84\x84\x082\x04:\x020\x1e"
+    )
+    with pytest.raises(
+        proto_manifest.ProtoManifestError, match="no android:minSdkVersion"
+    ):
+        proto_manifest.set_min_sdk_version(element, 21)
