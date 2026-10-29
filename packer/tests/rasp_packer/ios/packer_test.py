@@ -13,6 +13,7 @@ from rasp_packer import identity
 from rasp_packer import runtime_config
 from rasp_packer.ios import macho
 from rasp_packer.ios import packer
+from rasp_packer.ios import runtime_binary
 from tests.rasp_packer import conftest
 
 _CONFIG = runtime_config.RuntimeConfig(build_id="build-1")
@@ -49,10 +50,12 @@ def testPack_whenValidIpa_embedsTheRuntimeWithTheConfig(
 ) -> None:
     with _pack(ipa_file, runtime, tmp_path / "out.ipa") as archive:
         binary = archive.read(f"{_FRAMEWORK}/RaspRuntime")
-        config = archive.read(f"{_FRAMEWORK}/{runtime_config.FILE_NAME}")
+        names = archive.namelist()
 
-    assert binary == b"runtime binary"
-    assert config == _CONFIG.to_json()
+    shipped = (runtime / "RaspRuntime").read_bytes()
+    assert binary == runtime_binary.write_config(shipped, _CONFIG)
+    assert runtime_binary.read_config(binary) == [_CONFIG.to_json()]
+    assert f"{_FRAMEWORK}/config.json" not in names
 
 
 def testPack_whenValidIpa_returnsTheAppIdentity(
