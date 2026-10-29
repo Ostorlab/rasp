@@ -10,11 +10,11 @@ runtime's ``payload/dex_store.*``, ``payload/assets.h`` and ``loader/loader_dex.
 
 - ``assets/rasp/key.bin`` — the raw 32-byte key, stored. It decrypts the map and every business dex.
 - ``assets/rasp/map.bin`` — the class map (see loader_map), encrypted under the key, stored.
-- ``assets/rasp/config.json`` — the runtime's config (see runtime_config), stored.
 - ``assets/business/<i>.dex`` — one encrypted business dex per file, stored.
 - the framework dexes and the stub, in the clear, as ``classes.dex`` … ``classesN.dex``.
-- ``lib/<abi>/librasp.so`` — the runtime library, one per ABI, unmodified. The loader's own dex is
-  already embedded in it at the runtime's build, so the packer does not touch the ``.so``.
+- ``lib/<abi>/librasp.so`` — the runtime library, one per ABI, with the runtime's config written into
+  its ``.rasp_config`` section (see runtime_library). The loader's own dex is already embedded in it at
+  the runtime's build.
 
 It sets the manifest's appComponentFactory to the stub, raises minSdk to the runtime's floor (API 31,
 which the in-memory loader and ``JNI_GetCreatedJavaVMs`` need), drops the app's original dexes and v1
@@ -32,6 +32,7 @@ from rasp_packer.android import cipher
 from rasp_packer.android import injection
 from rasp_packer.android import loader_map
 from rasp_packer.android import resources as resources_module
+from rasp_packer.android import runtime_library
 from rasp_packer.android import split as split_module
 from rasp_packer.android.apk import archive
 from rasp_packer.android.apk import manifest as manifest_module
@@ -42,7 +43,6 @@ MINIMUM_API_LEVEL = 31
 ASSET_DIRECTORY = "assets/rasp"
 KEY_ENTRY = f"{ASSET_DIRECTORY}/key.bin"
 MAP_ENTRY = f"{ASSET_DIRECTORY}/map.bin"
-CONFIG_ENTRY = f"{ASSET_DIRECTORY}/{runtime_config.FILE_NAME}"
 ASSET_PREFIX = "assets/"
 
 type Splitter = collections.abc.Callable[[pathlib.Path, str], split_module.Split]
@@ -61,7 +61,7 @@ def pack(
     Args:
         app: The built APK to protect.
         output: Where to write the protected APK. It is unsigned.
-        config: The runtime's config, written into the APK.
+        config: The runtime's config, written into each runtime library.
         artifacts: The prebuilt stub and libraries. Loaded from the package resources when not given.
         splitter: Splits the app's classes into framework and business dexes. The default runs the
             bundled splitter; a test passes a recorded split.
@@ -74,6 +74,8 @@ def pack(
             package, no literal android:versionName or no literal android:minSdkVersion.
         ManifestError: The app's manifest cannot be read or edited.
         MissingRuntimeArtifactError: A prebuilt runtime artifact is missing.
+        InvalidRuntimeError: A runtime library is not an ELF file or has no ``.rasp_config`` section.
+        ConfigTooLargeError: The runtime's config does not fit in a runtime library.
         UnsupportedAbiError: The app ships native libraries for an ABI the runtime is not built for.
         AlreadyProtectedError: The app already holds the map, or its manifest already names the stub.
         SplitError: The app's classes cannot be read or split.
@@ -112,10 +114,12 @@ def pack(
         add={
             KEY_ENTRY: key,
             MAP_ENTRY: map_frame,
-            CONFIG_ENTRY: config.to_json(),
             **business_entries,
             **base_dexes,
-            **injection.library_entries(apk, artifacts),
+            **{
+                name: runtime_library.write_config(library, config)
+                for name, library in injection.library_entries(apk, artifacts).items()
+            },
         },
         remove=set(dex_names) | injection.stale_signature_entries(apk),
     )
