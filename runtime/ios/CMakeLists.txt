@@ -1,4 +1,5 @@
 add_library(RaspRuntime SHARED
+  src/data_dir.cpp
   src/entry.cpp
   src/monitoring.cpp
   src/checks/debugger.cpp

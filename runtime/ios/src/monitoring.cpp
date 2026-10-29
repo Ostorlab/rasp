@@ -6,6 +6,7 @@
 #include <chrono>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <pthread.h>
 #include <string>
 #include <thread>
@@ -19,7 +20,9 @@
 #include "checks/jailbreak.h"
 #include "checks/mitm.h"
 #include "checks/virtualizer.h"
+#include "data_dir.h"
 #include "rasp/embedded_config.h"
+#include "rasp/install_id.h"
 #include "rasp/observation.h"
 #include "rasp/plugins/registry.h"
 #include "rasp/util/logging.h"
@@ -39,7 +42,18 @@ constexpr std::chrono::seconds kCheckInterval{60};
 /// @return Never returns.
 void* monitor(void* argument) {
   const std::unique_ptr<const std::string> inserted_libraries(static_cast<std::string*>(argument));
-  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), read_embedded_config());
+  Config config = read_embedded_config();
+  const std::optional<std::string> dir = data_dir();
+  if (dir.has_value()) {
+    const std::optional<InstallId> id = get_or_create_install_id(*dir);
+    if (id.has_value()) {
+      config.install_id = *id;
+    }
+  }
+  if constexpr (kLoggingEnabled) {
+    rasp::log(config.install_id != InstallId{} ? "install_id loaded" : "install_id unavailable");
+  }
+  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), config);
   while (true) {
     std::vector<Observation> builtin = checks::jailbreak();
     std::ranges::move(checks::debugger(), std::back_inserter(builtin));

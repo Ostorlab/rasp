@@ -1,4 +1,5 @@
 add_library(rasp SHARED
+  src/data_dir.cpp
   src/entry.cpp
   src/monitoring.cpp
   src/apk/archive.cpp
