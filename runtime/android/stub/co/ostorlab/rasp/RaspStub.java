@@ -4,7 +4,6 @@ import android.app.AppComponentFactory;
 import android.content.pm.ApplicationInfo;
 import android.util.Log;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 
 /**
  * The component factory the packer points the app's manifest at.
@@ -39,7 +38,6 @@ public final class RaspStub extends AppComponentFactory {
     @Override
     public ClassLoader instantiateClassLoader(ClassLoader base, ApplicationInfo info) {
         try {
-            liftHiddenApi();
             ClassLoader generating = install(base, info.nativeLibraryDir);
             if (generating == null) {
                 return base;
@@ -73,28 +71,5 @@ public final class RaspStub extends AppComponentFactory {
         Field parent = ClassLoader.class.getDeclaredField("parent");
         parent.setAccessible(true);
         parent.set(child, newParent);
-    }
-
-    /**
-     * Exempts the app from the non-SDK API blocklist, so the reflection in setParent is allowed. It ignores any failure:
-     * older or newer platforms may not need or allow this, and the field access may still work.
-     */
-    private static void liftHiddenApi() {
-        try {
-            Method forName = Class.class.getDeclaredMethod("forName", String.class);
-            Method getDeclaredMethod =
-                    Class.class.getDeclaredMethod("getDeclaredMethod", String.class, Class[].class);
-            Class<?> vmRuntime = (Class<?>) forName.invoke(null, "dalvik.system.VMRuntime");
-            Method getRuntime = (Method) getDeclaredMethod.invoke(vmRuntime, "getRuntime", (Object) null);
-            Method setExemptions =
-                    (Method)
-                            getDeclaredMethod.invoke(
-                                    vmRuntime, "setHiddenApiExemptions", new Class[] {String[].class});
-            Object runtime = getRuntime.invoke(null);
-            setExemptions.invoke(
-                    runtime,
-                    new Object[] {new String[] {"Ljava/lang/ClassLoader;->parent:Ljava/lang/ClassLoader;"}});
-        } catch (Throwable ignored) {
-        }
     }
 }
