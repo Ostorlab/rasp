@@ -174,9 +174,8 @@ def testReadPackage_whenEmptyBytes_shouldRaise() -> None:
 
 
 def testSetMinSdkVersion_whenNoUsesSdk_shouldRaise() -> None:
-    # A minimal proto with just a <manifest> element but no <uses-sdk> child
-    # Build: XmlElement with name="manifest" wrapped in XmlNode
-    name_field = proto_manifest._encode_field(3, 2, b"manifest")
-    element = proto_manifest._encode_field(1, 2, name_field)
+    # A minimal proto with just a <manifest> element but no <uses-sdk> child:
+    # XmlNode { element: XmlElement { name: "manifest" } }
+    element = b"\x0a\x0a\x1a\x08manifest"
     with pytest.raises(proto_manifest.ProtoManifestError, match="no <uses-sdk>"):
         proto_manifest.set_min_sdk_version(element, 21)
