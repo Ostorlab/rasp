@@ -117,6 +117,11 @@ def split_from_dex_entries(
     """
     if len(dex_entries) == 0:
         raise SplitError("no DEX entries to split")
+    for name in dex_entries:
+        if "/" in name or "\\" in name or name.endswith(".dex") is False:
+            raise SplitError(
+                f"dex_entries key must be a bare root-level .dex filename, got: {name!r}"
+            )
     with tempfile.TemporaryDirectory(prefix="rasp-aab-dex-") as dex_dir:
         fake_apk = pathlib.Path(dex_dir) / "classes.zip"
         with zipfile.ZipFile(fake_apk, "w") as zf:
