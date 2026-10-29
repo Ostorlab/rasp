@@ -25,6 +25,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import zipfile
 
 from rasp_packer import errors
 from rasp_packer.android import resources as resources_module
@@ -91,12 +92,52 @@ def split(app: pathlib.Path, package: str) -> Split:
     Raises:
         SplitError: The ``split-dex`` tool is missing, fails, or writes output that can't be read.
     """
+    return _run_split_dex(app, package, label=str(app))
+
+
+def split_from_dex_entries(
+    dex_entries: collections.abc.Mapping[str, bytes], package: str
+) -> Split:
+    """Splits classes from pre-extracted DEX entries (e.g. from an AAB).
+
+    The ``split-dex`` tool expects an APK (a ZIP with root-level DEX files).
+    This function writes the given entries into a temporary ZIP so the tool can
+    read them unchanged.  The keys must be root-level DEX names such as
+    ``classes.dex``, ``classes2.dex``, etc.
+
+    Args:
+        dex_entries: A mapping of DEX file names to their bytes.
+        package: The app's package, such as ``com.example``.
+
+    Returns:
+        The framework dexes in load order, and the business dexes with the classes each defines.
+
+    Raises:
+        SplitError: The ``split-dex`` tool is missing, fails, or writes output that can't be read.
+    """
+    if len(dex_entries) == 0:
+        raise SplitError("no DEX entries to split")
+    for name in dex_entries:
+        if "/" in name or "\\" in name or name.endswith(".dex") is False:
+            raise SplitError(
+                f"dex_entries key must be a bare root-level .dex filename, got: {name!r}"
+            )
+    with tempfile.TemporaryDirectory(prefix="rasp-aab-dex-") as dex_dir:
+        fake_apk = pathlib.Path(dex_dir) / "classes.zip"
+        with zipfile.ZipFile(fake_apk, "w") as zf:
+            for name, data in dex_entries.items():
+                zf.writestr(name, data)
+        return _run_split_dex(fake_apk, package, label="AAB DEX entries")
+
+
+def _run_split_dex(apk: pathlib.Path, package: str, *, label: str) -> Split:
+    """Run the ``split-dex`` tool on *apk* and return the parsed output."""
     with _tool() as tool, tempfile.TemporaryDirectory(prefix="rasp-split-") as work:
         out = pathlib.Path(work)
         argv = [
             str(tool),
             "--apk",
-            str(app),
+            str(apk),
             "--out",
             str(out),
             "--set",
@@ -112,7 +153,7 @@ def split(app: pathlib.Path, package: str) -> Split:
             subprocess.run(argv, check=True, capture_output=True)
         except subprocess.CalledProcessError as error:
             detail = error.stderr.decode("utf-8", "replace").strip()
-            raise SplitError(f"split-dex failed on {app}: {detail}") from error
+            raise SplitError(f"split-dex failed on {label}: {detail}") from error
         return read_output(out)
 
 
