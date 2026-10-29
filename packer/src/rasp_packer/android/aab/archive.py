@@ -157,8 +157,9 @@ class Aab:
             path: Where to write the new AAB.
             replace: Entries to overwrite, by name. They keep their position and
                 their original compression.
-            add: New entries, by name. They are stored without compression. An
-                entry whose name already exists overwrites it in place.
+            add: New entries, by name. A genuinely new entry is stored without
+                compression. An entry whose name already exists overwrites it
+                in place and keeps its original compression.
             remove: Names of entries to drop.
         """
         final: list[tuple[str, bytes, int]] = []
