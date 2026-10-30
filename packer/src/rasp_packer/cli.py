@@ -17,7 +17,7 @@ EXIT_FAILED = 1
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="rasp",
-        description="Protects built Android and iOS apps with the RASP runtime.",
+        description="Protects built Android (APK, AAB) and iOS (IPA) apps with the RASP runtime.",
     )
     parser.add_argument(
         "--version",
@@ -29,7 +29,9 @@ def _parser() -> argparse.ArgumentParser:
     pack = commands.add_parser(
         "pack", help="add the runtime to a built app (the result is unsigned)"
     )
-    pack.add_argument("app", type=pathlib.Path, help="the built app, an APK or an IPA")
+    pack.add_argument(
+        "app", type=pathlib.Path, help="the built app, an APK, AAB, or IPA"
+    )
     pack.add_argument(
         "--platform",
         type=platforms.Platform,
