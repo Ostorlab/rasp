@@ -1,8 +1,7 @@
 """Locates the `RaspRuntime.framework` bundled in the packer.
 
-The framework comes from the runtime build and ships at `resources/RaspRuntime.framework`.
-The release workflow commits it there on the release tag only; without it, `framework` raises
-InvalidRuntimeError.
+The framework comes from the runtime build. `framework` looks for it at
+`resources/RaspRuntime.framework` in this package, and raises InvalidRuntimeError when it is absent.
 """
 
 import collections.abc
