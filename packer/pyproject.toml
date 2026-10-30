@@ -3,6 +3,8 @@ name = "rasp-packer"
 version = "0.3.0"
 description = "Adds the RASP runtime to a built Android or iOS app"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.14"
 dependencies = [
     "cryptography==50.0.2",
