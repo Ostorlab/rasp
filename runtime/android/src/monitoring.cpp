@@ -16,6 +16,7 @@
 #include "checks/integrity.h"
 #include "checks/mitm.h"
 #include "checks/root.h"
+#include "rasp/context.h"
 #include "rasp/embedded_config.h"
 #include "rasp/observation.h"
 #include "rasp/plugins/registry.h"
@@ -43,14 +44,16 @@ constexpr std::chrono::seconds kCheckInterval{60};
 }
 
 /// The thread: initialises the plugins, then runs the built-in checks and the plugins, then again every kCheckInterval,
-/// until the process exits.
+/// until the process exits. The context the plugins share is a local of this thread, which never returns, so it lives
+/// as long as the process.
 ///
 /// @return Never returns.
 void* monitor(void* /*argument*/) {
-  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), read_embedded_config());
+  rasp::plugins::Context context;
+  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), read_embedded_config(), context);
   while (true) {
     const std::vector<Observation> observations =
-        rasp::plugins::run_plugins(rasp::plugins::compiled_in(), run_checks());
+        rasp::plugins::run_plugins(rasp::plugins::compiled_in(), run_checks(), context);
     if constexpr (kLoggingEnabled) {
       for (const Observation& observation : observations) {
         rasp::log(describe(observation));
