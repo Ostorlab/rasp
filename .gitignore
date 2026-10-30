@@ -1,28 +1,14 @@
 # Build outputs and tool caches
 build/
-.dart_tool/
-.gradle/
-.cxx/
 .idea/
 *.iml
-local.properties
-.flutter-plugins-dependencies
 __pycache__/
 *.pyc
 .coverage
 coverage.xml
 htmlcov/
 
-# Local Python venv for the verifier
+# Local Python venvs
 .venv/
 
-# Per-build hardener output — secret (carries key material); regenerated per build, never committed.
-build_generated.h
-build_seed.h
-build_manifest.json
-wbaes_tables.h
-integrity_regions.h
-
-# ELF prototype outputs
-poc/elf/dist/
 *.egg-info/
