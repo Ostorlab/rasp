@@ -1,6 +1,6 @@
 # Packer
 
-Adds the RASP runtime to a built app: an APK for Android, an IPA for iOS. The packer returns the protected app unsigned: the customer signs it before shipping it.
+Adds the RASP runtime to a built app: an APK or an AAB for Android, an IPA for iOS. The packer returns the protected app unsigned: you sign it before you ship it.
 
 The packer is a library. `rasp_packer.packer.pack` is its entry point, and the `rasp` command line is a thin client of it, so a job can pack an app without starting a process.
 
@@ -24,72 +24,56 @@ rasp pack app.ipa --platform ios --build-id e6a8373149e83d008a5212b34bdd23bf637a
 
 `pack` returns the path of the protected app, the app's package name and version (on iOS, `CFBundleIdentifier` and `CFBundleShortVersionString` from its `Info.plist`; on Android, the `package` and `android:versionName` of its manifest), and the build id.
 
-The runtime is bundled in the packer.
+The packer adds a prebuilt runtime, which comes from the runtime build and is not in the repository. The packer looks for it in its package resources: see the README in `src/rasp_packer/android/resources/` and the one in `src/rasp_packer/ios/resources/`.
 
 ## Android
 
 For Android the packer protects the app's code:
 
-- it encrypts the app's dex files (`classes.dex`, `classes2.dex`, ...) and stores them as the asset `assets/rasp/payload.bin`;
-- it replaces `classes.dex` with a small stub, and sets `<application android:appComponentFactory>` to the stub's class, `co.ostorlab.rasp.RaspStub`, while leaving the app's own `<application android:name>` alone;
-- it adds the native runtime as `lib/<abi>/librasp.so`, for each ABI the app has native libraries for, or for every ABI the runtime is built for when the app has none. Android installs the native libraries of one ABI only, so each of the app's ABIs needs the runtime. An app with native libraries for an ABI the runtime isn't built for is refused with `UnsupportedAbiError`;
-- it raises the app's `android:minSdkVersion` to 31 when it is lower. The stub loads the dex files from memory as an `AppComponentFactory`, through a class loader with a native-library path, which needs Android 12 (API 31). The protected app then doesn't install on older devices;
-- it writes the asset `assets/rasp/config.json`, which the stub reads: the payload key, which the stub passes to the native runtime, the build id and the names of the dex files;
-- it removes the app's v1 signature files from `META-INF/`, since the customer signs the protected APK again.
+- it sorts the app's classes with the bundled `split-dex` tool. The classes under the app's package are the app's own code. The other classes, such as libraries, stay in the clear, as `classes.dex`, `classes2.dex`, ...;
+- it encrypts the app's own classes, in dex files of their own, and stores each of these files as the asset `assets/business/<i>.dex`. It also stores the class map as `assets/rasp/map.bin`, encrypted too: the map names the dex file that defines each of these classes. It stores the key as `assets/rasp/key.bin`;
+- it adds a small stub as the last dex file (`classesN.dex`), and sets `<application android:appComponentFactory>` to the stub's class, `co.ostorlab.rasp.RaspStub`, while leaving the app's own `<application android:name>` alone;
+- it adds the native runtime as `lib/<abi>/librasp.so`, for each ABI the app has native libraries for, or for every ABI the runtime is built for when the app has none. Android installs the native libraries of one ABI only, so each of the app's ABIs needs the runtime. An app with native libraries for an ABI the runtime isn't built for is refused with `UnsupportedAbiError`. The packer writes the runtime config, which holds the build id, into the `.rasp_config` section of each `librasp.so`;
+- it raises the app's `android:minSdkVersion` to 31 when it is lower, because the runtime supports Android 12 (API 31) and later. The protected app then doesn't install on older devices;
+- it removes the app's v1 signature files from `META-INF/`, since the protected APK must be signed again.
 
-It reads the app's package and version from the `<manifest>` element. An APK whose manifest has no package, or no literal `android:versionName` (for example an `android:versionName` set to a `@string` resource), is refused with `InvalidApkError`, and so is one without a literal `android:minSdkVersion` on `<uses-sdk>`. An APK that already holds a payload, or whose manifest already names the stub as its component factory, is refused with `AlreadyProtectedError`.
+For an AAB, the packer writes the same entries under `base/`, with the dex files under `base/dex/`, and edits its manifest the same way.
 
-At run time Android loads the stub as the app's component factory; the stub loads the runtime; the runtime runs its pre-decryption checks and, if they pass, decrypts the dex files; the stub then serves them from memory, and Android creates the app's own Application and components from them.
+It reads the app's package and version from the `<manifest>` element. An APK whose manifest has no package, or no literal `android:versionName` (for example an `android:versionName` set to a `@string` resource), is refused with `InvalidApkError`, and so is one without a literal `android:minSdkVersion` on `<uses-sdk>`. An AAB is refused in the same cases, with `InvalidAabError`. An app that already holds the class map, or whose manifest already names the stub as its component factory, is refused with `AlreadyProtectedError`.
 
-The stub and the native runtime are prebuilt by the runtime build and live under `src/rasp_packer/android/resources/` (see the README there). Without them the packer raises `MissingRuntimeArtifactError`.
+At run time Android loads the stub as the app's component factory, and the stub loads the runtime. The runtime starts the thread that runs the checks, and installs the on-demand class loader. The first time the app needs one of its own classes, this loader decrypts the dex file that defines it and loads it from memory.
 
-The binary `AndroidManifest.xml` is edited in place by `android/apk/axml.py`, so the packer needs no Android build tool. The protected APK is returned aligned, with native libraries on 16 KB page boundaries and other stored entries on 4-byte boundaries, so the customer signs it directly with no separate `zipalign` step.
+The stub and the native runtime come from the runtime build. The packer looks for them under `src/rasp_packer/android/resources/` (see the README there), and raises `MissingRuntimeArtifactError` when they are missing.
 
-First version: the payload key is written in cleartext in `config.json`. The dex encryption raises the effort needed to read the app's code, but on its own does not defeat a determined analyst who reads the key in `config.json`. `TODO.md` at the repository root tracks this limit.
+The binary `AndroidManifest.xml` is edited in place by `android/apk/axml.py`, so the packer needs no Android build tool. The protected APK is returned aligned, with native libraries on 16 KB page boundaries and other stored entries on 4-byte boundaries, so it can be signed directly, with no separate `zipalign` step.
 
-## Install
-
-Each release publishes the packer to the private Python repository `rasp-packer` in Google Artifact Registry. Installing it needs read access to that repository: ask an Ostorlab engineer with GCP admin rights to grant your account `roles/artifactregistry.reader` on `rasp-packer`.
-
-First sign in to Google Cloud:
-
-- on your machine, run `gcloud auth application-default login`;
-- in CI or an image build, set `GOOGLE_APPLICATION_CREDENTIALS` to the key file of a service account granted `roles/artifactregistry.reader` on `rasp-packer`.
-
-Then install the Artifact Registry keyring helper, the packer from Artifact Registry alone, and the packer's dependencies from PyPI. Replace `X.Y.Z` with the release version:
-
-```
-pip install keyring keyrings.google-artifactregistry-auth
-pip install --force-reinstall --no-deps --index-url https://us-central1-python.pkg.dev/adr-rasp/rasp-packer/simple/ rasp-packer==X.Y.Z
-pip install rasp-packer==X.Y.Z
-```
-
-When pip needs credentials for Artifact Registry, it asks keyring, and the helper gets a short-lived access token from the Google Cloud credentials above. The second command points `--index-url` at Artifact Registry only, so pip can't take `rasp-packer` from PyPI even if a package with that name exists there, and `--force-reinstall` replaces a copy of `rasp-packer` installed from anywhere else. The third command finds `rasp-packer==X.Y.Z` already installed, reads the dependencies it declares, and installs them from PyPI.
-
-Only a release has the prebuilt runtime in it: the iOS framework, and the Android stub and native libraries. A checkout of `main` has none of them, so its packer raises `InvalidRuntimeError` when it packs an IPA, and `MissingRuntimeArtifactError` when it packs an APK.
+The key is stored in the clear, in `assets/rasp/key.bin`. The encryption raises the effort needed to read the app's code, but on its own does not defeat a determined analyst who reads the key from the app. `TODO.md` at the repository root tracks this limit.
 
 ## Layout
 
 - `src/rasp_packer/packer.py`: `pack`, the entry point.
 - `src/rasp_packer/platforms.py`: the platforms, Android and iOS.
 - `src/rasp_packer/identity.py`: `AppIdentity`, the package name and version read from the app.
-- `src/rasp_packer/protection_versions.py`: the protection version of each platform, part of every build id. It is public: the caller reads it to compute the build id.
+- `src/rasp_packer/protection_versions.py`: the protection version of each platform. It is public, so the caller can read it, for example to compute the build id.
 - `src/rasp_packer/cli.py`: the `rasp` command line.
 - `src/rasp_packer/ios/`: packing of IPAs.
   - `ipa.py`: unpacks and repacks the IPA, keeping file permissions, and reads the app's identity (`CFBundleIdentifier` and `CFBundleShortVersionString`) from its `Info.plist`.
   - `macho.py`: makes the main executable load the runtime (`LC_LOAD_DYLIB` and `LC_RPATH`) and removes its code signature.
-  - `packer.py`: embeds `RaspRuntime.framework`, writes the build id (`RaspBuildId`) into its `Info.plist`, and removes the app's `_CodeSignature`.
-  - `resources.py`: locates the `RaspRuntime.framework` that ships with the packer, under `resources/` (see the README there). The framework is prebuilt by the runtime build; without it the packer raises `InvalidRuntimeError`.
-- `src/rasp_packer/android/`: packing of APKs.
-  - `packer.py`: the Android `pack`. It encrypts the dex files into the payload, puts the stub in place of `classes.dex`, adds `librasp.so` for the app's ABIs, sets the manifest's `appComponentFactory` to the stub, raises its `minSdkVersion`, writes `config.json`, and removes the v1 signature files.
+  - `packer.py`: embeds `RaspRuntime.framework`, writes the runtime config into its binary, and removes the app's `_CodeSignature`.
+  - `runtime_binary.py`: writes the runtime config into the `__DATA,__rasp_config` section of the framework's `RaspRuntime` binary.
+  - `resources.py`: locates the prebuilt `RaspRuntime.framework`, under `resources/` (see the README there). The framework is prebuilt by the runtime build; without it the packer raises `InvalidRuntimeError`.
+- `src/rasp_packer/android/`: packing of APKs and AABs.
+  - `packer.py`: the Android `pack`. It sorts the app's classes, encrypts the app's own dex files and the class map, adds the stub as the last dex file, adds `librasp.so` for the app's ABIs with the runtime config written into it, sets the manifest's `appComponentFactory` to the stub, raises its `minSdkVersion`, and removes the v1 signature files of an APK.
   - `apk/`: reading and editing the APK.
     - `archive.py`: reading and repacking the APK (a ZIP).
     - `axml.py`: reading and editing the binary `AndroidManifest.xml`.
     - `manifest.py`: the layer over `axml.py` for the component factory, the app's package and version, and its minimum API level.
-  - `cipher.py`: the authenticated cipher for the payload.
-  - `payload.py`: packing the dex files into the encrypted payload.
-  - `config.py`: the runtime config written into the APK.
-  - `resources.py`: locating the prebuilt stub and native libraries.
+  - `aab/`: reading and editing the AAB, and its manifest, which is in protobuf format.
+  - `cipher.py`: the authenticated cipher for the class map and the app's own dex files.
+  - `split.py`: runs the bundled `split-dex` tool, which sorts the app's classes into the app's own and the others.
+  - `loader_map.py`: the class map, which names the dex file that defines each of the app's own classes.
+  - `runtime_library.py`: writes the runtime config into the `.rasp_config` section of `librasp.so`.
+  - `resources.py`: locating the prebuilt stub and native libraries, and the bundled `split-dex` tool.
 - `tests/`: one test file per source file, at the same path, named `<module>_test.py`.
 
 ## Development
@@ -109,8 +93,6 @@ CI runs the same commands (`.github/workflows/packer.yml`).
 
 ## Build id and protection version
 
-Every protected build has a build id, which the packer writes into the app. The caller computes it and passes it to `pack` (or to `rasp pack --build-id`); the packer writes it as it is and does not check its format. It only refuses an id it cannot write: an empty one, or one with control characters.
+Every protected build has a build id, which the packer writes into the app. The caller chooses it and passes it to `pack` (or to `rasp pack --build-id`). The packer accepts any id: it writes it as it is and does not check its format. It only refuses an id it cannot write: an empty one, one with control characters, or one too long for the space the runtime keeps for its config.
 
-The build id is the lowercase hex SHA-256 over the organisation id, the SHA-256 of the input app file, the platform name, and the platform's protection version. The caller reads the protection version from `rasp_packer.protection_versions.PROTECTION_VERSIONS`.
-
-Each platform's protection version is a whole number in `src/rasp_packer/protection_versions.py`. Bump it when a change alters what protected apps do on that platform: the runtime's behaviour, or how the packer transforms the app. Changes that leave protected apps the same, such as comments, refactors, tests or docs, do not bump it.
+Each platform's protection version is a whole number in `src/rasp_packer/protection_versions.py`. The caller can read it from `rasp_packer.protection_versions.PROTECTION_VERSIONS`, for example to make it part of the build id. Bump it when a change alters what protected apps do on that platform: the runtime's behaviour, or how the packer transforms the app. Changes that leave protected apps the same, such as comments, refactors, tests or docs, do not bump it.

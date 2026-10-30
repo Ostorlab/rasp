@@ -16,6 +16,7 @@ to rebuild it and check it.
 - `libcxx-apple-posix-memalign.patch` — the one change made to the LLVM source
   before building (explained below).
 - `build.sh` — rebuilds the archive from the LLVM source.
+- `LICENSE.TXT` — the licence of libc++: the LLVM Project's Apache-2.0 with LLVM Exceptions.
 
 ## How it is built
 

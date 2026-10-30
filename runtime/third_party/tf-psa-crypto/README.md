@@ -1,6 +1,6 @@
 # Vendored TF-PSA-Crypto
 
-The packer encrypts the app's dex files with ChaCha20-Poly1305, as RFC 8439 defines it, and the Android runtime decrypts them in `librasp.so`. The runtime takes ChaCha20-Poly1305 from TF-PSA-Crypto, the cryptography library of the Mbed TLS project, built from source and linked statically into `librasp.so`. The host builds that run the tests build it too, because the tests of the payload decryption run on a development machine. The iOS build doesn't build it.
+The packer encrypts the app's own dex files with ChaCha20-Poly1305, as RFC 8439 defines it, and the Android runtime decrypts them in `librasp.so`. The runtime takes ChaCha20-Poly1305 from TF-PSA-Crypto, the cryptography library of the Mbed TLS project, built from source and linked statically into `librasp.so`. It also takes SHA-256 from it, for the integrity check on Android and the app-identity check on iOS, so the iOS build links it into `RaspRuntime.framework` too. The host builds that run the tests build it too, because the tests of the payload decryption run on a development machine.
 
 Since Mbed TLS 4, the Mbed TLS project ships its cryptography as TF-PSA-Crypto, a library of its own, with the PSA Crypto API. Its 1.1 branch is a long-term support branch, which gets security fixes until March 2029.
 
@@ -27,13 +27,14 @@ The archive is committed, rather than downloaded at build time, so the build wor
 
 ## How it is built
 
-`cmake/tf_psa_crypto.cmake` runs for Android and for the builds with tests. It extracts the archive into the build folder and adds TF-PSA-Crypto's own `CMakeLists.txt`, with `crypto_config.h` as `TF_PSA_CRYPTO_CONFIG_FILE`. TF-PSA-Crypto's programs and tests are off, and its compiler warnings are not errors: the warnings are about code we don't own, and a newer compiler must not break our build over them. That builds one static library, `rasp_tfpsacrypto`. `librasp.so` links it, and `-Wl,--exclude-libs,ALL` hides every one of its symbols, as it does for libc++. The library is also built with hidden visibility.
+`cmake/tf_psa_crypto.cmake` runs for Android, for iOS and for the builds with tests. It extracts the archive into the build folder and adds TF-PSA-Crypto's own `CMakeLists.txt`, with `crypto_config.h` as `TF_PSA_CRYPTO_CONFIG_FILE`. TF-PSA-Crypto's programs and tests are off, and its compiler warnings are not errors: the warnings are about code we don't own, and a newer compiler must not break our build over them. That builds one static library, `rasp_tfpsacrypto`. `librasp.so` and `RaspRuntime.framework` link it. In `librasp.so`, `-Wl,--exclude-libs,ALL` hides every one of its symbols, as it does for libc++. The library is also built with hidden visibility.
 
 ## The configuration
 
-`crypto_config.h` turns on only what the payload decryption needs. Everything else is off, so it isn't in the binary.
+`crypto_config.h` turns on only what the runtime needs: the payload decryption and SHA-256. Everything else is off, so it isn't in the binary.
 
-- **ChaCha20-Poly1305:** the payload's algorithm, and its key type. No other cipher, no hash function for the app's use, no public-key cryptography and no key storage is on.
+- **ChaCha20-Poly1305:** the payload's algorithm, and its key type. No other cipher, no public-key cryptography and no key storage is on.
+- **SHA-256:** the hash of the integrity check on Android and of the app-identity check on iOS, computed with `psa_hash_compute`.
 - **PSA crypto:** the runtime decrypts with `psa_aead_decrypt`, from the PSA Crypto API. Before any PSA call, `psa_crypto_init` starts PSA's random generator, even though decrypting needs no randomness. So the configuration has a random generator: HMAC_DRBG over SHA-256 (`MBEDTLS_HMAC_DRBG_C`, `MBEDTLS_MD_C` and SHA-256). CTR_DRBG, the other choice, would add AES.
 - **Randomness:** TF-PSA-Crypto's own entropy source (`MBEDTLS_PSA_BUILTIN_GET_ENTROPY`). It calls the `getrandom` system call only on glibc. On Android it reads a device file instead, and `MBEDTLS_PLATFORM_DEV_RANDOM` sets it to `/dev/urandom`. TF-PSA-Crypto's default is `/dev/random`, which can block for a long time on Linux kernels older than 5.6, and many Android 8 to 10 devices run such kernels. `/dev/urandom` never blocks. It is only weak right after the kernel boots, and an app always starts long after Android has seeded it.
 - **No text that names the library.** The version functions (`TF_PSA_CRYPTO_VERSION`) stay off, so the version string isn't in the binary to tell an attacker which library to hook.
