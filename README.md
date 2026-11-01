@@ -1,8 +1,8 @@
 # rasp
 
-Production source of Ostorlab Mobile RASP: the **packer**, and the **runtime libraries** it puts inside a customer's app.
+Ostorlab Mobile RASP: the **packer**, and the **runtime libraries** it puts inside an app.
 
-- **The packer** (Python) takes a customer's built app, an APK or an IPA, and adds the runtime to it. It returns the protected app unsigned, and the customer signs it before shipping it.
+- **The packer** (Python) takes a built app, an APK, an AAB or an IPA, and adds the runtime to it. It returns the protected app unsigned: you sign it before you ship it.
 - **The runtime libraries** (C++) run inside the protected app, on Android and on iOS. They run the checks (debugger, hooking, jailbreak and root, tampering, and others).
 
 ## Layout
@@ -10,7 +10,7 @@ Production source of Ostorlab Mobile RASP: the **packer**, and the **runtime lib
 ```
 packer/                 Python packer: a library, with the `rasp` command line as its client
   src/rasp_packer/
-    android/            APK: add the runtime library
+    android/            APK and AAB: add the runtime library
     ios/                IPA: add the runtime framework
   tests/
 runtime/                C++ runtime libraries, built with CMake, and the Android stub, in Java
@@ -18,41 +18,14 @@ runtime/                C++ runtime libraries, built with CMake, and the Android
   android/              Android entry point (JNI), the Android checks, the payload decryption, the stub loader, and the .so build
   ios/                  iOS entry point, the iOS checks, and the RaspRuntime.framework build
   tests/                tests that run on a development machine, without a device
-docs/                   notes about this repository
-poc/                    the proof of concept, kept for reference
 ```
-
-Each folder is created by the first pull request that adds code to it.
-
-## Releases
-
-A release is the packer with the runtimes built into it. To make one:
-
-1. Bump the version to the same number in `packer/pyproject.toml` and `runtime/CMakeLists.txt`, in a pull request.
-2. Run the **Release** workflow on `main`, from the repository's Actions tab.
-
-The workflow builds the iOS framework on macOS and runs the same checks as CI on it. It packs each app in [`packer/tests/apps/`](packer/tests/apps/README.md) with the new packer and checks the protected app. It then makes one commit on top of `main` that adds the framework to the packer, tags it `v<version>`, and pushes only the tag, so `main` never holds a built runtime. It refuses a version that is already released, or a packer and runtime whose versions differ.
-
-Install a release with `pip`, as the [packer README](packer/README.md#install) shows.
-
-## The `poc/` folder
-
-`poc/` holds the proof of concept that came before this production code: the Flutter plugin and its demo bank app, the reference trust service (`verifier/`), the build-time hardener, the Linux ELF packer, and the assurance and server-agent tools. See [`poc/README.md`](poc/README.md).
-
-It is kept for reference only:
-
-- Production code never imports from `poc/`.
-- Ideas from the proof of concept are reviewed and rewritten for production, not copied as they are.
-- The proof of concept's CI still runs, so it keeps working as a reference.
-
-## Design
-
-The design is described in the `Ostorlab/design-docs` repository:
-
-- *Mobile RASP*: the packer and the protection it adds.
 
 ## Contributing
 
 Every change goes through a pull request.
 
 Known work that isn't done yet is listed in [`TODO.md`](TODO.md).
+
+## License
+
+Apache-2.0. See [`LICENSE`](LICENSE).

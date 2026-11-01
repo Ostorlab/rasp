@@ -1,14 +1,13 @@
 # iOS runtime artifact
 
 The packer embeds one prebuilt artifact into every app. It comes from the
-runtime build, not from the packer. The release workflow
-(`.github/workflows/release.yml`) builds it and commits it here, on the release
-tag only:
+runtime build (see `runtime/README.md`), not from the packer, and it is not in
+the repository. The packer looks for it in this folder:
 
 - `RaspRuntime.framework` — the iOS runtime framework. The packer makes the
   app's main executable load it (`@rpath/RaspRuntime.framework/RaspRuntime`),
-  embeds it under the app's `Frameworks/`, and writes the build id
-  (`RaspBuildId`) into its `Info.plist`.
+  embeds it under the app's `Frameworks/`, and writes the runtime config, which
+  holds the build id, into the `__DATA,__rasp_config` section of its
+  `RaspRuntime` binary.
 
-`main` doesn't have it, so outside a release `resources.framework()` raises
-`InvalidRuntimeError`.
+Without it, `resources.framework()` raises `InvalidRuntimeError`.
