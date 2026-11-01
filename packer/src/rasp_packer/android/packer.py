@@ -38,6 +38,7 @@ from rasp_packer.android import injection
 from rasp_packer.android import loader_map
 from rasp_packer.android import resources as resources_module
 from rasp_packer.android import runtime_library
+from rasp_packer.android import self_encrypt
 from rasp_packer.android import split as split_module
 from rasp_packer.android.aab import archive as aab_archive
 from rasp_packer.android.aab import manifest as aab_manifest_module
@@ -167,7 +168,9 @@ def _pack_apk(
             **business_entries,
             **base_dexes,
             **{
-                name: runtime_library.write_config(library, config)
+                name: self_encrypt.encrypt_library(
+                    runtime_library.write_config(library, config)
+                )
                 for name, library in injection.library_entries(apk, artifacts).items()
             },
         },
@@ -224,8 +227,8 @@ def _pack_aab(
     }
     abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
     lib_entries = {
-        f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": runtime_library.write_config(
-            artifacts.libraries[abi], config
+        f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": self_encrypt.encrypt_library(
+            runtime_library.write_config(artifacts.libraries[abi], config)
         )
         for abi in sorted(abis)
     }

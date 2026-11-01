@@ -135,7 +135,8 @@ def testPackAab_writesTheConfigIntoLibrasp(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
         library = zf.read("base/lib/arm64-v8a/librasp.so")
-    assert library == runtime_library.write_config(_ARM64_SO, _CONFIG)
+    # The placed library is self-encrypted, so it is not the plain config-written library, but the config still reads back.
+    assert library != runtime_library.write_config(_ARM64_SO, _CONFIG)
     assert runtime_library.read_config(library) == _CONFIG.to_json()
 
 
@@ -193,9 +194,10 @@ def testPackAab_shipsFrameworkAndStubUnderBaseDex(tmp_path: pathlib.Path) -> Non
 def testPackAab_addsRuntimeLibraryUnderBaseLib(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
-        assert zf.read("base/lib/arm64-v8a/librasp.so") == runtime_library.write_config(
-            _ARM64_SO, _CONFIG
-        )
+        library = zf.read("base/lib/arm64-v8a/librasp.so")
+    # The placed library is the self-encrypted runtime, not the plain config-written library.
+    assert library != runtime_library.write_config(_ARM64_SO, _CONFIG)
+    assert runtime_library.read_config(library) == _CONFIG.to_json()
 
 
 # ── manifest patching ────────────────────────────────────────
