@@ -4,13 +4,13 @@ The format is deliberately public and has no white-box resistance claim. The
 seed controls reproducible diversity, not security against structural attacks.
 Only this trusted host code sees the key, round keys, and encoding inverses.
 
-The 372736-byte blob has three contiguous regions, with no header or padding:
+The 28463104-byte blob has three contiguous regions, with no header or padding:
 * T: [9 rounds][4 columns][4 input rows][256 inputs], little-endian uint32.
-* XOR: [9 rounds][4 columns][3 layers][8 nibbles][256 input pairs], uint8.
+* XOR: [9 rounds][4 columns][3 layers][4 bytes][65536 input pairs], uint8.
 * Final: [16 destination bytes][256 inputs], uint8.
 
-Words place output row zero in the least significant byte. Nibbles count from
-the least significant nibble. XOR pair indices are (left << 4) | right. Layers
+Words place output row zero in the least significant byte. Bytes count from
+the least significant byte. XOR pair indices are (left << 8) | right. Layers
 zero and one join T rows (0, 1) and (2, 3); layer two joins those two results.
 T and final table indices use destination positions after ShiftRows.
 """
@@ -25,7 +25,7 @@ from rasp_whitebox import aes
 
 T_OFFSET = 0
 XOR_OFFSET = 9 * 16 * 256 * 4
-FINAL_OFFSET = XOR_OFFSET + 9 * 4 * 3 * 8 * 256
+FINAL_OFFSET = XOR_OFFSET + 9 * 4 * 3 * 4 * 65536
 TABLE_SIZE = FINAL_OFFSET + 16 * 256
 
 _MIX_COLUMNS = ((2, 3, 1, 1), (1, 2, 3, 1), (1, 1, 2, 3), (3, 1, 1, 2))
@@ -40,15 +40,15 @@ def _random_bytes(seed: bytes) -> collections.abc.Iterator[int]:
     counter = 0
     while True:
         yield from hashlib.shake_256(
-            b"RASP-WB-ENCODINGS-v1\x00" + seed + counter.to_bytes(8, "big")
+            b"RASP-WB-ENCODINGS-v2\x00" + seed + counter.to_bytes(8, "big")
         ).digest(4096)
         counter += 1
 
 
 def _permutation(randomness: collections.abc.Iterator[int]) -> bytes:
-    """Draw a uniform nibble permutation using rejection and Fisher-Yates."""
-    values = list(range(16))
-    for index in range(15, 0, -1):
+    """Draw a uniform byte permutation using rejection and Fisher-Yates."""
+    values = list(range(256))
+    for index in range(255, 0, -1):
         bound = index + 1
         limit = 256 - 256 % bound
         choice = next(randomness)
@@ -68,8 +68,8 @@ def _inverse(permutation: bytes) -> bytes:
 
 
 def _word_encoding(randomness: collections.abc.Iterator[int]) -> tuple[bytes, ...]:
-    """Give each nibble of a contribution its own independent permutation."""
-    return tuple(_permutation(randomness) for _ in range(8))
+    """Give each byte of a contribution its own independent permutation."""
+    return tuple(_permutation(randomness) for _ in range(4))
 
 
 def _tbox(
@@ -87,8 +87,8 @@ def _tbox(
             for row in range(4)
         )
         encoded = sum(
-            permutation[(contribution >> (4 * nibble)) & 15] << (4 * nibble)
-            for nibble, permutation in enumerate(encoding)
+            permutation[(contribution >> (8 * byte)) & 255] << (8 * byte)
+            for byte, permutation in enumerate(encoding)
         )
         table.extend(encoded.to_bytes(4, "little"))
     return bytes(table)
@@ -108,20 +108,10 @@ def _xor_tables(
         right_inverse = _inverse(right)
         tables.extend(
             output[left_inverse[first] ^ right_inverse[second]]
-            for first in range(16)
-            for second in range(16)
+            for first in range(256)
+            for second in range(256)
         )
     return bytes(tables)
-
-
-def _byte_decoding(low: bytes, high: bytes) -> bytes:
-    """Translate two output-nibble encodings to the next input-byte inverse."""
-    low_inverse = _inverse(low)
-    high_inverse = _inverse(high)
-    return bytes(
-        low_inverse[value & 15] | (high_inverse[value >> 4] << 4)
-        for value in range(256)
-    )
 
 
 def generate(key: bytes, seed: bytes) -> bytes:
@@ -154,9 +144,7 @@ def generate(key: bytes, seed: bytes) -> bytes:
             xor_tables.extend(_xor_tables(contributions[2], contributions[3], joins[1]))
             xor_tables.extend(_xor_tables(joins[0], joins[1], joins[2]))
             for row in range(4):
-                next_decodings[4 * column + row] = _byte_decoding(
-                    joins[2][2 * row], joins[2][2 * row + 1]
-                )
+                next_decodings[4 * column + row] = _inverse(joins[2][row])
         input_decodings = next_decodings
     final_tables = bytearray()
     for destination in range(16):
@@ -170,7 +158,7 @@ def generate(key: bytes, seed: bytes) -> bytes:
 
 
 def emit_header(table_data: bytes) -> str:
-    """Render a self-contained C++20 encrypt_block header without a key API."""
+    """Render a C++20 header embedding adjacent whitebox_tables.bin at assembly time."""
     if len(table_data) != TABLE_SIZE:
         raise Error(f"table data must contain exactly {TABLE_SIZE} bytes")
     template = (
@@ -178,10 +166,6 @@ def emit_header(table_data: bytes) -> str:
         .joinpath("native", "aes.h.in")
         .read_text(encoding="utf-8")
     )
-    initializer = "\n".join(
-        "    "
-        + ", ".join(f"0x{value:02x}" for value in table_data[offset : offset + 16])
-        + ","
-        for offset in range(0, len(table_data), 16)
+    return template.replace("@TABLE_SIZE@", str(TABLE_SIZE)).replace(
+        "@FINAL_OFFSET@", str(FINAL_OFFSET)
     )
-    return template.replace("@TABLE_DATA@", initializer)

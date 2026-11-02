@@ -1,23 +1,44 @@
-# Blind binary evaluation
+# White-box AES evaluation
 
-## Result
+## Confirmed break of revision 1
 
-The OpenCode DeepSeek Flash agent ran the binary's documented command:
+After the initial public-decrypt experiment, OpenCode DeepSeek Flash recovered
+the exact embedded AES-128 key using static final-table analysis. The evaluator
+matched its candidate against the privately stored key hash and reran independent
+AES-GCM verification on the supplied record and a fresh binary-encrypted message.
+Both checks passed. The binary and original ciphertext remained unchanged.
 
-```sh
-./whitebox decrypt ciphertext.wbx recovered.txt
-```
+For each final table T and candidate final key byte k, the attacker evaluated
+`inverse_sbox(T[x] XOR k)`. The correct k produced a permutation whose high nibble
+depended only on the high input nibble and whose low nibble depended only on the
+low input nibble. XOR with the penultimate key byte preserves this property.
+Trying 256 candidates at each of 16 positions recovered the last round key;
+reversing the AES-128 key schedule recovered the master key. This attack needs
+about one million inverse-S-box evaluations, not an AES brute-force search.
 
-The recovered file contained 155 bytes and matched the private evaluator's original-text hash. This is successful use of the binary's public decryption interface; it is not a cryptanalytic recovery of plaintext from ciphertext alone.
+No raw key or plaintext is included in this report. The old report's initial
+“no key recovered” outcome is superseded by this confirmed extraction.
 
-The agent did **not** recover the embedded AES key. It produced no candidate key, so no key claim or independent candidate-key verification is possible. Plaintext recovery and key recovery are separate outcomes.
+## Revision 2 and regression
 
-## Static analysis reported by the agent
+The generator now uses arbitrary byte permutations throughout the table network,
+including all four bytes of every MixColumns contribution and encoded XOR join.
+Final input decoding is an arbitrary byte permutation. For a final table alone,
+any candidate final key byte can be absorbed into an arbitrary input permutation;
+the original nibble-separation distinguisher no longer applies.
 
-The agent identified a table-driven AES implementation and traced table regions in the executable. It reported that the round tables do not match a simple standard-AES-T-table-plus-constant form and that table columns appear to be byte permutations. It did not complete an algebraic/table-decomposition attack, and these observations do not establish a security bound.
+`analysis.final_key_candidates` reproduces the observed predicate without relying
+on hardcoded ELF addresses. Tests recover all 256 possible final key-byte values
+from legacy-shaped tables. The same predicate finds no candidates in the revised
+final tables for four key/seed combinations, whose native AES outputs are also
+compared with independent AES on known vectors and generated blocks.
 
-The binary and ciphertext hashes matched the public challenge manifest after evaluation. The recovered plaintext, generated binary, ciphertext, and private evaluator materials are intentionally excluded from this report and from source control.
+The data grows to 28,463,104 bytes. It is embedded with the GNU assembler at build
+time, avoiding a huge C++ initializer. No runtime table file is required.
 
-## Interpretation
-
-The experiment demonstrates that anyone holding the executable can request decryption of authenticated records through its supported interface. It does not demonstrate AES key extraction. This prototype remains a research baseline, not a production white-box cryptographic implementation. A failed key-extraction attempt by one model is not evidence that the implementation is secure.
+This is targeted hardening, not a general security result. The XOR network is
+still algebraically structured, and this regression does not test adapted attacks
+using multiple tables, fault injection, or execution traces. See the primary
+research [A Tutorial on White-box AES](https://eprint.iacr.org/2013/104.pdf)
+for the broader attacks on encoded-table constructions. A further independent
+attack against revision 2 is required before making any broader comparison.

@@ -9,9 +9,13 @@ namespace wb {
 namespace detail {
 
 /// Public-layout lookup data, containing neither raw keys nor inverse encodings.
-inline constexpr std::array<std::uint8_t, 372736> kTables{
-@TABLE_DATA@
-};
+extern const std::uint8_t kTables[@TABLE_SIZE@] asm("wb_tables");
+asm(".pushsection .rodata\n"
+    ".balign 64\n"
+    ".hidden wb_tables\n"
+    "wb_tables:\n"
+    ".incbin \"whitebox_tables.bin\"\n"
+    ".popsection\n");
 
 /// Load a packed encoded contribution without host byte-order assumptions.
 [[nodiscard]] inline std::uint32_t tbox(std::size_t round, std::size_t column,
@@ -23,16 +27,16 @@ inline constexpr std::array<std::uint8_t, 372736> kTables{
            (static_cast<std::uint32_t>(kTables[offset + 3]) << 24);
 }
 
-/// Combine two encoded contributions using independent nibble lookup tables.
+/// Combine two encoded contributions using independent byte lookup tables.
 [[nodiscard]] inline std::uint32_t encoded_xor(std::size_t round, std::size_t column,
                                               std::size_t layer, std::uint32_t left,
                                               std::uint32_t right) noexcept {
-    const auto base = 147456 + (((round * 4 + column) * 3 + layer) * 8 * 256);
+    const auto base = 147456 + (((round * 4 + column) * 3 + layer) * 4 * 65536);
     std::uint32_t result = 0;
-    for (std::size_t nibble = 0; nibble < 8; ++nibble) {
-        const auto shift = nibble * 4;
-        const auto pair = (((left >> shift) & 15U) << 4) | ((right >> shift) & 15U);
-        result |= static_cast<std::uint32_t>(kTables[base + nibble * 256 + pair]) << shift;
+    for (std::size_t byte = 0; byte < 4; ++byte) {
+        const auto shift = byte * 8;
+        const auto pair = (((left >> shift) & 255U) << 8) | ((right >> shift) & 255U);
+        result |= static_cast<std::uint32_t>(kTables[base + byte * 65536 + pair]) << shift;
     }
     return result;
 }
@@ -65,7 +69,7 @@ inline void encrypt_block(const std::uint8_t* input, std::uint8_t* output) noexc
     for (std::size_t destination = 0; destination < state.size(); ++destination) {
         const auto row = destination % 4;
         const auto source = 4 * ((destination / 4 + row) % 4) + row;
-        output[destination] = detail::kTables[368640 + destination * 256 + state[source]];
+        output[destination] = detail::kTables[@FINAL_OFFSET@ + destination * 256 + state[source]];
     }
 }
 

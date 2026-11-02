@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.ciphers import algorithms
 from cryptography.hazmat.primitives.ciphers import modes
 
 from rasp_whitebox import aes
+from rasp_whitebox import analysis
 from rasp_whitebox import tables
 
 
@@ -53,6 +54,11 @@ def testEncryptBlock_whenGeneratedAndCompiled_matchesIndependentAes(
 ) -> None:
     key = bytes.fromhex(key_hex)
     table_data = tables.generate(key, bytes([seed_byte]) * 32)
+    # Test the actual tables rather than relying on the old attack's ELF offset.
+    for destination in range(16):
+        offset = tables.FINAL_OFFSET + destination * 256
+        assert analysis.final_key_candidates(table_data[offset : offset + 256]) == ()
+    (tmp_path / "whitebox_tables.bin").write_bytes(table_data)
     (tmp_path / "aes.h").write_text(tables.emit_header(table_data))
     source = tmp_path / "harness.cpp"
     source.write_text(
@@ -80,6 +86,7 @@ def testEncryptBlock_whenGeneratedAndCompiled_matchesIndependentAes(
             "-o",
             str(binary),
         ],
+        cwd=tmp_path,
         check=True,
         capture_output=True,
     )
@@ -102,7 +109,7 @@ def testGenerate_whenSameKeyAndSeed_isReproducible() -> None:
     first = tables.generate(bytes(range(16)), bytes(range(32)))
     second = tables.generate(bytes(range(16)), bytes(range(32)))
     assert first == second
-    assert len(first) == 372736
+    assert len(first) == tables.TABLE_SIZE
 
 
 def testGenerate_whenSeedChanges_changesTableEncoding() -> None:
@@ -121,7 +128,7 @@ def testGenerate_whenInvalidInputLength_rejectsInput(
         tables.generate(bytes(key_length), bytes(seed_length))
 
 
-@pytest.mark.parametrize("length", [0, 372735, 372737])
+@pytest.mark.parametrize("length", [0, tables.TABLE_SIZE - 1, tables.TABLE_SIZE + 1])
 def testEmitHeader_whenInvalidTableLength_rejectsInput(length: int) -> None:
     with pytest.raises(ValueError, match="table"):
         tables.emit_header(bytes(length))

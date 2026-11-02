@@ -40,6 +40,7 @@ def build_binary(
             prefix=".whitebox-", dir=output.parent
         ) as name:
             folder = pathlib.Path(name)
+            (folder / "whitebox_tables.bin").write_bytes(table_data)
             (folder / "whitebox_aes.h").write_text(tables.emit_header(table_data))
             shutil.copyfile(template, folder / "main.cpp")
             executable = folder / "whitebox"
@@ -61,6 +62,7 @@ def build_binary(
                     "-o",
                     str(executable),
                 ],
+                cwd=folder,
                 capture_output=True,
                 text=True,
                 timeout=180,
