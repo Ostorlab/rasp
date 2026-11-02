@@ -15,6 +15,6 @@ import collections.abc
 from rasp_packer import platforms
 
 PROTECTION_VERSIONS: collections.abc.Mapping[platforms.Platform, int] = {
-    platforms.Platform.ANDROID: 1,
-    platforms.Platform.IOS: 1,
+    platforms.Platform.ANDROID: 2,
+    platforms.Platform.IOS: 2,
 }
