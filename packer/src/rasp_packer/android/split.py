@@ -173,7 +173,7 @@ def _tool() -> collections.abc.Iterator[pathlib.Path]:
     except errors.MissingPackerToolError as error:
         raise SplitError(
             f"the split-dex tool is not bundled in this build; set {SPLIT_DEX_ENV} to a split-dex "
-            "executable, or use a release build"
+            "executable"
         ) from error
 
 

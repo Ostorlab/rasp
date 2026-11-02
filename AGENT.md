@@ -28,7 +28,7 @@ uv run pytest
 - mypy runs in strict mode over `src` and `tests`.
 - Tests: one file per source file, at the same path under `tests/`, named `<module>_test.py`. Test functions are named `test<Action>_when<Condition>_<result>`, for example `testPack_whenOutputExists_raisesOutputExistsError`.
 - Bump a platform's number in `protection_versions.py` only when a change alters what protected apps do on that platform. It is part of every build id.
-- `main` has no prebuilt runtime in the packer. The release workflow adds it on the release tag only, so packing on `main` raises `InvalidRuntimeError`. Tests use fixtures instead.
+- The packer looks for the prebuilt runtime in its package resources: `rasp_packer/ios/resources/RaspRuntime.framework`, and `rasp_packer/android/resources/stub.dex` with `rasp_packer/android/resources/lib/<abi>/librasp.so`. They come from the runtime build and are not in the repository. Without them, packing an IPA raises `InvalidRuntimeError`, and packing an APK or an AAB raises `MissingRuntimeArtifactError`. Tests use fixtures instead.
 
 ## Runtime
 
@@ -55,10 +55,6 @@ run-clang-tidy -quiet -p build/host "^$PWD/(?!build/).*\.cpp$"
 - The tests must also pass under the `host-asan` and `host-tsan` presets.
 - The host build doesn't compile the iOS code. The `ios` and `ios-dev` presets need a Mac with Xcode; on a Mac, also run `run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.cpp$"`.
 - Fix clang-tidy findings instead of adding `NOLINT`.
-
-## Releases
-
-`.github/workflows/release.yml` runs by hand, from `main` only. The packer's version (`packer/pyproject.toml`) and the runtime's version (`runtime/CMakeLists.txt`) must be the same. It builds the runtime, commits it into the packer on the release tag `v<version>`, and creates the GitHub release.
 
 ## Pull requests
 

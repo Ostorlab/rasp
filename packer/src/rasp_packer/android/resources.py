@@ -7,11 +7,10 @@ Two artifacts come from the runtime build, not from the packer:
 - the native runtime library, one per ABI. The stub loads it with
   System.loadLibrary, so each file is named RUNTIME_LIBRARY.
 
-They live under this package's resources directory: the stub dex at
-``resources/stub.dex`` and each library at ``resources/lib/<abi>/librasp.so``.
-The release workflow copies them there from the runtime build. A checkout
-without them, such as ``main``, has none, so load raises
-MissingRuntimeArtifactError naming the path it looked in.
+The packer looks for them under this package's resources directory: the stub dex
+at ``resources/stub.dex`` and each library at ``resources/lib/<abi>/librasp.so``.
+When they are absent, load raises MissingRuntimeArtifactError naming the path it
+looked in.
 """
 
 import collections.abc
@@ -35,9 +34,8 @@ _SPLIT_DEX_TOOL = "split-dex"
 def split_dex_tool() -> collections.abc.Iterator[pathlib.Path]:
     """Yields the path of the on-demand packer's bundled split-dex tool.
 
-    The prebuilt tool ships inside the packer, next to the stub dex and the runtime libraries, the
-    same way: the release build places it at ``resources/split-dex``, and a checkout without it, such
-    as ``main``, has none. The path is valid only inside the ``with`` block.
+    The prebuilt tool ships inside the packer at ``resources/split-dex``, next to the stub dex and
+    the runtime libraries. The path is valid only inside the ``with`` block.
 
     Yields:
         The path of the split-dex executable.
