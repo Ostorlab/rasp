@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Release: HTTPS only. Debug and profile builds override this file to reach the reference server on the emulator host. -->
-<network-security-config>
-    <base-config cleartextTrafficPermitted="false" />
-</network-security-config>

@@ -1,9 +1,0 @@
-{
-  "name": "@ostorlab/rasp-agent",
-  "version": "0.1.0",
-  "private": true,
-  "license": "UNLICENSED",
-  "main": "index.cjs",
-  "scripts": {"test": "node --test test.cjs"},
-  "engines": {"node": ">=22"}
-}

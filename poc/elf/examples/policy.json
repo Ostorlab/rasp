@@ -1,6 +1,0 @@
-{
-  "default_action": "allow",
-  "operations": {
-    "connect": "deny"
-  }
-}
