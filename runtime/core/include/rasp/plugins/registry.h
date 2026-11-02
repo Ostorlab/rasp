@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "rasp/config.h"
+#include "rasp/context.h"
 #include "rasp/observation.h"
 #include "rasp/plugin.h"
 
@@ -21,7 +22,9 @@ namespace rasp::plugins {
 ///
 /// @param plugins The plugins.
 /// @param config The runtime's config, which each plugin's `init` receives.
-void init_plugins(std::span<const Plugin* const> plugins, const Config& config);
+/// @param context The values the plugins share, which each plugin's `init` receives. It must live as long as the
+/// process.
+void init_plugins(std::span<const Plugin* const> plugins, const Config& config, Context& context);
 
 /// Runs the plugins after the built-in checks.
 ///
@@ -31,8 +34,10 @@ void init_plugins(std::span<const Plugin* const> plugins, const Config& config);
 ///
 /// @param plugins The plugins, in the order their checks run.
 /// @param observations The observations of the built-in checks.
+/// @param context The values the plugins share, which every check and `on_observations` receives. It must be the one
+/// `init_plugins` gave the plugins.
 /// @return The built-in observations, then those of the plugins' checks.
 [[nodiscard]] std::vector<Observation> run_plugins(std::span<const Plugin* const> plugins,
-                                                   std::vector<Observation> observations);
+                                                   std::vector<Observation> observations, Context& context);
 
 }  // namespace rasp::plugins

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "rasp/config.h"
+#include "rasp/context.h"
 #include "rasp/observation.h"
 #include "rasp/plugin.h"
 
@@ -39,18 +40,20 @@ struct Memory {
 /// Remembers the build id.
 ///
 /// @param config The runtime's config. Only its build id is read.
-void remember(const Config& config) { memory().build_id = config.build_id; }
+void remember(const Config& config, Context& /*context*/) { memory().build_id = config.build_id; }
 
 /// Reports the build id.
 ///
 /// @return One example.build_id observation read through init: the build id the runtime gave the plugin.
-[[nodiscard]] std::vector<Observation> build_id() { return {observed("example.build_id", "init", memory().build_id)}; }
+[[nodiscard]] std::vector<Observation> build_id(Context& /*context*/) {
+  return {observed("example.build_id", "init", memory().build_id)};
+}
 
 /// Counts the runs.
 ///
 /// @return One example.runs observation read through counter: how many times the plugin's checks have run, this run
 /// included.
-[[nodiscard]] std::vector<Observation> runs() {
+[[nodiscard]] std::vector<Observation> runs(Context& /*context*/) {
   ++memory().runs;
   return {observed("example.runs", "counter", memory().runs)};
 }
@@ -59,7 +62,7 @@ void remember(const Config& config) { memory().build_id = config.build_id; }
 ///
 /// @return One example.seen observation read through on_observations: the number of observations. Empty before the
 /// first run has ended.
-[[nodiscard]] std::vector<Observation> seen() {
+[[nodiscard]] std::vector<Observation> seen(Context& /*context*/) {
   if (memory().seen < 0) {
     return {};
   }
@@ -69,7 +72,7 @@ void remember(const Config& config) { memory().build_id = config.build_id; }
 /// Remembers how many observations it received.
 ///
 /// @param observations All the observations. Only their number is read.
-void count(std::span<const Observation> observations) {
+void count(std::span<const Observation> observations, Context& /*context*/) {
   memory().seen = static_cast<std::int64_t>(observations.size());
 }
 

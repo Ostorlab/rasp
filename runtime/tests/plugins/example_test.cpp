@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "rasp/context.h"
 #include "rasp/observation.h"
 #include "rasp/plugin.h"
 #include "rasp/plugins/registry.h"
@@ -29,10 +30,11 @@ TEST(ExamplePlugin, compiledIn_whenTheRegistryHoldsTheExample_returnsIt) {
 TEST(ExamplePlugin, runPlugins_whenInitialisedThenRunTwice_reportsTheBuildIdItsRunsThenWhatThePreviousRunHeld) {
   const Observation builtin = observed("jb.fork_ok", "fork", false);
   const Observation build_id = observed("example.build_id", "init", std::string("build-7"));
+  Context context;
 
-  init_plugins(compiled_in(), {.build_id = "build-7"});
-  const std::vector<Observation> first = run_plugins(compiled_in(), {builtin});
-  const std::vector<Observation> second = run_plugins(compiled_in(), {builtin});
+  init_plugins(compiled_in(), {.build_id = "build-7"}, context);
+  const std::vector<Observation> first = run_plugins(compiled_in(), {builtin}, context);
+  const std::vector<Observation> second = run_plugins(compiled_in(), {builtin}, context);
 
   EXPECT_EQ(first, (std::vector<Observation>{builtin, build_id, observed("example.runs", "counter", std::int64_t{1})}));
   EXPECT_EQ(second, (std::vector<Observation>{
