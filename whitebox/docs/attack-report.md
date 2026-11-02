@@ -40,5 +40,30 @@ This is targeted hardening, not a general security result. The XOR network is
 still algebraically structured, and this regression does not test adapted attacks
 using multiple tables, fault injection, or execution traces. See the primary
 research [A Tutorial on White-box AES](https://eprint.iacr.org/2013/104.pdf)
-for the broader attacks on encoded-table constructions. A further independent
-attack against revision 2 is required before making any broader comparison.
+for the broader attacks on encoded-table constructions. The adaptive attempt below supersedes the initial limited regression result.
+
+## Confirmed break of revision 2
+
+The fresh binary was supplied to the same DeepSeek Flash evaluator, with prior
+knowledge of the first attack but no generator source or private evaluator data.
+Its reported run took about 95 seconds. It recovered the exact new key: the
+independent evaluator matched its SHA-256 to the private key hash. Supplied input
+hashes remained unchanged. The agent also verified original and freshly encrypted
+records through independent AES-GCM.
+
+Let X(a,b) be the last encoded XOR table and T its consuming final table. For
+candidate k, define Y(a,b) = inverse_sbox(T[X(a,b)] XOR k). The true k satisfies
+`Y(a,b) XOR Y(a,0) XOR Y(0,b) XOR Y(0,0) = 0` for every input pair. Testing 256
+candidates again recovers each last-round key byte. Arbitrary encodings disappear
+when these adjacent tables are composed. This is a local structural attack; no
+full BGE implementation or runtime faults are necessary.
+
+`analysis.xor_key_candidates` reproduces this adaptive predicate without NumPy,
+private challenge material, or hardcoded ELF addresses. Tests explicitly assert
+recovery of the true last-round key for all four native test builds. Passing these
+tests documents the failure; it must not be presented as a security pass.
+
+**Revision 2 is also broken.** Its approximately 76-fold storage increase did not
+produce demonstrated protection against adaptive extraction. A stronger design
+must remove the cheaply separable AES-round/XOR boundaries and undergo new attacks;
+wider encodings or relocated tables alone do not address this root cause.

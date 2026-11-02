@@ -57,7 +57,15 @@ def testEncryptBlock_whenGeneratedAndCompiled_matchesIndependentAes(
     # Test the actual tables rather than relying on the old attack's ELF offset.
     for destination in range(16):
         offset = tables.FINAL_OFFSET + destination * 256
-        assert analysis.final_key_candidates(table_data[offset : offset + 256]) == ()
+        final = table_data[offset : offset + 256]
+        assert analysis.final_key_candidates(final) == ()
+        # Known failure: arbitrary byte encodings do not hide the XOR relation.
+        row = destination % 4
+        column = (destination // 4 + row) % 4
+        xor_offset = tables.XOR_OFFSET + (((8 * 4 + column) * 3 + 2) * 4 + row) * 65536
+        assert analysis.xor_key_candidates(
+            final, table_data[xor_offset : xor_offset + 65536]
+        ) == (aes.expand_key(key)[10][destination],)
     (tmp_path / "whitebox_tables.bin").write_bytes(table_data)
     (tmp_path / "aes.h").write_text(tables.emit_header(table_data))
     source = tmp_path / "harness.cpp"

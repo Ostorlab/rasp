@@ -2,7 +2,7 @@
 
 This package generates a Linux executable specialized to a supplied AES-128 key. Both the Python reference and generated executable encrypt and decrypt binary files using AES-GCM. The executable needs no key file, Python installation, or external crypto library at runtime; it uses the Linux libc and loader.
 
-This is a classical encoded-table research baseline. It does not implement the proposed S5/circuit compiler or establish strong white-box resistance. AES round state is byte-encoded, but the GCM hash subkey, counter-mode outputs, and plaintext are observable. Someone who possesses the binary can invoke its decryption command. Key extraction is a separate experiment.
+**Both the original and revised constructions have confirmed key-recovery attacks.** This is a classical encoded-table research baseline. It does not implement the proposed S5/circuit compiler or establish strong white-box resistance. AES round state is byte-encoded, but the GCM hash subkey, counter-mode outputs, and plaintext are observable. Someone who possesses the binary can invoke its decryption command. Key extraction is a separate experiment.
 
 ## Run
 
@@ -103,3 +103,11 @@ without any external table file. The WBX1 format and key semantics are unchanged
 This revision addresses one demonstrated attack. Encoded XOR tables still expose
 algebraic structure; adapted table-composition, fault, or tracing attacks remain
 in scope. Wider encodings alone do not establish strong white-box resistance.
+
+The adaptive DeepSeek attempt also broke revision 2. It composed each final table
+with the preceding encoded XOR table and tested whether a candidate inverse-S-box
+mapping restores the XOR rectangle identity. The correct candidates revealed the
+last round key and hence the master key. The evaluator independently matched the
+recovered key to the private key hash. `analysis.xor_key_candidates` and the native
+vector tests now reproduce this known failure. The larger tables are therefore
+an unsuccessful hardening experiment, not a demonstrated security improvement.
