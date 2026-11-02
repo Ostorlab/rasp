@@ -19,6 +19,7 @@
 #include "checks/jailbreak.h"
 #include "checks/mitm.h"
 #include "checks/virtualizer.h"
+#include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/embedded_config.h"
 #include "rasp/observation.h"
@@ -32,25 +33,42 @@ namespace {
 /// How long the thread waits between two runs of the checks.
 constexpr std::chrono::seconds kCheckInterval{60};
 
-/// The thread: initialises the plugins, then runs the jailbreak, debugger, hooking, app-identity, emulator, virtualizer
-/// and network-interception checks and the plugins, then again every kCheckInterval, until the process exits. The
-/// context the plugins share is a local of this thread, which never returns, so it lives as long as the process.
+/// The thread: reads the runtime's config and initialises the plugins with it, then runs the jailbreak, debugger,
+/// hooking, app-identity, emulator, virtualizer and network-interception checks, each only when the config enables its
+/// group, and the plugins, then again every kCheckInterval, until the process exits. The config and the context the
+/// plugins share are locals of this thread, which never returns, so they live as long as the process.
 ///
 /// @param argument The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, a `std::string` allocated with `new`
 /// that the thread takes and keeps until the process exits.
 /// @return Never returns.
 void* monitor(void* argument) {
   const std::unique_ptr<const std::string> inserted_libraries(static_cast<std::string*>(argument));
+  const Config config = read_embedded_config();
   rasp::plugins::Context context;
-  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), read_embedded_config(), context);
+  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), config, context);
   while (true) {
-    std::vector<Observation> builtin = checks::jailbreak();
-    std::ranges::move(checks::debugger(), std::back_inserter(builtin));
-    std::ranges::move(checks::hooks(*inserted_libraries), std::back_inserter(builtin));
-    std::ranges::move(checks::identity(), std::back_inserter(builtin));
-    std::ranges::move(checks::emulator(), std::back_inserter(builtin));
-    std::ranges::move(checks::virtualizer(), std::back_inserter(builtin));
-    std::ranges::move(checks::mitm(), std::back_inserter(builtin));
+    std::vector<Observation> builtin;
+    if (is_check_enabled(config, "jailbreak")) {
+      std::ranges::move(checks::jailbreak(), std::back_inserter(builtin));
+    }
+    if (is_check_enabled(config, "debugger")) {
+      std::ranges::move(checks::debugger(), std::back_inserter(builtin));
+    }
+    if (is_check_enabled(config, "hooks")) {
+      std::ranges::move(checks::hooks(*inserted_libraries), std::back_inserter(builtin));
+    }
+    if (is_check_enabled(config, "identity")) {
+      std::ranges::move(checks::identity(), std::back_inserter(builtin));
+    }
+    if (is_check_enabled(config, "emulator")) {
+      std::ranges::move(checks::emulator(), std::back_inserter(builtin));
+    }
+    if (is_check_enabled(config, "virtualizer")) {
+      std::ranges::move(checks::virtualizer(), std::back_inserter(builtin));
+    }
+    if (is_check_enabled(config, "mitm")) {
+      std::ranges::move(checks::mitm(), std::back_inserter(builtin));
+    }
     const std::vector<Observation> observations =
         rasp::plugins::run_plugins(rasp::plugins::compiled_in(), std::move(builtin), context);
     if constexpr (kLoggingEnabled) {
