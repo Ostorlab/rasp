@@ -32,7 +32,7 @@ TEST(ExamplePlugin, runPlugins_whenInitialisedThenRunTwice_reportsTheBuildIdItsR
   const Observation build_id = observed("example.build_id", "init", std::string("build-7"));
   Context context;
 
-  init_plugins(compiled_in(), {.build_id = "build-7"}, context);
+  init_plugins(compiled_in(), {.build_id = "build-7", .checks = {}}, context);
   const std::vector<Observation> first = run_plugins(compiled_in(), {builtin}, context);
   const std::vector<Observation> second = run_plugins(compiled_in(), {builtin}, context);
 
