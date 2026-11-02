@@ -1,0 +1,72 @@
+/// Generated encoded-table AES-128 research baseline; no resistance guarantee.
+#pragma once
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+
+namespace wb {
+namespace detail {
+
+/// Public-layout lookup data, containing neither raw keys nor inverse encodings.
+inline constexpr std::array<std::uint8_t, 372736> kTables{
+@TABLE_DATA@
+};
+
+/// Load a packed encoded contribution without host byte-order assumptions.
+[[nodiscard]] inline std::uint32_t tbox(std::size_t round, std::size_t column,
+                                       std::size_t row, std::uint8_t input) noexcept {
+    const auto offset = (((round * 4 + column) * 4 + row) * 256 + input) * 4;
+    return static_cast<std::uint32_t>(kTables[offset]) |
+           (static_cast<std::uint32_t>(kTables[offset + 1]) << 8) |
+           (static_cast<std::uint32_t>(kTables[offset + 2]) << 16) |
+           (static_cast<std::uint32_t>(kTables[offset + 3]) << 24);
+}
+
+/// Combine two encoded contributions using independent nibble lookup tables.
+[[nodiscard]] inline std::uint32_t encoded_xor(std::size_t round, std::size_t column,
+                                              std::size_t layer, std::uint32_t left,
+                                              std::uint32_t right) noexcept {
+    const auto base = 147456 + (((round * 4 + column) * 3 + layer) * 8 * 256);
+    std::uint32_t result = 0;
+    for (std::size_t nibble = 0; nibble < 8; ++nibble) {
+        const auto shift = nibble * 4;
+        const auto pair = (((left >> shift) & 15U) << 4) | ((right >> shift) & 15U);
+        result |= static_cast<std::uint32_t>(kTables[base + nibble * 256 + pair]) << shift;
+    }
+    return result;
+}
+
+}  /// namespace detail
+
+/// Encrypt one complete block, allowing input and output storage to overlap.
+inline void encrypt_block(const std::uint8_t* input, std::uint8_t* output) noexcept {
+    std::array<std::uint8_t, 16> state{};
+    for (std::size_t index = 0; index < state.size(); ++index) {
+        state[index] = input[index];
+    }
+    for (std::size_t round = 0; round < 9; ++round) {
+        std::array<std::uint8_t, 16> next{};
+        for (std::size_t column = 0; column < 4; ++column) {
+            std::array<std::uint32_t, 4> contributions{};
+            for (std::size_t row = 0; row < 4; ++row) {
+                const auto source = 4 * ((column + row) % 4) + row;
+                contributions[row] = detail::tbox(round, column, row, state[source]);
+            }
+            const auto left = detail::encoded_xor(round, column, 0, contributions[0], contributions[1]);
+            const auto right = detail::encoded_xor(round, column, 1, contributions[2], contributions[3]);
+            const auto combined = detail::encoded_xor(round, column, 2, left, right);
+            for (std::size_t row = 0; row < 4; ++row) {
+                next[4 * column + row] = static_cast<std::uint8_t>(combined >> (8 * row));
+            }
+        }
+        state = next;
+    }
+    for (std::size_t destination = 0; destination < state.size(); ++destination) {
+        const auto row = destination % 4;
+        const auto source = 4 * ((destination / 4 + row) % 4) + row;
+        output[destination] = detail::kTables[368640 + destination * 256 + state[source]];
+    }
+}
+
+}  /// namespace wb

@@ -1,0 +1,43 @@
+[project]
+name = "rasp-whitebox"
+version = "0.0.0"
+description = "Offline white-box research compiler and evaluation tools"
+requires-python = ">=3.14"
+dependencies = ["cryptography==50.0.2"]
+
+[project.scripts]
+rasp-whitebox = "rasp_whitebox.cli:main"
+
+[dependency-groups]
+dev = ["mypy==2.4.0", "pytest==9.1.1", "ruff==0.16.10"]
+
+[build-system]
+requires = ["hatchling==1.29.0"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["B", "C4", "E", "F", "I", "PT", "RUF", "SIM", "UP", "W"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["src", "tests"]
+mypy_path = "src"
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+python_files = ["*_test.py"]
+python_functions = ["test*"]
+addopts = ["--import-mode=importlib", "--strict-config", "--strict-markers"]
+xfail_strict = true
+filterwarnings = ["error"]
