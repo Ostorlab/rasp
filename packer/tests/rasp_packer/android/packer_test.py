@@ -177,7 +177,8 @@ def testPack_whenValidApk_addsTheRuntimeLibraryWithTheConfigWrittenIntoIt(
         library = archive.read("lib/arm64-v8a/librasp.so")
         names = archive.namelist()
 
-    assert library == runtime_library.write_config(_ARM64_SO, _CONFIG)
+    # The placed library is self-encrypted, so it is not the plain config-written library, but the config still reads back.
+    assert library != runtime_library.write_config(_ARM64_SO, _CONFIG)
     assert runtime_library.read_config(library) == _CONFIG.to_json()
     assert "assets/rasp/config.json" not in names
 
