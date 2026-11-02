@@ -83,6 +83,57 @@ def testMain_whenPackFails_printsTheErrorAndReturnsFailed(
     assert capsys.readouterr().err.startswith("rasp pack: ")
 
 
+def testMain_whenChecksAreGiven_passesThemToThePacker(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_pack(**arguments: object) -> packer.PackResult:
+        calls.append(arguments)
+        return packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+        )
+
+    monkeypatch.setattr(packer, "pack", fake_pack)
+
+    cli.main([*_pack_arguments(tmp_path), "--checks", "jailbreak,identity"])
+
+    assert [call["checks"] for call in calls] == [["jailbreak", "identity"]]
+
+
+def testMain_whenChecksAreNotGiven_passesNoChecksToThePacker(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_pack(**arguments: object) -> packer.PackResult:
+        calls.append(arguments)
+        return packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+        )
+
+    monkeypatch.setattr(packer, "pack", fake_pack)
+
+    cli.main(_pack_arguments(tmp_path))
+
+    assert [call["checks"] for call in calls] == [None]
+
+
+def testMain_whenACheckIsUnknown_printsTheErrorAndReturnsFailed(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = cli.main([*_pack_arguments(tmp_path), "--checks", "telepathy"])
+
+    assert exit_code == cli.EXIT_FAILED
+    assert "the check 'telepathy' does not exist for ios" in capsys.readouterr().err
+
+
 def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     tmp_path: pathlib.Path,
     capsys: pytest.CaptureFixture[str],

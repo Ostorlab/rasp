@@ -21,19 +21,26 @@ class RuntimeConfig:
 
     Attributes:
         build_id: The id of the protected build.
+        checks: The ids of the check groups the protected app runs, sorted. None when it runs every group.
     """
 
     build_id: str
+    checks: tuple[str, ...] | None = None
 
     def to_json(self) -> bytes:
         """Writes the config as the runtime reads it.
 
         Returns:
-            A JSON object with one member per attribute, in UTF-8.
+            A JSON object with one member per attribute that is not None, in UTF-8.
         """
-        return json.dumps(
-            dataclasses.asdict(self), ensure_ascii=False, separators=(",", ":")
-        ).encode("utf-8")
+        members = {
+            name: value
+            for name, value in dataclasses.asdict(self).items()
+            if value is not None
+        }
+        return json.dumps(members, ensure_ascii=False, separators=(",", ":")).encode(
+            "utf-8"
+        )
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)

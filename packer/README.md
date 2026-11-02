@@ -15,12 +15,15 @@ result = packer.pack(
     platform=platforms.Platform.IOS,
     output=pathlib.Path("app-protected.ipa"),
     build_id="e6a8373149e83d008a5212b34bdd23bf637ad9561483c7a3c43b0a157c3f2a18",
+    checks=["debugger", "hooks", "identity", "jailbreak"],
 )
 ```
 
 ```
-rasp pack app.ipa --platform ios --build-id e6a8373149e83d008a5212b34bdd23bf637ad9561483c7a3c43b0a157c3f2a18 --output app-protected.ipa
+rasp pack app.ipa --platform ios --build-id e6a8373149e83d008a5212b34bdd23bf637ad9561483c7a3c43b0a157c3f2a18 --checks debugger,hooks,identity,jailbreak --output app-protected.ipa
 ```
+
+`checks` (`--checks` on the command line) is optional: see [Checks](#checks).
 
 `pack` returns the path of the protected app, the app's package name and version (on iOS, `CFBundleIdentifier` and `CFBundleShortVersionString` from its `Info.plist`; on Android, the `package` and `android:versionName` of its manifest), and the build id.
 
@@ -33,7 +36,7 @@ For Android the packer protects the app's code:
 - it sorts the app's classes with the bundled `split-dex` tool. The classes under the app's package are the app's own code. The other classes, such as libraries, stay in the clear, as `classes.dex`, `classes2.dex`, ...;
 - it encrypts the app's own classes, in dex files of their own, and stores each of these files as the asset `assets/business/<i>.dex`. It also stores the class map as `assets/rasp/map.bin`, encrypted too: the map names the dex file that defines each of these classes. It stores the key as `assets/rasp/key.bin`;
 - it adds a small stub as the last dex file (`classesN.dex`), and sets `<application android:appComponentFactory>` to the stub's class, `co.ostorlab.rasp.RaspStub`, while leaving the app's own `<application android:name>` alone;
-- it adds the native runtime as `lib/<abi>/librasp.so`, for each ABI the app has native libraries for, or for every ABI the runtime is built for when the app has none. Android installs the native libraries of one ABI only, so each of the app's ABIs needs the runtime. An app with native libraries for an ABI the runtime isn't built for is refused with `UnsupportedAbiError`. The packer writes the runtime config, which holds the build id, into the `.rasp_config` section of each `librasp.so`;
+- it adds the native runtime as `lib/<abi>/librasp.so`, for each ABI the app has native libraries for, or for every ABI the runtime is built for when the app has none. Android installs the native libraries of one ABI only, so each of the app's ABIs needs the runtime. An app with native libraries for an ABI the runtime isn't built for is refused with `UnsupportedAbiError`. The packer writes the runtime config, which holds the build id and the chosen checks, into the `.rasp_config` section of each `librasp.so`;
 - it raises the app's `android:minSdkVersion` to 31 when it is lower, because the runtime supports Android 12 (API 31) and later. The protected app then doesn't install on older devices;
 - it removes the app's v1 signature files from `META-INF/`, since the protected APK must be signed again.
 
@@ -97,3 +100,7 @@ CI runs the same commands (`.github/workflows/packer.yml`).
 Every protected build has a build id, which the packer writes into the app. The caller chooses it and passes it to `pack` (or to `rasp pack --build-id`). The packer accepts any id: it writes it as it is and does not check its format. It only refuses an id it cannot write: an empty one, one with control characters, or one too long for the space the runtime keeps for its config.
 
 Each platform's protection version is a whole number in `src/rasp_packer/protection_versions.py`. The caller can read it from `rasp_packer.protection_versions.PROTECTION_VERSIONS`, for example to make it part of the build id. Bump it when a change alters what protected apps do on that platform: the runtime's behaviour, or how the packer transforms the app. Changes that leave protected apps the same, such as comments, refactors, tests or docs, do not bump it.
+
+## Checks
+
+The runtime runs its checks in groups, such as `debugger` or `hooks`. `src/rasp_packer/checks.py` lists the groups of each platform in `CHECKS`, and those every protected app runs in `REQUIRED_CHECKS` (`identity`). The caller can choose the groups a protected app runs and pass their ids to `pack` (or to `rasp pack --checks`, comma-separated). The packer refuses an id that is not one of the platform's groups with `UnknownCheckError`, adds the required ones, and writes the ids sorted into the runtime config. Without a choice, it writes no list, and the protected app runs every group.

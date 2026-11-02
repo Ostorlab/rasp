@@ -95,6 +95,46 @@ def testPack_whenBuildIdCannotBeWritten_raisesInvalidBuildIdError(
         )
 
 
+def testPack_whenGivenChecks_packsWithAConfigHoldingThemSortedWithTheRequiredOnes(
+    ipa_file: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configs: list[object] = []
+
+    def fake_pack(*, config: object, **_: object) -> identity.AppIdentity:
+        configs.append(config)
+        return _IDENTITY
+
+    monkeypatch.setattr(ios_packer, "pack", fake_pack)
+    packer.pack(
+        app=ipa_file,
+        platform=platforms.Platform.IOS,
+        output=tmp_path / "out.ipa",
+        build_id=_BUILD_ID,
+        checks=["jailbreak", "debugger"],
+    )
+
+    assert configs == [
+        runtime_config.RuntimeConfig(
+            build_id=_BUILD_ID, checks=("debugger", "identity", "jailbreak")
+        )
+    ]
+
+
+def testPack_whenACheckIsNotOfThePlatform_raisesUnknownCheckError(
+    ipa_file: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    with pytest.raises(errors.UnknownCheckError, match="'root'"):
+        packer.pack(
+            app=ipa_file,
+            platform=platforms.Platform.IOS,
+            output=tmp_path / "out.ipa",
+            build_id=_BUILD_ID,
+            checks=["root"],
+        )
+
+    assert (tmp_path / "out.ipa").exists() is False
+
+
 def testPack_whenOutputExists_raisesOutputExistsError(tmp_path: pathlib.Path) -> None:
     output = tmp_path / "out.ipa"
     output.write_bytes(b"")

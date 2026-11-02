@@ -18,6 +18,16 @@ def testToJson_whenGivenABuildId_writesAJsonObjectWithIt() -> None:
     assert config.to_json() == b'{"build_id":"build-1"}'
 
 
+def testToJson_whenGivenChecks_writesThemAsAnArray() -> None:
+    config = runtime_config.RuntimeConfig(
+        build_id="build-1", checks=("debugger", "identity")
+    )
+
+    assert (
+        config.to_json() == b'{"build_id":"build-1","checks":["debugger","identity"]}'
+    )
+
+
 def testToJson_whenTheBuildIdIsNotAscii_writesItInUtf8() -> None:
     config = runtime_config.RuntimeConfig(build_id='bühl "7"')
 

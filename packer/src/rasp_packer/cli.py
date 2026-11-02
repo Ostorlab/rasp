@@ -50,7 +50,18 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="where to write the protected app",
     )
+    pack.add_argument(
+        "--checks",
+        type=_split_checks,
+        help="the check groups the app runs, comma-separated, such as debugger,identity; "
+        "identity always runs (default: every group)",
+    )
     return parser
+
+
+def _split_checks(value: str) -> list[str]:
+    """Splits the comma-separated check groups given on the command line."""
+    return value.split(",")
 
 
 def _pack(arguments: argparse.Namespace) -> int:
@@ -61,6 +72,7 @@ def _pack(arguments: argparse.Namespace) -> int:
             platform=arguments.platform,
             output=arguments.output,
             build_id=arguments.build_id,
+            checks=arguments.checks,
         )
     except errors.Error as error:
         print(f"rasp pack: {error}", file=sys.stderr)

@@ -1,9 +1,11 @@
 """The packer's entry point: protects a built app (APK, AAB, or IPA)."""
 
+import collections.abc
 import dataclasses
 import pathlib
 import re
 
+from rasp_packer import checks as check_groups
 from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import platforms
@@ -39,6 +41,7 @@ def pack(
     platform: platforms.Platform,
     output: pathlib.Path,
     build_id: str,
+    checks: collections.abc.Sequence[str] | None = None,
 ) -> PackResult:
     """Protects a built app: adds the runtime and writes the protected app to `output`.
 
@@ -48,25 +51,35 @@ def pack(
     runtime's config. The packer does not check the id's format: it only refuses an empty id or
     one with control characters.
 
+    The caller can choose the check groups the protected app runs, from those of the platform in
+    `checks.CHECKS`. The packer adds the required ones, `checks.REQUIRED_CHECKS`, and writes them
+    sorted into the runtime's config. Without a choice, the config lists none and the app runs
+    every group.
+
     Args:
         app: Path to the built app: an APK or AAB for Android, an IPA for iOS.
         platform: The platform of the app.
         output: Path to write the protected app to. It must not exist.
         build_id: The id of the protected build, written into the runtime's config.
+        checks: The ids of the check groups the protected app runs. None runs every group.
 
     Returns:
         The protected app, the app's package name and version, and the build id.
 
     Raises:
         InvalidBuildIdError: The build id is empty or has control characters.
+        UnknownCheckError: A check group is not one of the platform's.
         OutputExistsError: `output` already exists.
         InvalidAppError: The app file cannot be read.
         Error: The app cannot be packed; see the platform's packer.
     """
     _check_build_id(build_id)
+    resolved_checks = (
+        None if checks is None else check_groups.resolve_checks(platform, checks)
+    )
     if output.exists() is True:
         raise errors.OutputExistsError(f"{output} already exists")
-    config = runtime_config.RuntimeConfig(build_id=build_id)
+    config = runtime_config.RuntimeConfig(build_id=build_id, checks=resolved_checks)
     app_identity: identity.AppIdentity
     match platform:
         case platforms.Platform.ANDROID:
