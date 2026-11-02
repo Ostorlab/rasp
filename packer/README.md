@@ -55,6 +55,7 @@ The key is stored in the clear, in `assets/rasp/key.bin`. The encryption raises 
 - `src/rasp_packer/platforms.py`: the platforms, Android and iOS.
 - `src/rasp_packer/identity.py`: `AppIdentity`, the package name and version read from the app.
 - `src/rasp_packer/protection_versions.py`: the protection version of each platform. It is public, so the caller can read it, for example to compute the build id.
+- `src/rasp_packer/checks.py`: the check groups the runtime runs on each platform, in its order, and the ones every protected app runs. They are public, so the caller can read them, for example to offer the choice of the checks.
 - `src/rasp_packer/cli.py`: the `rasp` command line.
 - `src/rasp_packer/ios/`: packing of IPAs.
   - `ipa.py`: unpacks and repacks the IPA, keeping file permissions, and reads the app's identity (`CFBundleIdentifier` and `CFBundleShortVersionString`) from its `Info.plist`.
