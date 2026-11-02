@@ -42,7 +42,7 @@ ctest --preset host
 
 The tests must pass under `host-asan` and `host-tsan`, not only `host`. A memory error or a data race often doesn't fail a test. It corrupts something and crashes later, somewhere else. In a customer's app, that shows up as a random crash nobody can trace back to us. The sanitizers turn these bugs into test failures.
 
-Before pushing, run what CI runs (`.github/workflows/runtime.yml`): clang-format, clang-tidy, the three host presets, `android` and `android-dev` with the Android NDK, and on a Mac, `ios` and `ios-dev`.
+Before pushing, run what CI runs (`.github/workflows/runtime.yml`): clang-format, clang-tidy, the three host presets, `android` and `android-dev` with the Android NDK for each Android ABI, and on a Mac, `ios` and `ios-dev`. The Android presets build for `arm64-v8a`; pass `-DANDROID_ABI=armeabi-v7a`, `x86_64` or `x86` when you configure them to build for another ABI.
 
 ```
 git ls-files -z -- '*.h' '*.cpp' '*.h.in' | xargs -0 clang-format --dry-run --Werror

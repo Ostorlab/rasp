@@ -17,7 +17,7 @@ namespace rasp::android::checks {
 /// Runs the self-integrity check and returns what it observed.
 ///
 /// It computes the SHA-256 of the executable code (the `.text` section) of librasp.so twice: once from the installed
-/// file, under `lib/arm64-v8a/` inside the APK, and once from the same code in the process's memory. On a device that
+/// file, under `lib/<abi>/` inside the APK, and once from the same code in the process's memory. On a device that
 /// hasn't been tampered with the two hashes are equal. They differ when the code was patched in memory, for example by
 /// a tool such as Frida that rewrites a check to always report a safe value. The check only reports the two hashes;
 /// the server compares them.
@@ -56,9 +56,9 @@ struct TextRegion {
 /// @param image The bytes of the ELF file, read whole.
 /// @param load_bias The difference between where the image is loaded and the virtual addresses in its headers. It is 0
 /// for a non-relocated image and the load address for a position-independent one such as librasp.so.
-/// @return Where the `.text` section's bytes live, or nothing when the image isn't a 64-bit little-endian ELF, has no
-/// `.text` section with bytes in the file, or the section doesn't lie wholly inside the file part of one loadable,
-/// executable, non-writable segment.
+/// @return Where the `.text` section's bytes live, or nothing when the image isn't a little-endian ELF32 or ELF64 file,
+/// has no `.text` section with bytes in the file, has a `.text` address that doesn't fit the process's addresses, or
+/// the section doesn't lie wholly inside the file part of one loadable, executable, non-writable segment.
 [[nodiscard]] std::optional<TextRegion> find_text_region(std::span<const std::uint8_t> image, std::uintptr_t load_bias);
 
 /// The lowercase hexadecimal SHA-256 of `bytes`, or nothing when the crypto library can't compute it.

@@ -1,5 +1,5 @@
 /// The Android integrity check: the file and memory hashes of librasp.so's `.text`, and its unsupported result off
-/// Android. The ELF reader draws only on the standard ELF64 layout.
+/// Android. The ELF reader draws only on the standard ELF32 and ELF64 layouts.
 
 #include "checks/integrity.h"
 
@@ -13,6 +13,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "rasp/observation.h"
@@ -44,34 +45,116 @@ constexpr std::size_t kMaxLibrarySize = std::size_t{64} << 20U;
 /// The length of a SHA-256 digest, in bytes.
 constexpr std::size_t kDigestSize = 32;
 
-/// The ELF identification bytes this reader accepts: the magic, 64-bit class, little-endian data.
-constexpr std::array<std::uint8_t, 6> kElfIdentifier = {0x7F, 'E', 'L', 'F', 2, 1};
+/// The ELF identification bytes every image this reader accepts starts with: the magic.
+constexpr std::array<std::uint8_t, 4> kElfMagic = {0x7F, 'E', 'L', 'F'};
+/// The offset of the class byte in the ELF identification bytes.
+constexpr std::size_t kClassOffset = 4;
+/// The offset of the data-encoding byte in the ELF identification bytes.
+constexpr std::size_t kDataOffset = 5;
+/// ELFCLASS32, the class byte of a 32-bit image.
+constexpr std::uint8_t kElfClass32 = 1;
+/// ELFCLASS64, the class byte of a 64-bit image.
+constexpr std::uint8_t kElfClass64 = 2;
+/// ELFDATA2LSB, the data-encoding byte of a little-endian image.
+constexpr std::uint8_t kElfLittleEndian = 1;
 
-/// The offsets of the ELF64 header fields the reader uses, and the sizes it checks against.
-constexpr std::size_t kElfHeaderSize = 64;
-constexpr std::size_t kPhoffOffset = 0x20;
-constexpr std::size_t kShoffOffset = 0x28;
-constexpr std::size_t kPhentSizeOffset = 0x36;
-constexpr std::size_t kPhnumOffset = 0x38;
-constexpr std::size_t kShentSizeOffset = 0x3A;
-constexpr std::size_t kShnumOffset = 0x3C;
-constexpr std::size_t kShstrndxOffset = 0x3E;
+/// Where the fields the reader uses sit in the headers of one ELF class, and how wide that class's address-sized fields
+/// are. A 32-bit library, as armeabi-v7a and x86 use, has ELF32 headers, and a 64-bit one ELF64 headers; the two
+/// differ only in these offsets and widths.
+struct ElfLayout {
+  /// The width in bytes of an address, a file offset, and a section's flags and size: 4 in ELF32, 8 in ELF64.
+  std::size_t word_size = 0;
+  /// The size of the ELF header.
+  std::size_t header_size = 0;
+  /// The offset of `e_phoff`, the program header table's file offset, in the ELF header.
+  std::size_t phoff = 0;
+  /// The offset of `e_shoff`, the section header table's file offset, in the ELF header.
+  std::size_t shoff = 0;
+  /// The offset of `e_phentsize`, the size of one program header, in the ELF header.
+  std::size_t phentsize = 0;
+  /// The offset of `e_phnum`, the number of program headers, in the ELF header.
+  std::size_t phnum = 0;
+  /// The offset of `e_shentsize`, the size of one section header, in the ELF header.
+  std::size_t shentsize = 0;
+  /// The offset of `e_shnum`, the number of section headers, in the ELF header.
+  std::size_t shnum = 0;
+  /// The offset of `e_shstrndx`, the index of the section-name string table, in the ELF header.
+  std::size_t shstrndx = 0;
+  /// The smallest section header entry size the reader accepts: the size of one section header.
+  std::size_t section_header_size = 0;
+  /// The offset of `sh_name` in a section header.
+  std::size_t sh_name = 0;
+  /// The offset of `sh_flags` in a section header.
+  std::size_t sh_flags = 0;
+  /// The offset of `sh_addr` in a section header.
+  std::size_t sh_addr = 0;
+  /// The offset of `sh_offset` in a section header.
+  std::size_t sh_offset = 0;
+  /// The offset of `sh_size` in a section header.
+  std::size_t sh_size = 0;
+  /// The smallest program header entry size the reader accepts: the size of one program header.
+  std::size_t program_header_size = 0;
+  /// The offset of `p_type` in a program header.
+  std::size_t p_type = 0;
+  /// The offset of `p_flags` in a program header.
+  std::size_t p_flags = 0;
+  /// The offset of `p_offset` in a program header.
+  std::size_t p_offset = 0;
+  /// The offset of `p_vaddr` in a program header.
+  std::size_t p_vaddr = 0;
+  /// The offset of `p_filesz` in a program header.
+  std::size_t p_filesz = 0;
+};
 
-/// The offsets of the ELF64 section header fields the reader uses, and the entry size it expects.
-constexpr std::size_t kSectionHeaderSize = 64;
-constexpr std::size_t kShNameOffset = 0x00;
-constexpr std::size_t kShFlagsOffset = 0x08;
-constexpr std::size_t kShAddrOffset = 0x10;
-constexpr std::size_t kShOffsetOffset = 0x18;
-constexpr std::size_t kShSizeOffset = 0x20;
+/// The ELF32 layout.
+constexpr ElfLayout kElf32Layout{
+    .word_size = 4,
+    .header_size = 52,
+    .phoff = 0x1C,
+    .shoff = 0x20,
+    .phentsize = 0x2A,
+    .phnum = 0x2C,
+    .shentsize = 0x2E,
+    .shnum = 0x30,
+    .shstrndx = 0x32,
+    .section_header_size = 40,
+    .sh_name = 0x00,
+    .sh_flags = 0x08,
+    .sh_addr = 0x0C,
+    .sh_offset = 0x10,
+    .sh_size = 0x14,
+    .program_header_size = 32,
+    .p_type = 0x00,
+    .p_flags = 0x18,
+    .p_offset = 0x04,
+    .p_vaddr = 0x08,
+    .p_filesz = 0x10,
+};
 
-/// The offsets of the ELF64 program header fields the reader uses, and the entry size it expects.
-constexpr std::size_t kProgramHeaderSize = 56;
-constexpr std::size_t kPhTypeOffset = 0x00;
-constexpr std::size_t kPhFlagsOffset = 0x04;
-constexpr std::size_t kPhOffsetOffset = 0x08;
-constexpr std::size_t kPhVaddrOffset = 0x10;
-constexpr std::size_t kPhFileszOffset = 0x20;
+/// The ELF64 layout.
+constexpr ElfLayout kElf64Layout{
+    .word_size = 8,
+    .header_size = 64,
+    .phoff = 0x20,
+    .shoff = 0x28,
+    .phentsize = 0x36,
+    .phnum = 0x38,
+    .shentsize = 0x3A,
+    .shnum = 0x3C,
+    .shstrndx = 0x3E,
+    .section_header_size = 64,
+    .sh_name = 0x00,
+    .sh_flags = 0x08,
+    .sh_addr = 0x10,
+    .sh_offset = 0x18,
+    .sh_size = 0x20,
+    .program_header_size = 56,
+    .p_type = 0x00,
+    .p_flags = 0x04,
+    .p_offset = 0x08,
+    .p_vaddr = 0x10,
+    .p_filesz = 0x20,
+};
 
 /// PT_LOAD, the program header type of a segment the loader maps into memory.
 constexpr std::uint32_t kPtLoad = 1;
@@ -100,29 +183,55 @@ constexpr std::string_view kTextSectionName = ".text";
 }
 
 /// Reads a little-endian unsigned integer of type `T` at `offset`, or nothing when the span is too short to hold it.
+/// The offset is 64 bits wide, as ELF64 offsets are, and fits a `std::size_t` once it is known to lie inside the span.
 template <typename T>
-[[nodiscard]] std::optional<T> read_scalar(std::span<const std::uint8_t> bytes, std::size_t offset) {
+[[nodiscard]] std::optional<T> read_scalar(std::span<const std::uint8_t> bytes, std::uint64_t offset) {
   if (!range_fits(offset, sizeof(T), bytes.size())) {
     return std::nullopt;
   }
   T value = 0;
-  std::memcpy(&value, bytes.subspan(offset, sizeof(T)).data(), sizeof(T));
+  std::memcpy(&value, bytes.subspan(static_cast<std::size_t>(offset), sizeof(T)).data(), sizeof(T));
   return value;
 }
 
 /// Reads a little-endian 16-bit number at `offset`, or nothing when the span is too short to hold it.
-[[nodiscard]] std::optional<std::uint16_t> read_u16(std::span<const std::uint8_t> bytes, std::size_t offset) {
+[[nodiscard]] std::optional<std::uint16_t> read_u16(std::span<const std::uint8_t> bytes, std::uint64_t offset) {
   return read_scalar<std::uint16_t>(bytes, offset);
 }
 
 /// Reads a little-endian 32-bit number at `offset`, or nothing when the span is too short to hold it.
-[[nodiscard]] std::optional<std::uint32_t> read_u32(std::span<const std::uint8_t> bytes, std::size_t offset) {
+[[nodiscard]] std::optional<std::uint32_t> read_u32(std::span<const std::uint8_t> bytes, std::uint64_t offset) {
   return read_scalar<std::uint32_t>(bytes, offset);
 }
 
 /// Reads a little-endian 64-bit number at `offset`, or nothing when the span is too short to hold it.
-[[nodiscard]] std::optional<std::uint64_t> read_u64(std::span<const std::uint8_t> bytes, std::size_t offset) {
+[[nodiscard]] std::optional<std::uint64_t> read_u64(std::span<const std::uint8_t> bytes, std::uint64_t offset) {
   return read_scalar<std::uint64_t>(bytes, offset);
+}
+
+/// Reads a little-endian address-sized field of the `layout` class at `offset`: 32 bits in ELF32 and 64 bits in ELF64,
+/// widened to 64 bits. Nothing when the span is too short to hold it.
+[[nodiscard]] std::optional<std::uint64_t> read_word(std::span<const std::uint8_t> bytes, std::uint64_t offset,
+                                                     const ElfLayout& layout) {
+  if (layout.word_size == sizeof(std::uint64_t)) {
+    return read_u64(bytes, offset);
+  }
+  return read_u32(bytes, offset);
+}
+
+/// The layout of the class `image` declares, or nothing when it isn't a little-endian ELF32 or ELF64 image.
+[[nodiscard]] std::optional<ElfLayout> layout_of(std::span<const std::uint8_t> image) {
+  if (image.size() <= kDataOffset || !std::equal(kElfMagic.begin(), kElfMagic.end(), image.begin()) ||
+      image[kDataOffset] != kElfLittleEndian) {
+    return std::nullopt;
+  }
+  if (image[kClassOffset] == kElfClass32) {
+    return kElf32Layout;
+  }
+  if (image[kClassOffset] == kElfClass64) {
+    return kElf64Layout;
+  }
+  return std::nullopt;
 }
 
 /// One section header, with the fields the reader needs.
@@ -162,10 +271,11 @@ struct LoadSegment {
   std::uint64_t file_size = 0;
 };
 
-/// Reads the section header `index` from `image`, given the section header `table`.
+/// Reads the section header `index` from `image`, given the section header `table` and the `layout` of its class.
 [[nodiscard]] std::optional<SectionHeader> read_section_header(std::span<const std::uint8_t> image,
-                                                               const HeaderTable& table, std::uint16_t index) {
-  if (table.entry_size < kSectionHeaderSize) {
+                                                               const HeaderTable& table, const ElfLayout& layout,
+                                                               std::uint16_t index) {
+  if (table.entry_size < layout.section_header_size) {
     return std::nullopt;
   }
   const std::uint64_t offset_in_table = std::uint64_t{index} * table.entry_size;
@@ -173,11 +283,11 @@ struct LoadSegment {
     return std::nullopt;
   }
   const std::uint64_t base = table.offset + offset_in_table;
-  const std::optional<std::uint32_t> name_offset = read_u32(image, base + kShNameOffset);
-  const std::optional<std::uint64_t> flags = read_u64(image, base + kShFlagsOffset);
-  const std::optional<std::uint64_t> address = read_u64(image, base + kShAddrOffset);
-  const std::optional<std::uint64_t> file_offset = read_u64(image, base + kShOffsetOffset);
-  const std::optional<std::uint64_t> size = read_u64(image, base + kShSizeOffset);
+  const std::optional<std::uint32_t> name_offset = read_u32(image, base + layout.sh_name);
+  const std::optional<std::uint64_t> flags = read_word(image, base + layout.sh_flags, layout);
+  const std::optional<std::uint64_t> address = read_word(image, base + layout.sh_addr, layout);
+  const std::optional<std::uint64_t> file_offset = read_word(image, base + layout.sh_offset, layout);
+  const std::optional<std::uint64_t> size = read_word(image, base + layout.sh_size, layout);
   if (!name_offset || !flags || !address || !file_offset || !size) {
     return std::nullopt;
   }
@@ -190,11 +300,12 @@ struct LoadSegment {
   };
 }
 
-/// Reads the loadable segment at program header `index`, or nothing when the index is past the table, the entry can't
-/// be read, or the entry isn't a PT_LOAD segment.
+/// Reads the loadable segment at program header `index`, given the program header `table` and the `layout` of its
+/// class, or nothing when the index is past the table, the entry can't be read, or the entry isn't a PT_LOAD segment.
 [[nodiscard]] std::optional<LoadSegment> read_load_segment(std::span<const std::uint8_t> image,
-                                                           const HeaderTable& table, std::uint16_t index) {
-  if (table.entry_size < kProgramHeaderSize) {
+                                                           const HeaderTable& table, const ElfLayout& layout,
+                                                           std::uint16_t index) {
+  if (table.entry_size < layout.program_header_size) {
     return std::nullopt;
   }
   const std::uint64_t offset_in_table = std::uint64_t{index} * table.entry_size;
@@ -202,14 +313,14 @@ struct LoadSegment {
     return std::nullopt;
   }
   const std::uint64_t base = table.offset + offset_in_table;
-  const std::optional<std::uint32_t> type = read_u32(image, base + kPhTypeOffset);
+  const std::optional<std::uint32_t> type = read_u32(image, base + layout.p_type);
   if (!type || *type != kPtLoad) {
     return std::nullopt;
   }
-  const std::optional<std::uint32_t> flags = read_u32(image, base + kPhFlagsOffset);
-  const std::optional<std::uint64_t> file_offset = read_u64(image, base + kPhOffsetOffset);
-  const std::optional<std::uint64_t> address = read_u64(image, base + kPhVaddrOffset);
-  const std::optional<std::uint64_t> file_size = read_u64(image, base + kPhFileszOffset);
+  const std::optional<std::uint32_t> flags = read_u32(image, base + layout.p_flags);
+  const std::optional<std::uint64_t> file_offset = read_word(image, base + layout.p_offset, layout);
+  const std::optional<std::uint64_t> address = read_word(image, base + layout.p_vaddr, layout);
+  const std::optional<std::uint64_t> file_size = read_word(image, base + layout.p_filesz, layout);
   if (!flags || !file_offset || !address || !file_size) {
     return std::nullopt;
   }
@@ -240,21 +351,22 @@ struct LoadSegment {
   });
 }
 
-/// The `.text` section header of `image`, found through the section header `table` and the string table at
-/// `strtab_index`, or nothing when the image has no section with that name.
+/// The `.text` section header of `image`, found through the section header `table` of the `layout` class and the
+/// string table at `strtab_index`, or nothing when the image has no section with that name.
 [[nodiscard]] std::optional<SectionHeader> find_text_section(std::span<const std::uint8_t> image,
-                                                             const HeaderTable& table, std::uint16_t strtab_index) {
+                                                             const HeaderTable& table, const ElfLayout& layout,
+                                                             std::uint16_t strtab_index) {
   if (strtab_index >= table.count) {
     return std::nullopt;
   }
-  const std::optional<SectionHeader> strtab_header = read_section_header(image, table, strtab_index);
+  const std::optional<SectionHeader> strtab_header = read_section_header(image, table, layout, strtab_index);
   if (!strtab_header || !range_fits(strtab_header->file_offset, strtab_header->size, image.size())) {
     return std::nullopt;
   }
   const std::span<const std::uint8_t> strtab = image.subspan(static_cast<std::size_t>(strtab_header->file_offset),
                                                              static_cast<std::size_t>(strtab_header->size));
   for (std::uint16_t index = 0; index < table.count; ++index) {
-    const std::optional<SectionHeader> header = read_section_header(image, table, index);
+    const std::optional<SectionHeader> header = read_section_header(image, table, layout, index);
     if (!header) {
       return std::nullopt;
     }
@@ -279,11 +391,11 @@ struct LoadSegment {
 }
 
 /// Whether the `.text` section lies wholly inside the file part of one loadable, executable, non-writable segment of
-/// the program header `table`.
+/// the program header `table` of the `layout` class.
 [[nodiscard]] bool text_is_backed_by_file(std::span<const std::uint8_t> image, const HeaderTable& table,
-                                          const SectionHeader& text) {
+                                          const ElfLayout& layout, const SectionHeader& text) {
   for (std::uint16_t index = 0; index < table.count; ++index) {
-    const std::optional<LoadSegment> segment = read_load_segment(image, table, index);
+    const std::optional<LoadSegment> segment = read_load_segment(image, table, layout, index);
     if (segment && fits_in_file_part(*segment, text)) {
       return true;
     }
@@ -294,16 +406,17 @@ struct LoadSegment {
 }  // namespace
 
 std::optional<TextRegion> find_text_region(std::span<const std::uint8_t> image, std::uintptr_t load_bias) {
-  if (image.size() < kElfHeaderSize || !std::equal(kElfIdentifier.begin(), kElfIdentifier.end(), image.begin())) {
+  const std::optional<ElfLayout> layout = layout_of(image);
+  if (!layout || image.size() < layout->header_size) {
     return std::nullopt;
   }
-  const std::optional<std::uint64_t> section_offset = read_u64(image, kShoffOffset);
-  const std::optional<std::uint16_t> section_entry_size = read_u16(image, kShentSizeOffset);
-  const std::optional<std::uint16_t> section_count = read_u16(image, kShnumOffset);
-  const std::optional<std::uint16_t> strtab_index = read_u16(image, kShstrndxOffset);
-  const std::optional<std::uint64_t> program_offset = read_u64(image, kPhoffOffset);
-  const std::optional<std::uint16_t> program_entry_size = read_u16(image, kPhentSizeOffset);
-  const std::optional<std::uint16_t> program_count = read_u16(image, kPhnumOffset);
+  const std::optional<std::uint64_t> section_offset = read_word(image, layout->shoff, *layout);
+  const std::optional<std::uint16_t> section_entry_size = read_u16(image, layout->shentsize);
+  const std::optional<std::uint16_t> section_count = read_u16(image, layout->shnum);
+  const std::optional<std::uint16_t> strtab_index = read_u16(image, layout->shstrndx);
+  const std::optional<std::uint64_t> program_offset = read_word(image, layout->phoff, *layout);
+  const std::optional<std::uint16_t> program_entry_size = read_u16(image, layout->phentsize);
+  const std::optional<std::uint16_t> program_count = read_u16(image, layout->phnum);
   if (!section_offset || !section_entry_size || !section_count || !strtab_index || !program_offset ||
       !program_entry_size || !program_count || *section_count == 0 || *program_count == 0) {
     return std::nullopt;
@@ -320,12 +433,12 @@ std::optional<TextRegion> find_text_region(std::span<const std::uint8_t> image, 
       .count = *program_count,
   };
 
-  const std::optional<SectionHeader> text = find_text_section(image, section_table, *strtab_index);
+  const std::optional<SectionHeader> text = find_text_section(image, section_table, *layout, *strtab_index);
   if (!text || text->size == 0 || (text->flags & kShfAlloc) == 0U || (text->flags & kShfWrite) != 0U ||
-      !range_fits(text->file_offset, text->size, image.size())) {
+      !range_fits(text->file_offset, text->size, image.size()) || !std::in_range<std::uintptr_t>(text->address)) {
     return std::nullopt;
   }
-  if (!text_is_backed_by_file(image, program_table, *text)) {
+  if (!text_is_backed_by_file(image, program_table, *layout, *text)) {
     return std::nullopt;
   }
 
@@ -387,7 +500,7 @@ namespace {
 
 /// Where librasp.so is loaded: its on-disk path and its loaded image as a span starting at its load address.
 struct LoadedLibrary {
-  /// The path of the installed library file, under lib/arm64-v8a/ inside the APK.
+  /// The path of the installed library file, under lib/<abi>/ inside the APK.
   std::string path;
   /// The load address of the library: its load bias, where the span of its image begins.
   std::uintptr_t load_bias = 0;

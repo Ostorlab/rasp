@@ -13,6 +13,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace rasp::android::apk {
@@ -153,7 +154,7 @@ std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& ap
     return std::nullopt;
   }
   struct stat status = {};
-  if (fstat(descriptor, &status) != 0 || status.st_size <= 0) {
+  if (fstat(descriptor, &status) != 0 || status.st_size <= 0 || !std::in_range<std::size_t>(status.st_size)) {
     close(descriptor);
     return std::nullopt;
   }
