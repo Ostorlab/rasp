@@ -1,11 +1,13 @@
 /// Tests for the Android hooking checks: the memory-map probe that reports instrumentation-framework mappings and
-/// writable-executable regions.
+/// writable-executable regions, and the thread probe that reports Frida's threads.
 
 #include "checks/hooks.h"
 
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -45,6 +47,24 @@ constexpr std::string_view kCleanMaps =
 [[nodiscard]] std::string write_maps(const TemporaryDirectory& directory, std::string_view content) {
   const std::string path = directory.path() + "/maps";
   return write_file(path, content) ? path : std::string();
+}
+
+/// The hook.threads observation that reports `names`.
+[[nodiscard]] Observation threads(std::vector<std::string> names) {
+  return {.signal = "hook.threads", .source = "proc_task", .status = Status::kOk, .value = std::move(names)};
+}
+
+/// Writes a thread folder named `id` in `task_path`, whose `comm` file holds `name` and a line break.
+///
+/// @param task_path The folder of the threads.
+/// @param id The thread's id, the name of its folder.
+/// @param name The thread's name.
+/// @return `true` when the folder and the file were written.
+[[nodiscard]] bool write_thread(const std::string& task_path, int id, std::string_view name) {
+  const std::filesystem::path folder = std::filesystem::path(task_path) / std::to_string(id);
+  std::error_code error;
+  std::filesystem::create_directories(folder, error);
+  return !error && write_file((folder / "comm").string(), std::string(name) + "\n");
 }
 
 TEST(Hooks, observeMaps_whenMapIsClean_reportsEmptyLists) {
@@ -109,11 +129,59 @@ TEST(Hooks, observeMaps_whenTheFileIsMissing_reportsAnErrorForBoth) {
             (std::vector<Observation>{unreadable("hook.maps_hits"), unreadable("hook.rwx_regions")}));
 }
 
+TEST(Hooks, observeThreads_whenNoThreadIsFrida_reportsAnEmptyList) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  ASSERT_TRUE(write_thread(directory.path(), 100, "co.app"));
+  ASSERT_TRUE(write_thread(directory.path(), 101, "RenderThread"));
+
+  EXPECT_EQ(observe_threads(directory.path()), threads({}));
+}
+
+TEST(Hooks, observeThreads_whenFridasThreadsRun_reportsTheirNamesSortedOnce) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  ASSERT_TRUE(write_thread(directory.path(), 100, "co.app"));
+  ASSERT_TRUE(write_thread(directory.path(), 101, "pool-frida"));
+  ASSERT_TRUE(write_thread(directory.path(), 102, "gum-js-loop"));
+  ASSERT_TRUE(write_thread(directory.path(), 103, "pool-frida"));
+
+  EXPECT_EQ(observe_threads(directory.path()), threads({"gum-js-loop", "pool-frida"}));
+}
+
+TEST(Hooks, observeThreads_whenAMarkerIsUppercase_matchesCaseInsensitively) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  ASSERT_TRUE(write_thread(directory.path(), 100, "Frida-Main"));
+
+  EXPECT_EQ(observe_threads(directory.path()), threads({"Frida-Main"}));
+}
+
+TEST(Hooks, observeThreads_whenAThreadHasNoName_leavesItOut) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  std::error_code error;
+  std::filesystem::create_directories(std::filesystem::path(directory.path()) / "100", error);
+  ASSERT_FALSE(error);
+  ASSERT_TRUE(write_thread(directory.path(), 101, "gum-js-loop"));
+
+  EXPECT_EQ(observe_threads(directory.path()), threads({"gum-js-loop"}));
+}
+
+TEST(Hooks, observeThreads_whenTheFolderIsMissing_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+
+  EXPECT_EQ(observe_threads(directory.path() + "/missing"),
+            (Observation{.signal = "hook.threads", .source = "proc_task", .status = Status::kError, .value = {}}));
+}
+
 TEST(Hooks, hooks_whenOffAndroid_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(hooks(),
             (std::vector<Observation>{
                 {.signal = "hook.maps_hits", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.rwx_regions", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
+                {.signal = "hook.threads", .source = "proc_task", .status = Status::kUnsupported, .value = {}},
             }));
 }
 
