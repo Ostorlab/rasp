@@ -1,5 +1,6 @@
-/// The iOS debugger checks: the traced-flag, parent-process and exception-port probes, and their unsupported result off
-/// a physical device.
+/// The iOS debugger checks: the traced-flag probe through libc's sysctl and through the direct system call, the
+/// parent-process probe through getppid and through the direct sysctl system call, the exception-port probe, and their
+/// unsupported result off a physical device.
 
 #include "checks/debugger.h"
 
@@ -27,6 +28,13 @@
 #include <sys/sysctl.h>
 #endif
 
+#if defined(__APPLE__) && defined(__aarch64__)
+#include <bit>
+#include <optional>
+#include <span>
+#include <sys/syscall.h>
+#endif
+
 namespace rasp::ios::checks {
 
 namespace {
@@ -41,11 +49,13 @@ constexpr bool kPhysicalDevice = false;
 
 /// The signal of the traced-flag probe.
 constexpr std::string_view kTracedSignal = "dbg.traced";
-/// The source of the traced-flag probe.
+/// The source of the traced-flag probe that calls libc's sysctl function.
 constexpr std::string_view kTracedSource = "sysctl";
+/// The source of the probes that make the sysctl system call directly, without libc.
+constexpr std::string_view kSysctlDirectSource = "sysctl_syscall";
 /// The signal of the parent-process probe.
 constexpr std::string_view kParentSignal = "dbg.parent";
-/// The source of the parent-process probe.
+/// The source of the parent-process probe that calls libc's getppid function.
 constexpr std::string_view kParentSource = "getppid";
 /// The signal of the exception-port probe.
 constexpr std::string_view kExceptionPortsSignal = "dbg.exception_ports";
@@ -65,9 +75,82 @@ struct Probe {
 /// The probes the debugger checks run, in the order their observations are reported.
 constexpr std::array kProbes = {
     Probe{.signal = kTracedSignal, .source = kTracedSource, .observe = observe_traced},
+    Probe{.signal = kTracedSignal, .source = kSysctlDirectSource, .observe = observe_traced_syscall},
     Probe{.signal = kParentSignal, .source = kParentSource, .observe = observe_parent},
+    Probe{.signal = kParentSignal, .source = kSysctlDirectSource, .observe = observe_parent_syscall},
     Probe{.signal = kExceptionPortsSignal, .source = kExceptionPortsSource, .observe = observe_exception_ports},
 };
+
+#ifdef __APPLE__
+/// Whether `info`, a process's kinfo_proc entry, has the `P_TRACED` flag set.
+[[nodiscard]] bool traced(const kinfo_proc& info) {
+  const auto flags = static_cast<std::uint32_t>(info.kp_proc.p_flag);
+  return (flags & static_cast<std::uint32_t>(P_TRACED)) != 0;
+}
+#endif
+
+#if defined(__APPLE__) && defined(__aarch64__)
+/// Makes the BSD system call `number` with `arguments` directly, through the `svc` instruction, so that no libc
+/// function, and no hook on one, is in the way. It gives the call's result, or nothing when the kernel reports an
+/// error. The kernel sets the carry flag on an error, and the registers the call may change are all marked as changed.
+[[nodiscard]] std::optional<std::uint64_t> direct_syscall(std::uint64_t number,
+                                                          const std::array<std::uint64_t, 6>& arguments) {
+  std::uint64_t result = 0;
+  std::uint64_t carry = 0;
+  // NOLINTNEXTLINE(portability-no-assembler): the direct system call is the point, so that no libc function is used.
+  asm volatile(
+      "mov x0, %[a0]\n"
+      "mov x1, %[a1]\n"
+      "mov x2, %[a2]\n"
+      "mov x3, %[a3]\n"
+      "mov x4, %[a4]\n"
+      "mov x5, %[a5]\n"
+      "mov x16, %[number]\n"
+      "svc #0x80\n"
+      "cset %[carry], cs\n"
+      "mov %[result], x0\n"
+      : [result] "=&r"(result), [carry] "=&r"(carry)
+      : [number] "r"(number), [a0] "r"(arguments[0]), [a1] "r"(arguments[1]), [a2] "r"(arguments[2]),
+        [a3] "r"(arguments[3]), [a4] "r"(arguments[4]), [a5] "r"(arguments[5])
+      : "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16",
+        "x17", "memory", "cc");
+  if (carry != 0) {
+    return std::nullopt;
+  }
+  return result;
+}
+
+/// Makes the sysctl system call directly to read the value `name` names into `old`, whose size `old_size` gives and
+/// the kernel updates, and tells whether it succeeded.
+[[nodiscard]] bool direct_sysctl(std::span<int> name, kinfo_proc* old, std::size_t* old_size) {
+  return direct_syscall(SYS_sysctl,
+                        {
+                            std::bit_cast<std::uint64_t>(name.data()),
+                            name.size(),
+                            std::bit_cast<std::uint64_t>(old),
+                            std::bit_cast<std::uint64_t>(old_size),
+                            0,
+                            0,
+                        })
+      .has_value();
+}
+
+/// The app's own kinfo_proc entry, read with the getpid and sysctl system calls made directly, or nothing when a call
+/// fails or doesn't return a whole entry.
+[[nodiscard]] std::optional<kinfo_proc> own_process_direct() {
+  const std::optional<std::uint64_t> pid = direct_syscall(SYS_getpid, {});
+  if (!pid) {
+    return std::nullopt;
+  }
+  std::array<int, 4> name = {CTL_KERN, KERN_PROC, KERN_PROC_PID, static_cast<int>(*pid)};
+  kinfo_proc info{};
+  std::size_t size = sizeof(info);
+  if (!direct_sysctl(name, &info, &size) || size != sizeof(info)) {
+    return std::nullopt;
+  }
+  return info;
+}
+#endif
 
 }  // namespace
 
@@ -80,14 +163,37 @@ Observation observe_traced() {
       size != sizeof(info)) {
     return failed(kTracedSignal, kTracedSource);
   }
-  const auto flags = static_cast<std::uint32_t>(info.kp_proc.p_flag);
-  return observed(kTracedSignal, kTracedSource, (flags & static_cast<std::uint32_t>(P_TRACED)) != 0);
+  return observed(kTracedSignal, kTracedSource, traced(info));
 #else
   return unsupported(kTracedSignal, kTracedSource);
 #endif
 }
 
+Observation observe_traced_syscall() {
+#if defined(__APPLE__) && defined(__aarch64__)
+  const std::optional<kinfo_proc> info = own_process_direct();
+  if (!info) {
+    return failed(kTracedSignal, kSysctlDirectSource);
+  }
+  return observed(kTracedSignal, kSysctlDirectSource, traced(*info));
+#else
+  return unsupported(kTracedSignal, kSysctlDirectSource);
+#endif
+}
+
 Observation observe_parent() { return observed(kParentSignal, kParentSource, static_cast<std::int64_t>(getppid())); }
+
+Observation observe_parent_syscall() {
+#if defined(__APPLE__) && defined(__aarch64__)
+  const std::optional<kinfo_proc> info = own_process_direct();
+  if (!info) {
+    return failed(kParentSignal, kSysctlDirectSource);
+  }
+  return observed(kParentSignal, kSysctlDirectSource, static_cast<std::int64_t>(info->kp_eproc.e_ppid));
+#else
+  return unsupported(kParentSignal, kSysctlDirectSource);
+#endif
+}
 
 Observation observe_exception_ports() {
 #ifdef __APPLE__

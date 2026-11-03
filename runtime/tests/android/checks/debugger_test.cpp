@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,14 +45,20 @@ constexpr std::string_view kStatusTail =
   return std::string(kStatusHead) + std::string(line) + "\n" + std::string(kStatusTail);
 }
 
-/// The dbg.tracer_pid observation that reports `pid`.
-[[nodiscard]] Observation tracer_pid(std::int64_t pid) {
-  return {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kOk, .value = pid};
+/// The dbg.tracer_pid observations, through proc_status and through proc_status_syscall, that both report `pid`.
+[[nodiscard]] std::vector<Observation> tracer_pid(std::int64_t pid) {
+  return {
+      {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kOk, .value = pid},
+      {.signal = "dbg.tracer_pid", .source = "proc_status_syscall", .status = Status::kOk, .value = pid},
+  };
 }
 
-/// The dbg.tracer_pid observation of a status file that couldn't be read or understood.
-[[nodiscard]] Observation unreadable_tracer_pid() {
-  return {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kError, .value = {}};
+/// The dbg.tracer_pid observations, through both sources, of a status file that couldn't be read or understood.
+[[nodiscard]] std::vector<Observation> unreadable_tracer_pid() {
+  return {
+      {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kError, .value = {}},
+      {.signal = "dbg.tracer_pid", .source = "proc_status_syscall", .status = Status::kError, .value = {}},
+  };
 }
 
 TEST(Debugger, observeTracerPid_whenNothingIsAttached_reportsZero) {
@@ -180,11 +187,38 @@ TEST(Debugger, observeTracerPid_whenTheFileCantBeRead_reportsAnError) {
   EXPECT_EQ(observe_tracer_pid(directory.path()), unreadable_tracer_pid());
 }
 
+TEST(Debugger, observeJavaDebugger_whenADebuggerIsConnected_reportsTrue) {
+  EXPECT_EQ(
+      observe_java_debugger(true),
+      (Observation{
+          .signal = "dbg.java_debugger", .source = "is_debugger_connected", .status = Status::kOk, .value = true}));
+}
+
+TEST(Debugger, observeJavaDebugger_whenNoDebuggerIsConnected_reportsFalse) {
+  EXPECT_EQ(
+      observe_java_debugger(false),
+      (Observation{
+          .signal = "dbg.java_debugger", .source = "is_debugger_connected", .status = Status::kOk, .value = false}));
+}
+
+TEST(Debugger, observeJavaDebugger_whenTheVmCouldntBeAsked_reportsAnError) {
+  EXPECT_EQ(
+      observe_java_debugger(std::nullopt),
+      (Observation{
+          .signal = "dbg.java_debugger", .source = "is_debugger_connected", .status = Status::kError, .value = {}}));
+}
+
 TEST(Debugger, debugger_whenOffAndroid_reportsEveryCheckAsUnsupported) {
-  EXPECT_EQ(debugger(),
-            (std::vector<Observation>{
-                {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kUnsupported, .value = {}},
-            }));
+  EXPECT_EQ(
+      debugger(),
+      (std::vector<Observation>{
+          {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kUnsupported, .value = {}},
+          {.signal = "dbg.tracer_pid", .source = "proc_status_syscall", .status = Status::kUnsupported, .value = {}},
+          {.signal = "dbg.java_debugger",
+           .source = "is_debugger_connected",
+           .status = Status::kUnsupported,
+           .value = {}},
+      }));
 }
 
 }  // namespace

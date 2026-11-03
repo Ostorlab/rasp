@@ -35,6 +35,40 @@ TEST(Debugger, observeTraced_whenTheSystemHasNoProcessFlags_reportsUnsupported) 
 }
 #endif
 
+#if defined(__APPLE__) && defined(__aarch64__)
+TEST(Debugger, observeTracedSyscall_whenNoDebuggerIsAttached_reportsFalse) {
+  EXPECT_EQ(observe_traced_syscall(),
+            (Observation{.signal = "dbg.traced", .source = "sysctl_syscall", .status = Status::kOk, .value = false}));
+}
+
+TEST(Debugger, observeTracedSyscall_whenCalled_agreesWithTheLibcSource) {
+  const Observation through_libc = observe_traced();
+  const Observation direct = observe_traced_syscall();
+
+  EXPECT_EQ(direct.status, through_libc.status);
+  EXPECT_EQ(direct.value, through_libc.value);
+}
+
+TEST(Debugger, observeParentSyscall_whenCalled_reportsTheParentProcessId) {
+  EXPECT_EQ(observe_parent_syscall(), (Observation{.signal = "dbg.parent",
+                                                   .source = "sysctl_syscall",
+                                                   .status = Status::kOk,
+                                                   .value = static_cast<std::int64_t>(getppid())}));
+}
+#else
+TEST(Debugger, observeTracedSyscall_whenTheSystemIsNotAppleOnArm64_reportsUnsupported) {
+  EXPECT_EQ(
+      observe_traced_syscall(),
+      (Observation{.signal = "dbg.traced", .source = "sysctl_syscall", .status = Status::kUnsupported, .value = {}}));
+}
+
+TEST(Debugger, observeParentSyscall_whenTheSystemIsNotAppleOnArm64_reportsUnsupported) {
+  EXPECT_EQ(
+      observe_parent_syscall(),
+      (Observation{.signal = "dbg.parent", .source = "sysctl_syscall", .status = Status::kUnsupported, .value = {}}));
+}
+#endif
+
 TEST(Debugger, observeParent_whenCalled_reportsTheParentProcessId) {
   EXPECT_EQ(observe_parent(), (Observation{.signal = "dbg.parent",
                                            .source = "getppid",
@@ -85,14 +119,17 @@ TEST(Debugger, observeExceptionPorts_whenTheSystemHasNoExceptionPorts_reportsUns
 #endif
 
 TEST(Debugger, debugger_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
-  EXPECT_EQ(debugger(), (std::vector<Observation>{
-                            {.signal = "dbg.traced", .source = "sysctl", .status = Status::kUnsupported, .value = {}},
-                            {.signal = "dbg.parent", .source = "getppid", .status = Status::kUnsupported, .value = {}},
-                            {.signal = "dbg.exception_ports",
-                             .source = "task_get_exception_ports",
-                             .status = Status::kUnsupported,
-                             .value = {}},
-                        }));
+  EXPECT_EQ(debugger(),
+            (std::vector<Observation>{
+                {.signal = "dbg.traced", .source = "sysctl", .status = Status::kUnsupported, .value = {}},
+                {.signal = "dbg.traced", .source = "sysctl_syscall", .status = Status::kUnsupported, .value = {}},
+                {.signal = "dbg.parent", .source = "getppid", .status = Status::kUnsupported, .value = {}},
+                {.signal = "dbg.parent", .source = "sysctl_syscall", .status = Status::kUnsupported, .value = {}},
+                {.signal = "dbg.exception_ports",
+                 .source = "task_get_exception_ports",
+                 .status = Status::kUnsupported,
+                 .value = {}},
+            }));
 }
 
 }  // namespace

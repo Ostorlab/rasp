@@ -22,7 +22,7 @@ namespace rasp::android::checks {
 /// unsupported instead, so the server still sees that the check ran.
 ///
 /// @return One observation per signal and source, in this order: hook.maps_hits then hook.rwx_regions, both read
-/// through proc_maps.
+/// through proc_maps, then hook.maps_hits read through proc_maps_syscall.
 [[nodiscard]] std::vector<Observation> hooks();
 
 /// Reports the mappings of the memory map at `maps_path` that name a known instrumentation framework, and those that
@@ -31,12 +31,15 @@ namespace rasp::android::checks {
 /// A line of `/proc/self/maps` is `address perms offset dev inode pathname`. A mapping names a framework when its
 /// pathname contains a known marker, such as `frida`, `gadget`, `substrate` or `xposed`; a mapping is
 /// writable-executable when its permissions are `rwx`. Each list holds at most its first 32 matching lines, without
-/// their line breaks.
+/// their line breaks. The map is read twice, once through the libc file functions and once through direct system
+/// calls, and the framework lines are reported from both reads, so a hook on libc that hides a framework's mapping
+/// makes the two sources disagree. The writable-executable lines are reported from the libc read only: a JIT can map
+/// or unmap such memory between the two reads, so two honest reads could disagree.
 ///
 /// @param maps_path The memory map to read, `/proc/self/maps` on a device.
-/// @return Two observations read through proc_maps: hook.maps_hits, the lines that name a framework, then
-/// hook.rwx_regions, the writable-executable lines. Both have an error status when the map can't be read or is larger
-/// than 4 MiB.
+/// @return Three observations: hook.maps_hits, the lines that name a framework, then hook.rwx_regions, the
+/// writable-executable lines, both read through proc_maps; then hook.maps_hits read through proc_maps_syscall. An
+/// observation has an error status when its source can't read the map or the map is larger than 4 MiB.
 [[nodiscard]] std::vector<Observation> observe_maps(std::string_view maps_path);
 
 }  // namespace rasp::android::checks

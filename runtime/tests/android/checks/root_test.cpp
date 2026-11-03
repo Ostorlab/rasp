@@ -38,14 +38,27 @@ constexpr std::string_view kStockMounts =
   return {
       {.signal = "root.mounts", .source = "proc_mounts", .status = Status::kOk, .value = root_lines},
       {.signal = "root.rw_mounts", .source = "proc_mounts", .status = Status::kOk, .value = rw_lines},
+      {.signal = "root.mounts", .source = "proc_mounts_syscall", .status = Status::kOk, .value = root_lines},
+      {.signal = "root.rw_mounts", .source = "proc_mounts_syscall", .status = Status::kOk, .value = rw_lines},
   };
 }
 
-/// The observations of a mount table that couldn't be read.
+/// The observations of a mount table that couldn't be read, through both sources.
 [[nodiscard]] std::vector<Observation> unreadable_mounts() {
   return {
       {.signal = "root.mounts", .source = "proc_mounts", .status = Status::kError, .value = {}},
       {.signal = "root.rw_mounts", .source = "proc_mounts", .status = Status::kError, .value = {}},
+      {.signal = "root.mounts", .source = "proc_mounts_syscall", .status = Status::kError, .value = {}},
+      {.signal = "root.rw_mounts", .source = "proc_mounts_syscall", .status = Status::kError, .value = {}},
+  };
+}
+
+/// The root.fs_paths observations through access, stat and faccessat_syscall that all report `found`.
+[[nodiscard]] std::vector<Observation> fs_paths(const std::vector<std::string>& found) {
+  return {
+      {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = found},
+      {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = found},
+      {.signal = "root.fs_paths", .source = "faccessat_syscall", .status = Status::kOk, .value = found},
   };
 }
 
@@ -93,7 +106,7 @@ constexpr std::string_view kStockMounts =
 /// Reads properties that are all unset.
 [[nodiscard]] std::optional<std::string> read_nothing([[maybe_unused]] std::string_view name) { return std::nullopt; }
 
-TEST(Root, observePaths_whenOnePathExists_reportsItThroughBothSources) {
+TEST(Root, observePaths_whenOnePathExists_reportsItThroughEverySource) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string present = directory.path() + "/su";
@@ -104,10 +117,7 @@ TEST(Root, observePaths_whenOnePathExists_reportsItThroughBothSources) {
   const std::vector<Observation> observations = observe_paths(paths);
 
   const std::vector<std::string> found = {present};
-  EXPECT_EQ(observations, (std::vector<Observation>{
-                              {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = found},
-                              {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = found},
-                          }));
+  EXPECT_EQ(observations, fs_paths(found));
 }
 
 TEST(Root, observePaths_whenAPathIsADirectory_reportsIt) {
@@ -120,10 +130,7 @@ TEST(Root, observePaths_whenAPathIsADirectory_reportsIt) {
   const std::vector<Observation> observations = observe_paths(paths);
 
   const std::vector<std::string> found = {magisk};
-  EXPECT_EQ(observations, (std::vector<Observation>{
-                              {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = found},
-                              {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = found},
-                          }));
+  EXPECT_EQ(observations, fs_paths(found));
 }
 
 TEST(Root, observePaths_whenSeveralPathsExist_reportsThemInTheGivenOrder) {
@@ -138,13 +145,10 @@ TEST(Root, observePaths_whenSeveralPathsExist_reportsThemInTheGivenOrder) {
   const std::vector<Observation> observations = observe_paths(paths);
 
   const std::vector<std::string> found = {first, second};
-  EXPECT_EQ(observations, (std::vector<Observation>{
-                              {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = found},
-                              {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = found},
-                          }));
+  EXPECT_EQ(observations, fs_paths(found));
 }
 
-TEST(Root, observePaths_whenNoPathExists_reportsEmptyListsThroughBothSources) {
+TEST(Root, observePaths_whenNoPathExists_reportsEmptyListsThroughEverySource) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string missing = directory.path() + "/missing";
@@ -153,10 +157,7 @@ TEST(Root, observePaths_whenNoPathExists_reportsEmptyListsThroughBothSources) {
   const std::vector<Observation> observations = observe_paths(paths);
 
   const std::vector<std::string> none;
-  EXPECT_EQ(observations, (std::vector<Observation>{
-                              {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = none},
-                              {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = none},
-                          }));
+  EXPECT_EQ(observations, fs_paths(none));
 }
 
 /// A mount line that a root tool leaves, with one of the marks observe_mounts looks for.
@@ -438,8 +439,11 @@ TEST(Root, root_whenOffAndroid_reportsEveryCheckAsUnsupported) {
       (std::vector<Observation>{
           {.signal = "root.fs_paths", .source = "access", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.fs_paths", .source = "stat", .status = Status::kUnsupported, .value = {}},
+          {.signal = "root.fs_paths", .source = "faccessat_syscall", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.mounts", .source = "proc_mounts", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.rw_mounts", .source = "proc_mounts", .status = Status::kUnsupported, .value = {}},
+          {.signal = "root.mounts", .source = "proc_mounts_syscall", .status = Status::kUnsupported, .value = {}},
+          {.signal = "root.rw_mounts", .source = "proc_mounts_syscall", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.selinux_enforcing", .source = "selinuxfs", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.build_props", .source = "system_property", .status = Status::kUnsupported, .value = {}},
       }));

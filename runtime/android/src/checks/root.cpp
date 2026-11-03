@@ -1,5 +1,6 @@
-/// The Android root checks: the root-file, mount-table, SELinux and build-property probes, and their unsupported
-/// results off Android. The lists of su folders and writable system folders draw on RootBeer (Apache 2.0).
+/// The Android root checks: the root-file probe through access, stat and a direct system call, the mount-table probe
+/// through libc and through direct system calls, the SELinux and build-property probes, and their unsupported results
+/// off Android. The lists of su folders and writable system folders draw on RootBeer (Apache 2.0).
 
 #include "checks/root.h"
 
@@ -19,6 +20,7 @@
 
 #include "rasp/observation.h"
 #include "rasp/util/read_file.h"
+#include "util/direct_syscall.h"
 #include "util/system_property.h"
 
 namespace rasp::android::checks {
@@ -33,8 +35,10 @@ constexpr std::string_view kPathsSignal = "root.fs_paths";
 constexpr std::string_view kMountsSignal = "root.mounts";
 /// The signal of the mount-table probe that reports the system folders mounted writable.
 constexpr std::string_view kRwMountsSignal = "root.rw_mounts";
-/// The source of the mount-table probe.
+/// The source of the mount-table probe that reads the table through the libc file functions.
 constexpr std::string_view kMountsSource = "proc_mounts";
+/// The source of the mount-table probe that reads the table through direct system calls.
+constexpr std::string_view kMountsDirectSource = "proc_mounts_syscall";
 /// The signal of the SELinux probe.
 constexpr std::string_view kSelinuxSignal = "root.selinux_enforcing";
 /// The source of the SELinux probe.
@@ -158,6 +162,9 @@ constexpr bool kOnAndroid = false;
   return stat(path.c_str(), &info) == 0;
 }
 
+/// Whether the faccessat system call, made directly, finds a file at `path`.
+[[nodiscard]] bool found_by_faccessat(const std::string& path) { return util::exists_direct(path); }
+
 /// One way of asking whether a file exists at a path.
 struct PathSource {
   /// The observation's source, such as access or stat.
@@ -170,6 +177,7 @@ struct PathSource {
 constexpr std::array kPathSources = {
     PathSource{.name = "access", .exists = found_by_access},
     PathSource{.name = "stat", .exists = found_by_stat},
+    PathSource{.name = "faccessat_syscall", .exists = found_by_faccessat},
 };
 
 /// The fields of a mount table line that the probes read.
@@ -235,6 +243,18 @@ struct MountLine {
   return lines;
 }
 
+/// The root.mounts and root.rw_mounts observations through `source` of `table`, the mount table as that source read
+/// it, or nothing when it couldn't read it.
+[[nodiscard]] std::vector<Observation> mounts_from(const std::optional<std::string>& table, std::string_view source) {
+  if (!table) {
+    return {failed(kMountsSignal, source), failed(kRwMountsSignal, source)};
+  }
+  return {
+      observed(kMountsSignal, source, matching_lines(*table, made_by_root_tool)),
+      observed(kRwMountsSignal, source, matching_lines(*table, system_folder_writable)),
+  };
+}
+
 }  // namespace
 
 std::vector<Observation> observe_paths(std::span<const std::string_view> paths) {
@@ -250,14 +270,10 @@ std::vector<Observation> observe_paths(std::span<const std::string_view> paths) 
 }
 
 std::vector<Observation> observe_mounts(std::string_view mounts_path) {
-  const std::optional<std::string> table = read_file(mounts_path, kMaxMountsSize);
-  if (!table) {
-    return {failed(kMountsSignal, kMountsSource), failed(kRwMountsSignal, kMountsSource)};
-  }
-  return {
-      observed(kMountsSignal, kMountsSource, matching_lines(*table, made_by_root_tool)),
-      observed(kRwMountsSignal, kMountsSource, matching_lines(*table, system_folder_writable)),
-  };
+  std::vector<Observation> observations = mounts_from(read_file(mounts_path, kMaxMountsSize), kMountsSource);
+  std::ranges::move(mounts_from(util::read_file_direct(mounts_path, kMaxMountsSize), kMountsDirectSource),
+                    std::back_inserter(observations));
+  return observations;
 }
 
 Observation observe_selinux(std::string_view enforce_path) {
@@ -286,12 +302,14 @@ std::vector<Observation> root() {
   if (!kOnAndroid) {
     // Off Android the files, mounts and properties are not Android ones: report every probe as unsupported.
     std::vector<Observation> observations;
-    observations.reserve(kPathSources.size() + 4);
+    observations.reserve(kPathSources.size() + 6);
     for (const PathSource& source : kPathSources) {
       observations.push_back(unsupported(kPathsSignal, source.name));
     }
     observations.push_back(unsupported(kMountsSignal, kMountsSource));
     observations.push_back(unsupported(kRwMountsSignal, kMountsSource));
+    observations.push_back(unsupported(kMountsSignal, kMountsDirectSource));
+    observations.push_back(unsupported(kRwMountsSignal, kMountsDirectSource));
     observations.push_back(unsupported(kSelinuxSignal, kSelinuxSource));
     observations.push_back(unsupported(kPropsSignal, kPropsSource));
     return observations;

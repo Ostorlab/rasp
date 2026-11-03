@@ -19,19 +19,22 @@ namespace rasp::android::checks {
 /// files, mounts and properties it reads are Android ones. There every observation is unsupported instead, so the
 /// server still sees that the check ran.
 ///
-/// @return One observation per signal and source, in this order: root.fs_paths read through access and through stat,
-/// root.mounts and root.rw_mounts through proc_mounts, root.selinux_enforcing through selinuxfs, and root.build_props
-/// through system_property.
+/// @return One observation per signal and source, in this order: root.fs_paths read through access, through stat and
+/// through faccessat_syscall, root.mounts and root.rw_mounts through proc_mounts and then through proc_mounts_syscall,
+/// root.selinux_enforcing through selinuxfs, and root.build_props through system_property.
 [[nodiscard]] std::vector<Observation> root();
 
-/// Reports which of `paths` exist, read through two sources, access and stat.
+/// Reports which of `paths` exist, read through three sources: access, stat, and the faccessat system call made
+/// directly.
 ///
-/// Each path is looked up twice. A hook that hides a root file from one source but not the other makes the two lists
-/// disagree, which is itself a sign of tampering. Both observations are produced even when no path exists: an empty
+/// Each path is looked up three times. A hook that hides a root file from one source but not another makes the lists
+/// disagree, which is itself a sign of tampering. The direct system call goes around the libc functions, so a hook on
+/// both access and stat still leaves it to disagree. Every observation is produced even when no path exists: an empty
 /// list is a real answer, not a failure.
 ///
 /// @param paths The paths to look for, such as the known root artifact paths.
-/// @return Two root.fs_paths observations: the paths found through access, then the paths found through stat.
+/// @return Three root.fs_paths observations: the paths found through access, then through stat, then through
+/// faccessat_syscall.
 [[nodiscard]] std::vector<Observation> observe_paths(std::span<const std::string_view> paths);
 
 /// Reports the lines of the mount table at `mounts_path` that a root tool made, and those that mount a system folder
@@ -42,13 +45,15 @@ namespace rasp::android::checks {
 /// `KSU` and `APatch`. A system folder (`/`, `/system`, `/vendor`, `/sbin`, `/etc`, and the `bin` folders of
 /// `/system` and `/vendor`) is read-only on a stock device, so one mounted with the `rw` option was remounted, which
 /// takes root. The line holds the filesystem type too, so the server can tell the read-write rootfs that devices
-/// without system-as-root mount at `/`. The table is read once, whole, up to 1 MiB, and each list holds at most its
-/// first 32 lines.
+/// without system-as-root mount at `/`. Each read takes the table whole, up to 1 MiB, and each list holds at most its
+/// first 32 lines. The table is read twice, once through the libc file functions and once through direct system
+/// calls, so a hook on libc that hides a line makes the two sources disagree.
 ///
 /// @param mounts_path The mount table to read, `/proc/self/mounts` on a device.
-/// @return Two observations read through proc_mounts: root.mounts, the lines a root tool made, then root.rw_mounts, the
-/// lines that mount a system folder writable, both without their line breaks. Both have an error status when the
-/// table can't be read or is larger than 1 MiB.
+/// @return Four observations: root.mounts, the lines a root tool made, then root.rw_mounts, the lines that mount a
+/// system folder writable, both without their line breaks, read through proc_mounts; then the same two read through
+/// proc_mounts_syscall. Both observations of a source have an error status when that source can't read the table or
+/// it is larger than 1 MiB.
 [[nodiscard]] std::vector<Observation> observe_mounts(std::string_view mounts_path);
 
 /// Reports whether SELinux enforces its policy, from the file at `enforce_path`.
