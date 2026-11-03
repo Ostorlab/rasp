@@ -61,8 +61,14 @@ target_link_options(rasp PRIVATE -Wl,--exclude-libs,ALL)
 target_link_options(rasp PRIVATE $<$<CONFIG:Release>:-Wl,--strip-all>)
 
 # Page-isolate the clear bootstrap after .text (the packer activates it). The bootstrap runs before .rodata is decrypted,
-# so -fno-jump-tables keeps its switches out of the encrypted .rodata; the entry is a global constructor.
+# so -fno-jump-tables keeps its switches out of the encrypted .rodata.
 target_link_options(rasp PRIVATE -Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/src/selfdecrypt/sections.ld)
+
+# Run the bootstrap as DT_INIT. The dynamic linker calls DT_INIT before every DT_INIT_ARRAY constructor, so the library
+# decrypts before any of its own code runs. A constructor(1) is not enough: O-MVLL emits its own constructors at a
+# priority that sorts ahead of priority 1, and those live in the encrypted .text, so they would run (and crash on
+# ciphertext) before a constructor-based bootstrap. DT_INIT runs before all constructors regardless of priority.
+target_link_options(rasp PRIVATE -Wl,-init,rasp_self_decrypt_init)
 set_source_files_properties(src/entry.cpp PROPERTIES COMPILE_OPTIONS -Wno-global-constructors)
 set_source_files_properties(src/selfdecrypt/selfdecrypt.cpp
   PROPERTIES COMPILE_OPTIONS "-Wno-global-constructors;-fno-jump-tables")

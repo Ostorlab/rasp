@@ -1,5 +1,5 @@
-/// The load-time self-decrypt bootstrap of librasp.so. When the packer has encrypted the library, this runs at the
-/// earliest user constructor priority, before entry.cpp's rasp_start and before any other constructor, and decrypts the
+/// The load-time self-decrypt bootstrap of librasp.so. When the packer has encrypted the library, this runs as the
+/// library's DT_INIT, before entry.cpp's rasp_start and before any DT_INIT_ARRAY constructor, and decrypts the
 /// library's own .text/.rodata/.eh_frame in place. Everything it needs lives in the clear, page-isolated .stubcode /
 /// .stubrodata / .packmeta sections, which the packer never encrypts, so it never touches an encrypted byte of its own.
 ///
@@ -338,7 +338,7 @@ void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
 /// Runs the gate, derives the key, and decrypts every region the packer recorded: code via the anonymous-remap path,
 /// read-only data in place. It touches only the clear bootstrap (g_meta, the crypto in .stubcode, the run-time-built
 /// derivation page) and libc; it never calls the library's own encrypted code. Reached only through the computed-branch
-/// trampoline self_decrypt_entry, never called directly.
+/// trampoline rasp_self_decrypt_init (the DT_INIT entry), never called directly.
 [[gnu::noinline, gnu::used]] void self_decrypt() {
   if (g_meta.packed != 1) {
     return;
@@ -382,14 +382,16 @@ void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
 
 }  // namespace
 
-/// The library's earliest constructor. A very low priority runs it before every other constructor, including
-/// compiler-rt's own priority-90 init (which lives in the encrypted .text), so the library is decrypted before any of
-/// its own code runs. The bootstrap uses no atomics, so running before that init is safe. It does not call the
-/// decryptor directly: it folds self_decrypt's address through the live frame pointer and return address (which a
-/// static disassembler cannot know) and reaches it with a computed indirect branch, so the trace from .init_array to
-/// the decryptor is broken. The two XORs by the same volatile runtime value cancel, so at run time the call lands on
-/// self_decrypt.
-[[gnu::constructor(1)]] void self_decrypt_entry() {
+/// The library's DT_INIT entry (wired by -Wl,-init in android/CMakeLists.txt). The dynamic linker calls DT_INIT before
+/// every DT_INIT_ARRAY constructor, so the library is decrypted before any of its own code runs. A plain constructor is
+/// not enough: the O-MVLL obfuscator emits its own constructors at a priority that sorts ahead of a constructor(1) (a
+/// priority-0 constructor beats priority 1), so those obfuscator constructors -- which live in the encrypted .text --
+/// would run, and crash on ciphertext, before a constructor-based bootstrap got its turn. DT_INIT runs before all of
+/// them regardless of priority. The bootstrap uses no atomics, so running this early is safe. It does not call the
+/// decryptor directly: it folds self_decrypt's address through the live frame pointer and return address (which a static
+/// disassembler cannot know) and reaches it with a computed indirect branch, so the trace from DT_INIT to the decryptor
+/// is broken. The two XORs by the same volatile runtime value cancel, so at run time the call lands on self_decrypt.
+extern "C" [[gnu::used]] void rasp_self_decrypt_init() {
   volatile std::uintptr_t mask = reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)) ^
                                  reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
   std::uintptr_t target = reinterpret_cast<std::uintptr_t>(&self_decrypt);
