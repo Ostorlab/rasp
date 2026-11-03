@@ -14,8 +14,8 @@ namespace rasp {
 struct Config {
   /// The id of the protected build.
   std::string build_id;
-  /// The ids of the check groups the protected app runs. `std::nullopt` when every group runs: the packer wrote no
-  /// list, as in every build made before the list existed. An empty list runs no group.
+  /// The ids of the check groups the protected app runs. `std::nullopt` when the runtime can't read a list: then no
+  /// group runs, as with an empty list. The packer always writes a list, with the required groups in it.
   std::optional<std::vector<std::string>> checks;
 };
 
@@ -23,8 +23,7 @@ struct Config {
 ///
 /// @param config The runtime's config.
 /// @param group The group's id, the name of its function in `checks::`, for example `debugger`.
-/// @return `true` when the config has no list of check groups, or its list has this one. An empty list runs no
-/// group.
+/// @return `true` when the config's list has this group. Without a list, no group runs.
 [[nodiscard]] bool is_check_enabled(const Config& config, std::string_view group);
 
 }  // namespace rasp

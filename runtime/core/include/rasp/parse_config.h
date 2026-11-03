@@ -8,8 +8,8 @@
 
 namespace rasp {
 
-/// Reads the runtime's config from the JSON the packer writes: an object with a `build_id` string and, optionally, a
-/// `checks` array of check group ids. Members the runtime doesn't know are ignored.
+/// Reads the runtime's config from the JSON the packer writes: an object with a `build_id` string and a `checks` array
+/// of check group ids. Members the runtime doesn't know are ignored.
 ///
 /// @param json The JSON text.
 /// @return The config. A field is empty when the text is not a JSON object, or the object's member for it is missing or

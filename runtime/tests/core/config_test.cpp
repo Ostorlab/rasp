@@ -9,8 +9,8 @@
 namespace rasp {
 namespace {
 
-TEST(Config, isCheckEnabled_whenTheConfigListsNoChecks_returnsTrue) {
-  EXPECT_TRUE(is_check_enabled(Config{}, "debugger"));
+TEST(Config, isCheckEnabled_whenTheConfigListsNoChecks_returnsFalse) {
+  EXPECT_FALSE(is_check_enabled(Config{}, "identity"));
 }
 
 TEST(Config, isCheckEnabled_whenTheChecksListTheGroup_returnsTrue) {

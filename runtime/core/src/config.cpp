@@ -8,7 +8,7 @@
 namespace rasp {
 
 bool is_check_enabled(const Config& config, std::string_view group) {
-  return !config.checks.has_value() || std::ranges::find(*config.checks, group) != config.checks->end();
+  return config.checks.has_value() && std::ranges::find(*config.checks, group) != config.checks->end();
 }
 
 }  // namespace rasp
