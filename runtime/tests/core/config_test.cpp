@@ -10,17 +10,17 @@ namespace rasp {
 namespace {
 
 TEST(Config, isCheckEnabled_whenTheConfigListsNoChecks_returnsFalse) {
-  EXPECT_FALSE(is_check_enabled(Config{}, "identity"));
+  EXPECT_FALSE(is_check_enabled(Config{}, "debugger"));
 }
 
 TEST(Config, isCheckEnabled_whenTheChecksListTheGroup_returnsTrue) {
-  const Config config{.build_id = {}, .checks = std::vector<std::string>{"debugger", "identity"}};
+  const Config config{.build_id = {}, .checks = std::vector<std::string>{"debugger", "root"}};
 
-  EXPECT_TRUE(is_check_enabled(config, "identity"));
+  EXPECT_TRUE(is_check_enabled(config, "root"));
 }
 
 TEST(Config, isCheckEnabled_whenTheChecksDoNotListTheGroup_returnsFalse) {
-  const Config config{.build_id = {}, .checks = std::vector<std::string>{"debugger", "identity"}};
+  const Config config{.build_id = {}, .checks = std::vector<std::string>{"debugger", "root"}};
 
   EXPECT_FALSE(is_check_enabled(config, "hooks"));
 }
@@ -28,7 +28,7 @@ TEST(Config, isCheckEnabled_whenTheChecksDoNotListTheGroup_returnsFalse) {
 TEST(Config, isCheckEnabled_whenTheChecksAreEmpty_returnsFalse) {
   const Config config{.build_id = {}, .checks = std::vector<std::string>{}};
 
-  EXPECT_FALSE(is_check_enabled(config, "identity"));
+  EXPECT_FALSE(is_check_enabled(config, "debugger"));
 }
 
 }  // namespace

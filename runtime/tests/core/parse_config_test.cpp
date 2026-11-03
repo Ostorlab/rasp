@@ -46,10 +46,10 @@ TEST(ParseConfig, parseConfig_whenTheTextIsEmpty_leavesTheBuildIdEmpty) { EXPECT
 
 TEST(ParseConfig, parseConfig_whenGivenThePackersJsonWithChecks_readsTheChecksInOrder) {
   const std::optional<std::vector<std::string>> checks =
-      parse_config(R"({"build_id":"build-7","checks":["identity","debugger"]})").checks;
+      parse_config(R"({"build_id":"build-7","checks":["root","debugger"]})").checks;
 
   ASSERT_TRUE(checks.has_value());
-  EXPECT_EQ(*checks, (std::vector<std::string>{"identity", "debugger"}));
+  EXPECT_EQ(*checks, (std::vector<std::string>{"root", "debugger"}));
 }
 
 TEST(ParseConfig, parseConfig_whenTheChecksAreAnEmptyArray_readsNoCheck) {
@@ -61,10 +61,10 @@ TEST(ParseConfig, parseConfig_whenTheChecksAreAnEmptyArray_readsNoCheck) {
 
 TEST(ParseConfig, parseConfig_whenAChecksItemIsNotAString_ignoresIt) {
   const std::optional<std::vector<std::string>> checks =
-      parse_config(R"({"checks":["debugger",7,null,["hooks"],{"id":"root"},"identity"]})").checks;
+      parse_config(R"({"checks":["debugger",7,null,["hooks"],{"id":"root"},"hooks"]})").checks;
 
   ASSERT_TRUE(checks.has_value());
-  EXPECT_EQ(*checks, (std::vector<std::string>{"debugger", "identity"}));
+  EXPECT_EQ(*checks, (std::vector<std::string>{"debugger", "hooks"}));
 }
 
 TEST(ParseConfig, parseConfig_whenTheChecksAreMissing_leavesThemEmpty) {
