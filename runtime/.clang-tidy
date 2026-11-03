@@ -24,7 +24,7 @@ WarningsAsErrors: '*'
 HeaderFilterRegex: '.*/runtime/.*'
 ExcludeHeaderFilterRegex: '.*/runtime/build/.*'
 CheckOptions:
-  misc-include-cleaner.IgnoreHeaders: 'stdlib\.h;TargetConditionals\.h;mach/arm/.*;sys/_endian\.h;sys/_pthread/.*;bits/pthread_types\.h;sys/_types/.*;sys/fcntl\.h;sys/unistd\.h;sys/types\.h;asm-generic/socket\.h;psa/.*'
+  misc-include-cleaner.IgnoreHeaders: 'stdlib\.h;TargetConditionals\.h;mach/arm/.*;sys/_endian\.h;sys/_pthread/.*;bits/pthread_types\.h;bits/pthreadtypes\.h;sys/_types/.*;sys/fcntl\.h;sys/unistd\.h;sys/types\.h;asm-generic/socket\.h;psa/.*'
   bugprone-unused-return-value.AllowCastToVoid: true
   bugprone-unsafe-functions.CustomFunctions: >-
     ^::exit$,,ends the process that is the customer's app;

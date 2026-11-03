@@ -8,6 +8,7 @@ add_library(RaspRuntime SHARED
   src/checks/jailbreak.cpp
   src/checks/mitm.cpp
   src/checks/virtualizer.cpp
+  src/panic/end_process.cpp
   src/util/macho.cpp
   src/util/sha256.cpp)
 target_include_directories(RaspRuntime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

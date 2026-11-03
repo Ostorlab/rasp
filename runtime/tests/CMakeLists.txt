@@ -16,12 +16,22 @@ target_link_libraries(rasp_core_test PRIVATE rasp_core rasp_warnings rasp_langua
 target_compile_definitions(rasp_core_test PRIVATE RASP_EXPECTED_VERSION="${PROJECT_VERSION}")
 gtest_discover_tests(rasp_core_test)
 
-foreach(test context embedded_config observation parse_config plugins/init_plugins plugins/plugin plugins/registry plugins/run_plugins)
+foreach(test context embedded_config observation panic parse_config plugins/init_plugins plugins/plugin plugins/registry plugins/run_plugins)
   cmake_path(GET test FILENAME name)
   add_executable(rasp_core_${name}_test core/${test}_test.cpp)
   target_link_libraries(rasp_core_${name}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
   gtest_discover_tests(rasp_core_${name}_test)
 endforeach()
+# The development build of panic_on_detection logs instead of ending the process. This test compiles it as a
+# development build does, with its own log function, so it doesn't link rasp_core, which is built without logs.
+add_executable(rasp_core_panic_development_test core/panic_development_test.cpp
+  ${PROJECT_SOURCE_DIR}/core/src/observation.cpp
+  ${PROJECT_SOURCE_DIR}/core/src/panic.cpp)
+target_include_directories(rasp_core_panic_development_test PRIVATE ${PROJECT_SOURCE_DIR}/core/include)
+target_compile_definitions(rasp_core_panic_development_test PRIVATE RASP_LOGGING_ENABLED=true)
+target_link_libraries(rasp_core_panic_development_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_core_panic_development_test)
+
 list(LENGTH rasp_compiled_plugins rasp_expected_plugin_count)
 target_link_libraries(rasp_core_registry_test PRIVATE rasp_plugins)
 target_compile_definitions(rasp_core_registry_test PRIVATE RASP_EXPECTED_PLUGIN_COUNT=${rasp_expected_plugin_count})
@@ -96,6 +106,15 @@ target_include_directories(rasp_android_identity_test PRIVATE ${PROJECT_SOURCE_D
 target_link_libraries(rasp_android_identity_test PRIVATE rasp_core rasp_warnings rasp_language
   GTest::gtest_main)
 gtest_discover_tests(rasp_android_identity_test)
+
+# end_process makes the Linux exit_group system call directly, so its test runs only on a Linux host.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(rasp_android_end_process_test android/panic/end_process_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/panic/end_process.cpp)
+  target_include_directories(rasp_android_end_process_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+  target_link_libraries(rasp_android_end_process_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_android_end_process_test)
+endif()
 
 add_executable(rasp_android_apk_file_test android/util/apk_file_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
