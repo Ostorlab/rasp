@@ -12,9 +12,11 @@
 #include <vector>
 
 #ifdef __ANDROID__
+#include <array>
 #include <unistd.h>
 
 #include "apk/location.h"
+#include "rasp/util/obfuscation.h"
 #endif
 
 #include "rasp/observation.h"
@@ -87,6 +89,10 @@ Observation observe_code_path(std::string_view code_path) {
 
 std::vector<Observation> identity() {
 #ifdef __ANDROID__
+  static constexpr std::array kObfuscatedLiterals = {
+      kPackageSignal, kPackageSource, kUidSignal, kUidSource, kCodePathSignal, kCodePathSource, kCmdlinePath,
+  };
+  rasp::util::anchor_literals(kObfuscatedLiterals);
   const std::optional<std::string> code_path = apk::self_library_path();
   return {
       observe_package(kCmdlinePath),

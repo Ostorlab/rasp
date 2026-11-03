@@ -1,46 +1,51 @@
-# Obfuscates the self-decrypt bootstrap with the O-MVLL clang plugin (https://obfuscator.re/o-mvll/), by the scheme in
-# omvll_config.py. The plugin is a 22 MB binary, so it is NOT committed: it is downloaded by pinned SHA-256 (like
-# runtime/tests fetches GoogleTest) from RASP_OMVLL_URL. O-MVLL is opt-in here (RASP_OBFUSCATE, default off): a build
-# without the plugin URL still works; a production build sets -DRASP_OBFUSCATE=ON and the artifact URL. Adapted from the
-# feature/android-obfuscation branch's omvll.cmake, in pinned-download form.
+# Obfuscates the Android runtime with the O-MVLL clang plugin (https://obfuscator.re/o-mvll/) vendored in
+# third_party/omvll/, by the scheme in omvll_config.py. This covers the first-party runtime code (rasp, rasp_core) and,
+# within it, the self-decrypt bootstrap (selfdecrypt.cpp/chacha20.cpp/kdf_shovel.cpp) that the packer leaves in the clear
+# while it encrypts the rest of the library at rest: the bootstrap is the only code a static reverse-engineer can read, so
+# it gets every heavy pass. On by default for Release builds.
 
+set(RASP_OMVLL_ARCHIVE
+  ${CMAKE_CURRENT_LIST_DIR}/../third_party/omvll/omvll-1.11.0-ndk-r29-clang21-linux-x86_64.tar.xz)
 set(RASP_OMVLL_SHA256 070ce0de8bf11a6d0cb4668b149771e21454170d9f31211cca9b9780dbecdd71)
-set(RASP_OMVLL_URL "" CACHE STRING
-  "URL of the O-MVLL plugin archive (omvll-1.11.0-ndk-r29-clang21-linux-x86_64.tar.xz); its SHA-256 is pinned")
 set(RASP_OMVLL_DIR ${CMAKE_BINARY_DIR}/omvll)
-set(RASP_OMVLL_ARCHIVE ${RASP_OMVLL_DIR}/omvll.tar.xz)
 
 set(RASP_OMVLL_PLUGIN "" CACHE FILEPATH
-  "Override O-MVLL's omvll-ndk.so; empty uses the one downloaded from RASP_OMVLL_URL")
+  "Override O-MVLL's omvll-ndk.so; empty uses the plugin vendored under third_party/omvll")
 set(RASP_OMVLL_PYTHONPATH "" CACHE PATH
-  "Override O-MVLL's Python standard library; empty uses the one downloaded from RASP_OMVLL_URL")
+  "Override O-MVLL's Python standard library; empty uses the one vendored under third_party/omvll")
 set(RASP_OMVLL_CONFIG ${CMAKE_CURRENT_LIST_DIR}/omvll_config.py CACHE FILEPATH
   "The O-MVLL obfuscation scheme")
 
-option(RASP_OBFUSCATE "Obfuscate the self-decrypt bootstrap with O-MVLL (needs the plugin; default off)" OFF)
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  set(_rasp_obfuscate_default ON)
+else()
+  set(_rasp_obfuscate_default OFF)
+endif()
+option(RASP_OBFUSCATE "Obfuscate the first-party runtime code with O-MVLL (default: on for Release)"
+  ${_rasp_obfuscate_default})
 
-# Obfuscates `target`'s bootstrap translation units, when RASP_OBFUSCATE is on. The scheme in omvll_config.py is a no-op
-# on every non-bootstrap module, so applying the plugin to the whole target only costs build time.
+# Obfuscates `target`, when RASP_OBFUSCATE is on.
 function(rasp_obfuscate target)
   if(NOT RASP_OBFUSCATE)
-    message(STATUS "O-MVLL off (RASP_OBFUSCATE=OFF); ${target}'s bootstrap is not obfuscated")
+    message(STATUS "O-MVLL off (RASP_OBFUSCATE=OFF); ${target} is not obfuscated")
     return()
   endif()
   target_compile_options(${target} PRIVATE -fpass-plugin=${RASP_OMVLL_RESOLVED_PLUGIN})
   set_target_properties(${target} PROPERTIES
     C_COMPILER_LAUNCHER "${RASP_OMVLL_LAUNCHER}"
     CXX_COMPILER_LAUNCHER "${RASP_OMVLL_LAUNCHER}")
-  message(STATUS "O-MVLL on; ${target}'s bootstrap is obfuscated with ${RASP_OMVLL_RESOLVED_PLUGIN}")
+  message(STATUS "O-MVLL on; ${target} is obfuscated with ${RASP_OMVLL_RESOLVED_PLUGIN}")
 endfunction()
 
 if(RASP_OBFUSCATE)
-  # The plugin runs only on a Linux x86_64 host, for an Android build, with NDK r29's clang 21.
+  # The vendored plugin runs only on a Linux x86_64 host, for an Android build, with NDK r29's clang 21.
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
-    message(FATAL_ERROR "RASP_OBFUSCATE is only supported for the Android build (building for '${CMAKE_SYSTEM_NAME}')")
+    message(FATAL_ERROR "RASP_OBFUSCATE is only supported for the Android build; the vendored O-MVLL "
+      "plugin is an Android-NDK clang plugin (building for '${CMAKE_SYSTEM_NAME}')")
   endif()
   if(NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
-    message(FATAL_ERROR "RASP_OBFUSCATE needs a Linux x86_64 build host (host is "
-      "${CMAKE_HOST_SYSTEM_NAME}/${CMAKE_HOST_SYSTEM_PROCESSOR})")
+    message(FATAL_ERROR "RASP_OBFUSCATE needs a Linux x86_64 build host; the vendored O-MVLL plugin is a "
+      "linux-x86_64 clang plugin (host is ${CMAKE_HOST_SYSTEM_NAME}/${CMAKE_HOST_SYSTEM_PROCESSOR})")
   endif()
   if(NOT ANDROID_NDK_REVISION MATCHES "^29\\.")
     message(FATAL_ERROR "RASP_OBFUSCATE needs Android NDK r29; this NDK is revision ${ANDROID_NDK_REVISION}")
@@ -50,23 +55,29 @@ if(RASP_OBFUSCATE)
       "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
   endif()
 
+  file(SHA256 ${RASP_OMVLL_ARCHIVE} _rasp_omvll_actual)
+  if(NOT _rasp_omvll_actual STREQUAL RASP_OMVLL_SHA256)
+    message(FATAL_ERROR
+      "vendored O-MVLL ${RASP_OMVLL_ARCHIVE} has sha256 ${_rasp_omvll_actual}, expected ${RASP_OMVLL_SHA256}")
+  endif()
+  if(NOT EXISTS ${RASP_OMVLL_DIR}/omvll-ndk.so)
+    file(MAKE_DIRECTORY ${RASP_OMVLL_DIR})
+    file(ARCHIVE_EXTRACT INPUT ${RASP_OMVLL_ARCHIVE} DESTINATION ${RASP_OMVLL_DIR})
+  endif()
+
   if(RASP_OMVLL_PLUGIN)
     set(RASP_OMVLL_RESOLVED_PLUGIN ${RASP_OMVLL_PLUGIN})
+  else()
+    set(RASP_OMVLL_RESOLVED_PLUGIN ${RASP_OMVLL_DIR}/omvll-ndk.so)
+  endif()
+  if(RASP_OMVLL_PYTHONPATH)
     set(RASP_OMVLL_RESOLVED_PYTHONPATH ${RASP_OMVLL_PYTHONPATH})
   else()
-    if(NOT RASP_OMVLL_URL)
-      message(FATAL_ERROR "RASP_OBFUSCATE needs RASP_OMVLL_URL (the plugin archive is not committed) or RASP_OMVLL_PLUGIN")
-    endif()
-    if(NOT EXISTS ${RASP_OMVLL_DIR}/omvll-ndk.so)
-      file(MAKE_DIRECTORY ${RASP_OMVLL_DIR})
-      file(DOWNLOAD ${RASP_OMVLL_URL} ${RASP_OMVLL_ARCHIVE} EXPECTED_HASH SHA256=${RASP_OMVLL_SHA256} SHOW_PROGRESS)
-      file(ARCHIVE_EXTRACT INPUT ${RASP_OMVLL_ARCHIVE} DESTINATION ${RASP_OMVLL_DIR})
-    endif()
-    set(RASP_OMVLL_RESOLVED_PLUGIN ${RASP_OMVLL_DIR}/omvll-ndk.so)
     set(RASP_OMVLL_RESOLVED_PYTHONPATH ${RASP_OMVLL_DIR}/Lib)
   endif()
 
-  foreach(_rasp_omvll_path "${RASP_OMVLL_RESOLVED_PLUGIN}" "${RASP_OMVLL_RESOLVED_PYTHONPATH}" "${RASP_OMVLL_CONFIG}")
+  foreach(_rasp_omvll_path
+      "${RASP_OMVLL_RESOLVED_PLUGIN}" "${RASP_OMVLL_RESOLVED_PYTHONPATH}" "${RASP_OMVLL_CONFIG}")
     if(NOT EXISTS "${_rasp_omvll_path}")
       message(FATAL_ERROR "RASP_OBFUSCATE: a configured path does not exist: ${_rasp_omvll_path}")
     endif()
