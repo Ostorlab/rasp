@@ -15,15 +15,15 @@ result = packer.pack(
     platform=platforms.Platform.IOS,
     output=pathlib.Path("app-protected.ipa"),
     build_id="e6a8373149e83d008a5212b34bdd23bf637ad9561483c7a3c43b0a157c3f2a18",
-    checks=["debugger", "hooks", "identity", "jailbreak"],
+    checks=["debugger", "hooks", "jailbreak"],
 )
 ```
 
 ```
-rasp pack app.ipa --platform ios --build-id e6a8373149e83d008a5212b34bdd23bf637ad9561483c7a3c43b0a157c3f2a18 --checks debugger,hooks,identity,jailbreak --output app-protected.ipa
+rasp pack app.ipa --platform ios --build-id e6a8373149e83d008a5212b34bdd23bf637ad9561483c7a3c43b0a157c3f2a18 --checks debugger,hooks,jailbreak --output app-protected.ipa
 ```
 
-`checks` (`--checks` on the command line) is optional: see [Checks](#checks).
+`checks` (`--checks` on the command line) is optional: without it, the protected app runs every check group. See [Checks](#checks).
 
 `pack` returns the path of the protected app, the app's package name and version (on iOS, `CFBundleIdentifier` and `CFBundleShortVersionString` from its `Info.plist`; on Android, the `package` and `android:versionName` of its manifest), and the build id.
 
@@ -103,4 +103,10 @@ Each platform's protection version is a whole number in `src/rasp_packer/protect
 
 ## Checks
 
-The runtime runs its checks in groups, such as `debugger` or `hooks`. `src/rasp_packer/checks.py` lists the groups of each platform in `CHECKS`, and those every protected app runs in `REQUIRED_CHECKS` (`identity`). The caller can choose the groups a protected app runs and pass their ids to `pack` (or to `rasp pack --checks`, comma-separated). The packer refuses an id that is not one of the platform's groups with `UnknownCheckError`, adds the required ones, and writes the ids sorted into the runtime config. Without a choice, it writes no list, and the protected app runs every group.
+The runtime runs its checks in groups, such as `debugger` or `hooks`. `src/rasp_packer/checks.py` lists the groups of each platform in `CHECKS`, and those every protected app runs in `REQUIRED_CHECKS` (`identity`). The caller can choose the groups a protected app runs and pass their ids to `pack` (or to `rasp pack --checks`, comma-separated). The packer:
+
+- refuses an id that is not one of the platform's groups with `UnknownCheckError`;
+- adds the required groups, so the example above also runs `identity`;
+- writes the ids sorted into the runtime config.
+
+Without a choice, it writes no list, and the protected app runs every group.
