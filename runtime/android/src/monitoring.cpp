@@ -7,6 +7,7 @@
 #include <iterator>
 #include <pthread.h>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "checks/debugger.h"
@@ -16,9 +17,11 @@
 #include "checks/integrity.h"
 #include "checks/mitm.h"
 #include "checks/root.h"
+#include "panic/end_process.h"
 #include "rasp/context.h"
 #include "rasp/embedded_config.h"
 #include "rasp/observation.h"
+#include "rasp/panic.h"
 #include "rasp/plugins/registry.h"
 #include "rasp/util/logging.h"
 
@@ -43,17 +46,19 @@ constexpr std::chrono::seconds kCheckInterval{60};
   return observations;
 }
 
-/// The thread: initialises the plugins, then runs the built-in checks and the plugins, then again every kCheckInterval,
-/// until the process exits. The context the plugins share is a local of this thread, which never returns, so it lives
-/// as long as the process.
+/// The thread: initialises the plugins, then runs the built-in checks, arms a panic when they detect something, and
+/// runs the plugins, then again every kCheckInterval, until the process exits. The context the plugins share is a local
+/// of this thread, which never returns, so it lives as long as the process.
 ///
 /// @return Never returns.
 void* monitor(void* /*argument*/) {
   rasp::plugins::Context context;
   rasp::plugins::init_plugins(rasp::plugins::compiled_in(), read_embedded_config(), context);
   while (true) {
+    std::vector<Observation> builtin = run_checks();
+    static_cast<void>(panic_on_detection(builtin, end_process));
     const std::vector<Observation> observations =
-        rasp::plugins::run_plugins(rasp::plugins::compiled_in(), run_checks(), context);
+        rasp::plugins::run_plugins(rasp::plugins::compiled_in(), std::move(builtin), context);
     if constexpr (kLoggingEnabled) {
       for (const Observation& observation : observations) {
         rasp::log(describe(observation));
