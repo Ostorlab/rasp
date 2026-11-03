@@ -68,6 +68,12 @@ foreach(check debugger hooks mitm)
   gtest_discover_tests(rasp_android_${check}_test)
 endforeach()
 
+# The hooks check reads system library files through the shared ELF reader, and its tests read the ELF fixtures.
+target_sources(rasp_android_hooks_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp)
+target_compile_definitions(rasp_android_hooks_test PRIVATE
+  RASP_TEST_ELF_DATA="${CMAKE_CURRENT_SOURCE_DIR}/android/util/data")
+
 # The emulator and root checks read system properties through the shared util/system_property helper, so their tests
 # link it too.
 foreach(check emulator root)
@@ -82,7 +88,8 @@ endforeach()
 
 add_executable(rasp_android_integrity_test android/checks/integrity_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp)
 target_include_directories(rasp_android_integrity_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_integrity_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
@@ -103,6 +110,14 @@ target_include_directories(rasp_android_apk_file_test PRIVATE ${PROJECT_SOURCE_D
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_apk_file_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_apk_file_test)
+
+add_executable(rasp_android_elf_test android/util/elf_test.cpp ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp)
+target_include_directories(rasp_android_elf_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_android_elf_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+target_compile_definitions(rasp_android_elf_test PRIVATE
+  RASP_TEST_ELF_DATA="${CMAKE_CURRENT_SOURCE_DIR}/android/util/data")
+gtest_discover_tests(rasp_android_elf_test)
 
 if(TARGET rasp_loader_dex)
   add_executable(rasp_android_loader_dex_test android/loader/loader_dex_test.cpp
