@@ -30,7 +30,7 @@ The packer adds a prebuilt runtime, which comes from the runtime build and is no
 
 For Android the packer protects the app's code:
 
-- it sorts the app's classes with the bundled `split-dex` tool. The classes under the app's package are the app's own code. The other classes, such as libraries, stay in the clear, as `classes.dex`, `classes2.dex`, ...;
+- it sorts the app's classes with the dex splitter, `dexsplit`. The classes under the app's package are the app's own code. The other classes, such as libraries, stay in the clear, as `classes.dex`, `classes2.dex`, ...;
 - it encrypts the app's own classes, in dex files of their own, and stores each of these files as the asset `assets/business/<i>.dex`. It also stores the class map as `assets/rasp/map.bin`, encrypted too: the map names the dex file that defines each of these classes. It stores the key as `assets/rasp/key.bin`;
 - it adds a small stub as the last dex file (`classesN.dex`), and sets `<application android:appComponentFactory>` to the stub's class, `co.ostorlab.rasp.RaspStub`, while leaving the app's own `<application android:name>` alone;
 - it adds the native runtime as `lib/<abi>/librasp.so`, for each ABI the app has native libraries for, or for every ABI the runtime is built for when the app has none. Android installs the native libraries of one ABI only, so each of the app's ABIs needs the runtime. An app with native libraries for an ABI the runtime isn't built for is refused with `UnsupportedAbiError`. The packer writes the runtime config, which holds the build id, into the `.rasp_config` section of each `librasp.so`;
@@ -70,11 +70,12 @@ The key is stored in the clear, in `assets/rasp/key.bin`. The encryption raises 
     - `manifest.py`: the layer over `axml.py` for the component factory, the app's package and version, and its minimum API level.
   - `aab/`: reading and editing the AAB, and its manifest, which is in protobuf format.
   - `cipher.py`: the authenticated cipher for the class map and the app's own dex files.
-  - `split.py`: runs the bundled `split-dex` tool, which sorts the app's classes into the app's own and the others.
+  - `split.py`: calls `dexsplit`, which sorts the app's classes into the app's own and the others.
   - `loader_map.py`: the class map, which names the dex file that defines each of the app's own classes.
   - `runtime_library.py`: writes the runtime config into the `.rasp_config` section of `librasp.so`.
-  - `resources.py`: locating the prebuilt stub and native libraries, and the bundled `split-dex` tool.
+  - `resources.py`: locating the prebuilt stub and native libraries.
 - `tests/`: one test file per source file, at the same path, named `<module>_test.py`.
+- `dexsplit/`: the dex splitter, a C++ extension with its Python layer and tests, built into the packer's wheel.
 
 ## Development
 
