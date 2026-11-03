@@ -133,6 +133,17 @@ def testMain_whenChecksHaveSpacesOrATrailingComma_passesTheIdsAloneToThePacker(
     assert [call["checks"] for call in calls] == [expected]
 
 
+@pytest.mark.parametrize("value", ["", ",", " ", " , "])
+def testMain_whenChecksHaveNoId_exitsWithUsageError(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str], value: str
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main([*_pack_arguments(tmp_path), "--checks", value])
+
+    assert exit_info.value.code == _USAGE_ERROR
+    assert "give at least one check id" in capsys.readouterr().err
+
+
 def testMain_whenChecksAreNotGiven_passesNoChecksToThePacker(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

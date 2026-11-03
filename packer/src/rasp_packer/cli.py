@@ -64,9 +64,16 @@ def _split_checks(value: str) -> list[str]:
 
     Each id is stripped of the spaces around it, and the empty ones, such as the one after a trailing comma, are
     dropped.
+
+    Raises:
+        argparse.ArgumentTypeError: No id is left, as with an empty value, so argparse exits with a usage error
+            rather than packing an app that runs the required groups only.
     """
     checks = [check.strip() for check in value.split(",")]
-    return [check for check in checks if check != ""]
+    checks = [check for check in checks if check != ""]
+    if len(checks) == 0:
+        raise argparse.ArgumentTypeError("give at least one check id")
+    return checks
 
 
 def _pack(arguments: argparse.Namespace) -> int:
