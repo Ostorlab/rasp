@@ -35,12 +35,15 @@ def testPack_whenIosApp_packsWithAConfigHoldingTheGivenBuildId(
         platform=platforms.Platform.IOS,
         output=tmp_path / "out.ipa",
         build_id=_BUILD_ID,
+        checks=["identity"],
     )
 
     assert calls == {
         "app": ipa_file,
         "output": tmp_path / "out.ipa",
-        "config": runtime_config.RuntimeConfig(build_id=_BUILD_ID),
+        "config": runtime_config.RuntimeConfig(
+            build_id=_BUILD_ID, checks=("identity",)
+        ),
     }
 
 
@@ -54,6 +57,7 @@ def testPack_whenIosApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
         platform=platforms.Platform.IOS,
         output=tmp_path / "out.ipa",
         build_id=_BUILD_ID,
+        checks=["identity"],
     )
 
     assert result == packer.PackResult(
@@ -74,6 +78,7 @@ def testPack_whenBuildIdHasAnyFormat_packsItAsGiven(
         platform=platforms.Platform.IOS,
         output=tmp_path / "out.ipa",
         build_id="build-1",
+        checks=["identity"],
     )
 
     assert result.build_id == "build-1"
@@ -92,6 +97,7 @@ def testPack_whenBuildIdCannotBeWritten_raisesInvalidBuildIdError(
             platform=platforms.Platform.IOS,
             output=tmp_path / "out.ipa",
             build_id=build_id,
+            checks=["identity"],
         )
 
 
@@ -120,6 +126,29 @@ def testPack_whenGivenChecks_packsWithAConfigHoldingThemSortedWithTheRequiredOne
     ]
 
 
+def testPack_whenGivenNoChecks_packsWithAConfigHoldingOnlyTheRequiredOnes(
+    ipa_file: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configs: list[object] = []
+
+    def fake_pack(*, config: object, **_: object) -> identity.AppIdentity:
+        configs.append(config)
+        return _IDENTITY
+
+    monkeypatch.setattr(ios_packer, "pack", fake_pack)
+    packer.pack(
+        app=ipa_file,
+        platform=platforms.Platform.IOS,
+        output=tmp_path / "out.ipa",
+        build_id=_BUILD_ID,
+        checks=[],
+    )
+
+    assert configs == [
+        runtime_config.RuntimeConfig(build_id=_BUILD_ID, checks=("identity",))
+    ]
+
+
 def testPack_whenACheckIsNotOfThePlatform_raisesUnknownCheckError(
     ipa_file: pathlib.Path, tmp_path: pathlib.Path
 ) -> None:
@@ -145,6 +174,7 @@ def testPack_whenOutputExists_raisesOutputExistsError(tmp_path: pathlib.Path) ->
             platform=platforms.Platform.IOS,
             output=output,
             build_id=_BUILD_ID,
+            checks=["identity"],
         )
 
 
@@ -169,12 +199,15 @@ def testPack_whenAndroidApp_packsWithAConfigHoldingTheGivenBuildId(
         platform=platforms.Platform.ANDROID,
         output=tmp_path / "out.apk",
         build_id=_BUILD_ID,
+        checks=["identity"],
     )
 
     assert calls == {
         "app": app,
         "output": tmp_path / "out.apk",
-        "config": runtime_config.RuntimeConfig(build_id=_BUILD_ID),
+        "config": runtime_config.RuntimeConfig(
+            build_id=_BUILD_ID, checks=("identity",)
+        ),
     }
 
 
@@ -190,6 +223,7 @@ def testPack_whenAndroidApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
         platform=platforms.Platform.ANDROID,
         output=tmp_path / "out.apk",
         build_id=_BUILD_ID,
+        checks=["identity"],
     )
 
     assert result == packer.PackResult(

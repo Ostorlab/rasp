@@ -25,7 +25,7 @@ _BUILD_ID = "rasp-build/v1:" + "ab" * 32
 _STUB_DEX = b"stub dex bytes"
 _ARM64_SO = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _PACKAGE = "com.android.insecurebankv2"
-_CONFIG = runtime_config.RuntimeConfig(build_id=_BUILD_ID)
+_CONFIG = runtime_config.RuntimeConfig(build_id=_BUILD_ID, checks=("identity",))
 
 _FRAMEWORK = (b"framework dex zero", b"framework dex one")
 _BUSINESS = (
@@ -94,7 +94,7 @@ def _pack_aab(
     packer.pack(
         app=app,
         output=output,
-        config=runtime_config.RuntimeConfig(build_id=_BUILD_ID),
+        config=runtime_config.RuntimeConfig(build_id=_BUILD_ID, checks=("identity",)),
         artifacts=artifacts or _artifacts(),
         aab_splitter=_recorded_aab_split(),
     )
@@ -111,7 +111,7 @@ def testPack_whenAab_detectsFormatAndUsesAabPath(tmp_path: pathlib.Path) -> None
     packer.pack(
         app=app,
         output=tmp_path / "out.aab",
-        config=runtime_config.RuntimeConfig(build_id=_BUILD_ID),
+        config=runtime_config.RuntimeConfig(build_id=_BUILD_ID, checks=("identity",)),
         artifacts=_artifacts(),
         aab_splitter=_recorded_aab_split(captured),
     )
@@ -242,7 +242,9 @@ def testPackAab_whenAlreadyHasMap_raisesAlreadyProtectedError(
         packer.pack(
             app=app,
             output=tmp_path / "out.aab",
-            config=runtime_config.RuntimeConfig(build_id=_BUILD_ID),
+            config=runtime_config.RuntimeConfig(
+                build_id=_BUILD_ID, checks=("identity",)
+            ),
             artifacts=_artifacts(),
             aab_splitter=_recorded_aab_split(),
         )
@@ -267,7 +269,7 @@ def testPackAab_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     app_identity = packer.pack(
         app=app,
         output=tmp_path / "out.aab",
-        config=runtime_config.RuntimeConfig(build_id=_BUILD_ID),
+        config=runtime_config.RuntimeConfig(build_id=_BUILD_ID, checks=("identity",)),
         artifacts=_artifacts(),
         aab_splitter=_recorded_aab_split(),
     )

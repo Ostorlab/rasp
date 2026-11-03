@@ -77,7 +77,7 @@ def testMain_whenBuildIdIsEmpty_printsTheErrorAndReturnsFailed(
 def testMain_whenPackFails_printsTheErrorAndReturnsFailed(
     tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    exit_code = cli.main(_pack_arguments(tmp_path))
+    exit_code = cli.main([*_pack_arguments(tmp_path), "--checks", "debugger"])
 
     assert exit_code == cli.EXIT_FAILED
     assert capsys.readouterr().err.startswith("rasp pack: ")
@@ -144,8 +144,10 @@ def testMain_whenChecksHaveNoId_exitsWithUsageError(
     assert "give at least one check id" in capsys.readouterr().err
 
 
-def testMain_whenChecksAreNotGiven_passesNoChecksToThePacker(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+def testMain_whenChecksAreNotGiven_warnsAndPassesNoChecksToThePacker(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[dict[str, object]] = []
 
@@ -160,9 +162,15 @@ def testMain_whenChecksAreNotGiven_passesNoChecksToThePacker(
 
     monkeypatch.setattr(packer, "pack", fake_pack)
 
-    cli.main(_pack_arguments(tmp_path))
+    exit_code = cli.main(_pack_arguments(tmp_path))
 
-    assert [call["checks"] for call in calls] == [None]
+    assert exit_code == cli.EXIT_OK
+    assert [call["checks"] for call in calls] == [[]]
+    assert capsys.readouterr().err == (
+        "rasp pack: warning: no --checks given, so the app runs only the required checks: "
+        "identity. Pass --checks, such as --checks debugger,hooks, to choose the checks it "
+        "runs.\n"
+    )
 
 
 def testMain_whenACheckIsUnknown_printsTheErrorAndReturnsFailed(
