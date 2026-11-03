@@ -23,7 +23,7 @@ result = packer.pack(
 rasp pack app.ipa --platform ios --build-id e6a8373149e83d008a5212b34bdd23bf637ad9561483c7a3c43b0a157c3f2a18 --checks debugger,hooks,jailbreak --output app-protected.ipa
 ```
 
-`checks` (`--checks` on the command line) is how the caller chooses the check groups the protected app runs. Without `--checks`, the command line warns and packs the app with only `identity`. See [Checks](#checks).
+`checks` (`--checks` on the command line) is how the caller chooses the check groups the protected app runs. Without `--checks`, the command line warns and packs the app with only the required check group, `identity`. See [Checks](#checks).
 
 `pack` returns the path of the protected app, the app's package name and version (on iOS, `CFBundleIdentifier` and `CFBundleShortVersionString` from its `Info.plist`; on Android, the `package` and `android:versionName` of its manifest), and the build id.
 
