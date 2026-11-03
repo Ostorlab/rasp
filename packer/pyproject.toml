@@ -22,8 +22,19 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling==1.29.0"]
-build-backend = "hatchling.build"
+requires = [
+    "scikit-build-core==1.1.2",
+    "pybind11==3.1.0",
+]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+# The pure-Python packages ship alongside the compiled dexsplit._dex extension,
+# which the top-level CMakeLists builds and installs into the dexsplit package.
+wheel.packages = ["src/rasp_packer", "dexsplit/dexsplit"]
+cmake.version = ">=3.18"
+cmake.build-type = "Release"
+build-dir = "build/{wheel_tag}"
 
 [tool.ruff]
 target-version = "py314"
@@ -49,13 +60,13 @@ force-single-line = true
 [tool.mypy]
 python_version = "3.14"
 strict = true
-files = ["src", "tests"]
-mypy_path = "src"
+files = ["src", "tests", "dexsplit/dexsplit", "dexsplit/tests"]
+mypy_path = ["src", "dexsplit"]
 warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "dexsplit/tests"]
 python_files = ["*_test.py"]
 python_functions = ["test*"]
 addopts = ["--import-mode=importlib", "--strict-config", "--strict-markers"]
