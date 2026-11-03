@@ -15,6 +15,7 @@ add_library(rasp SHARED
   src/payload/cipher.cpp
   src/payload/dex_store.cpp
   src/util/apk_file.cpp
+  src/util/elf.cpp
   src/util/system_property.cpp)
 target_include_directories(rasp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(rasp PRIVATE rasp_core rasp_plugins rasp_loader_dex rasp_tfpsacrypto rasp_warnings rasp_language
