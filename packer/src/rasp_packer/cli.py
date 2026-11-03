@@ -60,8 +60,13 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _split_checks(value: str) -> list[str]:
-    """Splits the comma-separated check groups given on the command line."""
-    return value.split(",")
+    """Splits the comma-separated check groups given on the command line.
+
+    Each id is stripped of the spaces around it, and the empty ones, such as the one after a trailing comma, are
+    dropped.
+    """
+    checks = [check.strip() for check in value.split(",")]
+    return [check for check in checks if check != ""]
 
 
 def _pack(arguments: argparse.Namespace) -> int:

@@ -104,6 +104,35 @@ def testMain_whenChecksAreGiven_passesThemToThePacker(
     assert [call["checks"] for call in calls] == [["jailbreak", "identity"]]
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("debugger, identity", ["debugger", "identity"]), ("debugger,", ["debugger"])],
+)
+def testMain_whenChecksHaveSpacesOrATrailingComma_passesTheIdsAloneToThePacker(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+    expected: list[str],
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_pack(**arguments: object) -> packer.PackResult:
+        calls.append(arguments)
+        return packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+        )
+
+    monkeypatch.setattr(packer, "pack", fake_pack)
+
+    exit_code = cli.main([*_pack_arguments(tmp_path), "--checks", value])
+
+    assert exit_code == cli.EXIT_OK
+    assert [call["checks"] for call in calls] == [expected]
+
+
 def testMain_whenChecksAreNotGiven_passesNoChecksToThePacker(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
