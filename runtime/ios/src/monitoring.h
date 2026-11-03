@@ -1,26 +1,35 @@
-/// start_monitoring: runs the checks and the plugins every minute, on the runtime's own thread.
+/// start_monitoring: runs the checks and the plugins again and again, at random intervals, on the runtime's own
+/// thread.
 
 #pragma once
+
+#include <string>
 
 namespace rasp::ios {
 
 /// Starts the thread that runs the checks, and returns at once.
 ///
-/// It must be called while the runtime loads, on the app's main thread, before the app's own code runs. It first reads
-/// the value of `DYLD_INSERT_LIBRARIES` from the app's environment, once, and hands the copy to the thread, which
-/// reports it on every pass and never reads the environment itself.
+/// It must be called while the runtime loads, on the app's main thread, before the app's own code runs. The thread
+/// reports `inserted_libraries` on every pass and never reads the environment itself.
 ///
 /// The thread first initialises the plugins compiled into the runtime, with the runtime's config, which the packer
-/// wrote into the framework's binary. Then it runs the built-in checks and the plugins, and runs them again every 60
-/// seconds. A development build logs each observation.
+/// wrote into the framework's binary. Then it runs the built-in checks and the plugins, and runs them again after a
+/// random wait from check_interval, 30 to 90 seconds, drawn again before each wait. A development build logs each
+/// observation and each wait.
 ///
-/// When the built-in checks detect something, a release build ends the process a few seconds later, through
-/// panic_on_detection. The plugins still receive that run's observations in the meantime, but the end doesn't wait for
-/// them. A development build never ends the process: it logs what would have ended it.
+/// The thread beats the heartbeat of monitor_heartbeat when it starts, and before and after each run. Each run also
+/// reports the heartbeat's integ.monitor_alive observation with the built-in checks'.
 ///
-/// Nothing is checked when the thread can't be started. Otherwise the thread never ends: it runs until the process
-/// exits, and iOS suspends it while the app is in the background. The thread is detached: the app never waits for it,
-/// and the app may exit at any moment while it runs.
-void start_monitoring() noexcept;
+/// When the built-in checks or the heartbeat detect something, a release build ends the process a few seconds later,
+/// through panic_on_detection. The plugins still receive that run's observations in the meantime, but the end doesn't
+/// wait for them. A development build never ends the process: it logs what would have ended it.
+///
+/// Nothing is checked when the thread can't be started, and the heartbeat then never beats. Otherwise the thread never
+/// ends: it runs until the process exits, and iOS suspends it while the app is in the background. The thread is
+/// detached: the app never waits for it, and the app may exit at any moment while it runs.
+///
+/// @param inserted_libraries The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, as
+/// checks::read_inserted_libraries returns it, read once while the runtime loads.
+void start_monitoring(std::string inserted_libraries) noexcept;
 
 }  // namespace rasp::ios

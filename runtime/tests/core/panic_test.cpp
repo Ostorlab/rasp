@@ -88,6 +88,7 @@ TEST(Panic, detect_forEverySignal_detectsOnlyItsPositiveFinding) {
       {.signal = "hook.frida_port", .positive = true, .negative = false},
       {.signal = "hook.inline", .positive = Strings{"open"}, .negative = Strings{}},
       {.signal = "id.debuggable", .positive = true, .negative = false},
+      {.signal = "integ.monitor_alive", .positive = false, .negative = true},
       {.signal = "jb.fs_paths", .positive = Strings{"/var/jb"}, .negative = Strings{}},
       {.signal = "jb.sandbox_escape", .positive = true, .negative = false},
       {.signal = "jb.fork_ok", .positive = true, .negative = false},
