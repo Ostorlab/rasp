@@ -79,7 +79,7 @@ struct Environment {
   if (text == nullptr) {
     return false;
   }
-  const CFURLRef url = CFURLCreateWithFileSystemPath(kCFAllocatorDefault, text, kCFURLPOSIXPathStyle, false);
+  const CFURLRef url = CFURLCreateWithFileSystemPath(kCFAllocatorDefault, text, kCFURLPOSIXPathStyle, 0);
   CFRelease(text);
   if (url == nullptr) {
     return false;
