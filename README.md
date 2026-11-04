@@ -7,7 +7,7 @@
 **Runtime application self-protection (RASP) for Android and iOS apps.**
 
 rasp protects an app you have already built. It adds a small runtime to the APK, AAB or IPA, and the protected app
-checks the device it runs on while it is in use. No change to the app's source code is needed.
+checks the device it runs on and itself while it is in use. No change to the app's source code is needed.
 
 ## Features
 
