@@ -2,8 +2,10 @@
 
 #include "rasp/parse_config.h"
 
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 #include <yyjson.h>
 
 #include "rasp/config.h"
@@ -23,6 +25,25 @@ namespace {
   return {yyjson_get_str(value), yyjson_get_len(value)};
 }
 
+/// Reads a JSON array of strings.
+///
+/// @param value The value, or null.
+/// @return The array's strings, in its order, without its items that are not strings. Nothing when `value` is null or
+/// is not an array.
+[[nodiscard]] std::optional<std::vector<std::string>> read_texts(const yyjson_val* value) {
+  if (!yyjson_is_arr(value)) {
+    return std::nullopt;
+  }
+  std::vector<std::string> texts;
+  yyjson_arr_iter items = yyjson_arr_iter_with(value);
+  for (const yyjson_val* item = yyjson_arr_iter_next(&items); item != nullptr; item = yyjson_arr_iter_next(&items)) {
+    if (yyjson_is_str(item)) {
+      texts.push_back(read_text(item));
+    }
+  }
+  return texts;
+}
+
 }  // namespace
 
 Config parse_config(std::string_view json) {
@@ -31,7 +52,10 @@ Config parse_config(std::string_view json) {
     return {};
   }
   const yyjson_val* const root = yyjson_doc_get_root(document);
-  Config config{.build_id = read_text(yyjson_obj_get(root, "build_id"))};
+  Config config{
+      .build_id = read_text(yyjson_obj_get(root, "build_id")),
+      .checks = read_texts(yyjson_obj_get(root, "checks")),
+  };
   yyjson_doc_free(document);
   return config;
 }
