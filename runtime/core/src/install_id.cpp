@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -82,23 +83,49 @@ constexpr std::string_view kHexDigits = "0123456789abcdef";
   return text;
 }
 
-/// Writes `content` to the file at `path`, replacing it: to a temporary file next to it, which is then renamed.
+/// Writes `content` to a new file at `path`.
 ///
 /// @param path The file.
 /// @param content What it must hold.
 /// @return `true` when the file holds `content`.
-[[nodiscard]] bool replace_file(const std::string& path, std::string_view content) {
-  const std::string temporary = path + ".tmp." + std::to_string(getpid());
-  const gsl::owner<std::FILE*> file = std::fopen(temporary.c_str(), "we");
+[[nodiscard]] bool write_file(const std::string& path, std::string_view content) {
+  const gsl::owner<std::FILE*> file = std::fopen(path.c_str(), "we");
   if (file == nullptr) {
     return false;
   }
   const bool written = std::fwrite(content.data(), 1, content.size(), file) == content.size();
-  if (std::fclose(file) != 0 || !written || std::rename(temporary.c_str(), path.c_str()) != 0) {
+  return std::fclose(file) == 0 && written;
+}
+
+/// Keeps `id` in the file at `path`, unless another process of the app kept an id there first, so every process of the
+/// app uses the same id. The id is written whole to a temporary file next to `path`, which is linked to `path` only
+/// when `path` doesn't exist, so a process never reads half an id and never replaces another process's id. A file at
+/// `path` that doesn't hold an id is replaced.
+///
+/// @param path The file that keeps the id.
+/// @param id The new id.
+/// @return The id `path` holds: `id`, or the one another process kept first. Nothing when neither can be kept or read.
+[[nodiscard]] std::optional<std::string> keep(const std::string& path, const std::string& id) {
+  const std::string temporary = path + "." + id + ".tmp";
+  if (!write_file(temporary, id)) {
     static_cast<void>(std::remove(temporary.c_str()));
-    return false;
+    return std::nullopt;
   }
-  return true;
+  std::optional<std::string> kept;
+  if (link(temporary.c_str(), path.c_str()) == 0) {
+    kept = id;
+  } else if (errno == EEXIST) {
+    kept = util::read_file(path, kUuidLength);
+  }
+  if (!kept.has_value() || !is_uuid(*kept)) {
+    if (std::rename(temporary.c_str(), path.c_str()) != 0) {
+      static_cast<void>(std::remove(temporary.c_str()));
+      return std::nullopt;
+    }
+    return id;
+  }
+  static_cast<void>(std::remove(temporary.c_str()));
+  return kept;
 }
 
 }  // namespace
@@ -111,11 +138,7 @@ std::optional<std::string> load_or_create_install_id(std::string_view directory)
   if (kept.has_value() && is_uuid(*kept)) {
     return kept;
   }
-  std::string created = new_uuid();
-  if (!replace_file(path, created)) {
-    return std::nullopt;
-  }
-  return created;
+  return keep(path, new_uuid());
 }
 
 }  // namespace rasp

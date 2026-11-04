@@ -2,11 +2,17 @@
 
 #include "rasp/install_id.h"
 
+#include <array>
 #include <cstddef>
+#include <filesystem>
 #include <gtest/gtest.h>
+#include <iterator>
+#include <latch>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <vector>
 
 #include "rasp/util/read_file.h"
 #include "support/files.h"
@@ -80,6 +86,33 @@ TEST(InstallId, loadOrCreateInstallId_whenTwoInstallsCreateAnId_givesThemDiffere
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(second.has_value());
   EXPECT_NE(*first, *second);
+}
+
+TEST(InstallId, loadOrCreateInstallId_whenProcessesCreateAnIdAtOnce_givesThemAllTheKeptId) {
+  constexpr std::size_t kProcesses = 8;
+  const TemporaryDirectory directory;
+  std::array<std::optional<std::string>, kProcesses> ids;
+  std::latch start(kProcesses);
+  std::vector<std::thread> processes;
+  processes.reserve(kProcesses);
+
+  for (std::optional<std::string>& id : ids) {
+    processes.emplace_back([&directory, &start, &id] {
+      start.arrive_and_wait();
+      id = load_or_create_install_id(directory.path());
+    });
+  }
+  for (std::thread& process : processes) {
+    process.join();
+  }
+
+  const std::optional<std::string> kept = util::read_file(id_path(directory), 64);
+  ASSERT_TRUE(kept.has_value());
+  for (const std::optional<std::string>& id : ids) {
+    EXPECT_EQ(id, kept);
+  }
+  EXPECT_EQ(std::distance(std::filesystem::directory_iterator(directory.path()), std::filesystem::directory_iterator()),
+            1);
 }
 
 TEST(InstallId, loadOrCreateInstallId_whenTheKeptFileIsNotAnId_replacesIt) {
