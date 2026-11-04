@@ -58,7 +58,7 @@ them into the runtime's config, and the runtime runs only those.
 | `debugger` | ✓ | ✓ | A debugger attached to the app. |
 | `hooks` | ✓ | ✓ | Frida and other libraries injected into the app. |
 | `integrity` | ✓ | | The runtime's code changed in memory. |
-| `mitm` | ✓ | ✓ | VPN tunnels, proxies and user-installed certificates. |
+| `mitm` | ✓ | ✓ | VPN tunnels, and on iOS proxies. User-installed certificates are not detected yet. |
 | `identity` | ✓ | ✓ | Whether the app still has the identity it shipped with, which a repackaged copy changes. Always runs. |
 | `emulator` | ✓ | ✓ | An emulator or the iOS Simulator. |
 | `virtualizer` | | ✓ | The app running inside another app's container. |
