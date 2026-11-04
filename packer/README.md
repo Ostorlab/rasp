@@ -23,9 +23,9 @@ result = packer.pack(
 rasp pack app.ipa --platform ios --build-id e6a8373149e83d008a5212b34bdd23bf637ad9561483c7a3c43b0a157c3f2a18 --checks debugger,hooks,jailbreak --output app-protected.ipa
 ```
 
-`checks` (`--checks` on the command line) is how the caller chooses the check groups the protected app runs. Without `--checks`, the command line warns and packs the app with only the required check group, `identity`. An id that is not one of the platform's groups is skipped: the command line warns about it, and `pack` reports it in `skipped_checks`. See [Checks](#checks).
+`checks` (`--checks` on the command line) is how the caller chooses the check groups the protected app runs. `pack` requires `checks`, and only the command line defaults it. Without `--checks`, the command line warns and packs the app with only the required check group, `identity`. An id that is not one of the platform's groups is skipped: the command line warns about it, and `pack` reports it in `skipped_checks`. See [Checks](#checks).
 
-`pack` returns the path of the protected app, the app's package name and version (on iOS, `CFBundleIdentifier` and `CFBundleShortVersionString` from its `Info.plist`; on Android, the `package` and `android:versionName` of its manifest), the build id, and the skipped check ids, `skipped_checks`.
+`pack` returns the path of the protected app, the app's package name and version, the build id, and the skipped check ids, `skipped_checks`. On iOS, the package name and version are `CFBundleIdentifier` and `CFBundleShortVersionString` from its `Info.plist`; on Android, they are the `package` and `android:versionName` of its manifest.
 
 The packer adds a prebuilt runtime, which comes from the runtime build and is not in the repository. The packer looks for it in its package resources: see the README in `src/rasp_packer/android/resources/` and the one in `src/rasp_packer/ios/resources/`.
 
