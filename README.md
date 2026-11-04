@@ -30,7 +30,8 @@ your app (APK / AAB / IPA)
 protected app (unsigned)  ──▶  you sign it and ship it
         │
         ▼
-on the device                  the runtime runs the chosen checks and reports what it observes
+on the device                  the runtime runs the chosen checks and hands the observations
+                               to its plugins; a development build also logs them
 ```
 
 - **The packer** (`packer/`, Python) adds the runtime to the app and returns it unsigned.
@@ -91,7 +92,7 @@ result = packer.pack(
 | `debugger` | ✓ | ✓ | A debugger attached to the app |
 | `hooks` | ✓ | ✓ | Frida and other libraries injected into the app |
 | `integrity` | ✓ | | The runtime's code changed in memory |
-| `mitm` | ✓ | ✓ | VPN tunnels and proxies |
+| `mitm` | ✓ | ✓ | VPN tunnels, and proxies on iOS |
 | `identity` | ✓ | ✓ | A repackaged copy of the app (always on) |
 | `emulator` | ✓ | ✓ | An emulator or the iOS Simulator |
 | `virtualizer` | | ✓ | The app running inside another app's container |
