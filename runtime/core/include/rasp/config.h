@@ -16,7 +16,7 @@ struct Config {
   std::string build_id;
   /// The ids of the check groups the protected app runs. `std::nullopt` when the runtime can't read a list: then no
   /// group runs, as with an empty list.
-  std::optional<std::vector<std::string>> checks;
+  std::optional<std::vector<std::string>> checks = std::nullopt;
 };
 
 /// Whether the protected app runs a check group.

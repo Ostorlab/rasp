@@ -13,6 +13,12 @@ TEST(Config, isCheckEnabled_whenTheConfigListsNoChecks_returnsFalse) {
   EXPECT_FALSE(is_check_enabled(Config{}, "debugger"));
 }
 
+TEST(Config, isCheckEnabled_whenOnlyTheBuildIdIsSet_returnsFalse) {
+  const Config config{.build_id = "build-1"};
+
+  EXPECT_FALSE(is_check_enabled(config, "debugger"));
+}
+
 TEST(Config, isCheckEnabled_whenTheChecksListTheGroup_returnsTrue) {
   const Config config{.build_id = {}, .checks = std::vector<std::string>{"debugger", "root"}};
 
