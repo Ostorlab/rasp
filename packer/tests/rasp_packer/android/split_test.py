@@ -5,12 +5,14 @@ These exercise the in-process splitter against the dex entries of the committed 
 APK built from the same entries.
 """
 
+import logging
 import pathlib
 import zipfile
 
 import pytest
 
 from dexsplit import _dex
+from rasp_packer.android import mapping
 from rasp_packer.android import split
 
 _AAB = (
@@ -19,7 +21,15 @@ _AAB = (
     / "android"
     / "InsecureBankv2.aab"
 )
+_SMALL_DEX = (
+    pathlib.Path(__file__).resolve().parents[2] / "dexsplit" / "fixtures" / "sample.dex"
+)
 _PACKAGE = "com.android.insecurebankv2"
+
+# A class that is in the fixture's dex, directly in the app's package, and one in the same package not
+# named in the mapping below, to show the whole package is protected and not only the named class.
+_NAMED_CLASS = "com.android.insecurebankv2.CryptoClass"
+_UNNAMED_CLASS = "com.android.insecurebankv2.DoLogin"
 
 
 def _aab_dex_entries() -> dict[str, bytes]:
@@ -31,6 +41,13 @@ def _aab_dex_entries() -> dict[str, bytes]:
             and name.endswith(".dex")
             and "/" not in name.removeprefix("base/dex/")
         }
+
+
+def _total_classes() -> int:
+    return sum(
+        len(_dex.Model.read(data).class_descriptors)
+        for data in _aab_dex_entries().values()
+    )
 
 
 def testSplitFromDexEntries_whenRealApp_putsPackageClassesInBusiness() -> None:
@@ -145,3 +162,100 @@ def testSplit_whenTheApkIsNotAZip_raisesSplitError(tmp_path: pathlib.Path) -> No
 
     with pytest.raises(split.SplitError, match="cannot read"):
         split.split(apk, _PACKAGE)
+
+
+def testSplitFromDexEntries_whenMapping_protectsTheWholeObfuscatedPackage() -> None:
+    # The mapping names one class, as if R8 had moved "myapp.Entry" into the fixture's app package.
+    # The whole package must then be business, including classes the mapping does not name.
+    class_mapping = mapping.ClassMapping(renames={"myapp.Entry": _NAMED_CLASS})
+
+    result = split.split_from_dex_entries(_aab_dex_entries(), "myapp", class_mapping)
+
+    business_classes = [name for dex in result.business for name in dex.classes]
+    assert _NAMED_CLASS in business_classes
+    assert _UNNAMED_CLASS in business_classes
+    assert all(name.startswith(f"{_PACKAGE}.") for name in business_classes) is True
+    assert len(result.framework) > 0
+
+
+def testSplitFromDexEntries_whenMappingSelectsNoClasses_producesNoBusiness() -> None:
+    class_mapping = mapping.ClassMapping(renames={"myapp.Entry": "not.in.the.Dex"})
+
+    result = split.split_from_dex_entries(_aab_dex_entries(), "myapp", class_mapping)
+
+    assert len(result.business) == 0
+    assert len(result.framework) > 0
+
+
+def testSplitFromDexEntries_whenNoMappingAndFewClassesUnderPackage_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger=split.__name__):
+        split.split_from_dex_entries(_aab_dex_entries(), _PACKAGE)
+
+    assert any(
+        "pass the R8 mapping file" in record.message.lower()
+        or "--mapping" in record.message
+        for record in caplog.records
+    )
+
+
+def testSplitFromDexEntries_whenNoMappingAndManyClassesUnderPackage_doesNotWarn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger=split.__name__):
+        split.split_from_dex_entries(_aab_dex_entries(), "com.google.android.gms")
+
+    assert len(caplog.records) == 0
+
+
+def testSplitFromDexEntries_whenMappingSelectsNoClasses_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class_mapping = mapping.ClassMapping(renames={"myapp.Entry": "not.in.the.Dex"})
+
+    with caplog.at_level(logging.WARNING, logger=split.__name__):
+        split.split_from_dex_entries(_aab_dex_entries(), "myapp", class_mapping)
+
+    assert [record.getMessage() for record in caplog.records] == [
+        f"the mapping selects none of the {_total_classes()} classes, so the app's own code is "
+        "shipping in the clear. Check that the file given with --mapping is the one R8 wrote for "
+        "this build."
+    ]
+
+
+def testSplitFromDexEntries_whenMappingSelectsClasses_doesNotWarn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class_mapping = mapping.ClassMapping(renames={"myapp.Entry": _NAMED_CLASS})
+
+    with caplog.at_level(logging.WARNING, logger=split.__name__):
+        split.split_from_dex_entries(_aab_dex_entries(), "myapp", class_mapping)
+
+    assert caplog.records == []
+
+
+def testSplitFromDexEntries_whenNoMappingAndASmallAppHasNoClassUnderPackage_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    entries = {"classes.dex": _SMALL_DEX.read_bytes()}
+
+    with caplog.at_level(logging.WARNING, logger=split.__name__):
+        split.split_from_dex_entries(entries, "not.in.the.dex")
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "only 0 of 12 classes are under 'not.in.the.dex'; if R8 repackaged this release build, "
+        "most of the app's own code is shipping in the clear. Pass the R8 mapping file with "
+        "--mapping so the packer can find the app's classes by their obfuscated names."
+    ]
+
+
+def testSplitFromDexEntries_whenNoMappingAndASmallAppHasClassesUnderPackage_doesNotWarn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    entries = {"classes.dex": _SMALL_DEX.read_bytes()}
+
+    with caplog.at_level(logging.WARNING, logger=split.__name__):
+        split.split_from_dex_entries(entries, "android.support.annotation")
+
+    assert caplog.records == []
