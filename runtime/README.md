@@ -9,13 +9,15 @@ Before you change anything here, read [CONTRIBUTING.md](CONTRIBUTING.md): it lis
 The code is grouped the same way at every level. `util/` holds generic helpers that know nothing about RASP. Every other folder is one domain module, named after the job it does, such as `checks/`, which produces the observations, and on Android, `payload/`, which recovers the app's protected code. When a module has a part shared by every platform, that part is in `core/`, and its platform part is in the folder with the same name under `ios/` or `android/`. Every built-in check is platform code, so the built-in checks are only in the platform folders.
 
 - `core/`: code shared by every platform. It uses no platform API.
+  - `include/rasp/config.h`: `Config`, the runtime's config that the packer writes into the app (the build id and the ids of the check groups to run), and `is_check_enabled`. Without a list of groups, no group runs.
+  - `include/rasp/parse_config.h`: `parse_config`, which reads the config from the JSON the packer writes. Members it doesn't know are ignored.
   - `include/rasp/observation.h`: `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`), and `observed`, `unsupported` and `failed`, which build one.
   - `include/rasp/util/`: generic helpers.
     - `logging.h`: `rasp::log` and `kLoggingEnabled`, the development logging that release builds leave out.
     - `read_file.h`: `read_file`, which reads a whole file up to a size limit, for the checks that read files under `/proc` and `/sys`.
   - `src/`: the code of these headers, in the same folders.
 - `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it starts the thread that runs the checks.
-  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It runs the checks, then runs them again every 60 seconds. A development build logs each observation. It runs until the process exits, and iOS suspends it while the app is in the background.
+  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It runs the check groups the config lists, then runs them again every 60 seconds. A development build logs each observation. It runs until the process exits, and iOS suspends it while the app is in the background.
   - `src/checks/`: the iOS checks. Each one reports observations.
     - `debugger.h`: the debugger checks. Off a physical device every observation has the unsupported status.
       - `dbg.traced`: whether the kernel marks the app's process as traced by a debugger, read through sysctl from the `P_TRACED` flag of the process. The monitoring thread reads it on every pass, so it also sees a debugger that attaches after launch.
@@ -39,7 +41,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
 - `android/`: `librasp.so`, the runtime for Android, and the stub that loads it. When the library loads, it starts the thread that runs the checks. The stub then has it install the on-demand class loader, which decrypts each of the app's own dex files the first time one of its classes is needed.
   - `src/entry.cpp`: a load-time constructor that starts the runtime's thread.
-  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It runs the checks, then runs them again every 60 seconds. A development build logs each observation. It runs until the process exits.
+  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It runs the check groups the config lists, then runs them again every 60 seconds. A development build logs each observation. It runs until the process exits.
   - `src/checks/`: the Android checks. Each one reports observations.
     - `debugger.h`: the debugger checks. They run on Android; off Android every observation has the unsupported status.
       - `dbg.tracer_pid`: the process id of the native debugger attached to the app, 0 when there is none, read from the `TracerPid:` line of `/proc/self/status`.

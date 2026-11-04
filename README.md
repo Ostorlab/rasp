@@ -20,6 +20,34 @@ runtime/                C++ runtime libraries, built with CMake, and the Android
   tests/                tests that run on a development machine, without a device
 ```
 
+## Usage
+
+Pack an app with the check groups it should run, then sign the protected app:
+
+```
+rasp pack app.apk --platform android --build-id <build id> --checks root,debugger,hooks --output app-protected.apk
+```
+
+The packer can also be called as a Python library. See [`packer/README.md`](packer/README.md).
+
+## Check groups
+
+The runtime runs its checks in groups. The caller of the packer chooses the groups a protected app runs (`--checks`), the packer writes them into the runtime's config, and the runtime runs only those, when the app starts and then every 60 seconds. `identity` always runs: the packer adds it to every choice.
+
+| Group | Android | iOS | What it looks for |
+|---|---|---|---|
+| `root` | ✓ | | Root files, writable system partitions, SELinux and build properties. |
+| `jailbreak` | | ✓ | Jailbreak files, sandbox escape and process spawning. |
+| `debugger` | ✓ | ✓ | A debugger attached to the app. |
+| `hooks` | ✓ | ✓ | Frida and other libraries injected into the app. |
+| `integrity` | ✓ | | The runtime's code changed in memory. |
+| `mitm` | ✓ | ✓ | VPN tunnels, proxies and user-installed certificates. |
+| `identity` | ✓ | ✓ | Whether the app still has the identity it shipped with, which a repackaged copy changes. Always runs. |
+| `emulator` | ✓ | ✓ | An emulator or the iOS Simulator. |
+| `virtualizer` | | ✓ | The app running inside another app's container. |
+
+An id that is not a group of the app's platform is skipped with a warning, so a list made for an older version still packs. The groups are listed in [`packer/src/rasp_packer/checks.py`](packer/src/rasp_packer/checks.py), and a test checks they match the runtime. See [Checks](packer/README.md#checks) in the packer's README.
+
 ## Contributing
 
 Every change goes through a pull request.
