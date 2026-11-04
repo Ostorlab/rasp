@@ -34,6 +34,8 @@ on the device                  the runtime runs the chosen checks and hands the 
                                to its plugins; a development build also logs them
 ```
 
+A plugin is code compiled into the runtime ([API](runtime/core/include/rasp/plugin.h), [example](runtime/plugins/example/)). It can add its own checks, and it receives the observations of each run, for example to send them somewhere. A runtime built without plugins keeps the observations to itself, and a release build doesn't log them.
+
 - **The packer** (`packer/`, Python) adds the runtime to the app and returns it unsigned.
 - **The runtime** (`runtime/`, C++) runs inside the protected app and runs the checks.
 

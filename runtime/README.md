@@ -31,6 +31,13 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
       - `mitm.user_cas`: always unsupported, through `trust_store`. iOS has no public API that lists the certificate authorities the user installed, such as the root of an interception proxy, and the trust store is outside the app's sandbox. The signal is still reported, so iOS and Android report the same signals. Interception through such an authority can be caught when it is used instead, by checking the key of a TLS connection to a known server; that is future work, listed in `TODO.md`.
     - `virtualizer.h`: the virtualizer check, which reports whether the app runs as a guest inside another app (an app virtualizer) rather than installed as a standalone app. Off a physical device every observation is unsupported.
       - `virt.exec_path`: whether the main executable's path, read through dyld, lies outside the system's app-container layout `/private/var/containers/Bundle/Application/<UUID>/<App>.app/`. A genuine install sits inside it; a virtualizer loads the guest from its own data container (under `/private/var/mobile/Containers/Data/Application/`) instead of a system bundle path, so the executable path lies outside the layout. A sophisticated virtualizer can fake the path, so this is a signal, not proof.
+      - `virt.foreign_images`: the loaded images, read through dyld, whose path lies outside the legitimate roots:
+        - the app's own bundle directory
+        - `/usr/lib`
+        - `/System`
+        - the cryptex OS images under `/private/preboot/.../Cryptexes/OS/System/`, where modern iOS keeps stock frameworks such as WebKit
+
+        A virtualizer maps its own runtime into the guest from its data container, so those images show up here (at most 64 such images are reported). A clean process reports an empty list.
     - `hooks.h`: the hooking checks. Off a physical device every observation has the unsupported status.
       - `hook.maps_hits`: the paths of the images loaded in the process, read through dyld, that name a known instrumentation or hooking framework (Frida, Cycript, Substrate and the tweak loaders that replace it, SSL Kill Switch and the like), matched on the file name or on a folder that only holds tweaks, without regard to case.
       - `hook.dyld_env`: the value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, read through getenv, the libraries the environment asks dyld to insert into the app.
@@ -40,13 +47,6 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
       - `id.bundle_id`: the bundle identifier of the app's main bundle, read through two sources. `CFBundle` is the value CoreFoundation reports, and `Info.plist` is the `CFBundleIdentifier` key read from the main bundle's Info.plist file on disk, so a hook on CFBundle shows as two values that disagree.
       - `id.team_id`: the Team ID of the code signature of the app's main executable, read through `code_signature`.
       - `id.cdhash`: the cdhash of the code signature of the app's main executable, read through `code_signature`.
-      - `virt.foreign_images`: the loaded images, read through dyld, whose path lies outside the legitimate roots:
-        - the app's own bundle directory
-        - `/usr/lib`
-        - `/System`
-        - the cryptex OS images under `/private/preboot/.../Cryptexes/OS/System/`, where modern iOS keeps stock frameworks such as WebKit
-
-        A virtualizer maps its own runtime into the guest from its data container, so those images show up here (at most 64 such images are reported). A clean process reports an empty list.
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
 - `android/`: `librasp.so`, the runtime for Android, and the stub that loads it. When the library loads, it starts the thread that runs the checks. The stub then has it install the on-demand class loader, which decrypts each of the app's own dex files the first time one of its classes is needed.
   - `src/entry.cpp`: a load-time constructor that starts the runtime's thread.
