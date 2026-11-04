@@ -2,7 +2,12 @@
 
 #include "monitoring.h"
 
+#include <CoreFoundation/CFBase.h>
+#include <CoreFoundation/CFNumber.h>
+#include <CoreFoundation/CFString.h>
+#include <CoreFoundation/CFURL.h>
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <iterator>
@@ -10,6 +15,7 @@
 #include <pthread.h>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -36,9 +42,14 @@ namespace {
 /// How long the thread waits between two runs of the checks.
 constexpr std::chrono::seconds kCheckInterval{60};
 
-/// The folder of the app's sandbox that keeps the install id, under its home folder: Library/Caches, which iOS never
-/// backs up, so an id restored from a backup is never shared by two devices.
-constexpr std::string_view kInstallIdDirectory = "/Library/Caches";
+/// The folder of the app's sandbox that keeps the install id, under its home folder: Library/Application Support,
+/// which iOS never deletes to free space, unlike Library/Caches. The id's file is excluded from backups, so an id
+/// restored from a backup is never shared by two devices.
+constexpr std::string_view kInstallIdDirectory = "/Library/Application Support";
+
+/// The permissions of the folder that keeps the install id, when the runtime creates it: only the app can read, write
+/// and enter it.
+constexpr mode_t kPrivateDirectoryMode = 0700;
 
 /// What the thread reads from the app's environment, once, while the runtime loads.
 struct Environment {
@@ -58,14 +69,42 @@ struct Environment {
   return home == nullptr ? std::string() : std::string(home).append(kInstallIdDirectory);
 }
 
-/// The runtime's config, with the install id kept in `directory`.
+/// Marks the file at `path` as excluded from the device's backups, so a backup restored on another device doesn't
+/// carry it.
+///
+/// @param path The file.
+/// @return `true` when the file is marked.
+[[nodiscard]] bool exclude_from_backup(const std::string& path) {
+  const CFStringRef text = CFStringCreateWithCString(kCFAllocatorDefault, path.c_str(), kCFStringEncodingUTF8);
+  if (text == nullptr) {
+    return false;
+  }
+  const CFURLRef url = CFURLCreateWithFileSystemPath(kCFAllocatorDefault, text, kCFURLPOSIXPathStyle, false);
+  CFRelease(text);
+  if (url == nullptr) {
+    return false;
+  }
+  const bool excluded =
+      CFURLSetResourcePropertyForKey(url, kCFURLIsExcludedFromBackupKey, kCFBooleanTrue, nullptr) != 0;
+  CFRelease(url);
+  return excluded;
+}
+
+/// The runtime's config, with the install id kept in `directory`, which is created when it doesn't exist yet. The id's
+/// file is marked as excluded from backups on every launch.
 ///
 /// @param directory The folder that keeps the install id, or empty when there is none.
 /// @return The config the packer wrote, with its install id, which stays `std::nullopt` when it can't be read or kept.
 [[nodiscard]] Config read_config(const std::string& directory) {
   Config config = read_embedded_config();
-  if (!directory.empty()) {
-    config.install_id = load_or_create_install_id(directory);
+  if (directory.empty() || (mkdir(directory.c_str(), kPrivateDirectoryMode) != 0 && errno != EEXIST)) {
+    return config;
+  }
+  config.install_id = load_or_create_install_id(directory);
+  if (config.install_id.has_value() && !exclude_from_backup(directory + "/" + std::string(kInstallIdFileName))) {
+    if constexpr (kLoggingEnabled) {
+      rasp::log("install id: its file could not be excluded from backups");
+    }
   }
   return config;
 }

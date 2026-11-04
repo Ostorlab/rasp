@@ -16,9 +16,12 @@ inline constexpr std::string_view kInstallIdFileName = "rasp_install_id";
 ///
 /// The id is a random UUID (version 4) from `arc4random_buf`, written as 36 lowercase characters such as
 /// `0f8e5b8e-6c1a-4b7e-9d3a-2a4c5e6f7a8b`. It says nothing about the device or the user, so it changes when the app is
-/// installed again. A new id is written whole to a temporary file, which then becomes the kept one only if no other
-/// process of the app kept one first: otherwise that process's id is returned, so all the app's processes use the same
-/// id. A kept file that doesn't hold such a UUID is replaced with a new one.
+/// installed again. A kept file that doesn't hold such a UUID is replaced with a new one.
+///
+/// The processes of an app share the folder, and several may start at once. A process that finds no id takes the
+/// exclusive lock of `rasp_install_id.lock`, next to the id's file, reads the id again, and creates one only when there
+/// still is none, so every process of the app gets the same id. The new id is written whole to a temporary file that
+/// is then renamed, so a process never reads half an id.
 ///
 /// It reads and writes files, so it runs on the runtime's own thread, never at load time.
 ///

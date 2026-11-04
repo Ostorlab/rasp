@@ -11,9 +11,10 @@ namespace rasp::ios {
 /// thread, which never reads the environment itself.
 ///
 /// The thread first initialises the plugins compiled into the runtime, with the runtime's config, which the packer
-/// wrote into the framework's binary, and the install id it keeps in the sandbox's Library/Caches. Then it runs the
-/// built-in checks of the groups the config enables, and the plugins, and runs them again every 60 seconds. No group
-/// runs when the config has no `checks` list or the list is empty. A development build logs each observation.
+/// wrote into the framework's binary, and the install id it keeps in the sandbox's Library/Application Support,
+/// excluded from backups. Then it runs the built-in checks of the groups the config enables, and the plugins, and runs
+/// them again every 60 seconds. No group runs when the config has no `checks` list or the list is empty. A development
+/// build logs each observation.
 ///
 /// Nothing is checked when the thread can't be started. Otherwise the thread never ends: it runs until the process
 /// exits, and iOS suspends it while the app is in the background. The thread is detached: the app never waits for it,

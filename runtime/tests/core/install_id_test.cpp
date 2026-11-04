@@ -6,7 +6,6 @@
 #include <cstddef>
 #include <filesystem>
 #include <gtest/gtest.h>
-#include <iterator>
 #include <latch>
 #include <optional>
 #include <string>
@@ -111,8 +110,9 @@ TEST(InstallId, loadOrCreateInstallId_whenProcessesCreateAnIdAtOnce_givesThemAll
   for (const std::optional<std::string>& id : ids) {
     EXPECT_EQ(id, kept);
   }
-  EXPECT_EQ(std::distance(std::filesystem::directory_iterator(directory.path()), std::filesystem::directory_iterator()),
-            1);
+  for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(directory.path())) {
+    EXPECT_NE(entry.path().extension(), ".tmp") << entry.path();
+  }
 }
 
 TEST(InstallId, loadOrCreateInstallId_whenTheKeptFileIsNotAnId_replacesIt) {
