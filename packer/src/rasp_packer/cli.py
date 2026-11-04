@@ -85,7 +85,8 @@ def _required_checks() -> str:
 def _pack(arguments: argparse.Namespace) -> int:
     """Packs the app given on the command line and prints the result.
 
-    Without `--checks`, it warns and packs the app with only the required check groups.
+    Without `--checks`, it warns and packs the app with only the required check groups. It warns
+    about each given check id that is not one of the platform's groups, which the packer skips.
     """
     checks: list[str] | None = arguments.checks
     if checks is None:
@@ -107,6 +108,11 @@ def _pack(arguments: argparse.Namespace) -> int:
     except errors.Error as error:
         print(f"rasp pack: {error}", file=sys.stderr)
         return EXIT_FAILED
+    for check in result.skipped_checks:
+        print(
+            f"rasp pack: warning: {check!r} is not a check of {arguments.platform}, skipped",
+            file=sys.stderr,
+        )
     print(
         f"packed {arguments.platform} app: {result.output} "
         f"(package {result.package_name}, version {result.version}, build {result.build_id})"

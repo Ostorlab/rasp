@@ -65,6 +65,7 @@ def testPack_whenIosApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
         package_name="dev.ostorlab.demo",
         version="1.2.3",
         build_id=_BUILD_ID,
+        skipped_checks=(),
     )
 
 
@@ -149,19 +150,28 @@ def testPack_whenGivenNoChecks_packsWithAConfigHoldingOnlyTheRequiredOnes(
     ]
 
 
-def testPack_whenACheckIsNotOfThePlatform_raisesUnknownCheckError(
-    ipa_file: pathlib.Path, tmp_path: pathlib.Path
+def testPack_whenChecksAreNotOfThePlatform_packsWithTheOthersAndReportsThem(
+    ipa_file: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with pytest.raises(errors.UnknownCheckError, match="'root'"):
-        packer.pack(
-            app=ipa_file,
-            platform=platforms.Platform.IOS,
-            output=tmp_path / "out.ipa",
-            build_id=_BUILD_ID,
-            checks=["root"],
-        )
+    configs: list[object] = []
 
-    assert (tmp_path / "out.ipa").exists() is False
+    def fake_pack(*, config: object, **_: object) -> identity.AppIdentity:
+        configs.append(config)
+        return _IDENTITY
+
+    monkeypatch.setattr(ios_packer, "pack", fake_pack)
+    result = packer.pack(
+        app=ipa_file,
+        platform=platforms.Platform.IOS,
+        output=tmp_path / "out.ipa",
+        build_id=_BUILD_ID,
+        checks=["hooks", "root", "telepathy"],
+    )
+
+    assert configs == [
+        runtime_config.RuntimeConfig(build_id=_BUILD_ID, checks=("hooks", "identity"))
+    ]
+    assert result.skipped_checks == ("root", "telepathy")
 
 
 def testPack_whenOutputExists_raisesOutputExistsError(tmp_path: pathlib.Path) -> None:
@@ -231,4 +241,5 @@ def testPack_whenAndroidApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
         package_name="dev.ostorlab.demo",
         version="1.2.3",
         build_id=_BUILD_ID,
+        skipped_checks=(),
     )

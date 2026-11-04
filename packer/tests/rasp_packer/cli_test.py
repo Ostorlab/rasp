@@ -6,7 +6,10 @@ from importlib import metadata
 import pytest
 
 from rasp_packer import cli
+from rasp_packer import identity
 from rasp_packer import packer
+from rasp_packer import runtime_config
+from rasp_packer.android import packer as android_packer
 
 _BUILD_ID = "a" * 64
 _USAGE_ERROR = 2
@@ -95,6 +98,7 @@ def testMain_whenChecksAreGiven_passesThemToThePacker(
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            skipped_checks=(),
         )
 
     monkeypatch.setattr(packer, "pack", fake_pack)
@@ -123,6 +127,7 @@ def testMain_whenChecksHaveSpacesOrATrailingComma_passesTheIdsAloneToThePacker(
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            skipped_checks=(),
         )
 
     monkeypatch.setattr(packer, "pack", fake_pack)
@@ -158,6 +163,7 @@ def testMain_whenChecksAreNotGiven_warnsAndPassesNoChecksToThePacker(
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            skipped_checks=(),
         )
 
     monkeypatch.setattr(packer, "pack", fake_pack)
@@ -173,13 +179,30 @@ def testMain_whenChecksAreNotGiven_warnsAndPassesNoChecksToThePacker(
     )
 
 
-def testMain_whenACheckIsUnknown_printsTheErrorAndReturnsFailed(
-    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+def testMain_whenACheckIsUnknown_warnsAndPacksWithTheOtherChecks(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    exit_code = cli.main([*_pack_arguments(tmp_path), "--checks", "telepathy"])
+    configs: list[runtime_config.RuntimeConfig] = []
 
-    assert exit_code == cli.EXIT_FAILED
-    assert "the check 'telepathy' does not exist for ios" in capsys.readouterr().err
+    def fake_pack(
+        *, config: runtime_config.RuntimeConfig, **_: object
+    ) -> identity.AppIdentity:
+        configs.append(config)
+        return identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+
+    exit_code = cli.main(
+        [*_pack_arguments(tmp_path, platform="android"), "--checks", "hooks,oldcheck"]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert [config.checks for config in configs] == [("hooks", "identity")]
+    assert capsys.readouterr().err == (
+        "rasp pack: warning: 'oldcheck' is not a check of android, skipped\n"
+    )
 
 
 def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
@@ -195,6 +218,7 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            skipped_checks=(),
         ),
     )
 

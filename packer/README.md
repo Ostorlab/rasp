@@ -23,9 +23,9 @@ result = packer.pack(
 rasp pack app.ipa --platform ios --build-id e6a8373149e83d008a5212b34bdd23bf637ad9561483c7a3c43b0a157c3f2a18 --checks debugger,hooks,jailbreak --output app-protected.ipa
 ```
 
-`checks` (`--checks` on the command line) is how the caller chooses the check groups the protected app runs. Without `--checks`, the command line warns and packs the app with only the required check group, `identity`. See [Checks](#checks).
+`checks` (`--checks` on the command line) is how the caller chooses the check groups the protected app runs. Without `--checks`, the command line warns and packs the app with only the required check group, `identity`. An id that is not one of the platform's groups is skipped: the command line warns about it, and `pack` reports it in `skipped_checks`. See [Checks](#checks).
 
-`pack` returns the path of the protected app, the app's package name and version (on iOS, `CFBundleIdentifier` and `CFBundleShortVersionString` from its `Info.plist`; on Android, the `package` and `android:versionName` of its manifest), and the build id.
+`pack` returns the path of the protected app, the app's package name and version (on iOS, `CFBundleIdentifier` and `CFBundleShortVersionString` from its `Info.plist`; on Android, the `package` and `android:versionName` of its manifest), the build id, and the skipped check ids, `skipped_checks`.
 
 The packer adds a prebuilt runtime, which comes from the runtime build and is not in the repository. The packer looks for it in its package resources: see the README in `src/rasp_packer/android/resources/` and the one in `src/rasp_packer/ios/resources/`.
 
@@ -105,7 +105,7 @@ Each platform's protection version is a whole number in `src/rasp_packer/protect
 
 The runtime runs its checks in groups, such as `debugger` or `hooks`. `src/rasp_packer/checks.py` lists the groups of each platform in `CHECKS`, and those every protected app runs in `REQUIRED_CHECKS` (`identity`). The caller chooses the groups a protected app runs and passes their ids to `pack` (or to `rasp pack --checks`, comma-separated). The packer:
 
-- refuses an id that is not one of the platform's groups with `UnknownCheckError`;
+- skips an id that is not one of the platform's groups and reports it in `PackResult.skipped_checks`, so that a caller, such as a CI job, still packs when it passes a group that was renamed or removed. The command line warns about each skipped id on stderr, such as `rasp pack: warning: 'oldcheck' is not a check of android, skipped`, and packs the app;
 - adds the required groups, so `checks=["debugger", "hooks", "jailbreak"]` on iOS also runs `identity`;
 - writes the ids sorted into the runtime config.
 
