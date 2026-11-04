@@ -7,13 +7,13 @@ namespace rasp::ios {
 /// Starts the thread that runs the checks, and returns at once.
 ///
 /// It must be called while the runtime loads, on the app's main thread, before the app's own code runs. It first reads
-/// the value of `DYLD_INSERT_LIBRARIES` from the app's environment, once, and hands the copy to the thread, which
-/// reports it on every pass and never reads the environment itself.
+/// the values of `DYLD_INSERT_LIBRARIES` and `HOME` from the app's environment, once, and hands the copies to the
+/// thread, which never reads the environment itself.
 ///
 /// The thread first initialises the plugins compiled into the runtime, with the runtime's config, which the packer
-/// wrote into the framework's binary. Then it runs the built-in checks of the groups the config enables, and the
-/// plugins, and runs them again every 60 seconds. No group runs when the config has no `checks` list or the list is
-/// empty. A development build logs each observation.
+/// wrote into the framework's binary, and the install id it keeps in the sandbox's Library/Caches. Then it runs the
+/// built-in checks of the groups the config enables, and the plugins, and runs them again every 60 seconds. No group
+/// runs when the config has no `checks` list or the list is empty. A development build logs each observation.
 ///
 /// Nothing is checked when the thread can't be started. Otherwise the thread never ends: it runs until the process
 /// exits, and iOS suspends it while the app is in the background. The thread is detached: the app never waits for it,

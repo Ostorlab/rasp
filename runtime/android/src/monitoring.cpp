@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <chrono>
 #include <iterator>
+#include <optional>
 #include <pthread.h>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -19,9 +21,11 @@
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/embedded_config.h"
+#include "rasp/install_id.h"
 #include "rasp/observation.h"
 #include "rasp/plugins/registry.h"
 #include "rasp/util/logging.h"
+#include "util/app_storage.h"
 
 namespace rasp::android {
 
@@ -61,13 +65,25 @@ constexpr std::chrono::seconds kCheckInterval{60};
   return observations;
 }
 
+/// The runtime's config, with the install id kept in the app's `no_backup` folder.
+///
+/// @return The config the packer wrote, with its install id, which stays `std::nullopt` when it can't be read or kept.
+[[nodiscard]] Config read_config() {
+  Config config = read_embedded_config();
+  const std::optional<std::string> directory = util::make_no_backup_directory();
+  if (directory) {
+    config.install_id = load_or_create_install_id(*directory);
+  }
+  return config;
+}
+
 /// The thread: reads the runtime's config and initialises the plugins with it, then runs the built-in checks the config
 /// enables and the plugins, then again every kCheckInterval, until the process exits. The config and the context the
 /// plugins share are locals of this thread, which never returns, so they live as long as the process.
 ///
 /// @return Never returns.
 void* monitor(void* /*argument*/) {
-  const Config config = read_embedded_config();
+  const Config config = read_config();
   rasp::plugins::Context context;
   rasp::plugins::init_plugins(rasp::plugins::compiled_in(), config, context);
   while (true) {
