@@ -59,7 +59,3 @@ class InvalidRuntimeError(Error):
 
 class ConfigTooLargeError(Error):
     """The runtime's config does not fit in the space the runtime's binary keeps for it."""
-
-
-class UnknownCheckError(Error):
-    """A check group is not one the runtime runs on the app's platform."""
