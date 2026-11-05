@@ -1,4 +1,4 @@
-# rasp
+# RASP
 
 [![Packer](https://github.com/Ostorlab/rasp/actions/workflows/packer.yml/badge.svg)](https://github.com/Ostorlab/rasp/actions/workflows/packer.yml)
 [![Runtime](https://github.com/Ostorlab/rasp/actions/workflows/runtime.yml/badge.svg)](https://github.com/Ostorlab/rasp/actions/workflows/runtime.yml)
