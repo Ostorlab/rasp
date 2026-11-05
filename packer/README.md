@@ -57,7 +57,6 @@ The key is stored in the clear, in `assets/rasp/key.bin`. The encryption raises 
 - `src/rasp_packer/packer.py`: `pack`, the entry point.
 - `src/rasp_packer/platforms.py`: the platforms, Android and iOS.
 - `src/rasp_packer/identity.py`: `AppIdentity`, the package name and version read from the app.
-- `src/rasp_packer/protection_versions.py`: the protection version of each platform. It is public, so the caller can read it, for example to compute the build id.
 - `src/rasp_packer/checks.py`: the check groups of each platform, in the order the runtime runs them, and the ones every protected app runs. The packer skips an id that isn't one of them and reports it, so that a caller still packs when it passes a check group that was renamed or removed, and adds the ones every protected app runs.
 - `src/rasp_packer/cli.py`: the `rasp` command line.
 - `src/rasp_packer/ios/`: packing of IPAs.
@@ -98,8 +97,6 @@ CI runs the same commands (`.github/workflows/packer.yml`).
 ## Build id
 
 Every protected build has a build id, which the packer writes into the app. The caller chooses it and passes it to `pack` (or to `rasp pack --build-id`). The packer accepts any id: it writes it as it is and does not check its format. It only refuses an id it cannot write: an empty one, one with control characters, or one too long for the space the runtime keeps for its config.
-
-Each platform's protection version is a whole number in `src/rasp_packer/protection_versions.py`. The caller can read it from `rasp_packer.protection_versions.PROTECTION_VERSIONS`, for example to make it part of the build id. Bump it when a change alters what protected apps do on that platform: the runtime's behaviour, or how the packer transforms the app. Changes that leave protected apps the same, such as comments, refactors, tests or docs, do not bump it.
 
 ## Checks
 
