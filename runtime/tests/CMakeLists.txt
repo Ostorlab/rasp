@@ -80,6 +80,12 @@ foreach(check emulator root)
   gtest_discover_tests(rasp_android_${check}_test)
 endforeach()
 
+# The debugger, hooks and root checks read a second source through the shared util/direct_syscall helper, so their
+# tests link it too.
+foreach(check debugger hooks root)
+  target_sources(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src/util/direct_syscall.cpp)
+endforeach()
+
 add_executable(rasp_android_integrity_test android/checks/integrity_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)

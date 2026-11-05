@@ -1,4 +1,5 @@
-/// The Android hooking checks: the memory-map probe, and its unsupported result off Android. The list of
+/// The Android hooking checks: the memory-map probe through libc and through direct system calls, and its unsupported
+/// result off Android. The list of
 /// instrumentation markers draws on the names Frida, Substrate and Xposed map their code under.
 
 #include "checks/hooks.h"
@@ -15,6 +16,7 @@
 
 #include "rasp/observation.h"
 #include "rasp/util/read_file.h"
+#include "util/direct_syscall.h"
 
 namespace rasp::android::checks {
 
@@ -34,8 +36,10 @@ constexpr bool kOnAndroid = false;
 constexpr std::string_view kMapsHitsSignal = "hook.maps_hits";
 /// The signal of the probe that reports writable-executable mappings.
 constexpr std::string_view kRwxRegionsSignal = "hook.rwx_regions";
-/// The source of both probes.
+/// The source of both probes that read the memory map through the libc file functions.
 constexpr std::string_view kMapsSource = "proc_maps";
+/// The source of the framework probe that reads the memory map through direct system calls.
+constexpr std::string_view kMapsDirectSource = "proc_maps_syscall";
 
 /// The app's memory map.
 constexpr std::string_view kMapsPath = "/proc/self/maps";
@@ -107,18 +111,24 @@ constexpr auto kFrameworkMarkers = std::to_array<std::string_view>({
 
 std::vector<Observation> observe_maps(std::string_view maps_path) {
   const std::optional<std::string> maps = read_file(maps_path, kMaxMapsSize);
-  if (!maps) {
-    return {failed(kMapsHitsSignal, kMapsSource), failed(kRwxRegionsSignal, kMapsSource)};
-  }
+  const std::optional<std::string> direct_maps = util::read_file_direct(maps_path, kMaxMapsSize);
   return {
-      observed(kMapsHitsSignal, kMapsSource, matching_lines(*maps, names_framework)),
-      observed(kRwxRegionsSignal, kMapsSource, matching_lines(*maps, writable_executable)),
+      maps ? observed(kMapsHitsSignal, kMapsSource, matching_lines(*maps, names_framework))
+           : failed(kMapsHitsSignal, kMapsSource),
+      maps ? observed(kRwxRegionsSignal, kMapsSource, matching_lines(*maps, writable_executable))
+           : failed(kRwxRegionsSignal, kMapsSource),
+      direct_maps ? observed(kMapsHitsSignal, kMapsDirectSource, matching_lines(*direct_maps, names_framework))
+                  : failed(kMapsHitsSignal, kMapsDirectSource),
   };
 }
 
 std::vector<Observation> hooks() {
   if (!kOnAndroid) {
-    return {unsupported(kMapsHitsSignal, kMapsSource), unsupported(kRwxRegionsSignal, kMapsSource)};
+    return {
+        unsupported(kMapsHitsSignal, kMapsSource),
+        unsupported(kRwxRegionsSignal, kMapsSource),
+        unsupported(kMapsHitsSignal, kMapsDirectSource),
+    };
   }
   return observe_maps(kMapsPath);
 }

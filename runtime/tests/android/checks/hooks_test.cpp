@@ -26,9 +26,9 @@ constexpr std::string_view kCleanMaps =
     "7ffffffdd000-7ffffffff000 rw-p 00000000 00:00 0    [stack]\n"
     "7f0000200000-7f0000400000 rw-p 00000000 00:00 0    [anon:libc_malloc]\n";
 
-/// The hook.maps_hits observation that reports `lines`.
-[[nodiscard]] Observation maps_hits(std::vector<std::string> lines) {
-  return {.signal = "hook.maps_hits", .source = "proc_maps", .status = Status::kOk, .value = std::move(lines)};
+/// The hook.maps_hits observation through `source` that reports `lines`.
+[[nodiscard]] Observation maps_hits(std::vector<std::string> lines, std::string_view source = "proc_maps") {
+  return {.signal = "hook.maps_hits", .source = std::string(source), .status = Status::kOk, .value = std::move(lines)};
 }
 
 /// The hook.rwx_regions observation that reports `lines`.
@@ -36,9 +36,9 @@ constexpr std::string_view kCleanMaps =
   return {.signal = "hook.rwx_regions", .source = "proc_maps", .status = Status::kOk, .value = std::move(lines)};
 }
 
-/// The observation of a memory map that couldn't be read, for `signal`.
-[[nodiscard]] Observation unreadable(std::string_view signal) {
-  return {.signal = std::string(signal), .source = "proc_maps", .status = Status::kError, .value = {}};
+/// The observation through `source` of a memory map that couldn't be read, for `signal`.
+[[nodiscard]] Observation unreadable(std::string_view signal, std::string_view source = "proc_maps") {
+  return {.signal = std::string(signal), .source = std::string(source), .status = Status::kError, .value = {}};
 }
 
 /// Writes `content` to a maps file in `directory` and returns its path.
@@ -53,10 +53,11 @@ TEST(Hooks, observeMaps_whenMapIsClean_reportsEmptyLists) {
   const std::string path = write_maps(directory, kCleanMaps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path), (std::vector<Observation>{maps_hits({}), rwx_regions({})}));
+  EXPECT_EQ(observe_maps(path),
+            (std::vector<Observation>{maps_hits({}), rwx_regions({}), maps_hits({}, "proc_maps_syscall")}));
 }
 
-TEST(Hooks, observeMaps_whenFridaAgentIsMapped_reportsItUnderMapsHits) {
+TEST(Hooks, observeMaps_whenFridaAgentIsMapped_reportsItUnderMapsHitsThroughBothSources) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string line =
@@ -66,7 +67,9 @@ TEST(Hooks, observeMaps_whenFridaAgentIsMapped_reportsItUnderMapsHits) {
 
   const std::vector<Observation> observations = observe_maps(path);
 
-  EXPECT_EQ(observations.at(0), maps_hits({line}));
+  ASSERT_EQ(observations.size(), 3U);
+  EXPECT_EQ(observations[0], maps_hits({line}));
+  EXPECT_EQ(observations[2], maps_hits({line}, "proc_maps_syscall"));
 }
 
 TEST(Hooks, observeMaps_whenAMarkerIsUppercase_matchesCaseInsensitively) {
@@ -76,7 +79,11 @@ TEST(Hooks, observeMaps_whenAMarkerIsUppercase_matchesCaseInsensitively) {
   const std::string path = write_maps(directory, line + "\n");
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(0), maps_hits({line}));
+  const std::vector<Observation> observations = observe_maps(path);
+
+  ASSERT_EQ(observations.size(), 3U);
+  EXPECT_EQ(observations[0], maps_hits({line}));
+  EXPECT_EQ(observations[2], maps_hits({line}, "proc_maps_syscall"));
 }
 
 TEST(Hooks, observeMaps_whenARegionIsWritableExecutable_reportsItUnderRwxRegions) {
@@ -101,20 +108,32 @@ TEST(Hooks, observeMaps_whenARegionIsWritableButNotExecutable_doesNotReportIt) {
   EXPECT_EQ(observe_maps(path).at(1), rwx_regions({}));
 }
 
-TEST(Hooks, observeMaps_whenTheFileIsMissing_reportsAnErrorForBoth) {
+TEST(Hooks, observeMaps_whenTheFileIsMissing_reportsAnErrorForEveryObservation) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
 
   EXPECT_EQ(observe_maps(directory.path() + "/missing"),
-            (std::vector<Observation>{unreadable("hook.maps_hits"), unreadable("hook.rwx_regions")}));
+            (std::vector<Observation>{unreadable("hook.maps_hits"), unreadable("hook.rwx_regions"),
+                                      unreadable("hook.maps_hits", "proc_maps_syscall")}));
+}
+
+TEST(Hooks, observeMaps_whenTheFileCantBeRead_reportsAnErrorForEveryObservation) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+
+  EXPECT_EQ(observe_maps(directory.path()),
+            (std::vector<Observation>{unreadable("hook.maps_hits"), unreadable("hook.rwx_regions"),
+                                      unreadable("hook.maps_hits", "proc_maps_syscall")}));
 }
 
 TEST(Hooks, hooks_whenOffAndroid_reportsEveryCheckAsUnsupported) {
-  EXPECT_EQ(hooks(),
-            (std::vector<Observation>{
-                {.signal = "hook.maps_hits", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
-                {.signal = "hook.rwx_regions", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
-            }));
+  EXPECT_EQ(
+      hooks(),
+      (std::vector<Observation>{
+          {.signal = "hook.maps_hits", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
+          {.signal = "hook.rwx_regions", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
+          {.signal = "hook.maps_hits", .source = "proc_maps_syscall", .status = Status::kUnsupported, .value = {}},
+      }));
 }
 
 }  // namespace
