@@ -1,21 +1,23 @@
 /// The Android network-interception checks: the tunnel probe over the process's own network interfaces, the
-/// user-authority probe, and their unsupported results off Android.
+/// user-authority probe over the `AndroidCAStore` KeyStore, and their unsupported results off Android.
 
 #include "checks/mitm.h"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <filesystem>
 #include <ifaddrs.h>
 #include <iterator>
 #include <optional>
 #include <set>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 #include <vector>
+
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
 
 #include "rasp/observation.h"
 
@@ -45,6 +47,10 @@ constexpr std::string_view kUserCasSource = "user_cacerts";
 /// can't grow it without bound. The user-authority probe is not capped: the user decides which certificates to trust,
 /// so every one is reported.
 constexpr std::size_t kMaxEntries = 100;
+
+/// The prefix of a user-installed authority's alias in the `AndroidCAStore` KeyStore, followed by the authority's file
+/// name. The authorities the device ships with have the prefix `system:` instead.
+constexpr std::string_view kUserAliasPrefix = "user:";
 
 /// The interface-name prefixes of a tunnel, the kind a capturing proxy routes traffic through: `tun` for the layer-3
 /// interface a VPN app opens through the kernel's TUN/TAP driver, and `tap` for its layer-2 interface. These are the
@@ -107,34 +113,121 @@ constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"tun", "tap"})
   return std::vector<std::string>{tunnels.begin(), tunnels.end()};
 }
 
-/// The names of all the regular files directly in `directory`, sorted and without duplicates, or nothing when the
-/// directory can't be listed or an entry can't be read. Each user authority is one such file, named after the hash of
-/// its subject, and the user decides which to trust, so the probe reports every one rather than a bounded subset. The
-/// iterator is advanced with `increment`, not a range-for, because its `operator++` throws on failure and the library
-/// is built with -fno-exceptions.
-[[nodiscard]] std::optional<std::vector<std::string>> regular_file_names(std::string_view directory) {
-  std::error_code error;
-  std::filesystem::directory_iterator iterator(std::filesystem::path(directory), error);
-  if (error) {
+#ifdef __ANDROID__
+/// The most aliases read from the `AndroidCAStore` KeyStore, so a store that never ends can't keep the thread reading.
+/// A device ships with about 150 authorities.
+constexpr int kMaxAliases = 4096;
+
+/// The local references a pass of ca_store_aliases makes, outside the loop over the aliases, which frees its own.
+constexpr jint kLocalFrameCapacity = 16;
+
+/// Whether the last JNI call threw. The exception is cleared, so it never reaches the app.
+///
+/// @param env The thread's JNI environment.
+/// @return `true` when the call threw.
+[[nodiscard]] bool threw(JNIEnv* env) {
+  if (env->ExceptionCheck() == JNI_FALSE) {
+    return false;
+  }
+  env->ExceptionClear();
+  return true;
+}
+
+/// The JNI environment of the calling thread, which is attached to the app's Java VM the first time and stays attached:
+/// the runtime's thread never ends, so it never has to detach.
+///
+/// @return The environment, or null when there is no Java VM or the thread can't be attached.
+[[nodiscard]] JNIEnv* attached_env() {
+  JavaVM* vm = nullptr;
+  jsize count = 0;
+  if (JNI_GetCreatedJavaVMs(&vm, 1, &count) != JNI_OK || count < 1 || vm == nullptr) {
+    return nullptr;
+  }
+  JNIEnv* env = nullptr;
+  if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+    return nullptr;
+  }
+  return env;
+}
+
+/// Reads the aliases of the `AndroidCAStore` KeyStore, inside a local frame that the caller pops.
+///
+/// @param env The thread's JNI environment.
+/// @return The aliases, or nothing when a call fails or throws, or the store has more than kMaxAliases.
+[[nodiscard]] std::optional<std::vector<std::string>> read_ca_store_aliases(JNIEnv* env) {
+  jclass key_store = env->FindClass("java/security/KeyStore");
+  jclass enumeration = env->FindClass("java/util/Enumeration");
+  if (threw(env) || key_store == nullptr || enumeration == nullptr) {
     return std::nullopt;
   }
-  const std::filesystem::directory_iterator end;
-  std::set<std::string> names;
-  while (iterator != end) {
-    const bool regular = iterator->is_regular_file(error);
-    if (error) {
-      return std::nullopt;
-    }
-    if (regular) {
-      names.insert(iterator->path().filename().string());
-    }
-    iterator.increment(error);
-    if (error) {
-      return std::nullopt;
-    }
+  jmethodID get_instance =
+      env->GetStaticMethodID(key_store, "getInstance", "(Ljava/lang/String;)Ljava/security/KeyStore;");
+  jmethodID load = env->GetMethodID(key_store, "load", "(Ljava/security/KeyStore$LoadStoreParameter;)V");
+  jmethodID aliases = env->GetMethodID(key_store, "aliases", "()Ljava/util/Enumeration;");
+  jmethodID has_more = env->GetMethodID(enumeration, "hasMoreElements", "()Z");
+  jmethodID next = env->GetMethodID(enumeration, "nextElement", "()Ljava/lang/Object;");
+  jstring type = env->NewStringUTF("AndroidCAStore");
+  if (threw(env) || get_instance == nullptr || load == nullptr || aliases == nullptr || has_more == nullptr ||
+      next == nullptr || type == nullptr) {
+    return std::nullopt;
   }
-  return std::vector<std::string>{names.begin(), names.end()};
+  const jvalue type_argument{.l = type};
+  jobject store = env->CallStaticObjectMethodA(key_store, get_instance, &type_argument);
+  if (threw(env) || store == nullptr) {
+    return std::nullopt;
+  }
+  const jvalue no_parameter{.l = nullptr};
+  env->CallVoidMethodA(store, load, &no_parameter);
+  if (threw(env)) {
+    return std::nullopt;
+  }
+  jobject alias_enumeration = env->CallObjectMethodA(store, aliases, nullptr);
+  if (threw(env) || alias_enumeration == nullptr) {
+    return std::nullopt;
+  }
+  std::vector<std::string> found_aliases;
+  for (int index = 0; index <= kMaxAliases; ++index) {
+    const jboolean has_next = env->CallBooleanMethodA(alias_enumeration, has_more, nullptr);
+    if (threw(env)) {
+      return std::nullopt;
+    }
+    if (has_next == JNI_FALSE) {
+      return found_aliases;
+    }
+    if (index == kMaxAliases) {
+      return std::nullopt;
+    }
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): the aliases of a KeyStore are strings.
+    auto* alias = static_cast<jstring>(env->CallObjectMethodA(alias_enumeration, next, nullptr));
+    if (threw(env) || alias == nullptr) {
+      return std::nullopt;
+    }
+    const char* alias_chars = env->GetStringUTFChars(alias, nullptr);
+    if (alias_chars == nullptr) {
+      static_cast<void>(threw(env));
+      return std::nullopt;
+    }
+    found_aliases.emplace_back(alias_chars);
+    env->ReleaseStringUTFChars(alias, alias_chars);
+    env->DeleteLocalRef(alias);
+  }
+  return std::nullopt;
 }
+
+/// The aliases of the `AndroidCAStore` KeyStore, the system's view of the authorities the app's TLS trusts, read
+/// through JNI on the calling thread, which is attached to the app's Java VM for it. Every local reference is freed.
+///
+/// @return The aliases, or nothing when the thread can't reach the VM, or a call fails or throws.
+[[nodiscard]] std::optional<std::vector<std::string>> ca_store_aliases() {
+  JNIEnv* env = attached_env();
+  if (env == nullptr || env->PushLocalFrame(kLocalFrameCapacity) != JNI_OK) {
+    return std::nullopt;
+  }
+  std::optional<std::vector<std::string>> aliases = read_ca_store_aliases(env);
+  env->PopLocalFrame(nullptr);
+  return aliases;
+}
+#endif
 
 }  // namespace
 
@@ -142,12 +235,14 @@ Observation observe_tunnels(const std::vector<std::string>& interface_names) {
   return observed(kTunnelsSignal, kTunnelsSource, tunnel_names(interface_names));
 }
 
-Observation observe_user_cas(std::string_view cacerts_dir) {
-  std::optional<std::vector<std::string>> names = regular_file_names(cacerts_dir);
-  if (!names) {
-    return failed(kUserCasSignal, kUserCasSource);
+Observation observe_user_cas(const std::vector<std::string>& aliases) {
+  std::set<std::string> names;
+  for (const std::string_view alias : aliases) {
+    if (alias.starts_with(kUserAliasPrefix)) {
+      names.emplace(alias.substr(kUserAliasPrefix.size()));
+    }
   }
-  return observed(kUserCasSignal, kUserCasSource, std::move(*names));
+  return observed(kUserCasSignal, kUserCasSource, std::vector<std::string>{names.begin(), names.end()});
 }
 
 std::vector<Observation> mitm() {
@@ -156,13 +251,13 @@ std::vector<Observation> mitm() {
   }
   const std::optional<std::vector<std::string>> names = tunnel_interface_names();
   Observation tunnels = names ? observe_tunnels(*names) : failed(kTunnelsSignal, kTunnelsSource);
-  // The user trust store (`/data/misc/user/<id>/cacerts-added`) is labeled system_data_file under SELinux and there is
-  // no public SDK API that exposes user-installed CAs, so an untrusted app process can't enumerate them: report
-  // unsupported rather than a perpetual error.
   std::vector<Observation> observations;
   observations.reserve(2);
   observations.push_back(std::move(tunnels));
-  observations.push_back(unsupported(kUserCasSignal, kUserCasSource));
+#ifdef __ANDROID__
+  const std::optional<std::vector<std::string>> aliases = ca_store_aliases();
+  observations.push_back(aliases ? observe_user_cas(*aliases) : failed(kUserCasSignal, kUserCasSource));
+#endif
   return observations;
 }
 
