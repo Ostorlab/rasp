@@ -220,7 +220,11 @@ constexpr jint kLocalFrameCapacity = 16;
 /// @return The aliases, or nothing when the thread can't reach the VM, or a call fails or throws.
 [[nodiscard]] std::optional<std::vector<std::string>> ca_store_aliases() {
   JNIEnv* env = attached_env();
-  if (env == nullptr || env->PushLocalFrame(kLocalFrameCapacity) != JNI_OK) {
+  if (env == nullptr) {
+    return std::nullopt;
+  }
+  if (env->PushLocalFrame(kLocalFrameCapacity) != JNI_OK) {
+    static_cast<void>(threw(env));
     return std::nullopt;
   }
   std::optional<std::vector<std::string>> aliases = read_ca_store_aliases(env);
