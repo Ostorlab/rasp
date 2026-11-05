@@ -42,6 +42,9 @@ constexpr std::size_t kUuidLength = 36;
 /// id.
 constexpr std::string_view kLockSuffix = ".lock";
 
+/// The suffix of the temporary file next to the id's file, which a new id is written to before it is renamed over it.
+constexpr std::string_view kTemporarySuffix = ".tmp";
+
 /// The permissions of the lock file: only the app can read and write it.
 constexpr int kLockFileMode = 0600;
 
@@ -123,14 +126,15 @@ constexpr std::string_view kHexDigits = "0123456789abcdef";
   return kept;
 }
 
-/// Keeps `id` in the file at `path`, replacing it: the id is written whole to a temporary file next to it, which is
-/// then renamed, so a process never reads half an id.
+/// Keeps `id` in the file at `path`, replacing it: the id is written whole to the temporary file next to it, which is
+/// then renamed, so a process never reads half an id. Only the process that holds the lock calls it, so the temporary
+/// file has one name, and one a crash left before its rename is overwritten by the next one.
 ///
 /// @param path The file that keeps the id.
 /// @param id The new id.
 /// @return `true` when the file holds `id`.
 [[nodiscard]] bool keep(const std::string& path, const std::string& id) {
-  const std::string temporary = path + "." + id + ".tmp";
+  const std::string temporary = path + std::string(kTemporarySuffix);
   if (!write_file(temporary, id) || std::rename(temporary.c_str(), path.c_str()) != 0) {
     static_cast<void>(std::remove(temporary.c_str()));
     return false;

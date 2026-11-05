@@ -115,6 +115,19 @@ TEST(InstallId, loadOrCreateInstallId_whenProcessesCreateAnIdAtOnce_givesThemAll
   }
 }
 
+TEST(InstallId, loadOrCreateInstallId_whenACrashLeftATemporaryFile_reusesItsName) {
+  const TemporaryDirectory directory;
+  ASSERT_TRUE(write_file(id_path(directory) + ".tmp", "0f8e5b8e-6c1a"));
+
+  const std::optional<std::string> id = load_or_create_install_id(directory.path());
+
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(util::read_file(id_path(directory), 64), id);
+  for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(directory.path())) {
+    EXPECT_NE(entry.path().extension(), ".tmp") << entry.path();
+  }
+}
+
 TEST(InstallId, loadOrCreateInstallId_whenTheKeptFileIsNotAnId_replacesIt) {
   for (const std::string_view kept : {
            std::string_view(""),
