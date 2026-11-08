@@ -46,6 +46,7 @@ from rasp_packer.android import key_schedule
 from rasp_packer.android import loader_map
 from rasp_packer.android import resources as resources_module
 from rasp_packer.android import runtime_library
+from rasp_packer.android import self_encrypt
 from rasp_packer.android import split as split_module
 from rasp_packer.android.aab import archive as aab_archive
 from rasp_packer.android.aab import manifest as aab_manifest_module
@@ -159,8 +160,14 @@ def _pack_apk(
         apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
         resources_module.STUB_FACTORY_CLASS,
     )
+    libraries = {
+        name: self_encrypt.encrypt_library(
+            runtime_library.write_config(library, config)
+        )
+        for name, library in injection.library_entries(apk, artifacts).items()
+    }
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
-        injection.library_entries(apk, artifacts), config
+        libraries, config
     )
     map_frame, dex_entries = _encrypt_payload(result.business, root)
     base_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
@@ -216,7 +223,9 @@ def _pack_aab(
     )
     abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
     libraries = {
-        f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": artifacts.libraries[abi]
+        f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": self_encrypt.encrypt_library(
+            runtime_library.write_config(artifacts.libraries[abi], config)
+        )
         for abi in sorted(abis)
     }
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
@@ -250,10 +259,10 @@ def _schedule_libraries(
 ) -> tuple[bytes, bytes, dict[str, bytes], dict[str, bytes]]:
     """Builds the schedule's fold over the app's runtime libraries.
 
-    It invents a fresh fold program — the per-app recipe of real inputs and decoys, in a random order — and the decoy entries the program names, then writes each ABI's library with its config, the shared program, and the per-ABI keystore share that makes that library's chains recover the root: the share cancels its ABI's chains, so every ABI recovers the same root.
+    It invents a fresh fold program — the per-app recipe of real inputs and decoys, in a random order — and the decoy entries the program names, then writes into each ABI's library its per-ABI keystore share, the share that makes that library's chains recover the root: the share cancels its ABI's chains, so every ABI recovers the same root. The libraries arrive with their config written and their code and read-only data self-encrypted, and the fold gathers its digests from those shipped bytes: they stay encrypted on disk, and the runtime reads the library file — not the decrypted memory — so both sides gather the same digests.
 
     Args:
-        libraries: The prebuilt runtime libraries, by APK entry name.
+        libraries: The runtime libraries with their config written and their code and read-only data self-encrypted, by APK entry name. Each already carries the same config.
         config: The runtime's config.
 
     Returns:

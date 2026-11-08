@@ -11,6 +11,7 @@ permissions:
 env:
   LLVM_VERSION: "23"
   CMAKE_VERSION: "4.4.4"
+  ANDROID_NDK_VERSION: "29.0.14206865"
 
 jobs:
   format:
@@ -253,7 +254,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends "clang-tidy-${LLVM_VERSION}"
           echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
       - name: Select the NDK
-        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+        run: |
+          ndk="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          test -d "$ndk" || { echo "NDK $ANDROID_NDK_VERSION is not installed on this runner"; exit 1; }
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+      - name: Pick this build's obfuscation seed
+        run: |
+          seed="$(python3 -c 'import secrets; print(secrets.randbits(63))')"
+          echo "::add-mask::$seed"
+          echo "RASP_OMVLL_SEED=$seed" >> "$GITHUB_ENV"
       - name: Configure
         run: cmake --preset android -DANDROID_ABI=${{ matrix.abi }}
       - name: Build
@@ -282,6 +291,14 @@ jobs:
           lib=build/android/android/librasp.so
           test -z "$("$nm" -D -u "$lib" | grep __android_log)"
           test -z "$(strings -a "$lib" | grep -F RaspRuntime)"
+      - name: Check the library shows no signal name or probed path
+        run: |
+          lib=build/android/android/librasp.so
+          test -s "$lib"
+          literals="$(grep -rhoE '"((root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+|/(proc|sys)/[^"]+)"' android/src | tr -d '"' | sort -u)"
+          test -n "$literals"
+          readable="$(strings -a "$lib" | grep -xF -- "$literals" || true)"
+          if [ -n "$readable" ]; then echo "readable in the release library:"; echo "$readable"; exit 1; fi
       - name: Configure the development build
         run: cmake --preset android-dev -DANDROID_ABI=${{ matrix.abi }}
       - name: Build the development build
