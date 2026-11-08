@@ -1,7 +1,8 @@
-/// Tests for the dex store, against a map and dexes the packer's schedule made, stored in a zip the test builds. The
-/// frames are the fixed vectors the packer's tests check too (key_schedule_test.py): the map and both dexes were
-/// sealed under the schedule over a fixed root, so open_dex_store's map key and decrypt_dex's dex keys are exercised
-/// exactly as the packer produced them.
+/// Tests for the dex store, against a map and dexes the packer's fold made, stored in a zip the test builds. The
+/// frames are the fixed vectors the packer's tests check too (key_schedule_test.py), sealed under the fold's root
+/// and the sensor guard of a clean process, so open_dex_store's map key and decrypt_dex's guarded keys are
+/// exercised exactly as the packer produced them. The decryption's sensors are observed live: a host test process
+/// is not traced and cannot check its own code section, so it reads as the clean process the packer folds in.
 
 #include "payload/dex_store.h"
 
@@ -64,18 +65,18 @@ using test_support::zip_with_stored_entries;
   return {bytes.begin(), bytes.end()};
 }
 
-/// The root key of the vectors, made by the packer's schedule over a fixed library and shares.
+/// The root key of the vectors, made by the packer's fold over a fixed library and program.
 constexpr std::string_view kRootHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 
-/// A frame holding the class map, made by the packer's schedule under kRoot. Its plaintext is:
+/// A frame holding the class map, made by the packer's fold under kRoot. Its plaintext is:
 ///   com.example.Alpha,business/0.dex   com.example.Beta,business/0.dex
 ///   com.example.Gamma,business/1.dex   com.example.Alpha,business/1.dex (a repeat the first line must win over)
 constexpr std::string_view kMapFrameHex =
-    "000102030405060708090a0bfa778ca58fe9a3129eb01f255c3f58b75132615e4a4fbdce"
-    "9a57a5c9b8f2ddc5099d30effa98d3c123c032a7f98fcc8164af6e17296abe4fea2f1ac7"
-    "0ef47c9e378a9380aabc9acffdd578afe22364488843158031b90902b5c6641af81ce706"
-    "f994da417c658b0406c21eea5c9236bb6aa18798a655a86776437e8309fda8c48c154b21"
-    "2877a652cd3963fa7c0d59c8b620aa";
+    "000102030405060708090a0bde978b4c0bf489db7f49fe2d7443b65923f17ec4ec53367633"
+    "fcb37d50a6ac53509eac1971608f2803a46e0c45224480474a4b73650209f23787a7f57c44"
+    "75153a88f127977732363fb99424c2bc83c778eac5def57c814214af0155fd95594d36df73"
+    "8bba5c17f86dcfb6a37a27e96ba26c14031d02d10a3a731fa9a2b7d8f8241f07ab51dba377"
+    "cd24e3c78d0439271208f1";
 
 /// A frame holding a map whose only usable line is `com.example.Kept,business/0.dex`, made under kRoot. Its other
 /// lines are each skipped for a different reason:
@@ -84,22 +85,22 @@ constexpr std::string_view kMapFrameHex =
 ///   com.example.NoPath,         nothing after the comma
 ///   <empty line>                no comma
 constexpr std::string_view kMalformedMapFrameHex =
-    "303132333435363738393a3b326e7a0942924c385d0626dd783d0018f41cd777880d9fad3"
-    "add5524fb22f1b4411d610df6ae5c38aa336bafd4a1b6f7862d78dd7c90209a1a1ebec786"
-    "a36388c6ed72ae9752e66257d707d57932b5e3585972fb0f8a2a673b4e397ffcafac4472d"
-    "3a7abbcafd97fdf";
+    "303132333435363738393a3b6f6ff810d62725cc4601b435d1f0462cadd3ebfe802d68b956"
+    "7250f51b6351c0684331299aa346c0a65833edf922a414fb41a4af45623e5ce9bac9bf4294"
+    "ebe40c241d29142879892e2a3604883fd1becb110add6cf06ec01f321deb4a9ab33ab083a7"
+    "7dce618e2955";
 
 /// The dex at business/0.dex: its frame and its plaintext bytes.
 constexpr std::string_view kDex0FrameHex =
-    "101112131415161718191a1b8b1ee9ab64248cd5df0472dcf17e727a38b00d8eb15b986e"
-    "4c67ab8fb78952634d1d963055ec9a7f04b5f4d27b99c6080c34b0001e76661051ca1997"
-    "8ffbaa862837613153b36f311592744af503ee";
+    "101112131415161718191a1bdb0fa54f72e44bf99595b360f3b1c68d107a2baacd481bd3c2"
+    "89cd0f6ef21b2bdb46a8a08980d0a9e94a70a67aa533d8e585dbaabe60359febe5fe544975"
+    "f82a19cdc38f2cab4fcec2ca3397590f59";
 constexpr std::string_view kDex0Plaintext = "business dex zero: bytes that decrypt_dex must return verbatim\n";
 
 /// The dex at business/1.dex: its frame and its plaintext bytes.
 constexpr std::string_view kDex1FrameHex =
-    "202122232425262728292a2ba2851fa4da0a9d8ff2ababc947146ff64a8c8516c66ee543"
-    "11f1721f9dd1b6a3ee";
+    "202122232425262728292a2b857019a080e0b74704d8686130ff975604a674850ecee1440e"
+    "98f2a45a6a8d5cc5";
 constexpr std::string_view kDex1Plaintext = "business dex one\n";
 
 /// The entry name, inside the APK, of each business dex the map points at.

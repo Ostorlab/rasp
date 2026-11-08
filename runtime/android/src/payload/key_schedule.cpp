@@ -1,13 +1,14 @@
-/// The key schedule the packer locks the payload with, in the runtime: the fold that rebuilds the root key from the
-/// app's own parts, the HKDF that gives every frame its key, and the gathering that reads the parts from the library
-/// and the APK. The fold's pieces are the ones key_schedule.py on the packer's side combines, and the tests of both
-/// sides check the same fixed vectors.
+/// The key schedule the packer locks the payload with, in the runtime: the fold program's interpreter, the two
+/// chains, the sensors, and the gathering that reads the program's inputs from the library and the APK. The
+/// packer's key_schedule.py makes the programs this interprets, and the tests of both sides check the same fixed
+/// vectors.
 ///
-/// The digests and the ELF section finding come from the integrity check's helpers (checks/integrity.h), so the
-/// schedule and the check read the library's `.text` through the same reader.
+/// The digests, the ELF section finding and the text-integrity observation come from the integrity check's helpers
+/// (checks/integrity.h), so the schedule and the check read the library's own sections through the same readers.
 
 #include "payload/key_schedule.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -16,30 +17,71 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 #include "apk/archive.h"
+#include "checks/debugger.h"
 #include "checks/integrity.h"
 #include "payload/assets.h"
 #include "payload/cipher.h"
+#include "rasp/observation.h"
 #include "util/apk_file.h"
 
 namespace rasp::android::payload {
 
 namespace {
 
-/// The HKDF info every frame key starts with, followed by the frame's full APK entry name.
-constexpr std::string_view kFrameInfoPrefix = "rasp.v1.frame/";
+/// The name of the library section a fold record's parameter names, the packer's table mirrored.
+///
+/// @param index The record's parameter, a section-name index.
+/// @return The section's name, or nothing when the index is outside the table.
+[[nodiscard]] std::optional<std::string_view> section_name(std::uint16_t index) {
+  switch (index) {
+    case 0:
+      return ".rodata";
+    case 1:
+      return ".dynstr";
+    case 2:
+      return ".rela.dyn";
+    case 3:
+      return ".eh_frame";
+    case 4:
+      return ".plt";
+    case 5:
+      return ".data.rel.ro";
+    case 6:
+      return ".got";
+    default:
+      return std::nullopt;
+  }
+}
 
-/// The name of the library's config section, whose trailing kKeySize bytes hold the keystore share.
-constexpr std::string_view kConfigSection = ".rasp_config";
+/// The offset, within a fold program, of the two chain counts, then the records, then the constants.
+constexpr std::size_t kCountOffset = 16;
+constexpr std::size_t kRecordSize = 8;
+constexpr std::size_t kRecordsOffset = 20;
+constexpr std::size_t kConstantsOffset = kRecordsOffset + (kMaxProgramRecords * kRecordSize);
 
 /// The largest library file read. librasp.so is well under this, and the limit bounds what the read allocates for a
 /// forged file.
 constexpr std::size_t kMaxLibrarySize = std::size_t{64} << 20U;
 
-/// The smallest `.rasp_config` section the schedule accepts: one byte of config region and a full keystore share.
-constexpr std::uint64_t kSmallestConfigSection = kKeySize + 1;
+/// The smallest `.rasp_config` section the schedule accepts: a byte of config, a program and a keystore share.
+constexpr std::uint64_t kSmallestConfigSection = kProgramSize + kKeySize + 1;
+
+/// The name of the library's config section, whose trailing bytes hold the fold program and the keystore share.
+constexpr std::string_view kConfigSection = ".rasp_config";
+
+/// The prefix of every derivation info string of the schedule, followed by "fold.<tag>/<i>", "frame/<entry>", "seed"
+/// or "guard".
+constexpr std::string_view kFrameInfoPrefix = "rasp.v2.";
+
+/// The info of the dex seed's derivation.
+constexpr std::string_view kSeedInfo = "rasp.v2.seed";
+
+/// The info of the sensor guard's derivation.
+constexpr std::string_view kGuardInfo = "rasp.v2.guard";
 
 static_assert(checks::kDigestSize == kKeySize, "the schedule folds digests with keys of the same size");
 
@@ -66,7 +108,274 @@ void xor_into(std::span<std::uint8_t> out, std::span<const std::uint8_t> input) 
   return psa_key_derivation_input_bytes(&operation, step, bytes.data(), bytes.size());
 }
 
+/// The little-endian 16-bit value at `offset` in `bytes`.
+///
+/// @param bytes The bytes to read.
+/// @param offset Where to read.
+/// @return The value there.
+[[nodiscard]] std::uint16_t read_u16(std::span<const std::uint8_t> bytes, std::size_t offset) {
+  const unsigned low = bytes[offset];
+  const unsigned high = bytes[offset + 1];
+  return static_cast<std::uint16_t>(low | (high << 8U));
+}
+
+/// The little-endian 32-bit value at `offset` in `bytes`.
+///
+/// @param bytes The bytes to read.
+/// @param offset Where to read.
+/// @return The value there.
+[[nodiscard]] std::uint32_t read_u32(std::span<const std::uint8_t> bytes, std::size_t offset) {
+  const std::uint32_t b0 = bytes[offset];
+  const std::uint32_t b1 = bytes[offset + 1];
+  const std::uint32_t b2 = bytes[offset + 2];
+  const std::uint32_t b3 = bytes[offset + 3];
+  return b0 | (b1 << 8U) | (b2 << 16U) | (b3 << 24U);
+}
+
+/// Whether the library's `.text` in memory matches its file, as the integrity check observes it.
+///
+/// @return What the check says about the running process.
+[[nodiscard]] bool text_is_intact() {
+#ifdef __ANDROID__
+  const std::vector<Observation> hashes = checks::integrity();
+  if (hashes.size() != 2 || hashes[0].status != Status::kOk || hashes[1].status != Status::kOk) {
+    return false;
+  }
+  const std::string* const file = std::get_if<std::string>(&hashes[0].value);
+  const std::string* const memory = std::get_if<std::string>(&hashes[1].value);
+  return file != nullptr && memory != nullptr && *file == *memory;
+#else
+  // A host build cannot observe its own code section: the check's self-observation needs the dynamic loader's
+  // module tables. The guard is a device fact; the tests cover its arithmetic with fixed sensor blocks.
+  return true;
+#endif
+}
+
+/// The key a key-sized span holds, zero-padded to the key's size when it is short.
+///
+/// @param bytes The bytes read, expected to be kKeySize long.
+/// @return The key they hold.
+[[nodiscard]] Key read_key(std::span<const std::uint8_t> bytes) {
+  Key key{};
+  const std::size_t count = std::min(bytes.size(), key.size());
+  std::ranges::copy(bytes.first(count), key.begin());
+  return key;
+}
+
+/// The digest of a region of the library file, at `offset` for `size` bytes.
+///
+/// @param image The library's whole file bytes.
+/// @param region The region to digest, with its file offset and size.
+/// @return The digest. Nothing when the region reaches outside the image or the digest fails.
+[[nodiscard]] std::optional<Key> digest_of(std::span<const std::uint8_t> image,
+                                           const std::optional<checks::TextRegion>& region) {
+  if (!region.has_value() || region->file_offset > image.size() || region->size > image.size() - region->file_offset) {
+    return std::nullopt;
+  }
+  const std::span<const std::uint8_t> bytes =
+      image.subspan(static_cast<std::size_t>(region->file_offset), static_cast<std::size_t>(region->size));
+  return checks::sha256(bytes);
+}
+
+/// The digest of the library section a record's parameter names.
+///
+/// @param image The library's whole file bytes.
+/// @param param The record's parameter, a section-name index.
+/// @return The digest. Nothing when the index is outside the table, the library has no such section, or the digest
+/// fails.
+[[nodiscard]] std::optional<Key> section_digest(std::span<const std::uint8_t> image, std::uint16_t param) {
+  const std::optional<std::string_view> name = section_name(param);
+  if (!name.has_value()) {
+    return std::nullopt;
+  }
+  const std::optional<checks::SectionRegion> section = checks::find_section_region(image, *name);
+  if (!section.has_value()) {
+    return std::nullopt;
+  }
+  return digest_of(image,
+                   checks::TextRegion{.file_offset = section->file_offset, .memory_address = 0, .size = section->size});
+}
+
+/// The digest of a byte range of the library file.
+///
+/// @param image The library's whole file bytes.
+/// @param offset The range's offset.
+/// @param length The range's length.
+/// @return The digest. Nothing when the range reaches outside the image or the digest fails.
+[[nodiscard]] std::optional<Key> range_digest(std::span<const std::uint8_t> image, std::uint32_t offset,
+                                              std::uint16_t length) {
+  if (offset > image.size() || length > image.size() - offset) {
+    return std::nullopt;
+  }
+  const std::span<const std::uint8_t> bytes = image.subspan(static_cast<std::size_t>(offset), length);
+  return checks::sha256(bytes);
+}
+
+/// The digest of the config region, the section's bytes before the keystore share.
+///
+/// @param config_region The region to digest.
+/// @return The digest. Nothing when the digest fails.
+[[nodiscard]] std::optional<Key> digest_of_region(std::span<const std::uint8_t> config_region) {
+  return checks::sha256(config_region);
+}
+
+/// The digest of the decoy entry a record's parameter names.
+///
+/// @param apk The path of the app's APK.
+/// @param param The record's parameter, the decoy's index.
+/// @return The digest. Nothing when the entry can't be read or the digest fails.
+[[nodiscard]] std::optional<Key> entry_digest(const std::string& apk, std::uint16_t param) {
+  const std::optional<std::vector<std::uint8_t>> entry = apk::read_stored_entry(apk, decoy_entry_name(param));
+  if (!entry.has_value()) {
+    return std::nullopt;
+  }
+  return checks::sha256(*entry);
+}
+
+/// The library-side inputs a fold's records gather from, read once per recovery.
+struct FoldInputs {
+  /// The library's whole file bytes, with its config, program and keystore.
+  std::span<const std::uint8_t> image;
+  /// The `.rasp_config` section's bytes before the keystore share, as shipped.
+  std::span<const std::uint8_t> config_region;
+  /// The asset share read from the s.bin entry.
+  std::span<const std::uint8_t> share;
+};
+
+/// Gathers one record's input, the record's source read from the fold's inputs.
+///
+/// @param program The fold program the library carries, for its constants.
+/// @param record The record whose source to gather.
+/// @param inputs The library-side inputs, read once per recovery.
+/// @param environment The environment the recovery folds in as its gates.
+/// @param apk The path of the app's APK, which holds the decoy entries.
+/// @return The gathered input. Nothing when the record's source can't be read.
+[[nodiscard]] std::optional<Key> gather_record(const FoldProgram& program, const FoldRecord& record,
+                                               const FoldInputs& inputs, const Environment& environment,
+                                               const std::string& apk) {
+  switch (record.kind) {
+    case RecordKind::kText:
+      return digest_of(inputs.image, checks::find_text_region(inputs.image, 0));
+    case RecordKind::kSection:
+      return section_digest(inputs.image, record.param);
+    case RecordKind::kRange:
+      return range_digest(inputs.image, record.param32, record.param);
+    case RecordKind::kShare:
+      return read_key(inputs.share);
+    case RecordKind::kRegion:
+      return digest_of_region(inputs.config_region);
+    case RecordKind::kGates:
+      return gate_block(environment);
+    case RecordKind::kConstant:
+      if (record.param >= program.constants.size()) {
+        return std::nullopt;
+      }
+      return program.constants[record.param];
+    case RecordKind::kEntry:
+      return entry_digest(apk, record.param);
+  }
+  return std::nullopt;
+}
+
+/// Gathers one chain's inputs, the records' sources read from the fold's inputs.
+///
+/// @param program The fold program the library carries.
+/// @param records The chain's records, in order.
+/// @param inputs The library-side inputs, read once per recovery.
+/// @param environment The environment the recovery folds in as its gates.
+/// @param apk The path of the app's APK, which holds the decoy entries.
+/// @return The gathered inputs, in order; nothing as soon as one source can't be read.
+[[nodiscard]] std::optional<std::vector<Key>> gather_inputs(const FoldProgram& program,
+                                                            std::span<const FoldRecord> records,
+                                                            const FoldInputs& inputs, const Environment& environment,
+                                                            const std::string& apk) {
+  std::vector<Key> gathered;
+  gathered.reserve(records.size());
+  for (const FoldRecord& record : records) {
+    const std::optional<Key> input = gather_record(program, record, inputs, environment, apk);
+    if (!input.has_value()) {
+      return std::nullopt;
+    }
+    gathered.push_back(*input);
+  }
+  return gathered;
+}
+
 }  // namespace
+
+std::optional<FoldProgram> decode_program(std::span<const std::uint8_t> blob) {
+  if (blob.size() != kProgramSize) {
+    return std::nullopt;
+  }
+  std::vector<std::uint8_t> unmasked(blob.begin(), blob.end());
+  const std::span<std::uint8_t> masked(unmasked);
+  for (std::size_t index = kCountOffset; index < kProgramSize; ++index) {
+    masked[index] = static_cast<std::uint8_t>(masked[index] ^ blob[index % kCountOffset]);
+  }
+  const std::uint16_t count_a = read_u16(unmasked, kCountOffset);
+  const std::uint16_t count_s = read_u16(unmasked, kCountOffset + 2);
+  if (static_cast<std::size_t>(count_a) + count_s > kMaxProgramRecords) {
+    return std::nullopt;
+  }
+  FoldProgram program;
+  const std::size_t count = static_cast<std::size_t>(count_a) + count_s;
+  for (std::size_t index = 0; index < count; ++index) {
+    const std::size_t offset = kRecordsOffset + (index * kRecordSize);
+    const auto kind = static_cast<RecordKind>(unmasked[offset]);
+    const FoldRecord record{
+        .kind = kind,
+        .param = read_u16(unmasked, offset + 2),
+        .param32 = read_u32(unmasked, offset + 4),
+    };
+    (index < count_a ? program.chain_a : program.chain_s).push_back(record);
+  }
+  std::size_t named = 0;
+  for (const FoldRecord& record : program.chain_a) {
+    if (record.kind == RecordKind::kConstant) {
+      named = std::max<std::size_t>(named, record.param + 1U);
+    }
+  }
+  for (const FoldRecord& record : program.chain_s) {
+    if (record.kind == RecordKind::kConstant) {
+      named = std::max<std::size_t>(named, record.param + 1U);
+    }
+  }
+  for (std::size_t index = 0; index < named; ++index) {
+    const std::size_t offset = kConstantsOffset + (index * kKeySize);
+    Key constant{};
+    std::ranges::copy(std::span(unmasked).subspan(offset, kKeySize), constant.begin());
+    program.constants.push_back(constant);
+  }
+  return program;
+}
+
+std::string decoy_entry_name(std::uint16_t index) {
+  return std::string(kDecoyEntryPrefix) + std::to_string(index) + ".bin";
+}
+
+Key gate_block(const Environment& environment) {
+  Key block{};
+  block[0] = environment.java_environment ? 1U : 0U;
+  block[1] = environment.no_tracer ? 1U : 0U;
+  block[2] = environment.installed_under_data ? 1U : 0U;
+  return block;
+}
+
+Key sensor_block(const Sensors& sensors) {
+  Key block{};
+  block[0] = sensors.no_tracer ? 1U : 0U;
+  block[1] = sensors.text_intact ? 1U : 0U;
+  return block;
+}
+
+Sensors observe_sensors() {
+  const Observation tracer = checks::observe_tracer_pid("/proc/self/status");
+  const std::int64_t* const tracer_pid = std::get_if<std::int64_t>(&tracer.value);
+  return Sensors{
+      .no_tracer = tracer.status == Status::kOk && tracer_pid != nullptr && *tracer_pid == 0,
+      .text_intact = text_is_intact(),
+  };
+}
 
 std::optional<Key> hkdf_sha256(std::span<const std::uint8_t> secret, std::string_view info,
                                std::span<const std::uint8_t> salt) {
@@ -97,45 +406,38 @@ std::optional<Key> hkdf_sha256(std::span<const std::uint8_t> secret, std::string
   return output;
 }
 
-Key gate_block(const Environment& environment) {
-  Key block{};
-  block[0] = environment.java_environment ? 1U : 0U;
-  block[1] = environment.no_tracer ? 1U : 0U;
-  block[2] = environment.installed_under_data ? 1U : 0U;
-  return block;
-}
-
-std::optional<Key> root_key(std::span<const std::uint8_t> share_lib, std::span<const std::uint8_t> share_asset,
-                            std::span<const std::uint8_t> config_binding, std::span<const std::uint8_t> text_binding,
-                            std::span<const std::uint8_t> gates) {
-  if (share_lib.size() != kKeySize || share_asset.size() != kKeySize || config_binding.size() != kKeySize ||
-      text_binding.size() != kKeySize || gates.size() != kKeySize) {
-    return std::nullopt;
+Key fold_chain(const Key& state, std::span<const Key> inputs, std::string_view tag) {
+  Key current = state;
+  std::string info;
+  for (std::size_t index = 0; index < inputs.size(); ++index) {
+    info.clear();
+    info.reserve(kFrameInfoPrefix.size() + tag.size() + 12);
+    info.append(kFrameInfoPrefix).append("fold.").append(tag).push_back('/');
+    info.append(std::to_string(index));
+    if (const std::optional<Key> next = hkdf_sha256(current, info, inputs[index])) {
+      current = *next;
+    }
   }
-  Key root{};
-  xor_into(root, share_lib);
-  xor_into(root, share_asset);
-  xor_into(root, config_binding);
-  xor_into(root, text_binding);
-  xor_into(root, gates);
-  return root;
-}
-
-std::optional<Key> dex_master(const Key& root, std::span<const std::uint8_t> map_frame) {
-  const std::optional<std::array<std::uint8_t, checks::kDigestSize>> digest = checks::sha256(map_frame);
-  if (!digest.has_value()) {
-    return std::nullopt;
-  }
-  Key master = root;
-  xor_into(master, *digest);
-  return master;
+  return current;
 }
 
 std::optional<Key> frame_key(const Key& master, std::span<const std::uint8_t> nonce, std::string_view entry) {
   std::string info;
-  info.reserve(kFrameInfoPrefix.size() + entry.size());
-  info.append(kFrameInfoPrefix).append(entry);
+  info.reserve(kFrameInfoPrefix.size() + entry.size() + 7);
+  info.append(kFrameInfoPrefix).append("frame/").append(entry);
   return hkdf_sha256(master, info, nonce);
+}
+
+std::optional<Key> seed_from(const Key& root, std::span<const std::uint8_t> map_frame) {
+  const std::optional<std::array<std::uint8_t, checks::kDigestSize>> digest = checks::sha256(map_frame);
+  if (!digest.has_value()) {
+    return std::nullopt;
+  }
+  return hkdf_sha256(root, kSeedInfo, *digest);
+}
+
+std::optional<Key> guarded_master(const Key& seed, const Key& sensors) {
+  return hkdf_sha256(seed, kGuardInfo, sensors);
 }
 
 std::optional<Key> recover_root_key(const Environment& environment, std::string_view library_path,
@@ -146,35 +448,49 @@ std::optional<Key> recover_root_key(const Environment& environment, std::string_
   }
   const std::span<const std::uint8_t> image(*library);
 
-  const std::optional<checks::SectionRegion> config = checks::find_section_region(image, kConfigSection);
-  if (!config.has_value() || config->size < kSmallestConfigSection) {
+  const std::optional<checks::SectionRegion> section = checks::find_section_region(image, kConfigSection);
+  if (!section.has_value() || section->size < kSmallestConfigSection) {
     return std::nullopt;
   }
-  const std::uint64_t region_size = config->size - kKeySize;
+  const std::uint64_t region_size = section->size - kKeySize;
   const std::span<const std::uint8_t> config_region =
-      image.subspan(static_cast<std::size_t>(config->file_offset), static_cast<std::size_t>(region_size));
-  const std::span<const std::uint8_t> share_lib =
-      image.subspan(static_cast<std::size_t>(config->file_offset + region_size), kKeySize);
+      image.subspan(static_cast<std::size_t>(section->file_offset), static_cast<std::size_t>(region_size));
+  const std::span<const std::uint8_t> program_bytes =
+      image.subspan(static_cast<std::size_t>(section->file_offset + region_size - kProgramSize), kProgramSize);
+  const std::span<const std::uint8_t> keystore =
+      image.subspan(static_cast<std::size_t>(section->file_offset + region_size), kKeySize);
 
-  const std::optional<checks::TextRegion> text = checks::find_text_region(image, 0);
-  if (!text.has_value()) {
-    return std::nullopt;
-  }
-  const std::span<const std::uint8_t> text_bytes =
-      image.subspan(static_cast<std::size_t>(text->file_offset), static_cast<std::size_t>(text->size));
-
-  const std::optional<std::array<std::uint8_t, checks::kDigestSize>> config_digest = checks::sha256(config_region);
-  const std::optional<std::array<std::uint8_t, checks::kDigestSize>> text_digest = checks::sha256(text_bytes);
-  if (!config_digest.has_value() || !text_digest.has_value()) {
+  const std::optional<FoldProgram> program = decode_program(program_bytes);
+  if (!program.has_value()) {
     return std::nullopt;
   }
 
-  const std::optional<std::vector<std::uint8_t>> share_asset = apk::read_stored_entry(apk, kShareEntry);
-  if (!share_asset.has_value() || share_asset->size() != kKeySize) {
+  const std::optional<std::vector<std::uint8_t>> share = apk::read_stored_entry(apk, kShareEntry);
+  if (!share.has_value() || share->size() != kKeySize) {
     return std::nullopt;
   }
 
-  return root_key(share_lib, *share_asset, *config_digest, *text_digest, gate_block(environment));
+  const FoldInputs inputs{
+      .image = image,
+      .config_region = config_region,
+      .share = *share,
+  };
+  const std::optional<std::vector<Key>> chain_a = gather_inputs(*program, program->chain_a, inputs, environment, apk);
+  if (!chain_a.has_value()) {
+    return std::nullopt;
+  }
+  const std::optional<std::vector<Key>> chain_s = gather_inputs(*program, program->chain_s, inputs, environment, apk);
+  if (!chain_s.has_value()) {
+    return std::nullopt;
+  }
+
+  const Key a_state = fold_chain(Key{}, *chain_a, "a");
+  const Key s_state = fold_chain(Key{}, *chain_s, "s");
+  Key root{};
+  xor_into(root, a_state);
+  xor_into(root, s_state);
+  xor_into(root, keystore);
+  return root;
 }
 
 }  // namespace rasp::android::payload

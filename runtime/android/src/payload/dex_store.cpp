@@ -55,7 +55,7 @@ void index_map(std::string_view text, DexStore& store) {
 
 /// The frame key of the encrypted entry `frame` holds, derived for `entry`.
 ///
-/// @param master The stage's master key: the root for the map, the dex master for a dex.
+/// @param master The stage's master key: the root for the map, the guarded master for a dex.
 /// @param frame The frame, which starts with its nonce.
 /// @param entry The frame's full APK entry name.
 /// @return The frame key. Nothing when the frame is too short to hold a nonce, or the derivation fails.
@@ -82,7 +82,7 @@ std::optional<DexStore> open_dex_store(std::string apk, const Key& root) {
   if (!map.has_value()) {
     return std::nullopt;
   }
-  const std::optional<Key> seed = dex_master(root, *frame);
+  const std::optional<Key> seed = seed_from(root, *frame);
   if (!seed.has_value()) {
     return std::nullopt;
   }
@@ -109,7 +109,12 @@ std::optional<std::vector<std::uint8_t>> decrypt_dex(const DexStore& store, cons
   if (!frame.has_value()) {
     return std::nullopt;
   }
-  const std::optional<Key> key = key_of(store.seed, *frame, dex.entry);
+  const Sensors sensors = observe_sensors();
+  const std::optional<Key> master = guarded_master(store.seed, sensor_block(sensors));
+  if (!master.has_value()) {
+    return std::nullopt;
+  }
+  const std::optional<Key> key = key_of(*master, *frame, dex.entry);
   if (!key.has_value()) {
     return std::nullopt;
   }

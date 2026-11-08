@@ -1,5 +1,5 @@
 /// The dex store: an index of the packer's class map, and the reads and decryption that turn a class name into the
-/// decrypted dex that defines it.
+/// decrypted dex that defines it, under the key schedule's sensor guard.
 
 #pragma once
 
@@ -31,7 +31,8 @@ struct EncryptedDex {
 struct DexStore {
   /// The path of the APK that holds the encrypted dexes.
   std::string apk;
-  /// The master of every business dex's frame key: the root key bound to the map frame as shipped.
+  /// The master of every business dex's frame key before the guard: the root key bound to the map frame as shipped.
+  /// It never decrypts a frame by itself: every decryption derives through the sensors observed then.
   Key seed{};
   /// Every dex the map names, each with its APK entry name and its classes.
   std::vector<EncryptedDex> dexes;
@@ -59,17 +60,19 @@ struct DexStore {
 /// @return A pointer into `store`, valid while `store` lives, or null when the store has no such class.
 [[nodiscard]] const EncryptedDex* dex_of(const DexStore& store, const std::string& class_name);
 
-/// Reads and decrypts `dex`.
+/// Reads and decrypts `dex`, under the sensor guard.
 ///
-/// It reads the dex's entry from the APK and derives its frame key from the store's dex master, the frame's nonce and
-/// the entry's own name, so a renamed entry no longer decrypts. It decrypts on every call; the caller caches the
+/// It reads the dex's entry from the APK, observes the process's sensors, and derives its frame key from the store's
+/// seed, the observed sensor guard, the frame's nonce and the entry's own name. A clean process folds the same block
+/// every time; a debugger attached between loads, or a hook patched into the library's code, folds a different one,
+/// and the frame's tag fails, with no branch anywhere that says why. It decrypts on every call; the caller caches the
 /// result when it wants to, and wipes it once it has handed the dex to the class loader.
 ///
-/// @param store The store `dex` came from, which holds the APK path and the dex master.
+/// @param store The store `dex` came from, which holds the APK path and the seed.
 /// @param dex A dex that dex_of returned for `store`.
-/// @return The decrypted dex bytes. Nothing when the entry can't be read or does not decrypt. Since the packer writes
-/// every dex the map names, encrypted under the schedule, nothing means the APK was changed; the caller can treat it
-/// as a signal.
+/// @return The decrypted dex bytes. Nothing when the entry can't be read, a sensor observation fails, or the frame
+/// does not decrypt. Since the packer writes every dex the map names, encrypted under the schedule, nothing means the
+/// APK was changed or the process was tampered with; the caller can treat it as a signal.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> decrypt_dex(const DexStore& store, const EncryptedDex& dex);
 
 }  // namespace rasp::android::payload

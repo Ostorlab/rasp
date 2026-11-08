@@ -1,6 +1,6 @@
-/// Tests for the key schedule: the RFC 5869 vectors for HKDF, the fold and the gates, the fixed vectors the packer's
-/// tests share (key_schedule_test.py), and the recovery driven with a library and an APK the packer's schedule made,
-/// so the ELF reader, the digests, the HKDF and the fold run end to end without a device.
+/// Tests for the key schedule's fold: the program and its interpreter, the chains, the sensors, the guard, and the
+/// fixed vectors the packer's tests share (key_schedule_test.py), which drive the recovery end to end with a library
+/// and an APK the packer's schedule made, without a device.
 
 #include "payload/key_schedule.h"
 
@@ -63,40 +63,67 @@ using test_support::zip_with_stored_entries;
   return {bytes.begin(), bytes.end()};
 }
 
-/// The fixed vectors below were made by the packer's schedule (rasp_packer/android/key_schedule.py) over a fixed
-/// library, root, share and nonces; the packer's tests check the same values, so both sides of the schedule are pinned
-/// to one another. kLibrary is the library with its config and keystore share already written.
-/// The root key of the vectors, fixed at pack time.
+/// The 32 bytes a lowercase-hex string stands for, as a key.
+///
+/// @param hex The hex digits, two per byte.
+/// @return The key they stand for.
+[[nodiscard]] Key from_key(std::string_view hex) {
+  Key key{};
+  std::ranges::copy(from_hex(hex) | std::views::take(key.size()), key.begin());
+  return key;
+}
+
+/// The vectors' fold program, encoded and masked, as the packer wrote it.
+constexpr std::string_view kProgramHex =
+    "000102030405060708090a0b0c0d0e0f030104030405060708090a0b0d0d0c0f00010203"
+    "060546076c090a0b080d0e0f000102030705060708090a0b0a0d0e0f0001020301050607"
+    "08090a0b0b0d0e0f000102030305070708090a0b0c0d0e0f000102030405060708090a0b"
+    "0c0d0e0f000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "00010203444444444c4c4c4c444444444c4c4c4c545454545c5c5c5c545454545c5c5c5c"
+    "0405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f0001020304050607"
+    "08090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f000102030405060708090a0b"
+    "0c0d0e0f000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f00010203"
+    "0405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f0001020304050607"
+    "08090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f000102030405060708090a0b"
+    "0c0d0e0f000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f00010203"
+    "0405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f0001020304050607"
+    "08090a0b0c0d0e0f";
+
+/// The vectors' root key, drawn at random at pack time.
 constexpr std::string_view kRootHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
-/// The asset share, shipped as the s.bin entry.
-constexpr std::string_view kShareAssetHex = "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f";
-/// The class map's frame key: HKDF of the root over the map nonce and entry.
-constexpr std::string_view kMapKeyHex = "3cd614f94a393fbc968ce0b09feafec71d164971476e62353ffa7fc913b3a6f7";
-/// The class map's frame.
+
+/// The vectors' asset share, the s.bin entry.
+constexpr std::string_view kShareHex = "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f";
+
+/// The decoy entries at assets/rasp/r0.bin and r1.bin.
+constexpr std::string_view kDecoy0Hex = "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f";
+constexpr std::string_view kDecoy1Hex = "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f";
+
+/// The class map's frame key and frame.
+constexpr std::string_view kMapKeyHex = "5148f4c03d5c379482f5e656dfe3ede4a139f570175a397308ae1213c43b014e";
 constexpr std::string_view kMapFrameHex =
-    "000102030405060708090a0bfa778ca58fe9a3129eb01f255c3f58b75132615e4a4fbdce"
-    "9a57a5c9b8f2ddc5099d30effa98d3c123c032a7f98fcc8164af6e17296abe4fea2f1ac7"
-    "0ef47c9e378a9380aabc9acffdd578afe22364488843158031b90902b5c6641af81ce706"
-    "f994da417c658b0406c21eea5c9236bb6aa18798a655a86776437e8309fda8c48c154b21"
-    "2877a652cd3963fa7c0d59c8b620aa";
-/// The dex master: the root bound to the map frame.
-constexpr std::string_view kMasterHex = "0c3ee85700c0bc074d37b2fbc19ce5e1b908074cb788797fb922a1b3a47addbe";
-/// The business dex at assets/business/0.dex.
+    "000102030405060708090a0bde978b4c0bf489db7f49fe2d7443b65923f17ec4ec533676"
+    "33fcb37d50a6ac53509eac1971608f2803a46e0c45224480474a4b73650209f23787a7f5"
+    "7c4475153a88f127977732363fb99424c2bc83c778eac5def57c814214af0155fd95594d"
+    "36df738bba5c17f86dcfb6a37a27e96ba26c14031d02d10a3a731fa9a2b7d8f8241f07ab"
+    "51dba377cd24e3c78d0439271208f1";
+
+/// The dex seed and the guarded master of a clean process.
+constexpr std::string_view kSeedHex = "8bc6daaea6969e5ad8b4dbab11d077a62c08b90d094aed686908845c1de0fbf7";
+constexpr std::string_view kGuardHex = "944e29316ba4b4b4dffd54378aab62ef62807261d48be2e59fb72df663bb6a23";
+
+/// The business dexes at assets/business/0.dex and 1.dex.
 constexpr std::string_view kDex0FrameHex =
-    "101112131415161718191a1b8b1ee9ab64248cd5df0472dcf17e727a38b00d8eb15b986e"
-    "4c67ab8fb78952634d1d963055ec9a7f04b5f4d27b99c6080c34b0001e76661051ca1997"
-    "8ffbaa862837613153b36f311592744af503ee";
-/// The business dex at assets/business/1.dex.
+    "101112131415161718191a1bdb0fa54f72e44bf99595b360f3b1c68d107a2baacd481bd3"
+    "c289cd0f6ef21b2bdb46a8a08980d0a9e94a70a67aa533d8e585dbaabe60359febe5fe54"
+    "4975f82a19cdc38f2cab4fcec2ca3397590f59";
 constexpr std::string_view kDex1FrameHex =
-    "202122232425262728292a2ba2851fa4da0a9d8ff2ababc947146ff64a8c8516c66ee543"
-    "11f1721f9dd1b6a3ee";
-/// The keystore share the packer wrote into the library's `.rasp_config` section.
-constexpr std::string_view kShareLibHex = "da36643e1969de042320709105f0f188332bb3caab836c521f811aafe47fefe7";
-/// The digest of the library's config region.
-constexpr std::string_view kConfigBindingHex = "fb94601990080e7433246e5aead20370e2670dc0d8c599fe4de3ec24d34bccc1";
-/// The digest of the library's `.text` section.
-constexpr std::string_view kTextBindingHex = "00832507a941f05030243eebcf02d2d8f16c9e2a5366d58c7242d6ab17140306";
-/// The library with its config and keystore share written, 6640 bytes.
+    "202122232425262728292a2b857019a080e0b74704d8686130ff975604a674850ecee144"
+    "0e98f2a45a6a8d5cc5";
+
+/// The library with its config, fold program and keystore, 6640 bytes.
 constexpr std::string_view kLibraryHex =
     "7f454c460201010000000000000000000300b70001000000000000000000000040000000"
     "00000000f01500000000000000000000400038000900400010000e000600000004000000"
@@ -224,22 +251,22 @@ constexpr std::string_view kLibraryHex =
     "000000000000000000000000000000000000000000000000000000000000000000000000"
     "000000000000000000000000000000000000000000000000000000000000000000000000"
     "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000000000000000000000000000000000000000000000"
-    "00000000000000000000000000000000da36643e1969de042320709105f0f188332bb3ca"
-    "ab836c521f811aafe47fefe7005562756e747520636c616e672076657273696f6e203139"
+    "0000000000000000000102030405060708090a0b0c0d0e0f030104030405060708090a0b"
+    "0d0d0c0f00010203060546076c090a0b080d0e0f000102030705060708090a0b0a0d0e0f"
+    "000102030105060708090a0b0b0d0e0f000102030305070708090a0b0c0d0e0f00010203"
+    "0405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f0001020304050607"
+    "08090a0b0c0d0e0f00010203444444444c4c4c4c444444444c4c4c4c545454545c5c5c5c"
+    "545454545c5c5c5c0405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f00010203"
+    "0405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f0001020304050607"
+    "08090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f000102030405060708090a0b"
+    "0c0d0e0f000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f00010203"
+    "0405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f0001020304050607"
+    "08090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f000102030405060708090a0b"
+    "0c0d0e0f000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f96b0750b04da3238601f502ef31e76b99b33e5a6"
+    "783579f31c37f04527eeeb88005562756e747520636c616e672076657273696f6e203139"
     "2e312e3720282b2b32303235303830343039303331322b6364373038303239653062322d"
     "317e657870317e32303235303830343231303332352e373929004c696e6b65723a205562"
     "756e7475204c4c442031392e312e37000000000000000000000000000000000000000000"
@@ -284,47 +311,42 @@ constexpr std::string_view kLibraryHex =
     "000000000000000000000000b81500000000000037000000000000000000000000000000"
     "01000000000000000000000000000000";
 
+/// The vectors' plaintexts, as text.
+constexpr std::string_view kMapText =
+    "com.example.Alpha,business/0.dex\n"
+    "com.example.Beta,business/0.dex\n"
+    "com.example.Gamma,business/1.dex\n"
+    "com.example.Alpha,business/1.dex\n";
+/// The vectors' map nonce.
+constexpr std::string_view kMapNonceHex = "000102030405060708090a0b";
 
-/// The map and dex frames' entry names.
+/// The map's and the business dexes' full APK entry names.
 constexpr std::string_view kMapEntryName = kMapEntry;
 constexpr std::string_view kDex0Entry = "assets/business/0.dex";
 constexpr std::string_view kDex1Entry = "assets/business/1.dex";
 
-/// The vectors' map frame, decoded.
-///
-/// @return The frame as a byte vector.
-[[nodiscard]] std::vector<std::uint8_t> map_frame() { return from_hex(kMapFrameHex); }
-
-
-/// The 32 bytes a lowercase-hex string stands for, as a key.
-///
-/// @param hex The hex digits, two per byte.
-/// @return The key they stand for.
-[[nodiscard]] Key from_key(std::string_view hex) {
-  Key key{};
-  std::ranges::copy(from_hex(hex) | std::views::take(key.size()), key.begin());
-  return key;
-}
-
-/// The root key of the vectors, decoded.
-///
-/// @return The root key.
-[[nodiscard]] Key root() { return from_key(kRootHex); }
-
 /// A fixture that writes the vectors' library and APK into its own temporary directory.
 class KeyScheduleTest : public testing::Test {
  protected:
-  /// Writes the vectors' library as a plain file and the vectors' APK, with the decoded asset share, the map frame
-  /// and both dex frames, as stored entries.
+  /// Writes the vectors' library as a plain file and the vectors' APK, with the asset share, both decoy entries, the
+  /// map frame and both dex frames, as stored entries.
   ///
   /// @return Whether both writes succeeded.
   [[nodiscard]] bool write_vectors() {
     if (!write_file(directory_.path() + "/librasp.so", bytes_of(kLibraryHex))) {
       return false;
     }
-    const std::string share_asset = bytes_of(kShareAssetHex);
+    const std::string share = bytes_of(kShareHex);
+    const std::string decoy0 = bytes_of(kDecoy0Hex);
+    const std::string decoy1 = bytes_of(kDecoy1Hex);
+    // The decoys' names are held in locals: a StoredEntry's name is a view, and a view of the
+    // temporary decoy_entry_name returns would dangle before the zip is built.
+    const std::string decoy0_name = decoy_entry_name(0);
+    const std::string decoy1_name = decoy_entry_name(1);
     const std::vector<StoredEntry> entries = {
-        {.name = kShareEntry, .content = share_asset},
+        {.name = kShareEntry, .content = share},
+        {.name = decoy0_name, .content = decoy0},
+        {.name = decoy1_name, .content = decoy1},
         {.name = kMapEntryName, .content = std::string_view(kMapFrameHex)},
         {.name = kDex0Entry, .content = std::string_view(kDex0FrameHex)},
         {.name = kDex1Entry, .content = std::string_view(kDex1FrameHex)},
@@ -349,8 +371,8 @@ class KeyScheduleTest : public testing::Test {
 
 TEST(Hkdf, hkdf_whenGivenRfc5869TestCase1_matchesTheFirst32BytesOfItsOkm) {
   const std::vector<std::uint8_t> ikm(22, 0x0b);
-  const std::vector<std::uint8_t> salt = from_hex("000102030405060708090a0b0c");
   const std::string info = bytes_of("f0f1f2f3f4f5f6f7f8f9");
+  const std::vector<std::uint8_t> salt = from_hex("000102030405060708090a0b0c");
 
   const std::optional<Key> okm = hkdf_sha256(ikm, info, salt);
 
@@ -368,121 +390,123 @@ TEST(Hkdf, hkdf_whenGivenRfc5869TestCase3WithAnEmptySaltAndInfo_matchesTheFirst3
   EXPECT_EQ(*okm, from_key("8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d"));
 }
 
-TEST(KeySchedule, frameKey_whenGivenTheVectorInputs_matchesTheVectorKey) {
-  const std::optional<Key> key =
-      frame_key(root(), std::span<const std::uint8_t>(map_frame()).first(kNonceSize), kMapEntryName);
+TEST(Fold, decode_whenGivenTheVectorsProgram_runsItsRecordsAndConstants) {
+  const std::optional<FoldProgram> program = decode_program(from_hex(kProgramHex));
+
+  ASSERT_TRUE(program.has_value());
+  EXPECT_EQ(program->chain_a.size(), 3U);
+  EXPECT_EQ(program->chain_a[0].kind, RecordKind::kText);
+  EXPECT_EQ(program->chain_a[1].kind, RecordKind::kSection);
+  EXPECT_EQ(program->chain_a[1].param, 2U);
+  EXPECT_EQ(program->chain_a[2].kind, RecordKind::kRange);
+  EXPECT_EQ(program->chain_a[2].param, 64U);
+  EXPECT_EQ(program->chain_a[2].param32, 100U);
+  EXPECT_EQ(program->chain_s.size(), 6U);
+  EXPECT_EQ(program->chain_s[0].kind, RecordKind::kRegion);
+  EXPECT_EQ(program->chain_s[1].kind, RecordKind::kShare);
+  EXPECT_EQ(program->chain_s[2].kind, RecordKind::kConstant);
+  EXPECT_EQ(program->chain_s[2].param, 0U);
+  EXPECT_EQ(program->chain_s[3].kind, RecordKind::kGates);
+  EXPECT_EQ(program->chain_s[4].kind, RecordKind::kEntry);
+  EXPECT_EQ(program->chain_s[5].kind, RecordKind::kEntry);
+}
+
+TEST(Fold, decode_whenTheBlobIsTheWrongSize_returnsNothing) {
+  EXPECT_FALSE(decode_program(std::vector<std::uint8_t>(64)).has_value());
+}
+
+TEST(Fold, decode_whenTheProgramNamesTooManyRecords_returnsNothing) {
+  // 17 records across the two chains is one more than the program holds, and the mask is zero, so
+  // unmasking is the identity.
+  std::vector<std::uint8_t> blob(kProgramSize, 0);
+  blob[16] = 17U;
+
+  EXPECT_FALSE(decode_program(blob).has_value());
+}
+
+TEST(Fold, chains_whenReordered_changeTheirStates) {
+  const std::array<Key, 3> inputs{
+      from_key("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"),
+      from_key("202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"),
+      from_key("404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"),
+  };
+  const Key first = fold_chain(Key{}, std::span<const Key>(inputs), "a");
+  const std::array<Key, 3> reordered{
+      inputs[2],
+      inputs[1],
+      inputs[0],
+  };
+
+  const Key second = fold_chain(Key{}, std::span<const Key>(reordered), "a");
+
+  EXPECT_NE(first, second);
+}
+
+TEST(KeySchedule, frameKey_whenGivenTheVectorInputs_matchesTheVectorMapKey) {
+  const std::optional<Key> key = frame_key(from_key(kRootHex), from_hex(kMapNonceHex), kMapEntryName);
 
   ASSERT_TRUE(key.has_value());
   EXPECT_EQ(*key, from_key(kMapKeyHex));
 }
 
-TEST(KeySchedule, frameKey_whenEntryDiffers_derivesADifferentKey) {
-  const std::optional<Key> key = frame_key(root(), std::span<const std::uint8_t>(map_frame()).first(kNonceSize),
-                                           kDex0Entry);
+TEST(KeySchedule, seedFrom_whenGivenTheVectorInputs_matchesTheVectorSeed) {
+  const std::optional<Key> seed = seed_from(from_key(kRootHex), from_hex(kMapFrameHex));
 
-  ASSERT_TRUE(key.has_value());
-  EXPECT_NE(*key, from_key(kMapKeyHex));
+  ASSERT_TRUE(seed.has_value());
+  EXPECT_EQ(*seed, from_key(kSeedHex));
 }
 
-TEST(KeySchedule, dexMaster_whenGivenTheVectorInputs_matchesTheVectorMaster) {
-  const std::optional<Key> master = dex_master(root(), map_frame());
-
-  ASSERT_TRUE(master.has_value());
-  EXPECT_EQ(*master, from_key(kMasterHex));
-}
-
-TEST(KeySchedule, dexMaster_whenTheMapFrameIsTampered_changes) {
-  std::vector<std::uint8_t> frame = map_frame();
+TEST(KeySchedule, seedFrom_whenTheMapFrameIsTampered_changes) {
+  std::vector<std::uint8_t> frame = from_hex(kMapFrameHex);
   frame.back() = static_cast<std::uint8_t>(frame.back() ^ 0x01U);
 
-  const std::optional<Key> master = dex_master(root(), frame);
+  const std::optional<Key> seed = seed_from(from_key(kRootHex), frame);
 
-  ASSERT_TRUE(master.has_value());
-  EXPECT_NE(*master, from_key(kMasterHex));
+  ASSERT_TRUE(seed.has_value());
+  EXPECT_NE(*seed, from_key(kSeedHex));
 }
 
 TEST(KeySchedule, gateBlock_whenTheDeviceIsClean_isOneBytePerFactThenZeros) {
-  const Key block = gate_block(kCleanEnvironment);
+  const Environment clean{.java_environment = true, .no_tracer = true, .installed_under_data = true};
 
-  Key expected{};
-  expected[0] = 1U;
-  expected[1] = 1U;
-  expected[2] = 1U;
-  EXPECT_EQ(block, expected);
+  const Key block = gate_block(clean);
+
+  EXPECT_EQ(block[0], 1U);
+  EXPECT_EQ(block[1], 1U);
+  EXPECT_EQ(block[2], 1U);
 }
 
-TEST(KeySchedule, gateBlock_whenAFactFails_flipsItsByte) {
-  const Environment environment{.java_environment = true, .no_tracer = false, .installed_under_data = true};
+TEST(KeySchedule, sensorBlock_whenTheProcessIsClean_isTheCleanSensors) {
+  const Sensors clean{.no_tracer = true, .text_intact = true};
 
-  const Key block = gate_block(environment);
+  const Key block = sensor_block(clean);
 
-  EXPECT_EQ(block[1], 0U);
-  EXPECT_NE(block, gate_block(kCleanEnvironment));
+  EXPECT_EQ(block[0], 1U);
+  EXPECT_EQ(block[1], 1U);
+  EXPECT_EQ(block, kCleanSensors);
 }
 
-TEST(KeySchedule, rootKey_whenFoldedWithTheVectorParts_givesTheVectorRoot) {
-  const std::vector<std::uint8_t> share_lib = from_hex(kShareLibHex);
-  const std::vector<std::uint8_t> share_asset = from_hex(kShareAssetHex);
-  const std::vector<std::uint8_t> config_binding = from_hex(kConfigBindingHex);
-  const std::vector<std::uint8_t> text_binding = from_hex(kTextBindingHex);
+TEST(KeySchedule, guardedMaster_whenTheProcessIsClean_matchesTheVectorGuard) {
+  const std::optional<Key> guard = guarded_master(from_key(kSeedHex), kCleanSensors);
 
-  const std::optional<Key> recovered =
-      root_key(share_lib, share_asset, config_binding, text_binding, gate_block(kCleanEnvironment));
-
-  ASSERT_TRUE(recovered.has_value());
-  EXPECT_EQ(*recovered, root());
+  ASSERT_TRUE(guard.has_value());
+  EXPECT_EQ(*guard, from_key(kGuardHex));
 }
 
-/// The root key of the five parts, folded in their fixed order.
-///
-/// @param parts The five parts of the fold: the two shares, the two bindings, and the gates.
-/// @return The root key, or nothing when a part has the wrong size.
-[[nodiscard]] std::optional<Key> fold_of(const std::array<std::vector<std::uint8_t>, 5>& parts) {
-  return root_key(parts.at(0), parts.at(1), parts.at(2), parts.at(3), parts.at(4));
+TEST(KeySchedule, guardedMaster_whenASensorFails_derivesADifferentMaster) {
+  const Sensors traced{.no_tracer = false, .text_intact = true};
+
+  const std::optional<Key> guard = guarded_master(from_key(kSeedHex), sensor_block(traced));
+
+  ASSERT_TRUE(guard.has_value());
+  EXPECT_NE(*guard, from_key(kGuardHex));
 }
 
-/// The parts with their first byte flipped: one copy per part, each with a different part tampered.
-///
-/// @param parts The five parts of the fold.
-/// @return The tampered copies, one per part.
-[[nodiscard]] std::array<std::array<std::vector<std::uint8_t>, 5>, 5> tamper_each(
-    const std::array<std::vector<std::uint8_t>, 5>& parts) {
-  std::array<std::array<std::vector<std::uint8_t>, 5>, 5> copies{};
-  for (std::size_t which = 0; which < parts.size(); ++which) {
-    copies.at(which) = parts;
-    std::vector<std::uint8_t>& tampered = copies.at(which).at(which);
-    tampered.front() = static_cast<std::uint8_t>(tampered.front() ^ 0x01U);
-  }
-  return copies;
-}
+TEST(KeySchedule, observeSensors_whenCalledOnAHostProcess_reportsNoTracer) {
+  const Sensors sensors = observe_sensors();
 
-TEST(KeySchedule, rootKey_whenAnyPartChanges_changes) {
-  const Key gates = gate_block(kCleanEnvironment);
-  const std::vector<std::uint8_t> gate_bytes(gates.begin(), gates.end());
-  const std::array<std::vector<std::uint8_t>, 5> parts = {
-      from_hex(kShareLibHex),
-      from_hex(kShareAssetHex),
-      from_hex(kConfigBindingHex),
-      from_hex(kTextBindingHex),
-      gate_bytes,
-  };
-  const std::optional<Key> recovered = fold_of(parts);
-  ASSERT_TRUE(recovered.has_value());
-
-  const std::array<std::array<std::vector<std::uint8_t>, 5>, 5> tampered = tamper_each(parts);
-  for (const std::array<std::vector<std::uint8_t>, 5>& one : tampered) {
-    const std::optional<Key> changed = fold_of(one);
-    ASSERT_TRUE(changed.has_value());
-    EXPECT_NE(*changed, *recovered);
-  }
-}
-
-TEST(KeySchedule, rootKey_whenAPartIsTheWrongSize_returnsNothing) {
-  const std::vector<std::uint8_t> short_part(31, 0);
-
-  EXPECT_FALSE(root_key(short_part, from_hex(kShareAssetHex), from_hex(kConfigBindingHex),
-                        from_hex(kTextBindingHex), gate_block(kCleanEnvironment))
-                   .has_value());
+  // A test process is not traced; on a host build the text sensor cannot run, and reads as intact.
+  EXPECT_TRUE(sensors.no_tracer);
 }
 
 TEST_F(KeyScheduleTest, recoverRootKey_whenGivenTheVectorLibraryAndApk_givesTheVectorRoot) {
@@ -491,7 +515,7 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenGivenTheVectorLibraryAndApk_givesTheV
   const std::optional<Key> recovered = recover_root_key(kCleanEnvironment, library_path(), apk_path());
 
   ASSERT_TRUE(recovered.has_value());
-  EXPECT_EQ(*recovered, root());
+  EXPECT_EQ(*recovered, from_key(kRootHex));
 }
 
 TEST_F(KeyScheduleTest, recoverRootKey_whenAGateFails_givesADifferentRoot) {
@@ -501,7 +525,7 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenAGateFails_givesADifferentRoot) {
   const std::optional<Key> recovered = recover_root_key(traced, library_path(), apk_path());
 
   ASSERT_TRUE(recovered.has_value());
-  EXPECT_NE(*recovered, root());
+  EXPECT_NE(*recovered, from_key(kRootHex));
 }
 
 TEST_F(KeyScheduleTest, recoverRootKey_whenTheLibraryCodeIsPatched_givesADifferentRoot) {
@@ -517,7 +541,36 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenTheLibraryCodeIsPatched_givesADiffere
   const std::optional<Key> recovered = recover_root_key(kCleanEnvironment, library_path(), apk_path());
 
   ASSERT_TRUE(recovered.has_value());
-  EXPECT_NE(*recovered, root());
+  EXPECT_NE(*recovered, from_key(kRootHex));
+}
+
+TEST_F(KeyScheduleTest, recoverRootKey_whenTheFoldProgramIsPatched_givesADifferentRoot) {
+  ASSERT_TRUE(write_vectors());
+  std::vector<std::uint8_t> library = from_hex(kLibraryHex);
+  const std::span<const std::uint8_t> image(library);
+  const std::optional<checks::SectionRegion> section = checks::find_section_region(image, ".rasp_config");
+  ASSERT_TRUE(section.has_value());
+  const std::uint64_t program_offset = section->file_offset + section->size - kProgramSize - kKeySize + 100;
+  library[static_cast<std::size_t>(program_offset)] =
+      static_cast<std::uint8_t>(library[static_cast<std::size_t>(program_offset)] ^ 0x01U);
+  ASSERT_TRUE(write_file(library_path(), std::string(library.begin(), library.end())));
+
+  const std::optional<Key> recovered = recover_root_key(kCleanEnvironment, library_path(), apk_path());
+
+  ASSERT_TRUE(recovered.has_value());
+  EXPECT_NE(*recovered, from_key(kRootHex));
+}
+
+TEST_F(KeyScheduleTest, recoverRootKey_whenADecoyEntryIsAbsent_returnsNothing) {
+  ASSERT_TRUE(write_file(library_path(), bytes_of(kLibraryHex)));
+  const std::string share = bytes_of(kShareHex);
+  const std::vector<StoredEntry> entries = {
+      {.name = kShareEntry, .content = share},
+      {.name = kMapEntryName, .content = std::string_view(kMapFrameHex)},
+  };
+  ASSERT_TRUE(write_file(apk_path(), zip_with_stored_entries(entries)));
+
+  EXPECT_FALSE(recover_root_key(kCleanEnvironment, library_path(), apk_path()).has_value());
 }
 
 TEST_F(KeyScheduleTest, recoverRootKey_whenTheApkHasNoShareEntry_returnsNothing) {
@@ -535,6 +588,19 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenTheLibraryIsNotAnElfFile_returnsNothi
   ASSERT_TRUE(write_file(apk_path(), zip_with_stored_entries({})));
 
   EXPECT_FALSE(recover_root_key(kCleanEnvironment, library_path(), apk_path()).has_value());
+}
+
+TEST_F(KeyScheduleTest, decrypt_whenGivenTheVectorMapFrame_opensThePlaintext) {
+  ASSERT_TRUE(write_vectors());
+  const std::optional<Key> root = recover_root_key(kCleanEnvironment, library_path(), apk_path());
+  ASSERT_TRUE(root.has_value());
+  const std::optional<Key> key = frame_key(*root, from_hex(kMapNonceHex), kMapEntryName);
+  ASSERT_TRUE(key.has_value());
+
+  const std::optional<std::vector<std::uint8_t>> map = decrypt(*key, from_hex(kMapFrameHex));
+
+  ASSERT_TRUE(map.has_value());
+  EXPECT_EQ(std::string(map->begin(), map->end()), std::string(kMapText));
 }
 
 }  // namespace

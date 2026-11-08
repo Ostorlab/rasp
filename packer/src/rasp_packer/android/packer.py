@@ -32,7 +32,9 @@ the native runtime are prebuilt artifacts from the runtime build; see resources.
 """
 
 import collections.abc
+import hashlib
 import pathlib
+import random
 import zipfile
 
 from rasp_packer import errors
@@ -157,7 +159,7 @@ def _pack_apk(
         apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
         resources_module.STUB_FACTORY_CLASS,
     )
-    root, share_asset, lib_entries = _schedule_libraries(
+    root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
         injection.library_entries(apk, artifacts), config
     )
     map_frame, dex_entries = _encrypt_payload(result.business, root)
@@ -169,6 +171,7 @@ def _pack_apk(
             SHARE_ENTRY: share_asset,
             MAP_ENTRY: map_frame,
             **dex_entries,
+            **decoy_entries,
             **base_dexes,
             **lib_entries,
         },
@@ -216,7 +219,9 @@ def _pack_aab(
         f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": artifacts.libraries[abi]
         for abi in sorted(abis)
     }
-    root, share_asset, lib_entries = _schedule_libraries(libraries, config)
+    root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
+        libraries, config
+    )
     map_frame, dex_data_entries = _encrypt_payload(result.business, root)
     base_dexes = {
         f"{_AAB_DEX_PREFIX}{name}": data
@@ -231,6 +236,7 @@ def _pack_aab(
             AAB_SHARE_ENTRY: share_asset,
             AAB_MAP_ENTRY: map_frame,
             **{f"{_AAB_BASE}{name}": data for name, data in dex_data_entries.items()},
+            **{f"{_AAB_BASE}{name}": data for name, data in decoy_entries.items()},
             **base_dexes,
             **lib_entries,
         },
@@ -241,39 +247,105 @@ def _pack_aab(
 
 def _schedule_libraries(
     libraries: dict[str, bytes], config: runtime_config.RuntimeConfig
-) -> tuple[bytes, bytes, dict[str, bytes]]:
-    """Builds the schedule's root over the app's runtime libraries.
+) -> tuple[bytes, bytes, dict[str, bytes], dict[str, bytes]]:
+    """Builds the schedule's fold over the app's runtime libraries.
 
-    It draws a fresh root and asset share, then writes each ABI's library with its config and the
-    per-ABI keystore share that makes that library recover the root: the share cancels the bindings
-    of its own sections, so every ABI recovers the same root.
+    It invents a fresh fold program — the per-app recipe of real inputs and decoys, in a random order — and the decoy entries the program names, then writes each ABI's library with its config, the shared program, and the per-ABI keystore share that makes that library's chains recover the root: the share cancels its ABI's chains, so every ABI recovers the same root.
 
     Args:
         libraries: The prebuilt runtime libraries, by APK entry name.
         config: The runtime's config.
 
     Returns:
-        The root key, the asset share to ship as the s.bin entry, and the finished libraries, by
-        APK entry name.
+        The root key, the asset share to ship as the s.bin entry, the finished libraries, by APK
+        entry name, and the decoy entries the fold program names, by APK entry name.
 
     Raises:
         InvalidRuntimeError: A library is not an ELF file or has no required section.
         ConfigTooLargeError: The config does not fit in a library's section.
     """
+    generator = random.SystemRandom()
+    sections = frozenset().union(
+        *(runtime_library.fold_sections(library) for library in libraries.values())
+    )
+    smallest = min((len(library) for library in libraries.values()), default=0)
+    spans = tuple(
+        runtime_library.keystore_span(library) for library in libraries.values()
+    )
+    program = key_schedule.build_program(
+        generator, sections=tuple(sections), library_size=smallest, keystore_spans=spans
+    )
+    encoded = key_schedule.encode_program(program)
+    decoys = {
+        key_schedule.decoy_entry_name(index): key_schedule.new_decoy_entry()
+        for index in program.decoy_entries
+    }
+
     root = key_schedule.new_root()
     share_asset = key_schedule.new_share()
     lib_entries: dict[str, bytes] = {}
     for name, library in libraries.items():
-        configured = runtime_library.write_config(library, config)
-        config_binding = key_schedule.bind_config(
-            runtime_library.config_region(configured)
+        with_program = runtime_library.write_program(
+            runtime_library.write_config(library, config), encoded
         )
-        text_binding = key_schedule.bind_text(runtime_library.text_region(configured))
-        share_lib = key_schedule.share_for(
-            root, share_asset, config_binding, text_binding, key_schedule.CLEAN_GATES
+        gather = _resolver(with_program, program, share_asset, decoys)
+        a_state = key_schedule.run_chain(
+            bytes(key_schedule.KEY_SIZE), program.chain_a, gather, "a"
         )
-        lib_entries[name] = runtime_library.write_keystore(configured, share_lib)
-    return root, share_asset, lib_entries
+        s_state = key_schedule.run_chain(
+            bytes(key_schedule.KEY_SIZE), program.chain_s, gather, "s"
+        )
+        lib_entries[name] = runtime_library.write_keystore(
+            with_program, key_schedule.fold(a_state, s_state, root)
+        )
+    return root, share_asset, lib_entries, decoys
+
+
+def _resolver(
+    library: bytes,
+    program: key_schedule.FoldProgram,
+    share_asset: bytes,
+    decoys: dict[str, bytes],
+) -> collections.abc.Callable[[key_schedule.FoldRecord], bytes]:
+    """Returns the gatherer of one library's fold inputs, the packer's side of the interpreter.
+
+    Args:
+        library: The library with its config and fold program already written.
+        program: The fold program the library carries.
+        share_asset: The asset share to ship as the s.bin entry.
+        decoys: The decoy entries the program names, by APK entry name.
+
+    Returns:
+        A function that returns the 32 bytes each fold record's source holds, the same values the
+        runtime gathers from the shipped library and APK.
+    """
+
+    def resolve(record: key_schedule.FoldRecord) -> bytes:
+        if record.kind == key_schedule.KIND_TEXT:
+            return hashlib.sha256(runtime_library.text_region(library)).digest()
+        if record.kind == key_schedule.KIND_SECTION:
+            return hashlib.sha256(
+                runtime_library.section_region(
+                    library, key_schedule.SECTION_NAMES[record.param]
+                )
+            ).digest()
+        if record.kind == key_schedule.KIND_RANGE:
+            return hashlib.sha256(
+                library[record.param32 : record.param32 + record.param]
+            ).digest()
+        if record.kind == key_schedule.KIND_SHARE:
+            return share_asset
+        if record.kind == key_schedule.KIND_REGION:
+            return hashlib.sha256(runtime_library.config_region(library)).digest()
+        if record.kind == key_schedule.KIND_GATES:
+            return key_schedule.CLEAN_GATES
+        if record.kind == key_schedule.KIND_CONSTANT:
+            return program.constants[record.param]
+        return hashlib.sha256(
+            decoys[key_schedule.decoy_entry_name(record.param)]
+        ).digest()
+
+    return resolve
 
 
 def _encrypt_payload(
@@ -281,9 +353,7 @@ def _encrypt_payload(
 ) -> tuple[bytes, dict[str, bytes]]:
     """Encrypts the class map and the business dexes under the schedule.
 
-    The map is sealed under a key derived from the root, and every business dex under a key derived
-    from the dex master, which binds the root to the map frame as shipped. Each frame's nonce is
-    fresh, and its key is derived from the nonce and the frame's own APK entry name.
+    The map is sealed under a key derived from the root, and every business dex under a key derived from the dex seed — the root bound to the map frame as shipped — and from the sensor guard of a clean process. Each frame's nonce is fresh, and its key is derived from the nonce and the frame's own APK entry name.
 
     Args:
         business: The business dexes the splitter produced.
@@ -297,12 +367,14 @@ def _encrypt_payload(
     map_frame = cipher.encrypt(
         map_key, map_nonce, loader_map.build(business).encode("utf-8")
     )
-    master = key_schedule.dex_master(root, map_frame)
+    guard = key_schedule.guarded_master(
+        key_schedule.seed_from(root, map_frame), key_schedule.CLEAN_SENSORS
+    )
     dex_entries: dict[str, bytes] = {}
     for dex in business:
         entry = ASSET_PREFIX + dex.path
         nonce = cipher.new_nonce()
-        key = key_schedule.frame_key(master, nonce, entry)
+        key = key_schedule.frame_key(guard, nonce, entry)
         dex_entries[entry] = cipher.encrypt(key, nonce, dex.data)
     return map_frame, dex_entries
 
