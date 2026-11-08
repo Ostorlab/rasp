@@ -1,15 +1,14 @@
-/// The APK entries the packer writes for the payload key and the on-demand loader, so every
-/// reader takes their names from one place. The packer stores all of them uncompressed, under `assets/`, so the runtime
-/// reads them without an inflate step.
+/// The APK entries the packer writes for the key schedule and the on-demand loader, so every reader takes their names
+/// from one place. The packer stores all of them uncompressed, under `assets/`, so the runtime reads them without an
+/// inflate step.
 
 #pragma once
 
 namespace rasp::android::payload {
 
-/// The APK entry that holds the payload key, which decrypts every encrypted entry the packer writes.
-// TODO: the key ships in clear in the APK, so anyone who unzips the app can decrypt its code. Fold the key into the
-// cipher with white-box cryptography instead, so no separable key sits in the package.
-inline constexpr const char* kKeyEntry = "assets/rasp/key.bin";
+/// The APK entry that holds the key schedule's asset share: 32 bytes that are one input of the fold that rebuilds the
+/// payload's root key, not a key by themselves (payload/key_schedule.h).
+inline constexpr const char* kShareEntry = "assets/rasp/s.bin";
 
 /// The APK entry that holds the encrypted class map, one `binary.class.Name,<path>` line per class.
 inline constexpr const char* kMapEntry = "assets/rasp/map.bin";

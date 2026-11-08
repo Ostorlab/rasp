@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -13,6 +14,9 @@
 #include "rasp/observation.h"
 
 namespace rasp::android::checks {
+
+/// The length of a SHA-256 digest, in bytes.
+inline constexpr std::size_t kDigestSize = 32;
 
 /// Runs the self-integrity check and returns what it observed.
 ///
@@ -61,11 +65,41 @@ struct TextRegion {
 /// the section doesn't lie wholly inside the file part of one loadable, executable, non-writable segment.
 [[nodiscard]] std::optional<TextRegion> find_text_region(std::span<const std::uint8_t> image, std::uintptr_t load_bias);
 
+/// Where a named section's bytes live in an ELF file image.
+///
+/// Unlike find_text_region this makes no claim about the section's flags or which segment maps it: it only finds the
+/// section by name and checks its bytes lie inside the image. The key schedule uses it to read the library's
+/// `.rasp_config` section, which is allocated and writable, not code.
+struct SectionRegion {
+  /// The offset of the section's bytes in the file.
+  std::uint64_t file_offset = 0;
+  /// The number of bytes in the section.
+  std::uint64_t size = 0;
+};
+
+/// Finds the section named `name` in the ELF image whose file bytes are `image`, or nothing when the image isn't a
+/// little-endian ELF32 or ELF64 file, has no section with that name, or the section's bytes reach outside the image.
+///
+/// @param image The bytes of the ELF file, read whole.
+/// @param name The section's name, such as `.rasp_config`.
+/// @return Where the section's bytes live in the file.
+[[nodiscard]] std::optional<SectionRegion> find_section_region(std::span<const std::uint8_t> image,
+                                                               std::string_view name);
+
 /// The lowercase hexadecimal SHA-256 of `bytes`, or nothing when the crypto library can't compute it.
 ///
 /// @param bytes The bytes to hash.
 /// @return The 64-character hex digest, or nothing on a crypto error.
 [[nodiscard]] std::optional<std::string> sha256_hex(std::span<const std::uint8_t> bytes);
+
+/// The SHA-256 digest of `bytes`, or nothing when the crypto library can't compute it.
+///
+/// The key schedule binds the payload's keys to digests of the library's own sections; this is the digest it folds
+/// in.
+///
+/// @param bytes The bytes to hash.
+/// @return The 32-byte digest, or nothing on a crypto error.
+[[nodiscard]] std::optional<std::array<std::uint8_t, kDigestSize>> sha256(std::span<const std::uint8_t> bytes);
 
 /// The integ.text_sha256 observations for the library whose file is `library_path` and whose `.text` bytes are at
 /// `text_memory` in the process.

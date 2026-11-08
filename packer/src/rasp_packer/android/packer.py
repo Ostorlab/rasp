@@ -2,21 +2,26 @@
 
 The packer keeps the app's framework and library dexes in the clear and encrypts only the app's own
 ("business") dexes, each on its own, so the runtime decrypts one business dex the first time a class
-in it is needed. A screen the user never opens is never decrypted, and a decrypted dex is held no
-longer than it is used.
+in it is needed. A screen the user never opens is never decrypted, and a decrypted dex is wiped as
+soon as the class loader has copied it.
 
 It produces the entries the runtime reads from the app's own APK (names and rules taken from the
-runtime's ``payload/dex_store.*``, ``payload/assets.h`` and ``loader/loader_dex.*``):
+runtime's ``payload/dex_store.*``, ``payload/assets.h``, ``payload/key_schedule.*`` and
+``loader/loader_dex.*``):
 
-- ``assets/rasp/key.bin`` — the raw 32-byte key, stored. It decrypts the map and every business dex.
-- ``assets/rasp/map.bin`` — the class map (see loader_map), encrypted under the key, stored.
+- ``assets/rasp/s.bin`` — one input of the key schedule's fold, not a key by itself (key_schedule).
+- ``assets/rasp/map.bin`` — the class map (see loader_map), encrypted, stored.
 - ``assets/business/<i>.dex`` — one encrypted business dex per file, stored.
 - the framework dexes and the stub, in the clear, as ``classes.dex`` … ``classesN.dex``.
-- ``lib/<abi>/librasp.so`` — the runtime library, one per ABI, with the runtime's config written into
-  its ``.rasp_config`` section (see runtime_library). The loader's own dex is already embedded in it at
-  the runtime's build.
+- ``lib/<abi>/librasp.so`` — the runtime library, one per ABI, with the runtime's config and a
+  per-ABI keystore share written into its ``.rasp_config`` section (see runtime_library). The
+  loader's own dex is already embedded in it at the runtime's build.
 
-For AAB files, all paths live under ``base/`` (e.g. ``base/assets/rasp/key.bin``,
+No key ships in the app: every frame's key is derived, on the device, from the schedule in
+``payload/key_schedule.*`` — the library's own sections, the s.bin entry, the map frame as shipped,
+and environment gates that only a real Android runtime passes (key_schedule for the scheme).
+
+For AAB files, all paths live under ``base/`` (e.g. ``base/assets/rasp/s.bin``,
 ``base/dex/classes.dex``, ``base/lib/<abi>/librasp.so``).  The manifest is in protobuf format
 instead of binary AXML, and no zipalign or v1 signature stripping is needed.
 
@@ -35,6 +40,7 @@ from rasp_packer import identity
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
 from rasp_packer.android import injection
+from rasp_packer.android import key_schedule
 from rasp_packer.android import loader_map
 from rasp_packer.android import resources as resources_module
 from rasp_packer.android import runtime_library
@@ -48,13 +54,13 @@ PRIMARY_DEX = "classes.dex"
 MINIMUM_API_LEVEL = 31
 
 ASSET_DIRECTORY = "assets/rasp"
-KEY_ENTRY = f"{ASSET_DIRECTORY}/key.bin"
+SHARE_ENTRY = f"{ASSET_DIRECTORY}/s.bin"
 MAP_ENTRY = f"{ASSET_DIRECTORY}/map.bin"
 ASSET_PREFIX = "assets/"
 
 _AAB_BASE = "base/"
 _AAB_DEX_PREFIX = "base/dex/"
-AAB_KEY_ENTRY = f"{_AAB_BASE}{KEY_ENTRY}"
+AAB_SHARE_ENTRY = f"{_AAB_BASE}{SHARE_ENTRY}"
 AAB_MAP_ENTRY = f"{_AAB_BASE}{MAP_ENTRY}"
 AAB_ASSET_PREFIX = f"{_AAB_BASE}{ASSET_PREFIX}"
 
@@ -151,25 +157,20 @@ def _pack_apk(
         apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
         resources_module.STUB_FACTORY_CLASS,
     )
-    key = cipher.new_key()
-    map_frame = cipher.encrypt(key, loader_map.build(result.business).encode("utf-8"))
-    business_entries = {
-        ASSET_PREFIX + dex.path: cipher.encrypt(key, dex.data)
-        for dex in result.business
-    }
+    root, share_asset, lib_entries = _schedule_libraries(
+        injection.library_entries(apk, artifacts), config
+    )
+    map_frame, dex_entries = _encrypt_payload(result.business, root)
     base_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
     apk.write(
         output,
         replace={apk_archive.MANIFEST_ENTRY: patched_manifest},
         add={
-            KEY_ENTRY: key,
+            SHARE_ENTRY: share_asset,
             MAP_ENTRY: map_frame,
-            **business_entries,
+            **dex_entries,
             **base_dexes,
-            **{
-                name: runtime_library.write_config(library, config)
-                for name, library in injection.library_entries(apk, artifacts).items()
-            },
+            **lib_entries,
         },
         remove=set(dex_names) | injection.stale_signature_entries(apk),
     )
@@ -210,38 +211,100 @@ def _pack_aab(
         aab_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
         resources_module.STUB_FACTORY_CLASS,
     )
-    key = cipher.new_key()
-    map_frame = cipher.encrypt(key, loader_map.build(result.business).encode("utf-8"))
-    business_entries = {
-        AAB_ASSET_PREFIX + dex.path: cipher.encrypt(key, dex.data)
-        for dex in result.business
+    abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
+    libraries = {
+        f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": artifacts.libraries[abi]
+        for abi in sorted(abis)
     }
+    root, share_asset, lib_entries = _schedule_libraries(libraries, config)
+    map_frame, dex_data_entries = _encrypt_payload(result.business, root)
     base_dexes = {
         f"{_AAB_DEX_PREFIX}{name}": data
         for name, data in injection.base_dex_entries(
             result.framework, artifacts.stub_dex
         ).items()
     }
-    abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
-    lib_entries = {
-        f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": runtime_library.write_config(
-            artifacts.libraries[abi], config
-        )
-        for abi in sorted(abis)
-    }
     aab.write(
         output,
         replace={aab_archive.MANIFEST_ENTRY: patched_manifest},
         add={
-            AAB_KEY_ENTRY: key,
+            AAB_SHARE_ENTRY: share_asset,
             AAB_MAP_ENTRY: map_frame,
-            **business_entries,
+            **{f"{_AAB_BASE}{name}": data for name, data in dex_data_entries.items()},
             **base_dexes,
             **lib_entries,
         },
         remove=set(dex_names),
     )
     return app_identity
+
+
+def _schedule_libraries(
+    libraries: dict[str, bytes], config: runtime_config.RuntimeConfig
+) -> tuple[bytes, bytes, dict[str, bytes]]:
+    """Builds the schedule's root over the app's runtime libraries.
+
+    It draws a fresh root and asset share, then writes each ABI's library with its config and the
+    per-ABI keystore share that makes that library recover the root: the share cancels the bindings
+    of its own sections, so every ABI recovers the same root.
+
+    Args:
+        libraries: The prebuilt runtime libraries, by APK entry name.
+        config: The runtime's config.
+
+    Returns:
+        The root key, the asset share to ship as the s.bin entry, and the finished libraries, by
+        APK entry name.
+
+    Raises:
+        InvalidRuntimeError: A library is not an ELF file or has no required section.
+        ConfigTooLargeError: The config does not fit in a library's section.
+    """
+    root = key_schedule.new_root()
+    share_asset = key_schedule.new_share()
+    lib_entries: dict[str, bytes] = {}
+    for name, library in libraries.items():
+        configured = runtime_library.write_config(library, config)
+        config_binding = key_schedule.bind_config(
+            runtime_library.config_region(configured)
+        )
+        text_binding = key_schedule.bind_text(runtime_library.text_region(configured))
+        share_lib = key_schedule.share_for(
+            root, share_asset, config_binding, text_binding, key_schedule.CLEAN_GATES
+        )
+        lib_entries[name] = runtime_library.write_keystore(configured, share_lib)
+    return root, share_asset, lib_entries
+
+
+def _encrypt_payload(
+    business: tuple[split_module.BusinessDex, ...], root: bytes
+) -> tuple[bytes, dict[str, bytes]]:
+    """Encrypts the class map and the business dexes under the schedule.
+
+    The map is sealed under a key derived from the root, and every business dex under a key derived
+    from the dex master, which binds the root to the map frame as shipped. Each frame's nonce is
+    fresh, and its key is derived from the nonce and the frame's own APK entry name.
+
+    Args:
+        business: The business dexes the splitter produced.
+        root: The schedule's root key.
+
+    Returns:
+        The map frame, and the encrypted business dexes by APK entry name.
+    """
+    map_nonce = cipher.new_nonce()
+    map_key = key_schedule.frame_key(root, map_nonce, MAP_ENTRY)
+    map_frame = cipher.encrypt(
+        map_key, map_nonce, loader_map.build(business).encode("utf-8")
+    )
+    master = key_schedule.dex_master(root, map_frame)
+    dex_entries: dict[str, bytes] = {}
+    for dex in business:
+        entry = ASSET_PREFIX + dex.path
+        nonce = cipher.new_nonce()
+        key = key_schedule.frame_key(master, nonce, entry)
+        dex_entries[entry] = cipher.encrypt(key, nonce, dex.data)
+    return map_frame, dex_entries
 
 
 def _aab_native_abis(aab: aab_archive.Aab) -> set[str]:

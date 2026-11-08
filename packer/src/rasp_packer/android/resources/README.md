@@ -12,8 +12,8 @@ The packer looks for these files in this folder, `packer/src/rasp_packer/android
 
 The packer writes these into the APK, made for each app when it is packed, so they are not files of this folder:
 
-- `assets/rasp/key.bin`: the raw 32-byte key, stored uncompressed. It decrypts the class map and every business dex.
-- `assets/rasp/map.bin`: the class map, encrypted under the key and stored. It names, per class, the business dex that defines it. `loader_map` builds it and `cipher` describes the frame format.
-- `assets/business/<i>.dex`: one encrypted business dex per file, stored. Each is one `cipher` frame under the key.
+- `assets/rasp/s.bin`: one input of the key schedule, stored uncompressed. It is one share of the fold that rebuilds the payload's root key, not a key by itself (`key_schedule`).
+- `assets/rasp/map.bin`: the class map, encrypted and stored. It names, per class, the business dex that defines it. `loader_map` builds it and `cipher` describes the frame format; its key is derived from the schedule's root.
+- `assets/business/<i>.dex`: one encrypted business dex per file, stored. Each is one `cipher` frame under its own schedule-derived key, so no two frames share a key.
 - the framework dexes and the stub, in the clear, as `classes.dex` … `classesN.dex`.
-- the runtime config, which holds the build id, in the `.rasp_config` section of each `lib/<abi>/librasp.so`.
+- the runtime config, which holds the build id, and a per-ABI keystore share, both in the `.rasp_config` section of each `lib/<abi>/librasp.so`. The share is one input of the key schedule's fold, chosen per ABI so every ABI recovers the same root key.

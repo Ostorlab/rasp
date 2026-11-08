@@ -1,14 +1,17 @@
 """End-to-end tests of the Android packer, with a recorded split."""
 
 import collections.abc
+import io
 import pathlib
 import zipfile
 
+import lief
 import pytest
 
 from rasp_packer import errors
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
+from rasp_packer.android import key_schedule
 from rasp_packer.android import packer
 from rasp_packer.android import resources
 from rasp_packer.android import runtime_library
@@ -105,6 +108,28 @@ def _pack(
     return output
 
 
+def _recover_root(
+    archive: zipfile.ZipFile,
+    library_entry: str = "lib/arm64-v8a/librasp.so",
+    gates: bytes = key_schedule.CLEAN_GATES,
+) -> bytes:
+    """Recovers the root key from a packed APK the way the runtime does on the device."""
+    library = archive.read(library_entry)
+    return key_schedule.root_key(
+        runtime_library.keystore(library),
+        archive.read(packer.SHARE_ENTRY),
+        key_schedule.bind_config(runtime_library.config_region(library)),
+        key_schedule.bind_text(runtime_library.text_region(library)),
+        gates,
+    )
+
+
+def _decrypt_map(archive: zipfile.ZipFile, root: bytes) -> bytes:
+    frame = archive.read(packer.MAP_ENTRY)
+    key = key_schedule.frame_key(root, frame[: cipher.NONCE_SIZE], packer.MAP_ENTRY)
+    return cipher.decrypt(key, frame)
+
+
 def testPack_whenValidApk_splitsOnTheManifestPackage(tmp_path: pathlib.Path) -> None:
     app = tmp_path / "app.apk"
     _make_apk(app)
@@ -119,12 +144,34 @@ def testPack_whenValidApk_splitsOnTheManifestPackage(tmp_path: pathlib.Path) -> 
     assert captured == [(app, _PACKAGE)]
 
 
-def testPack_whenValidApk_writesTheRawKey(tmp_path: pathlib.Path) -> None:
+def testPack_whenValidApk_writesNoKeyEntry(tmp_path: pathlib.Path) -> None:
     output = _pack(tmp_path)
     with zipfile.ZipFile(output) as archive:
-        info = archive.getinfo(packer.KEY_ENTRY)
-        assert len(archive.read(packer.KEY_ENTRY)) == cipher.KEY_SIZE
+        names = set(archive.namelist())
+    assert "assets/rasp/key.bin" not in names
+
+
+def testPack_whenValidApk_writesTheScheduleShareStored(
+    tmp_path: pathlib.Path,
+) -> None:
+    output = _pack(tmp_path)
+    with zipfile.ZipFile(output) as archive:
+        info = archive.getinfo(packer.SHARE_ENTRY)
+        assert len(archive.read(packer.SHARE_ENTRY)) == key_schedule.KEY_SIZE
     assert info.compress_type == zipfile.ZIP_STORED
+
+
+def testPack_whenValidApk_recoversTheRootFromTheShippedArtifacts(
+    tmp_path: pathlib.Path,
+) -> None:
+    output = _pack(tmp_path)
+    with zipfile.ZipFile(output) as archive:
+        root = _recover_root(archive)
+        with pytest.raises(cipher.CipherError):
+            # The root is random per packing, so it only proves the map opens below; here a wrong
+            # root must fail, showing the recovery is exact and not accidental.
+            _decrypt_map(archive, bytes(key_schedule.KEY_SIZE))
+        assert len(root) == key_schedule.KEY_SIZE
 
 
 def testPack_whenValidApk_writesAnEncryptedMapThatNamesEveryBusinessClass(
@@ -133,8 +180,7 @@ def testPack_whenValidApk_writesAnEncryptedMapThatNamesEveryBusinessClass(
     output = _pack(tmp_path)
     with zipfile.ZipFile(output) as archive:
         assert archive.getinfo(packer.MAP_ENTRY).compress_type == zipfile.ZIP_STORED
-        key = archive.read(packer.KEY_ENTRY)
-        map_text = cipher.decrypt(key, archive.read(packer.MAP_ENTRY)).decode("utf-8")
+        map_text = _decrypt_map(archive, _recover_root(archive)).decode("utf-8")
         names = set(archive.namelist())
     lines = [line for line in map_text.splitlines() if line]
     assert len(lines) == 3
@@ -152,11 +198,58 @@ def testPack_whenValidApk_writesEachBusinessDexEncryptedAndStored(
 ) -> None:
     output = _pack(tmp_path)
     with zipfile.ZipFile(output) as archive:
-        key = archive.read(packer.KEY_ENTRY)
+        root = _recover_root(archive)
+        frame = archive.read(packer.MAP_ENTRY)
+        master = key_schedule.dex_master(root, frame)
         for dex in _BUSINESS:
             entry = f"{packer.ASSET_PREFIX}{dex.path}"
+            encrypted = archive.read(entry)
             assert archive.getinfo(entry).compress_type == zipfile.ZIP_STORED
-            assert cipher.decrypt(key, archive.read(entry)) == dex.data
+            key = key_schedule.frame_key(master, encrypted[: cipher.NONCE_SIZE], entry)
+            assert cipher.decrypt(key, encrypted) == dex.data
+
+
+def testPack_whenTheLibraryCodeIsPatched_theMapNoLongerDecrypts(
+    tmp_path: pathlib.Path,
+) -> None:
+    output = _pack(tmp_path)
+    with zipfile.ZipFile(output) as archive:
+        root = _recover_root(archive)
+        _decrypt_map(archive, root)
+    elf = lief.ELF.parse(io.BytesIO(_ARM64_SO))
+    assert elf is not None
+    text = elf.get_section(runtime_library.TEXT_SECTION)
+    assert text is not None
+    patched_library = bytearray(_ARM64_SO)
+    patched_library[text.offset] ^= 0x01
+    repacked = tmp_path / "patched.apk"
+    with (
+        zipfile.ZipFile(output) as archive,
+        zipfile.ZipFile(repacked, "w") as repacked_archive,
+    ):
+        for name in archive.namelist():
+            data = (
+                patched_library
+                if name == "lib/arm64-v8a/librasp.so"
+                else archive.read(name)
+            )
+            info = archive.getinfo(name)
+            repacked_archive.writestr(info, bytes(data))
+    with zipfile.ZipFile(repacked) as archive:
+        root = _recover_root(archive)
+        with pytest.raises(cipher.CipherError):
+            _decrypt_map(archive, root)
+
+
+def testPack_whenAGateFails_theMapNoLongerDecrypts(tmp_path: pathlib.Path) -> None:
+    output = _pack(tmp_path)
+    dirty_gates = key_schedule.gate_block(
+        java_environment=True, no_tracer=True, installed_under_data=False
+    )
+    with zipfile.ZipFile(output) as archive:
+        root = _recover_root(archive, gates=dirty_gates)
+        with pytest.raises(cipher.CipherError):
+            _decrypt_map(archive, root)
 
 
 def testPack_whenValidApk_shipsFrameworkAndStubInTheClearAsBaseDexes(
@@ -171,7 +264,7 @@ def testPack_whenValidApk_shipsFrameworkAndStubInTheClearAsBaseDexes(
     assert "classes4.dex" not in names
 
 
-def testPack_whenValidApk_addsTheRuntimeLibraryWithTheConfigWrittenIntoIt(
+def testPack_whenValidApk_addsTheRuntimeLibraryWithTheConfigAndKeystore(
     tmp_path: pathlib.Path,
 ) -> None:
     output = _pack(tmp_path)
@@ -179,8 +272,8 @@ def testPack_whenValidApk_addsTheRuntimeLibraryWithTheConfigWrittenIntoIt(
         library = archive.read("lib/arm64-v8a/librasp.so")
         names = archive.namelist()
 
-    assert library == runtime_library.write_config(_ARM64_SO, _CONFIG)
     assert runtime_library.read_config(library) == _CONFIG.to_json()
+    assert len(runtime_library.keystore(library)) == key_schedule.KEY_SIZE
     assert "assets/rasp/config.json" not in names
 
 

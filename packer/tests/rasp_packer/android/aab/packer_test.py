@@ -8,6 +8,7 @@ import pytest
 from rasp_packer import errors
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
+from rasp_packer.android import key_schedule
 from rasp_packer.android import packer
 from rasp_packer.android import resources
 from rasp_packer.android import runtime_library
@@ -101,6 +102,18 @@ def _pack_aab(
     return output
 
 
+def _recover_root(archive: zipfile.ZipFile) -> bytes:
+    """Recovers the root key from a packed AAB the way the runtime does on the device."""
+    library = archive.read("base/lib/arm64-v8a/librasp.so")
+    return key_schedule.root_key(
+        runtime_library.keystore(library),
+        archive.read(packer.AAB_SHARE_ENTRY),
+        key_schedule.bind_config(runtime_library.config_region(library)),
+        key_schedule.bind_text(runtime_library.text_region(library)),
+        key_schedule.CLEAN_GATES,
+    )
+
+
 # ── format detection ─────────────────────────────────────────
 
 
@@ -122,21 +135,23 @@ def testPack_whenAab_detectsFormatAndUsesAabPath(tmp_path: pathlib.Path) -> None
     assert "classes2.dex" in dex_entries
 
 
-# ── key, map, config ────────────────────────────────────────
+# ── share, map, config ───────────────────────────────────────
 
 
-def testPackAab_writesTheRawKey(tmp_path: pathlib.Path) -> None:
+def testPackAab_writesTheScheduleShareUnderBase(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
-        assert len(zf.read(packer.AAB_KEY_ENTRY)) == cipher.KEY_SIZE
+        assert len(zf.read(packer.AAB_SHARE_ENTRY)) == key_schedule.KEY_SIZE
+        names = set(zf.namelist())
+    assert "base/assets/rasp/key.bin" not in names
 
 
-def testPackAab_writesTheConfigIntoLibrasp(tmp_path: pathlib.Path) -> None:
+def testPackAab_writesTheConfigAndKeystoreIntoLibrasp(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
         library = zf.read("base/lib/arm64-v8a/librasp.so")
-    assert library == runtime_library.write_config(_ARM64_SO, _CONFIG)
     assert runtime_library.read_config(library) == _CONFIG.to_json()
+    assert len(runtime_library.keystore(library)) == key_schedule.KEY_SIZE
 
 
 def testPackAab_writesEncryptedMapThatNamesEveryBusinessClass(
@@ -144,8 +159,11 @@ def testPackAab_writesEncryptedMapThatNamesEveryBusinessClass(
 ) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
-        key = zf.read(packer.AAB_KEY_ENTRY)
-        map_text = cipher.decrypt(key, zf.read(packer.AAB_MAP_ENTRY)).decode("utf-8")
+        frame = zf.read(packer.AAB_MAP_ENTRY)
+        key = key_schedule.frame_key(
+            _recover_root(zf), frame[: cipher.NONCE_SIZE], packer.MAP_ENTRY
+        )
+        map_text = cipher.decrypt(key, frame).decode("utf-8")
         names = set(zf.namelist())
     lines = [line for line in map_text.splitlines() if len(line) > 0]
     assert len(lines) == 3
@@ -168,10 +186,18 @@ def testPackAab_writesEncryptedMapThatNamesEveryBusinessClass(
 def testPackAab_writesEachBusinessDexEncrypted(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
-        key = zf.read(packer.AAB_KEY_ENTRY)
+        root = _recover_root(zf)
+        map_frame = zf.read(packer.AAB_MAP_ENTRY)
+        master = key_schedule.dex_master(root, map_frame)
         for dex in _BUSINESS:
             entry = f"{packer.AAB_ASSET_PREFIX}{dex.path}"
-            assert cipher.decrypt(key, zf.read(entry)) == dex.data
+            encrypted = zf.read(entry)
+            key = key_schedule.frame_key(
+                master,
+                encrypted[: cipher.NONCE_SIZE],
+                f"{packer.ASSET_PREFIX}{dex.path}",
+            )
+            assert cipher.decrypt(key, encrypted) == dex.data
 
 
 # ── framework + stub as base DEX ─────────────────────────────
@@ -193,9 +219,10 @@ def testPackAab_shipsFrameworkAndStubUnderBaseDex(tmp_path: pathlib.Path) -> Non
 def testPackAab_addsRuntimeLibraryUnderBaseLib(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
-        assert zf.read("base/lib/arm64-v8a/librasp.so") == runtime_library.write_config(
-            _ARM64_SO, _CONFIG
-        )
+        library = zf.read("base/lib/arm64-v8a/librasp.so")
+
+    assert runtime_library.read_config(library) == _CONFIG.to_json()
+    assert runtime_library.keystore(library) != bytes(key_schedule.KEY_SIZE)
 
 
 # ── manifest patching ────────────────────────────────────────
