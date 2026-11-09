@@ -256,7 +256,7 @@ jobs:
           echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
       - name: Pick this build's obfuscation seed
         run: |
-          seed="$(python3 -c 'import secrets; print(secrets.randbits(63))')"
+          seed="$(python3 -c 'import secrets; print(secrets.randbits(31))')"
           echo "::add-mask::$seed"
           echo "RASP_OMVLL_SEED=$seed" >> "$GITHUB_ENV"
       - name: Configure

@@ -227,10 +227,12 @@ class DexStoreTest : public testing::Test {
   ///
   /// @return The store, which has a value whenever the APK was written and the map decrypted.
   [[nodiscard]] std::optional<DexStore> open_clean_store() {
-    return open_dex_store(write_full_apk({.map = bytes_of(kMapFrameHex),
-                                          .program = bytes_of(kJFrameHex),
-                                          .dex0 = bytes_of(kDex0FrameHex),
-                                          .dex1 = bytes_of(kDex1FrameHex)}),
+    return open_dex_store(write_full_apk({
+                              .map = bytes_of(kMapFrameHex),
+                              .program = bytes_of(kJFrameHex),
+                              .dex0 = bytes_of(kDex0FrameHex),
+                              .dex1 = bytes_of(kDex1FrameHex),
+                          }),
                           root());
   }
 
@@ -363,10 +365,12 @@ TEST_F(DexStoreTest, decryptDex_whenCalledFromSeveralThreadsAtOnce_decryptsEvery
 TEST_F(DexStoreTest, decryptDex_whenTheDexFrameIsTampered_returnsNothing) {
   std::string dex0 = bytes_of(kDex0FrameHex);
   dex0.back() = flip_low_bit(dex0.back());
-  std::optional<DexStore> store = open_dex_store(write_full_apk({.map = bytes_of(kMapFrameHex),
-                                                                 .program = bytes_of(kJFrameHex),
-                                                                 .dex0 = dex0,
-                                                                 .dex1 = bytes_of(kDex1FrameHex)}),
+  std::optional<DexStore> store = open_dex_store(write_full_apk({
+                                                     .map = bytes_of(kMapFrameHex),
+                                                     .program = bytes_of(kJFrameHex),
+                                                     .dex0 = dex0,
+                                                     .dex1 = bytes_of(kDex1FrameHex),
+                                                 }),
                                                  root());
   ASSERT_TRUE(store.has_value());
   arm_j_store(*store, share());
@@ -398,10 +402,12 @@ TEST_F(DexStoreTest, openDexStore_whenTheMapFrameIsTampered_returnsNothing) {
   std::string map = bytes_of(kMapFrameHex);
   map.back() = flip_low_bit(map.back());
 
-  EXPECT_FALSE(open_dex_store(write_full_apk({.map = map,
-                                              .program = bytes_of(kJFrameHex),
-                                              .dex0 = bytes_of(kDex0FrameHex),
-                                              .dex1 = bytes_of(kDex1FrameHex)}),
+  EXPECT_FALSE(open_dex_store(write_full_apk({
+                                  .map = map,
+                                  .program = bytes_of(kJFrameHex),
+                                  .dex0 = bytes_of(kDex0FrameHex),
+                                  .dex1 = bytes_of(kDex1FrameHex),
+                              }),
                               root())
                    .has_value());
 }
@@ -410,19 +416,23 @@ TEST_F(DexStoreTest, openDexStore_whenTheRootIsWrong_returnsNothing) {
   const std::optional<DexStore> store = open_clean_store();
   ASSERT_TRUE(store.has_value());
 
-  EXPECT_FALSE(open_dex_store(write_full_apk({.map = bytes_of(kMapFrameHex),
-                                              .program = bytes_of(kJFrameHex),
-                                              .dex0 = bytes_of(kDex0FrameHex),
-                                              .dex1 = bytes_of(kDex1FrameHex)}),
+  EXPECT_FALSE(open_dex_store(write_full_apk({
+                                  .map = bytes_of(kMapFrameHex),
+                                  .program = bytes_of(kJFrameHex),
+                                  .dex0 = bytes_of(kDex0FrameHex),
+                                  .dex1 = bytes_of(kDex1FrameHex),
+                              }),
                               wrong_root())
                    .has_value());
 }
 
 TEST_F(DexStoreTest, decryptDex_whenTheRootWasWrongAtOpenTime_cannotDecryptAnyDex) {
-  const std::optional<DexStore> store = open_dex_store(write_full_apk({.map = bytes_of(kMapFrameHex),
-                                                                       .program = bytes_of(kJFrameHex),
-                                                                       .dex0 = bytes_of(kDex0FrameHex),
-                                                                       .dex1 = bytes_of(kDex1FrameHex)}),
+  const std::optional<DexStore> store = open_dex_store(write_full_apk({
+                                                           .map = bytes_of(kMapFrameHex),
+                                                           .program = bytes_of(kJFrameHex),
+                                                           .dex0 = bytes_of(kDex0FrameHex),
+                                                           .dex1 = bytes_of(kDex1FrameHex),
+                                                       }),
                                                        wrong_root());
   EXPECT_FALSE(store.has_value());
 }
@@ -457,10 +467,12 @@ TEST_F(DexStoreTest, openDexStore_whenTheProgramEntryIsPresent_keepsItForTheStub
 }
 
 TEST_F(DexStoreTest, openDexStore_whenTheAppShippedNoProgram_keepsNoProgram) {
-  const std::optional<DexStore> store = open_dex_store(write_full_apk({.map = bytes_of(kMapFrameHex),
-                                                                       .program = "",
-                                                                       .dex0 = bytes_of(kDex0FrameHex),
-                                                                       .dex1 = bytes_of(kDex1FrameHex)}),
+  const std::optional<DexStore> store = open_dex_store(write_full_apk({
+                                                           .map = bytes_of(kMapFrameHex),
+                                                           .program = "",
+                                                           .dex0 = bytes_of(kDex0FrameHex),
+                                                           .dex1 = bytes_of(kDex1FrameHex),
+                                                       }),
                                                        root());
   ASSERT_TRUE(store.has_value());
 

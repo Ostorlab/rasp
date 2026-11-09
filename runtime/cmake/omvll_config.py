@@ -68,7 +68,9 @@ class RaspConfig(omvll.ObfuscationConfig):
         super().__init__()
         seed = os.environ.get("RASP_OMVLL_SEED")
         if seed is not None:
-            omvll.config.probability_seed = int(seed)
+            # The plugin's binding takes a 32-bit signed int, so the seed folds into one: any wider value would
+            # overflow it and fail the build.
+            omvll.config.probability_seed = int(seed) & 0x7FFFFFFF
 
     def _in_crypto_module(self, mod: omvll.Module, func: omvll.Function) -> bool:
         # default_config returns False for an excluded module.
