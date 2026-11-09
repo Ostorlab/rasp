@@ -330,13 +330,14 @@ struct TextLayout {
 }
 
 /// An image like `image_with_text` builds, plus a `.rasp_config` section of `config_size` bytes after the text
-/// segment, whose trailing bytes are overwritten with `digest`. The packer's fold leaves such a section in every
-/// packed library: the expected plaintext `.text` digest in its last 32 bytes, the keystore share before them.
+/// segment, whose 32 bytes before the section's end are overwritten with `digest`. The packer's fold leaves such a
+/// section in every packed library: the expected plaintext `.text` digest right before the keystore share, bound
+/// into the root key.
 ///
 /// @param text_bytes The `.text` content, also placed in the section the image names `.text`.
 /// @param layout The text layout, as `image_with_text` takes it.
-/// @param config_size The `.rasp_config` section's size, at least 32 bytes.
-/// @param digest The bytes written into the section's trailing 32 bytes, or an empty span to leave them zero.
+/// @param config_size The `.rasp_config` section's size, at least 64 bytes.
+/// @param digest The bytes written into the section's 32 bytes before its end, or an empty span to leave them zero.
 /// @return The built image.
 [[nodiscard]] std::vector<std::uint8_t> image_with_text_and_config(std::span<const std::uint8_t> text_bytes,
                                                                    const TextLayout& layout, std::uint64_t config_size,
@@ -370,7 +371,7 @@ struct TextLayout {
   image.resize(static_cast<std::size_t>(config_offset + config_size), 0);
   if (!digest.empty()) {
     std::ranges::copy(digest,
-                      std::span(image).subspan(static_cast<std::size_t>(config_offset + config_size - 32)).begin());
+                      std::span(image).subspan(static_cast<std::size_t>(config_offset + config_size - 64)).begin());
   }
   return image;
 }

@@ -458,11 +458,15 @@ std::optional<Key> recover_root_key(const Environment& environment, std::string_
   if (!section.has_value() || section->size < kSmallestConfigSection) {
     return std::nullopt;
   }
-  const std::uint64_t region_size = section->size - (2 * kKeySize);
+  // The `.rasp_config` layout, from the section's start: the config JSON, its zero padding, the fold program, the
+  // expected plaintext `.text` digest, then the keystore share in the trailing 32 bytes. The gathered region is
+  // everything but the keystore: the share is written after the fold's inputs are gathered, while the digest sits
+  // inside the region, so a patched expectation breaks the fold instead of being honoured by it.
+  const std::uint64_t region_size = section->size - kKeySize;
   const std::span<const std::uint8_t> config_region =
       image.subspan(static_cast<std::size_t>(section->file_offset), static_cast<std::size_t>(region_size));
-  const std::span<const std::uint8_t> program_bytes =
-      image.subspan(static_cast<std::size_t>(section->file_offset + region_size - kProgramSize), kProgramSize);
+  const std::span<const std::uint8_t> program_bytes = image.subspan(
+      static_cast<std::size_t>(section->file_offset + region_size - kProgramSize - kKeySize), kProgramSize);
   const std::span<const std::uint8_t> keystore =
       image.subspan(static_cast<std::size_t>(section->file_offset + region_size), kKeySize);
 

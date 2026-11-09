@@ -60,8 +60,8 @@ def write_program(library: bytes, program: bytes) -> bytes:
         library: The content of a `librasp.so`, with its config already written.
 
     Returns:
-        The library with the program in the bytes before the keystore slot and the text-digest slot. Its size does not
-        change.
+        The library with the program in the bytes before the text-digest slot and the keystore share. Its size does
+        not change.
 
     Raises:
         InvalidRuntimeError: The library is not an ELF file, or has no `.rasp_config` section.
@@ -85,15 +85,15 @@ def write_program(library: bytes, program: bytes) -> bytes:
 
 
 def write_keystore(library: bytes, share: bytes) -> bytes:
-    """Writes the keystore share into a runtime library, after the fold program.
+    """Writes the keystore share into a runtime library, as the section's trailing 32 bytes.
 
     Args:
-        library: The content of a `librasp.so`, with its config and fold program already written.
+        library: The content of a `librasp.so`, with its config, fold program and text digest already written.
         share: The 32-byte share (key_schedule.root_key's compensating value).
 
     Returns:
-        The library with the share in the 32 bytes before the text-digest slot of its `.rasp_config` section. Its
-        size does not change.
+        The library with the share in the last 32 bytes of its `.rasp_config` section. Its size does not change. The
+        share is written after the fold's inputs are gathered, so no gather can cover it.
 
     Raises:
         InvalidRuntimeError: The library is not an ELF file, or has no `.rasp_config` section.
@@ -105,24 +105,28 @@ def write_keystore(library: bytes, share: bytes) -> bytes:
     if space.size < 2 * key_schedule.KEY_SIZE + 1:
         raise ValueError(f"the {ELF_SECTION} section is too small for a keystore share")
     written = bytearray(library)
-    start = space.offset + space.size - 2 * key_schedule.KEY_SIZE
+    start = space.offset + space.size - key_schedule.KEY_SIZE
     written[start : start + key_schedule.KEY_SIZE] = share
     return bytes(written)
 
 
 def write_text_digest(library: bytes, digest: bytes) -> bytes:
-    """Writes the expected plaintext `.text` digest into a runtime library, in the section's trailing 32 bytes.
+    """Writes the expected plaintext `.text` digest into a runtime library, before the fold program's end and the
+    keystore share: the 32 bytes before the share's slot.
 
     The digest is what the integrity check and the fold's sensor guard compare the running `.text` against on packed
     builds: the shipped file keeps ciphertext there, so file and memory can never match, but the decrypted memory must
-    equal the plaintext this digest was taken of.
+    equal the plaintext this digest was taken of. Writing it before the fold's inputs are gathered binds it into the
+    root key: a patched digest in the shipped file breaks every decryption, so the expectation the sensor compares
+    against cannot be swapped for a patched one.
 
     Args:
-        library: The content of a `librasp.so`, with its config, fold program and keystore already written.
+        library: The content of a `librasp.so`, with its config and fold program already written.
         digest: The SHA-256 of the library's plaintext `.text` section, 32 bytes.
 
     Returns:
-        The library with the digest in the last 32 bytes of its `.rasp_config` section. Its size does not change.
+        The library with the digest in the 32 bytes before its `.rasp_config` section's keystore slot. Its size does
+        not change.
 
     Raises:
         InvalidRuntimeError: The library is not an ELF file, or has no `.rasp_config` section.
@@ -134,22 +138,24 @@ def write_text_digest(library: bytes, digest: bytes) -> bytes:
     if space.size < 2 * key_schedule.KEY_SIZE + 1:
         raise ValueError(f"the {ELF_SECTION} section is too small for a text digest")
     written = bytearray(library)
-    start = space.offset + space.size - key_schedule.KEY_SIZE
+    start = space.offset + space.size - 2 * key_schedule.KEY_SIZE
     written[start : start + key_schedule.KEY_SIZE] = digest
     return bytes(written)
 
 
 def config_region(library: bytes) -> bytes:
-    """Reads the config region of a runtime library: the section without the keystore share and the text digest.
+    """Reads the config region of a runtime library: the section without the keystore share.
 
-    The region holds the config JSON, its zero padding and the fold program, and the key schedule folds its digest
-    into the root key.
+    The region holds the config JSON, its zero padding, the expected text digest and the fold program, and the key
+    schedule folds its digest into the root key: because the digest slot sits inside the region, a patched
+    expectation breaks the fold, and the running `.text` can only be compared against the expectation the app shipped
+    with the key it decrypts with.
 
     Args:
         library: The content of a `librasp.so`.
 
     Returns:
-        The section's bytes before the trailing 64, the config JSON, the padding and the fold program.
+        The section's bytes before the trailing 32, the config JSON, the padding, the digest and the fold program.
 
     Raises:
         InvalidRuntimeError: The library is not an ELF file, or has no `.rasp_config` section.
@@ -158,7 +164,7 @@ def config_region(library: bytes) -> bytes:
     space = _space(library)
     if space.size < 2 * key_schedule.KEY_SIZE + 1:
         raise ValueError(f"the {ELF_SECTION} section is too small for a keystore share")
-    return library[space.offset : space.offset + space.size - 2 * key_schedule.KEY_SIZE]
+    return library[space.offset : space.offset + space.size - key_schedule.KEY_SIZE]
 
 
 def program(library: bytes) -> bytes:
@@ -187,17 +193,16 @@ def program(library: bytes) -> bytes:
 
 
 def keystore_span(library: bytes) -> tuple[int, int]:
-    """Returns where the late-written bytes live in the library file: their offset and length.
+    """Returns where the keystore share lives in the library file: its offset and length.
 
-    The fold program's range decoys must avoid these bytes: the keystore share and the expected text digest are
-    written after the fold's inputs are gathered, so a range over them would digest different bytes at pack time
-    than the runtime reads.
+    The fold program's range decoys must avoid these bytes: the share is written after the fold's inputs are
+    gathered, so a range over them would digest different bytes at pack time than the runtime reads.
 
     Args:
         library: The content of a `librasp.so`.
 
     Returns:
-        The trailing bytes' file offset and their length, 2 * KEY_SIZE.
+        The share's file offset and its length, KEY_SIZE.
 
     Raises:
         InvalidRuntimeError: The library is not an ELF file, or has no `.rasp_config` section.
@@ -206,14 +211,11 @@ def keystore_span(library: bytes) -> tuple[int, int]:
     space = _space(library)
     if space.size < 2 * key_schedule.KEY_SIZE + 1:
         raise ValueError(f"the {ELF_SECTION} section is too small for a keystore share")
-    return (
-        space.offset + space.size - 2 * key_schedule.KEY_SIZE,
-        2 * key_schedule.KEY_SIZE,
-    )
+    return space.offset + space.size - key_schedule.KEY_SIZE, key_schedule.KEY_SIZE
 
 
 def keystore(library: bytes) -> bytes:
-    """Reads the keystore share of a runtime library: the 32 bytes before the text-digest slot.
+    """Reads the keystore share of a runtime library: the section's trailing 32 bytes.
 
     Args:
         library: The content of a `librasp.so`.
@@ -229,14 +231,12 @@ def keystore(library: bytes) -> bytes:
     if space.size < 2 * key_schedule.KEY_SIZE + 1:
         raise ValueError(f"the {ELF_SECTION} section is too small for a keystore share")
     return library[
-        space.offset + space.size - 2 * key_schedule.KEY_SIZE : space.offset
-        + space.size
-        - key_schedule.KEY_SIZE
+        space.offset + space.size - key_schedule.KEY_SIZE : space.offset + space.size
     ]
 
 
 def text_digest(library: bytes) -> bytes:
-    """Reads the expected plaintext `.text` digest of a runtime library: the section's trailing 32 bytes.
+    """Reads the expected plaintext `.text` digest of a runtime library: the 32 bytes before the keystore share.
 
     Args:
         library: The content of a `librasp.so`.
@@ -252,7 +252,9 @@ def text_digest(library: bytes) -> bytes:
     if space.size < 2 * key_schedule.KEY_SIZE + 1:
         raise ValueError(f"the {ELF_SECTION} section is too small for a text digest")
     return library[
-        space.offset + space.size - key_schedule.KEY_SIZE : space.offset + space.size
+        space.offset + space.size - 2 * key_schedule.KEY_SIZE : space.offset
+        + space.size
+        - key_schedule.KEY_SIZE
     ]
 
 

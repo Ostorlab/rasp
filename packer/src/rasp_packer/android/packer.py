@@ -264,7 +264,7 @@ def _schedule_libraries(
 ) -> tuple[bytes, bytes, dict[str, bytes], dict[str, bytes]]:
     """Builds the schedule's fold over the app's runtime libraries.
 
-    It invents a fresh fold program — the per-app recipe of real inputs and decoys, in a random order — and the decoy entries the program names, then writes into each ABI's library its per-ABI keystore share, the share that makes that library's chains recover the root: the share cancels its ABI's chains, so every ABI recovers the same root. It also writes each library's expected plaintext `.text` digest into the section's trailing slot, for the integrity check and the sensor guard to compare the running code against. The libraries arrive with their config written and their code and read-only data self-encrypted, and the fold gathers its digests from those shipped bytes: they stay encrypted on disk, and the runtime reads the library file — not the decrypted memory — so both sides gather the same digests.
+    It invents a fresh fold program — the per-app recipe of real inputs and decoys, in a random order — and the decoy entries the program names, then writes into each ABI's library its per-ABI keystore share, the share that makes that library's chains recover the root: the share cancels its ABI's chains, so every ABI recovers the same root. It also writes each library's expected plaintext `.text` digest before the fold's inputs are gathered, so the region digest binds the expectation into the root: a patched digest in the shipped file breaks every decryption, and the integrity check and the sensor guard can only compare the running code against the expectation the app decrypts with. The libraries arrive with their config written and their code and read-only data self-encrypted, and the fold gathers its digests from those shipped bytes: they stay encrypted on disk, and the runtime reads the library file — not the decrypted memory — so both sides gather the same digests.
 
     Args:
         libraries: The runtime libraries with their config written and their code and read-only data self-encrypted, by APK entry name. Each already carries the same config.
@@ -300,21 +300,21 @@ def _schedule_libraries(
     share_asset = key_schedule.new_share()
     lib_entries: dict[str, bytes] = {}
     for name, library in libraries.items():
-        with_program = runtime_library.write_program(
-            runtime_library.write_config(library, config), encoded
+        with_digest = runtime_library.write_text_digest(
+            runtime_library.write_program(
+                runtime_library.write_config(library, config), encoded
+            ),
+            digests[name],
         )
-        gather = _resolver(with_program, program, share_asset, decoys)
+        gather = _resolver(with_digest, program, share_asset, decoys)
         a_state = key_schedule.run_chain(
             bytes(key_schedule.KEY_SIZE), program.chain_a, gather, "a"
         )
         s_state = key_schedule.run_chain(
             bytes(key_schedule.KEY_SIZE), program.chain_s, gather, "s"
         )
-        lib_entries[name] = runtime_library.write_text_digest(
-            runtime_library.write_keystore(
-                with_program, key_schedule.fold(a_state, s_state, root)
-            ),
-            digests[name],
+        lib_entries[name] = runtime_library.write_keystore(
+            with_digest, key_schedule.fold(a_state, s_state, root)
         )
     return root, share_asset, lib_entries, decoys
 

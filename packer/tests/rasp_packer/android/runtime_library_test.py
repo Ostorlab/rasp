@@ -125,23 +125,34 @@ def testWriteKeystore_whenNotAnElfFile_raisesInvalidRuntimeError() -> None:
         runtime_library.write_keystore(b"not a library", _SHARE)
 
 
-def testConfigRegion_whenConfigProgramAndKeystoreAreWritten_holdsThemAll() -> None:
+def testConfigRegion_whenConfigProgramDigestAndKeystoreAreWritten_holdsThemAll() -> (
+    None
+):
     program = bytes(range(256)) * 2
     library = runtime_library.write_text_digest(
-        runtime_library.write_keystore(
-            runtime_library.write_program(_configured(), program), _SHARE
-        ),
+        runtime_library.write_program(_configured(), program),
         _DIGEST,
     )
 
     region = runtime_library.config_region(library)
 
-    assert len(region) == 4096 - 2 * key_schedule.KEY_SIZE
+    assert len(region) == 4096 - key_schedule.KEY_SIZE
     assert region.startswith(_CONFIG.to_json())
-    assert region[len(_CONFIG.to_json()) : -key_schedule.PROGRAM_SIZE] == bytes(
-        len(region) - len(_CONFIG.to_json()) - key_schedule.PROGRAM_SIZE
+    assert region[
+        len(_CONFIG.to_json()) : -key_schedule.PROGRAM_SIZE - key_schedule.KEY_SIZE
+    ] == bytes(
+        len(region)
+        - len(_CONFIG.to_json())
+        - key_schedule.PROGRAM_SIZE
+        - key_schedule.KEY_SIZE
     )
-    assert region[-key_schedule.PROGRAM_SIZE :] == program
+    assert (
+        region[
+            -key_schedule.PROGRAM_SIZE - key_schedule.KEY_SIZE : -key_schedule.KEY_SIZE
+        ]
+        == program
+    )
+    assert region[-key_schedule.KEY_SIZE :] == _DIGEST
 
 
 def testWriteTextDigest_whenGivenALibrary_writesTheDigestIntoTheSection() -> None:

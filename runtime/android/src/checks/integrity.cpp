@@ -511,9 +511,9 @@ namespace {
   return hex;
 }
 
-/// The expected plaintext `.text` digest a packed runtime carries, as hex: the `.rasp_config` section's trailing 32
-/// bytes, which the packer's fold writes alongside the keystore share. All-zero bytes mean the library was never
-/// packed, and the caller falls back to comparing the file against memory.
+/// The expected plaintext `.text` digest a packed runtime carries, as hex: the `.rasp_config` section's 32 bytes before
+/// its keystore share, which the packer's fold writes there and binds into the root key. All-zero bytes mean the
+/// library was never packed, and the caller falls back to comparing the file against memory.
 ///
 /// @param image The library's whole file bytes.
 /// @return The digest as hex. Nothing when the section is missing, too small, or unwritten.
@@ -522,7 +522,7 @@ namespace {
   if (!section || section->size < 2 * kDigestSize || !range_fits(section->file_offset, section->size, image.size())) {
     return std::nullopt;
   }
-  const auto start = static_cast<std::size_t>(section->file_offset + section->size - kDigestSize);
+  const auto start = static_cast<std::size_t>(section->file_offset + section->size - (2 * kDigestSize));
   const std::span<const std::uint8_t> digest = image.subspan(start, kDigestSize);
   if (std::ranges::all_of(digest, [](std::uint8_t byte) { return byte == 0; })) {
     return std::nullopt;
