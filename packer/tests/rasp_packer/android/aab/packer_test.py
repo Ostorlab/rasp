@@ -8,6 +8,7 @@ import pytest
 from rasp_packer import errors
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
+from rasp_packer.android import java_program
 from rasp_packer.android import key_schedule
 from rasp_packer.android import packer
 from rasp_packer.android import resources
@@ -198,9 +199,17 @@ def testPackAab_writesEachBusinessDexEncrypted(tmp_path: pathlib.Path) -> None:
         root = _recover_root(zf)
         assert root is not None
         map_frame = zf.read(packer.AAB_MAP_ENTRY)
-        guard = key_schedule.guarded_master(
-            key_schedule.seed_from(root, map_frame), key_schedule.CLEAN_SENSORS
+        program_frame = zf.read(packer.AAB_JAVA_PROGRAM_ENTRY)
+        program_key = key_schedule.frame_key(
+            root, program_frame[: cipher.NONCE_SIZE], packer.JAVA_PROGRAM_ENTRY
         )
+        program = java_program.decode_program(
+            cipher.decrypt(program_key, program_frame)
+        )
+        armed = key_schedule.armed_master(
+            key_schedule.seed_from(root, map_frame), java_program.run_reference(program)
+        )
+        guard = key_schedule.guarded_master(armed, key_schedule.CLEAN_SENSORS)
         for dex in _BUSINESS:
             entry = f"{packer.AAB_ASSET_PREFIX}{dex.path}"
             encrypted = zf.read(entry)

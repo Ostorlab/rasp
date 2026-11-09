@@ -175,12 +175,24 @@ struct FoldProgram {
 /// @return The seed. Nothing when the digest can't be computed.
 [[nodiscard]] std::optional<Key> seed_from(const Key& root, std::span<const std::uint8_t> map_frame);
 
-/// The master of the next decryption: the seed under the observed sensor guard.
+/// The armed master: the seed under the Java share the stub's program produced on the real runtime.
+///
+/// The share comes from a per-app program of resolution steps the stub executes through ART (the j.bin entry), so
+/// this master needs the native fold *and* a runtime that resolves the program's classes the way the packer
+/// predicted. An emulated runtime that answers one step differently derives a different master, and every dex
+/// frame's tag fails, with no branch anywhere that says why.
 ///
 /// @param seed The dex seed.
+/// @param j_share The Java share the stub produced.
+/// @return The armed master. Nothing when the derivation fails.
+[[nodiscard]] std::optional<Key> armed_master(const Key& seed, const Key& j_share);
+
+/// The master of the next decryption: the armed master under the observed sensor guard.
+///
+/// @param armed The armed master the Java share produced.
 /// @param sensors The sensor block observed now.
 /// @return The guarded master. Nothing when the derivation fails.
-[[nodiscard]] std::optional<Key> guarded_master(const Key& seed, const Key& sensors);
+[[nodiscard]] std::optional<Key> guarded_master(const Key& armed, const Key& sensors);
 
 /// Recovers the root key from the app the packer produced, the way the loader does at install time.
 ///

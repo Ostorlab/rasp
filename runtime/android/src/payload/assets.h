@@ -13,6 +13,10 @@ inline constexpr const char* kShareEntry = "assets/rasp/s.bin";
 /// The APK entry that holds the encrypted class map, one `binary.class.Name,<path>` line per class.
 inline constexpr const char* kMapEntry = "assets/rasp/map.bin";
 
+/// The APK entry that holds the encrypted Java program: the steps the stub executes through the real runtime to
+/// produce the share that arms the dex store.
+inline constexpr const char* kJProgramEntry = "assets/rasp/j.bin";
+
 /// The prefix of the APK entries that hold the decoys the fold program names, `<prefix>r<i>.bin`, whose digests are
 /// inputs of the fold (payload/key_schedule.h).
 inline constexpr const char* kDecoyEntryPrefix = "assets/rasp/r";

@@ -11,6 +11,7 @@ import pytest
 from rasp_packer import errors
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
+from rasp_packer.android import java_program
 from rasp_packer.android import key_schedule
 from rasp_packer.android import packer
 from rasp_packer.android import resources
@@ -130,6 +131,24 @@ def _decrypt_map(archive: zipfile.ZipFile, root: bytes) -> bytes:
     return cipher.decrypt(key, frame)
 
 
+def _armed_guard(archive: zipfile.ZipFile, root: bytes, map_frame: bytes) -> bytes:
+    """Returns the guard that seals the packed dexes: the armed chain over the app's own Java program.
+
+    It decrypts the program the packer shipped, runs its reference the way the stub runs it on a real runtime, and
+    derives through the armed master — so what these tests decrypt with is exactly what the device decrypts with
+    when the runtime resolves the program's steps as the packer predicted.
+    """
+    frame = archive.read(packer.JAVA_PROGRAM_ENTRY)
+    key = key_schedule.frame_key(
+        root, frame[: cipher.NONCE_SIZE], packer.JAVA_PROGRAM_ENTRY
+    )
+    program = java_program.decode_program(cipher.decrypt(key, frame))
+    armed = key_schedule.armed_master(
+        key_schedule.seed_from(root, map_frame), java_program.run_reference(program)
+    )
+    return key_schedule.guarded_master(armed, key_schedule.CLEAN_SENSORS)
+
+
 def _pack_with_decoy(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str]:
     """Packs until a pack's random fold program names a decoy entry, and returns it and the entry.
 
@@ -236,9 +255,7 @@ def testPack_whenValidApk_writesEachBusinessDexEncryptedAndStored(
         root = _recover_root(archive)
         assert root is not None
         frame = archive.read(packer.MAP_ENTRY)
-        guard = key_schedule.guarded_master(
-            key_schedule.seed_from(root, frame), key_schedule.CLEAN_SENSORS
-        )
+        guard = _armed_guard(archive, root, frame)
         for dex in _BUSINESS:
             entry = f"{packer.ASSET_PREFIX}{dex.path}"
             encrypted = archive.read(entry)

@@ -72,7 +72,7 @@ void index_map(std::string_view text, DexStore& store) {
 }  // namespace
 
 std::optional<DexStore> open_dex_store(std::string apk, const Key& root) {
-  static constexpr std::array<std::string_view, 2> kObfuscatedLiterals = {kMapEntry, kAssetPrefix};
+  static constexpr std::array<std::string_view, 3> kObfuscatedLiterals = {kMapEntry, kJProgramEntry, kAssetPrefix};
   rasp::util::anchor_literals(kObfuscatedLiterals);
   const std::optional<std::vector<std::uint8_t>> frame = rasp::android::apk::read_stored_entry(apk, kMapEntry);
   if (!frame.has_value()) {
@@ -94,10 +94,29 @@ std::optional<DexStore> open_dex_store(std::string apk, const Key& root) {
   DexStore store;
   store.apk = std::move(apk);
   store.seed = *seed;
+  // The Java program is sealed under the root like the map: the loader needs it before the stub can arm. An app the
+  // packer built without one ships no entry, and its store then arms from a zero share.
+  const std::optional<std::vector<std::uint8_t>> program_frame =
+      rasp::android::apk::read_stored_entry(store.apk, kJProgramEntry);
+  if (program_frame.has_value()) {
+    const std::optional<Key> program_key = key_of(root, *program_frame, kJProgramEntry);
+    std::optional<std::vector<std::uint8_t>> program =
+        program_key.has_value() ? decrypt(*program_key, *program_frame) : std::nullopt;
+    if (program.has_value()) {
+      store.j_program = std::move(*program);
+    }
+  }
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
   index_map(std::string_view(reinterpret_cast<const char*>(map->data()), map->size()), store);
   wipe(*map);
   return store;
+}
+
+void arm_j_store(DexStore& store, const Key& j_share) {
+  const std::optional<Key> armed = armed_master(store.seed, j_share);
+  if (armed.has_value()) {
+    store.armed = *armed;
+  }
 }
 
 const EncryptedDex* dex_of(const DexStore& store, const std::string& class_name) {
@@ -109,12 +128,15 @@ const EncryptedDex* dex_of(const DexStore& store, const std::string& class_name)
 }
 
 std::optional<std::vector<std::uint8_t>> decrypt_dex(const DexStore& store, const EncryptedDex& dex) {
+  if (!store.armed.has_value()) {
+    return std::nullopt;
+  }
   const std::optional<std::vector<std::uint8_t>> frame = rasp::android::apk::read_stored_entry(store.apk, dex.entry);
   if (!frame.has_value()) {
     return std::nullopt;
   }
   const Sensors sensors = observe_sensors();
-  const std::optional<Key> master = guarded_master(store.seed, sensor_block(sensors));
+  const std::optional<Key> master = guarded_master(*store.armed, sensor_block(sensors));
   if (!master.has_value()) {
     return std::nullopt;
   }

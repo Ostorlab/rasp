@@ -82,6 +82,9 @@ constexpr std::string_view kFrameInfoPrefix = "rasp.v2.";
 /// The info of the dex seed's derivation.
 constexpr std::string_view kSeedInfo = "rasp.v2.seed";
 
+/// The info of the armed master's HKDF step: the seed under the Java share.
+constexpr std::string_view kArmedInfo = "rasp.v2.armed";
+
 /// The info of the sensor guard's derivation.
 constexpr std::string_view kGuardInfo = "rasp.v2.guard";
 
@@ -438,14 +441,16 @@ std::optional<Key> seed_from(const Key& root, std::span<const std::uint8_t> map_
   return hkdf_sha256(root, kSeedInfo, *digest);
 }
 
-std::optional<Key> guarded_master(const Key& seed, const Key& sensors) {
-  return hkdf_sha256(seed, kGuardInfo, sensors);
+std::optional<Key> armed_master(const Key& seed, const Key& j_share) { return hkdf_sha256(seed, kArmedInfo, j_share); }
+
+std::optional<Key> guarded_master(const Key& armed, const Key& sensors) {
+  return hkdf_sha256(armed, kGuardInfo, sensors);
 }
 
 std::optional<Key> recover_root_key(const Environment& environment, std::string_view library_path,
                                     const std::string& apk) {
-  static constexpr std::array<std::string_view, 6> kObfuscatedLiterals = {
-      kConfigSection, kFrameInfoPrefix, kSeedInfo, kGuardInfo, kShareEntry, kDecoyEntryPrefix,
+  static constexpr std::array<std::string_view, 7> kObfuscatedLiterals = {
+      kConfigSection, kFrameInfoPrefix, kSeedInfo, kArmedInfo, kGuardInfo, kShareEntry, kDecoyEntryPrefix,
   };
   rasp::util::anchor_literals(kObfuscatedLiterals);
   const std::optional<std::vector<std::uint8_t>> library = util::read_library_file(library_path, kMaxLibrarySize);

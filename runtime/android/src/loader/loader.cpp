@@ -455,6 +455,53 @@ void install(JNIEnv* env, jclass /*stub*/, jobject base, jstring library_search_
   env->SetObjectField(base, parent, generating);
 }
 
+/// The native body of `RaspStub.program`, which JNI_OnLoad binds with RegisterNatives.
+///
+/// It returns the decrypted Java program the packer shipped — the steps the stub executes through the real runtime —
+/// or null when the store never opened or the app shipped no program. The program is root-sealed, so an emulator
+/// that cannot recover the fold gets nothing to run at all; and the store stays unarmed, so no dex decrypts.
+///
+/// @param env The JNI environment of the calling thread.
+/// @return A new byte array holding the program, or null.
+jbyteArray program(JNIEnv* env, jclass /*stub*/) {
+  State& current = state();
+  if (!current.store.has_value() || current.store->j_program.empty()) {
+    return nullptr;
+  }
+  const std::span<const std::uint8_t> bytes(current.store->j_program);
+  const auto size = static_cast<jsize>(bytes.size());
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  jbyteArray result = env->NewByteArray(size);
+  if (result != nullptr) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+    env->SetByteArrayRegion(result, 0, size, reinterpret_cast<const jbyte*>(bytes.data()));
+  }
+  return result;
+}
+
+/// The native body of `RaspStub.arm`, which JNI_OnLoad binds with RegisterNatives.
+///
+/// It folds the share the stub's Java program produced into the dex master, and lets the dexes decrypt. The share
+/// is 32 bytes or nothing; nothing leaves the store unarmed, and no business class ever decrypts. A wrong share
+/// arms just as quietly, and every frame's tag fails.
+///
+/// @param env The JNI environment of the calling thread.
+/// @param share The share the stub produced, or null.
+void arm(JNIEnv* env, jclass /*stub*/, jbyteArray share) {
+  State& current = state();
+  if (!current.store.has_value() || share == nullptr) {
+    return;
+  }
+  const jsize size = env->GetArrayLength(share);
+  if (size != static_cast<jsize>(sizeof(Key))) {
+    return;
+  }
+  Key j_share{};
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  env->GetByteArrayRegion(share, 0, size, reinterpret_cast<jbyte*>(j_share.data()));
+  payload::arm_j_store(*current.store, j_share);
+}
+
 }  // namespace
 
 }  // namespace rasp::android::loader
@@ -475,13 +522,27 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     env->ExceptionClear();
     return JNI_ERR;
   }
-  const JNINativeMethod method = {
-      .name = "install",
-      .signature = "(Ljava/lang/ClassLoader;Ljava/lang/String;)V",
-      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-      .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::install),
+  const JNINativeMethod methods[] = {
+      {
+          .name = "install",
+          .signature = "(Ljava/lang/ClassLoader;Ljava/lang/String;)V",
+          // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+          .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::install),
+      },
+      {
+          .name = "program",
+          .signature = "()[B",
+          // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+          .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::program),
+      },
+      {
+          .name = "arm",
+          .signature = "([B)V",
+          // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+          .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::arm),
+      },
   };
-  const jint registered = env->RegisterNatives(stub, &method, 1);
+  const jint registered = env->RegisterNatives(stub, methods, 3);
   env->DeleteLocalRef(stub);
   if (registered != JNI_OK) {
     env->ExceptionClear();

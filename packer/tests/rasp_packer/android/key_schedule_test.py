@@ -13,6 +13,7 @@ import pytest
 
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
+from rasp_packer.android import java_program
 from rasp_packer.android import key_schedule
 from rasp_packer.android import runtime_library
 from tests.rasp_packer import conftest
@@ -82,13 +83,41 @@ _DIRTY_GUARD = bytes.fromhex(
     "83b17fb7baa07c1f89b6ce89d336fae8386fd67786a9e2d48d60e4bf60240620"
 )
 _DEX0_FRAME = bytes.fromhex(
-    "101112131415161718191a1bdb0fa54f72e44bf99595b360f3b1c68d107a2baacd481bd3c2"
-    "89cd0f6ef21b2bdb46a8a08980d0a9e94a70a67aa533d8e585dbaabe60359febe5fe544975"
-    "f82a19cdc38f2cab4fcec2ca3397590f59"
+    "101112131415161718191a1b3bd54b643d169e43202ad27100cb29c136c937d69ecf42797c66003decd2eb93859a42526a25bd33c117d2bf13c70f4e48cb716bf6e5b6f6823988cfa71313a19be2c81c8b6d391caa2d65507b522b"
 )
 _DEX1_FRAME = bytes.fromhex(
-    "202122232425262728292a2b857019a080e0b74704d8686130ff975604a674850ecee1440e"
-    "98f2a45a6a8d5cc5"
+    "202122232425262728292a2be6f82c2b5559d83e8e37632b307c749a6b8eda5efdad11e8d677ef75b10fea0174"
+)
+
+# The fixed Java program the vectors' app ships: two hierarchy walks and two resolutions, in a fixed order. Its
+# share — what the stub yields on a runtime that resolves as the packer predicted — is the vector below, and the
+# dex frames are sealed under the armed master that share derives.
+_JAVA_PROGRAM = java_program.Program(
+    steps=(
+        java_program.Step(
+            kind=java_program.KIND_SUPERS, name="java.util.ArrayList", depth=3
+        ),
+        java_program.Step(
+            kind=java_program.KIND_RESOLVE, name="java.lang.String", depth=0
+        ),
+        java_program.Step(
+            kind=java_program.KIND_RESOLVE, name="co.ostorlab.rasp.RaspStub", depth=0
+        ),
+        java_program.Step(
+            kind=java_program.KIND_SUPERS, name="java.lang.Exception", depth=2
+        ),
+    )
+)
+_JAVA_PROGRAM_ENTRY = "assets/rasp/j.bin"
+_JAVA_NONCE = bytes.fromhex("303132333435363738393a3b")
+_JAVA_FRAME = bytes.fromhex(
+    "303132333435363738393a3b6e4d4bbca466657713459031be2d98b30172d467d4f16b5f4b00e02717cc7ea271d3c909c4cff1b0452dc435fc29be838f6a92f61d172f4b94ba1aa469b47b8535e3b2d813bfadd77532e2af989efca6a479380fb39f17044aa4a79f5a59edd71ea5f318d06b69febd60c2dd2ef04a9b43"
+)
+_JAVA_SHARE = bytes.fromhex(
+    "063f7eca0167a1c524f862d0f1fd64d44ee47f502dcf8c97fbb4dc7ef16e631a"
+)
+_ARMED = bytes.fromhex(
+    "27ff73c243df33f85ab17a91a3caede3ceb67c79ee2355f2488870dd0d78535b"
 )
 
 _MAP_ENTRY = "assets/rasp/map.bin"
@@ -437,12 +466,52 @@ def testGuardedMaster_whenASensorFails_derivesADifferentMaster() -> None:
     assert key_schedule.guarded_master(_SEED, dirty) == _DIRTY_GUARD
 
 
+def testArmedMaster_whenGivenTheVectorSeedAndShare_matchesTheVectorArmed() -> None:
+    assert key_schedule.armed_master(_SEED, _JAVA_SHARE) == _ARMED
+
+
+def testArmedMaster_whenTheShareDiffers_derivesADifferentMaster() -> None:
+    wrong = bytes(key_schedule.KEY_SIZE)
+
+    assert key_schedule.armed_master(_SEED, wrong) != _ARMED
+
+
+def testJavaShare_whenTheReferenceRunsTheVectorProgram_matchesTheVectorShare() -> None:
+    assert java_program.run_reference(_JAVA_PROGRAM) == _JAVA_SHARE
+
+
+def testJavaShare_whenAStepIsAnsweredDifferently_changes() -> None:
+    # An emulated runtime that resolves one step differently — walking a shorter hierarchy, or echoing a name —
+    # yields a different share, and every dex frame's tag fails.
+    answered = java_program.Program(
+        steps=(
+            java_program.Step(
+                kind=java_program.KIND_SUPERS, name="java.util.ArrayList", depth=2
+            ),
+            *_JAVA_PROGRAM.steps[1:],
+        )
+    )
+
+    assert java_program.run_reference(answered) != _JAVA_SHARE
+
+
+def testJavaFrame_whenSealedUnderTheVectorKey_matchesTheVectorFrame() -> None:
+    key = key_schedule.frame_key(_ROOT, _JAVA_NONCE, _JAVA_PROGRAM_ENTRY)
+
+    assert cipher.encrypt(
+        key, _JAVA_NONCE, java_program.encode_program(_JAVA_PROGRAM)
+    ) == (_JAVA_FRAME)
+
+
 def testMapFrame_whenSealedUnderTheVectorKey_matchesTheVectorFrame() -> None:
     assert cipher.encrypt(_MAP_KEY, _MAP_NONCE, _MAP_TEXT) == _MAP_FRAME
 
 
-def testDexFrames_whenSealedUnderTheVectorGuard_matchTheVectorFrames() -> None:
-    guard = key_schedule.guarded_master(_SEED, key_schedule.CLEAN_SENSORS)
+def testDexFrames_whenSealedUnderTheVectorArmedGuard_matchTheVectorFrames() -> None:
+    guard = key_schedule.guarded_master(
+        key_schedule.armed_master(_SEED, _JAVA_SHARE),
+        key_schedule.CLEAN_SENSORS,
+    )
 
     assert (
         cipher.encrypt(
@@ -462,9 +531,23 @@ def testDexFrames_whenSealedUnderTheVectorGuard_matchTheVectorFrames() -> None:
     )
 
 
+def testDexFrame_whenTheShareIsWrong_doesNotDecryptUnderTheArmedKey() -> None:
+    guard = key_schedule.guarded_master(
+        key_schedule.armed_master(_SEED, bytes(key_schedule.KEY_SIZE)),
+        key_schedule.CLEAN_SENSORS,
+    )
+
+    key = key_schedule.frame_key(guard, _DEX0_NONCE, _DEX0_ENTRY)
+    assert cipher.encrypt(key, _DEX0_NONCE, _DEX0_PLAINTEXT) != _DEX0_FRAME
+    with pytest.raises(cipher.CipherError):
+        cipher.decrypt(key, _DEX0_FRAME)
+
+
 def testDexFrame_whenTheGuardIsDirty_doesNotDecryptUnderTheCleanKey() -> None:
     dirty = key_schedule.sensor_block(no_tracer=False, text_intact=True)
-    guard = key_schedule.guarded_master(_SEED, dirty)
+    guard = key_schedule.guarded_master(
+        key_schedule.armed_master(_SEED, _JAVA_SHARE), dirty
+    )
 
     key = key_schedule.frame_key(guard, _DEX0_NONCE, _DEX0_ENTRY)
     assert cipher.encrypt(key, _DEX0_NONCE, _DEX0_PLAINTEXT) != _DEX0_FRAME

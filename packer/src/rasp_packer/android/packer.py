@@ -42,6 +42,7 @@ from rasp_packer import identity
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
 from rasp_packer.android import injection
+from rasp_packer.android import java_program
 from rasp_packer.android import key_schedule
 from rasp_packer.android import loader_map
 from rasp_packer.android import resources as resources_module
@@ -59,12 +60,14 @@ MINIMUM_API_LEVEL = 31
 ASSET_DIRECTORY = "assets/rasp"
 SHARE_ENTRY = f"{ASSET_DIRECTORY}/s.bin"
 MAP_ENTRY = f"{ASSET_DIRECTORY}/map.bin"
+JAVA_PROGRAM_ENTRY = java_program.PROGRAM_ENTRY
 ASSET_PREFIX = "assets/"
 
 _AAB_BASE = "base/"
 _AAB_DEX_PREFIX = "base/dex/"
 AAB_SHARE_ENTRY = f"{_AAB_BASE}{SHARE_ENTRY}"
 AAB_MAP_ENTRY = f"{_AAB_BASE}{MAP_ENTRY}"
+AAB_JAVA_PROGRAM_ENTRY = f"{_AAB_BASE}{JAVA_PROGRAM_ENTRY}"
 AAB_ASSET_PREFIX = f"{_AAB_BASE}{ASSET_PREFIX}"
 
 type Splitter = collections.abc.Callable[[pathlib.Path, str], split_module.Split]
@@ -169,7 +172,9 @@ def _pack_apk(
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
         libraries, digests, config
     )
-    map_frame, dex_entries = _encrypt_payload(result.business, root)
+    map_frame, program_frame, dex_entries = _encrypt_payload(
+        result.business, root, random.SystemRandom()
+    )
     base_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
     apk.write(
         output,
@@ -177,6 +182,7 @@ def _pack_apk(
         add={
             SHARE_ENTRY: share_asset,
             MAP_ENTRY: map_frame,
+            JAVA_PROGRAM_ENTRY: program_frame,
             **dex_entries,
             **decoy_entries,
             **base_dexes,
@@ -234,7 +240,9 @@ def _pack_aab(
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
         libraries, digests, config
     )
-    map_frame, dex_data_entries = _encrypt_payload(result.business, root)
+    map_frame, program_frame, dex_data_entries = _encrypt_payload(
+        result.business, root, random.SystemRandom()
+    )
     base_dexes = {
         f"{_AAB_DEX_PREFIX}{name}": data
         for name, data in injection.base_dex_entries(
@@ -247,6 +255,7 @@ def _pack_aab(
         add={
             AAB_SHARE_ENTRY: share_asset,
             AAB_MAP_ENTRY: map_frame,
+            AAB_JAVA_PROGRAM_ENTRY: program_frame,
             **{f"{_AAB_BASE}{name}": data for name, data in dex_data_entries.items()},
             **{f"{_AAB_BASE}{name}": data for name, data in decoy_entries.items()},
             **base_dexes,
@@ -367,34 +376,50 @@ def _resolver(
 
 
 def _encrypt_payload(
-    business: tuple[split_module.BusinessDex, ...], root: bytes
-) -> tuple[bytes, dict[str, bytes]]:
-    """Encrypts the class map and the business dexes under the schedule.
+    business: tuple[split_module.BusinessDex, ...],
+    root: bytes,
+    generator: random.Random,
+) -> tuple[bytes, bytes, dict[str, bytes]]:
+    """Encrypts the class map, the Java program, and the business dexes under the schedule.
 
-    The map is sealed under a key derived from the root, and every business dex under a key derived from the dex seed — the root bound to the map frame as shipped — and from the sensor guard of a clean process. Each frame's nonce is fresh, and its key is derived from the nonce and the frame's own APK entry name.
+    The map and the Java program are sealed under keys derived from the root alone: the loader needs them before the
+    stub can arm. Every business dex is sealed under the armed master — the dex seed bound to the Java share the
+    program's steps produce on a real runtime — and then under the sensor guard of a clean process. Each frame's
+    nonce is fresh, and its key is derived from the nonce and the frame's own APK entry name.
 
     Args:
         business: The business dexes the splitter produced.
         root: The schedule's root key.
+        generator: The source of randomness for this app's Java program.
 
     Returns:
-        The map frame, and the encrypted business dexes by APK entry name.
+        The map frame, the Java program frame, and the encrypted business dexes by APK entry name.
     """
     map_nonce = cipher.new_nonce()
     map_key = key_schedule.frame_key(root, map_nonce, MAP_ENTRY)
     map_frame = cipher.encrypt(
         map_key, map_nonce, loader_map.build(business).encode("utf-8")
     )
-    guard = key_schedule.guarded_master(
-        key_schedule.seed_from(root, map_frame), key_schedule.CLEAN_SENSORS
+
+    program = java_program.build_program(generator)
+    program_nonce = cipher.new_nonce()
+    program_key = key_schedule.frame_key(root, program_nonce, JAVA_PROGRAM_ENTRY)
+    program_frame = cipher.encrypt(
+        program_key, program_nonce, java_program.encode_program(program)
     )
+
+    armed = key_schedule.armed_master(
+        key_schedule.seed_from(root, map_frame),
+        java_program.run_reference(program),
+    )
+    guard = key_schedule.guarded_master(armed, key_schedule.CLEAN_SENSORS)
     dex_entries: dict[str, bytes] = {}
     for dex in business:
         entry = ASSET_PREFIX + dex.path
         nonce = cipher.new_nonce()
         key = key_schedule.frame_key(guard, nonce, entry)
         dex_entries[entry] = cipher.encrypt(key, nonce, dex.data)
-    return map_frame, dex_entries
+    return map_frame, program_frame, dex_entries
 
 
 def _aab_native_abis(aab: aab_archive.Aab) -> set[str]:

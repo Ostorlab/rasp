@@ -486,13 +486,36 @@ def seed_from(root: bytes, map_frame: bytes) -> bytes:
     return _hkdf(root, salt=_digest(map_frame), info=b"rasp.v2.seed")
 
 
+def armed_master(seed: bytes, j_share: bytes) -> bytes:
+    """Returns the armed master: the seed under the Java share the stub's program produced.
+
+    The share comes from a per-app program of resolution steps the stub executes through the real Android runtime
+    (android/java_program.py), so the dex master needs the native fold *and* a runtime that resolves the program's
+    classes the way the packer predicted. An emulated runtime that answers one step differently derives a different
+    master, and every frame's tag fails, with no branch anywhere that says why.
+
+    Args:
+        seed: The dex seed.
+        j_share: The Java share, 32 bytes.
+
+    Returns:
+        The armed master, 32 bytes.
+
+    Raises:
+        ValueError: An argument is not 32 bytes.
+    """
+    if len(seed) != KEY_SIZE or len(j_share) != KEY_SIZE:
+        raise ValueError(f"the seed and share must be {KEY_SIZE} bytes")
+    return _hkdf(seed, salt=j_share, info=b"rasp.v2.armed")
+
+
 def guarded_master(seed: bytes, sensors: bytes) -> bytes:
     """Returns the master of the next decryption: the seed under the observed sensor guard.
 
     The runtime re-observes the process on every decryption and derives through what it sees, so a debugger attached between loads, or a hook patched into the library's code, changes the master and the frame's tag fails, with no branch anywhere that says why.
 
     Args:
-        seed: The dex seed.
+        seed: The armed master the Java share produced, or the dex seed for the vectors before the Java arm.
         sensors: The sensor block observed now, 32 bytes.
 
     Returns:

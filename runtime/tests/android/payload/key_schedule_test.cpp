@@ -114,14 +114,25 @@ constexpr std::string_view kMapFrameHex =
 constexpr std::string_view kSeedHex = "8bc6daaea6969e5ad8b4dbab11d077a62c08b90d094aed686908845c1de0fbf7";
 constexpr std::string_view kGuardHex = "944e29316ba4b4b4dffd54378aab62ef62807261d48be2e59fb72df663bb6a23";
 
+/// The vectors' Java program: the frame it ships as (sealed under the root, at assets/rasp/j.bin) and the share its
+/// steps yield on a runtime that resolves them as the packer predicted. The armed master is the seed under that
+/// share; the dex frames below are sealed under the armed master's clean guard.
+constexpr std::string_view kJFrameHex =
+    "303132333435363738393a3b6e4d4bbca466657713459031be2d98b30172d467d4f16b5f"
+    "4b00e02717cc7ea271d3c909c4cff1b0452dc435fc29be838f6a92f61d172f4b94ba1aa4"
+    "69b47b8535e3b2d813bfadd77532e2af989efca6a479380fb39f17044aa4a79f5a59edd7"
+    "1ea5f318d06b69febd60c2dd2ef04a9b43";
+constexpr std::string_view kJShareHex = "063f7eca0167a1c524f862d0f1fd64d44ee47f502dcf8c97fbb4dc7ef16e631a";
+constexpr std::string_view kArmedHex = "27ff73c243df33f85ab17a91a3caede3ceb67c79ee2355f2488870dd0d78535b";
+
 /// The business dexes at assets/business/0.dex and 1.dex.
 constexpr std::string_view kDex0FrameHex =
-    "101112131415161718191a1bdb0fa54f72e44bf99595b360f3b1c68d107a2baacd481bd3"
-    "c289cd0f6ef21b2bdb46a8a08980d0a9e94a70a67aa533d8e585dbaabe60359febe5fe54"
-    "4975f82a19cdc38f2cab4fcec2ca3397590f59";
+    "101112131415161718191a1b3bd54b643d169e43202ad27100cb29c136c937d69ecf4279"
+    "7c66003decd2eb93859a42526a25bd33c117d2bf13c70f4e48cb716bf6e5b6f6823988cf"
+    "a71313a19be2c81c8b6d391caa2d65507b522b";
 constexpr std::string_view kDex1FrameHex =
-    "202122232425262728292a2b857019a080e0b74704d8686130ff975604a674850ecee144"
-    "0e98f2a45a6a8d5cc5";
+    "202122232425262728292a2be6f82c2b5559d83e8e37632b307c749a6b8eda5efdad11e8"
+    "d677ef75b10fea0174";
 
 /// The library with its config, fold program, keystore and expected text digest, 9408 bytes.
 constexpr std::string_view kLibraryHex =
@@ -397,6 +408,13 @@ constexpr std::string_view kMapText =
 /// The vectors' map nonce.
 constexpr std::string_view kMapNonceHex = "000102030405060708090a0b";
 
+/// The nonce of the vectors' Java program frame, and the program the frame holds once decrypted.
+constexpr std::string_view kJNonceHex = "303132333435363738393a3b";
+constexpr std::string_view kJProgramEntryName = "assets/rasp/j.bin";
+constexpr std::string_view kJProgramHex =
+    "0400020313006a6176612e7574696c2e41727261794c697374010010006a6176612e6c616e672e537472696e6701001900636f2e6f"
+    "73746f726c61622e726173702e5261737053747562020213006a6176612e6c616e672e457863657074696f6e";
+
 /// The map's and the business dexes' full APK entry names.
 constexpr std::string_view kMapEntryName = kMapEntry;
 constexpr std::string_view kDex0Entry = "assets/business/0.dex";
@@ -577,6 +595,32 @@ TEST(KeySchedule, guardedMaster_whenASensorFails_derivesADifferentMaster) {
 
   ASSERT_TRUE(guard.has_value());
   EXPECT_NE(*guard, from_key(kGuardHex));
+}
+
+TEST(KeySchedule, armedMaster_whenGivenTheVectorSeedAndShare_matchesTheVectorArmed) {
+  const std::optional<Key> armed = armed_master(from_key(kSeedHex), from_key(kJShareHex));
+
+  ASSERT_TRUE(armed.has_value());
+  EXPECT_EQ(*armed, from_key(kArmedHex));
+}
+
+TEST(KeySchedule, javaFrame_whenDecryptedUnderTheVectorKey_givesTheVectorProgram) {
+  const std::optional<Key> key = frame_key(from_key(kRootHex), from_hex(kJNonceHex), kJProgramEntryName);
+  ASSERT_TRUE(key.has_value());
+
+  const std::optional<std::vector<std::uint8_t>> program = decrypt(*key, from_hex(kJFrameHex));
+
+  ASSERT_TRUE(program.has_value());
+  EXPECT_EQ(*program, from_hex(kJProgramHex));
+}
+
+TEST(KeySchedule, armedMaster_whenTheShareDiffers_derivesADifferentMaster) {
+  const Key wrong{};
+
+  const std::optional<Key> armed = armed_master(from_key(kSeedHex), wrong);
+
+  ASSERT_TRUE(armed.has_value());
+  EXPECT_NE(*armed, from_key(kArmedHex));
 }
 
 TEST(KeySchedule, observeSensors_whenCalledOnAHostProcess_reportsNoTracer) {
