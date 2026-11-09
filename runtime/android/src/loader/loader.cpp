@@ -493,10 +493,10 @@ void arm(JNIEnv* env, jclass /*stub*/, jbyteArray share) {
     return;
   }
   const jsize size = env->GetArrayLength(share);
-  if (size != static_cast<jsize>(sizeof(Key))) {
+  if (size != static_cast<jsize>(sizeof(payload::Key))) {
     return;
   }
-  Key j_share{};
+  payload::Key j_share{};
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
   env->GetByteArrayRegion(share, 0, size, reinterpret_cast<jbyte*>(j_share.data()));
   payload::arm_j_store(*current.store, j_share);
