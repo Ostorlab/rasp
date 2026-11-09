@@ -20,7 +20,6 @@
 #endif
 
 #include "rasp/observation.h"
-#include "rasp/util/obfuscation.h"
 
 namespace rasp::android::checks {
 
@@ -251,8 +250,6 @@ Observation observe_user_cas(const std::vector<std::string>& aliases) {
 }
 
 std::vector<Observation> mitm() {
-  static constexpr std::array kObfuscatedLiterals = {kTunnelsSignal, kTunnelsSource, kUserCasSignal, kUserCasSource};
-  rasp::util::anchor_literals(kObfuscatedLiterals);
   if (!kOnAndroid) {
     return {unsupported(kTunnelsSignal, kTunnelsSource), unsupported(kUserCasSignal, kUserCasSource)};
   }

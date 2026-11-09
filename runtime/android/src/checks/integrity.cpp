@@ -24,7 +24,6 @@
 #include <dlfcn.h>
 #include <link.h>
 
-#include "rasp/util/obfuscation.h"
 #endif
 
 namespace rasp::android::checks {
@@ -645,9 +644,6 @@ constexpr char kAnchor = 0;
 }  // namespace
 
 std::vector<Observation> integrity() {
-  static constexpr std::array kObfuscatedLiterals = {kTextHashSignal, kFileSource, kMemorySource, kTextSectionName,
-                                                     kConfigSectionName};
-  rasp::util::anchor_literals(kObfuscatedLiterals);
   const std::optional<LoadedLibrary> library = find_own_library();
   if (!library || library->path.empty()) {
     return {failed(kTextHashSignal, kFileSource), failed(kTextHashSignal, kMemorySource)};

@@ -26,7 +26,6 @@
 #include "payload/assets.h"
 #include "payload/cipher.h"
 #include "rasp/observation.h"
-#include "rasp/util/obfuscation.h"
 #include "util/apk_file.h"
 
 namespace rasp::android::payload {
@@ -449,10 +448,6 @@ std::optional<Key> guarded_master(const Key& armed, const Key& sensors) {
 
 std::optional<Key> recover_root_key(const Environment& environment, std::string_view library_path,
                                     const std::string& apk) {
-  static constexpr std::array<std::string_view, 7> kObfuscatedLiterals = {
-      kConfigSection, kFrameInfoPrefix, kSeedInfo, kArmedInfo, kGuardInfo, kShareEntry, kDecoyEntryPrefix,
-  };
-  rasp::util::anchor_literals(kObfuscatedLiterals);
   const std::optional<std::vector<std::uint8_t>> library = util::read_library_file(library_path, kMaxLibrarySize);
   if (!library.has_value()) {
     return std::nullopt;

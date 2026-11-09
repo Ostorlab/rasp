@@ -291,14 +291,20 @@ jobs:
           lib=build/android/android/librasp.so
           test -z "$("$nm" -D -u "$lib" | grep __android_log)"
           test -z "$(strings -a "$lib" | grep -F RaspRuntime)"
-      - name: Check the library shows no signal name or probed path
+      - name: Check the library keeps the schedule's literals readable
         run: |
           lib=build/android/android/librasp.so
           test -s "$lib"
-          literals="$(grep -rhoE '"((root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+|rasp\.v2\.[a-z_.]*|assets/rasp/[^"]*|/(proc|sys)/[^"]+)"' android/src | tr -d '"' | sort -u)"
+          literals="$(grep -rhoE '"((root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+|rasp\.v2\.[a-z_.]*|assets/rasp/[a-z]+\.bin|/(proc|sys)/[^"]+|TracerPid:|\.rasp_config)"' android/src | tr -d '"' | sort -u)"
           test -n "$literals"
-          readable="$(strings -a "$lib" | grep -xF -- "$literals" || true)"
-          if [ -n "$readable" ]; then echo "readable in the release library:"; echo "$readable"; exit 1; fi
+          missing="$(comm -23 <(printf '%s\n' "$literals") <(strings -a "$lib" | sort -u) || true)"
+          if [ -n "$missing" ]; then
+            echo "the string obfuscation encrypted literals the runtime reads through data pointers:"
+            echo "$missing"
+            echo "the runtime reads them as constant data, so the local decryption never runs for them;"
+            echo "they must stay readable here - the packer's at-rest encryption hides them in the shipped library."
+            exit 1
+          fi
       - name: Configure the development build
         run: cmake --preset android-dev -DANDROID_ABI=${{ matrix.abi }}
       - name: Build the development build

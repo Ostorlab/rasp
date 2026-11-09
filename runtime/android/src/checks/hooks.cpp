@@ -14,7 +14,6 @@
 #include <vector>
 
 #include "rasp/observation.h"
-#include "rasp/util/obfuscation.h"
 #include "rasp/util/read_file.h"
 
 namespace rasp::android::checks {
@@ -118,8 +117,6 @@ std::vector<Observation> observe_maps(std::string_view maps_path) {
 }
 
 std::vector<Observation> hooks() {
-  static constexpr std::array kObfuscatedLiterals = {kMapsHitsSignal, kRwxRegionsSignal, kMapsSource, kMapsPath};
-  rasp::util::anchor_literals(kObfuscatedLiterals);
   if (!kOnAndroid) {
     return {unsupported(kMapsHitsSignal, kMapsSource), unsupported(kRwxRegionsSignal, kMapsSource)};
   }

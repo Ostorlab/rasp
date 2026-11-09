@@ -15,7 +15,6 @@
 #include <vector>
 
 #include "rasp/observation.h"
-#include "rasp/util/obfuscation.h"
 #include "rasp/util/read_file.h"
 
 namespace rasp::android::checks {
@@ -85,8 +84,6 @@ Observation observe_tracer_pid(std::string_view status_path) {
 }
 
 std::vector<Observation> debugger() {
-  static constexpr std::array kObfuscatedLiterals = {kTracerPidSignal, kTracerPidSource, kStatusPath, kTracerPidField};
-  rasp::util::anchor_literals(kObfuscatedLiterals);
   if (!kOnAndroid) {
     return {unsupported(kTracerPidSignal, kTracerPidSource)};
   }
