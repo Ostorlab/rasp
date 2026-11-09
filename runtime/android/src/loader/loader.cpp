@@ -6,6 +6,7 @@
 /// `GeneratingClassLoader.findClass` on the class it just loaded. So neither native method is a `Java_...` symbol, and
 /// the library's symbols can be stripped or renamed.
 
+#include <array>
 #include <cstdint>
 #include <jni.h>
 #include <mutex>
@@ -15,13 +16,12 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
-#include "apk/archive.h"
 #include "apk/location.h"
 #include "checks/debugger.h"
 #include "loader/loader_dex.h"
-#include "payload/assets.h"
 #include "payload/cipher.h"
 #include "payload/dex_store.h"
 #include "payload/key_schedule.h"
@@ -492,13 +492,13 @@ void arm(JNIEnv* env, jclass /*stub*/, jbyteArray share) {
   if (!current.store.has_value() || share == nullptr) {
     return;
   }
-  const jsize size = env->GetArrayLength(share);
-  if (size != static_cast<jsize>(sizeof(payload::Key))) {
+  const std::size_t size = static_cast<std::size_t>(env->GetArrayLength(share));
+  if (size != sizeof(payload::Key)) {
     return;
   }
   payload::Key j_share{};
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-  env->GetByteArrayRegion(share, 0, size, reinterpret_cast<jbyte*>(j_share.data()));
+  env->GetByteArrayRegion(share, 0, static_cast<jsize>(size), reinterpret_cast<jbyte*>(j_share.data()));
   payload::arm_j_store(*current.store, j_share);
 }
 
@@ -522,7 +522,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     env->ExceptionClear();
     return JNI_ERR;
   }
-  const JNINativeMethod methods[] = {
+  const std::array<JNINativeMethod, 3> methods = {{
       {
           .name = "install",
           .signature = "(Ljava/lang/ClassLoader;Ljava/lang/String;)V",
@@ -541,8 +541,8 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
           // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
           .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::arm),
       },
-  };
-  const jint registered = env->RegisterNatives(stub, methods, 3);
+  }};
+  const jint registered = env->RegisterNatives(stub, methods.data(), static_cast<jint>(methods.size()));
   env->DeleteLocalRef(stub);
   if (registered != JNI_OK) {
     env->ExceptionClear();
