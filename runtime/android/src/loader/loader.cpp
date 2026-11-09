@@ -7,6 +7,7 @@
 /// the library's symbols can be stripped or renamed.
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <jni.h>
 #include <mutex>
@@ -492,7 +493,7 @@ void arm(JNIEnv* env, jclass /*stub*/, jbyteArray share) {
   if (!current.store.has_value() || share == nullptr) {
     return;
   }
-  const std::size_t size = static_cast<std::size_t>(env->GetArrayLength(share));
+  const auto size = static_cast<std::size_t>(env->GetArrayLength(share));
   if (size != sizeof(payload::Key)) {
     return;
   }
@@ -522,26 +523,28 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     env->ExceptionClear();
     return JNI_ERR;
   }
-  const std::array<JNINativeMethod, 3> methods = {{
+  const std::array<JNINativeMethod, 3> methods = {
       {
-          .name = "install",
-          .signature = "(Ljava/lang/ClassLoader;Ljava/lang/String;)V",
-          // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-          .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::install),
+          {
+              .name = "install",
+              .signature = "(Ljava/lang/ClassLoader;Ljava/lang/String;)V",
+              // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+              .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::install),
+          },
+          {
+              .name = "program",
+              .signature = "()[B",
+              // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+              .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::program),
+          },
+          {
+              .name = "arm",
+              .signature = "([B)V",
+              // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+              .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::arm),
+          },
       },
-      {
-          .name = "program",
-          .signature = "()[B",
-          // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-          .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::program),
-      },
-      {
-          .name = "arm",
-          .signature = "([B)V",
-          // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-          .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::arm),
-      },
-  }};
+  };
   const jint registered = env->RegisterNatives(stub, methods.data(), static_cast<jint>(methods.size()));
   env->DeleteLocalRef(stub);
   if (registered != JNI_OK) {
