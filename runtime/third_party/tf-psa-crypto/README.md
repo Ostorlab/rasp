@@ -1,6 +1,6 @@
 # Vendored TF-PSA-Crypto
 
-The packer encrypts the app's own dex files with ChaCha20-Poly1305, as RFC 8439 defines it, and the Android runtime decrypts them in `librasp.so`. The runtime takes ChaCha20-Poly1305 from TF-PSA-Crypto, the cryptography library of the Mbed TLS project, built from source and linked statically into `librasp.so`. It also takes SHA-256 from it, for the integrity check on Android and the app-identity check on iOS, so the iOS build links it into `RaspRuntime.framework` too. The host builds that run the tests build it too, because the tests of the payload decryption run on a development machine.
+The packer encrypts the app's own dex files with ChaCha20-Poly1305, as RFC 8439 defines it, and the Android runtime decrypts them in `librasp.so`. The runtime takes ChaCha20-Poly1305 from TF-PSA-Crypto, the cryptography library of the Mbed TLS project, built from source and linked statically into `librasp.so`. It also takes HKDF-SHA-256 from it, for the payload's key schedule, and SHA-256, for the integrity check on Android and the app-identity check on iOS, so the iOS build links it into `RaspRuntime.framework` too. The host builds that run the tests build it too, because the tests of the payload decryption run on a development machine.
 
 Since Mbed TLS 4, the Mbed TLS project ships its cryptography as TF-PSA-Crypto, a library of its own, with the PSA Crypto API. Its 1.1 branch is a long-term support branch, which gets security fixes until March 2029.
 

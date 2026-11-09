@@ -4,9 +4,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <iterator>
+#include <optional>
 #include <pthread.h>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -22,45 +25,85 @@
 #include "rasp/context.h"
 #include "rasp/embedded_config.h"
 #include "rasp/heartbeat.h"
+#include "rasp/install_id.h"
 #include "rasp/observation.h"
 #include "rasp/panic.h"
 #include "rasp/plugins/registry.h"
 #include "rasp/schedule.h"
 #include "rasp/util/logging.h"
+#include "util/app_storage.h"
 
 namespace rasp::android {
 
 namespace {
 
-/// Runs the built-in checks.
+/// Runs the built-in check groups that the runtime's config enables.
 ///
-/// @return What they observed: the root, debugger, hooking, integrity and network-interception checks, in that order.
-[[nodiscard]] std::vector<Observation> run_checks() {
-  std::vector<Observation> observations = checks::root();
-  std::ranges::move(checks::debugger(), std::back_inserter(observations));
-  std::ranges::move(checks::hooks(), std::back_inserter(observations));
-  std::ranges::move(checks::integrity(), std::back_inserter(observations));
-  std::ranges::move(checks::mitm(), std::back_inserter(observations));
-  std::ranges::move(checks::identity(), std::back_inserter(observations));
-  std::ranges::move(checks::emulator(), std::back_inserter(observations));
+/// @param config The runtime's config.
+/// @return What they observed: the root, debugger, hooking, integrity, network-interception, app-identity and emulator
+/// checks, in that order, each only when the config enables its group.
+[[nodiscard]] std::vector<Observation> run_checks(const Config& config) {
+  std::vector<Observation> observations;
+  // The mask's bits are the groups' positions in the packer's CHECKS order, which this dispatch's order keeps in
+  // step with: new groups append at both ends.
+  const auto enabled = [&config](unsigned bit, std::string_view id) {
+    if (config.checks_mask.has_value()) {
+      return (config.checks_mask.value() & (std::uint64_t{1} << bit)) != 0;
+    }
+    return is_check_enabled(config, id);
+  };
+  if (enabled(0, "root")) {
+    std::ranges::move(checks::root(), std::back_inserter(observations));
+  }
+  if (enabled(1, "debugger")) {
+    std::ranges::move(checks::debugger(), std::back_inserter(observations));
+  }
+  if (enabled(2, "hooks")) {
+    std::ranges::move(checks::hooks(), std::back_inserter(observations));
+  }
+  if (enabled(3, "integrity")) {
+    std::ranges::move(checks::integrity(), std::back_inserter(observations));
+  }
+  if (enabled(4, "mitm")) {
+    std::ranges::move(checks::mitm(), std::back_inserter(observations));
+  }
+  if (enabled(5, "identity")) {
+    std::ranges::move(checks::identity(), std::back_inserter(observations));
+  }
+  if (enabled(6, "emulator")) {
+    std::ranges::move(checks::emulator(), std::back_inserter(observations));
+  }
   return observations;
+}
+
+/// The runtime's config, with the install id kept in the app's `no_backup` folder.
+///
+/// @return The config the packer wrote, with its install id, which stays `std::nullopt` when it can't be read or kept.
+[[nodiscard]] Config read_config() {
+  Config config = read_embedded_config();
+  const std::optional<std::string> directory = util::make_no_backup_directory();
+  if (directory) {
+    config.install_id = load_or_create_install_id(*directory);
+  }
+  return config;
 }
 
 /// The thread: beats the monitoring heartbeat, initialises the plugins, then, until the process exits, observes and
 /// beats the heartbeat, runs the built-in checks, arms a panic when they or the heartbeat detect something, runs the
-/// plugins, beats again and waits a random check_interval. The context the plugins share is a local of this thread,
-/// which never returns, so it lives as long as the process.
+/// plugins, beats again and waits a random check_interval. The config and the context the plugins share are locals of
+/// this thread, which never returns, so they live as long as the process.
 ///
 /// @return Never returns.
 void* monitor(void* /*argument*/) {
   Heartbeat& heartbeat = monitor_heartbeat();
   heartbeat.beat(std::chrono::steady_clock::now());
+  const Config config = read_config();
   rasp::plugins::Context context;
-  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), read_embedded_config(), context);
+  rasp::plugins::init_plugins(rasp::plugins::compiled_in(), config, context);
   while (true) {
     Observation alive = heartbeat.observe(std::chrono::steady_clock::now());
     heartbeat.beat(std::chrono::steady_clock::now());
-    std::vector<Observation> builtin = run_checks();
+    std::vector<Observation> builtin = run_checks(config);
     builtin.push_back(std::move(alive));
     static_cast<void>(panic_on_detection(builtin, end_process));
     const std::vector<Observation> observations =

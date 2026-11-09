@@ -23,6 +23,7 @@
 #include <bit>
 #include <dlfcn.h>
 #include <link.h>
+
 #endif
 
 namespace rasp::android::checks {
@@ -41,9 +42,6 @@ constexpr std::string_view kMemorySource = "memory";
 /// The largest library file read. librasp.so is well under this, and the limit bounds what the read allocates for a
 /// forged file.
 constexpr std::size_t kMaxLibrarySize = std::size_t{64} << 20U;
-
-/// The length of a SHA-256 digest, in bytes.
-constexpr std::size_t kDigestSize = 32;
 
 /// The ELF identification bytes every image this reader accepts starts with: the magic.
 constexpr std::array<std::uint8_t, 4> kElfMagic = {0x7F, 'E', 'L', 'F'};
@@ -169,6 +167,11 @@ constexpr std::uint64_t kShfAlloc = 0x2;
 
 /// The name of the executable code section.
 constexpr std::string_view kTextSectionName = ".text";
+
+/// The name of the runtime's config section, whose trailing 32 bytes carry the expected plaintext `.text` digest
+/// on packed builds. The packer renames the section in the shipped library, so this is the renamed name, not the raw
+/// build's.
+constexpr std::string_view kConfigSectionName = ".init";
 
 /// Whether the range `[offset, offset + length)` lies within a container of `size` bytes, checked without any addition
 /// that could overflow. Every bounds check on an attacker-controlled ELF offset and size goes through this, so a
@@ -353,9 +356,9 @@ struct LoadSegment {
 
 /// The `.text` section header of `image`, found through the section header `table` of the `layout` class and the
 /// string table at `strtab_index`, or nothing when the image has no section with that name.
-[[nodiscard]] std::optional<SectionHeader> find_text_section(std::span<const std::uint8_t> image,
-                                                             const HeaderTable& table, const ElfLayout& layout,
-                                                             std::uint16_t strtab_index) {
+[[nodiscard]] std::optional<SectionHeader> find_named_section(std::span<const std::uint8_t> image,
+                                                              const HeaderTable& table, const ElfLayout& layout,
+                                                              std::uint16_t strtab_index, std::string_view name) {
   if (strtab_index >= table.count) {
     return std::nullopt;
   }
@@ -370,7 +373,7 @@ struct LoadSegment {
     if (!header) {
       return std::nullopt;
     }
-    if (section_named(strtab, *header, kTextSectionName)) {
+    if (section_named(strtab, *header, name)) {
       return header;
     }
   }
@@ -433,7 +436,8 @@ std::optional<TextRegion> find_text_region(std::span<const std::uint8_t> image, 
       .count = *program_count,
   };
 
-  const std::optional<SectionHeader> text = find_text_section(image, section_table, *layout, *strtab_index);
+  const std::optional<SectionHeader> text =
+      find_named_section(image, section_table, *layout, *strtab_index, kTextSectionName);
   if (!text || text->size == 0 || (text->flags & kShfAlloc) == 0U || (text->flags & kShfWrite) != 0U ||
       !range_fits(text->file_offset, text->size, image.size()) || !std::in_range<std::uintptr_t>(text->address)) {
     return std::nullopt;
@@ -449,7 +453,34 @@ std::optional<TextRegion> find_text_region(std::span<const std::uint8_t> image, 
   };
 }
 
-std::optional<std::string> sha256_hex(std::span<const std::uint8_t> bytes) {
+std::optional<SectionRegion> find_section_region(std::span<const std::uint8_t> image, std::string_view name) {
+  const std::optional<ElfLayout> layout = layout_of(image);
+  if (!layout || image.size() < layout->header_size) {
+    return std::nullopt;
+  }
+  const std::optional<std::uint64_t> section_offset = read_word(image, layout->shoff, *layout);
+  const std::optional<std::uint16_t> section_entry_size = read_u16(image, layout->shentsize);
+  const std::optional<std::uint16_t> section_count = read_u16(image, layout->shnum);
+  const std::optional<std::uint16_t> strtab_index = read_u16(image, layout->shstrndx);
+  if (!section_offset || !section_entry_size || !section_count || !strtab_index || *section_count == 0) {
+    return std::nullopt;
+  }
+  const HeaderTable table{
+      .offset = *section_offset,
+      .entry_size = *section_entry_size,
+      .count = *section_count,
+  };
+  const std::optional<SectionHeader> section = find_named_section(image, table, *layout, *strtab_index, name);
+  if (!section || !range_fits(section->file_offset, section->size, image.size())) {
+    return std::nullopt;
+  }
+  return SectionRegion{
+      .file_offset = section->file_offset,
+      .size = section->size,
+  };
+}
+
+std::optional<std::array<std::uint8_t, kDigestSize>> sha256(std::span<const std::uint8_t> bytes) {
   if (psa_crypto_init() != PSA_SUCCESS) {
     return std::nullopt;
   }
@@ -460,14 +491,53 @@ std::optional<std::string> sha256_hex(std::span<const std::uint8_t> bytes) {
   if (status != PSA_SUCCESS || length != digest.size()) {
     return std::nullopt;
   }
+  return digest;
+}
+
+namespace {
+
+/// Encodes bytes as lowercase hex.
+///
+/// @param bytes The bytes to encode.
+/// @return Their hex string.
+[[nodiscard]] std::string hex_encode(std::span<const std::uint8_t> bytes) {
   constexpr std::string_view kDigits = "0123456789abcdef";
   std::string hex;
-  hex.reserve(digest.size() * 2);
-  for (const std::uint8_t byte : digest) {
+  hex.reserve(bytes.size() * 2);
+  for (const std::uint8_t byte : bytes) {
     hex.push_back(kDigits[byte >> 4U]);
     hex.push_back(kDigits[byte & 0x0FU]);
   }
   return hex;
+}
+
+/// The expected plaintext `.text` digest a packed runtime carries, as hex: the `.rasp_config` section's 32 bytes before
+/// its keystore share, which the packer's fold writes there and binds into the root key. All-zero bytes mean the
+/// library was never packed, and the caller falls back to comparing the file against memory.
+///
+/// @param image The library's whole file bytes.
+/// @return The digest as hex. Nothing when the section is missing, too small, or unwritten.
+[[nodiscard]] std::optional<std::string> expected_text_hash(std::span<const std::uint8_t> image) {
+  const std::optional<SectionRegion> section = find_section_region(image, kConfigSectionName);
+  if (!section || section->size < 2 * kDigestSize || !range_fits(section->file_offset, section->size, image.size())) {
+    return std::nullopt;
+  }
+  const auto start = static_cast<std::size_t>(section->file_offset + section->size - (2 * kDigestSize));
+  const std::span<const std::uint8_t> digest = image.subspan(start, kDigestSize);
+  if (std::ranges::all_of(digest, [](std::uint8_t byte) { return byte == 0; })) {
+    return std::nullopt;
+  }
+  return hex_encode(digest);
+}
+
+}  // namespace
+
+std::optional<std::string> sha256_hex(std::span<const std::uint8_t> bytes) {
+  const std::optional<std::array<std::uint8_t, kDigestSize>> digest = sha256(bytes);
+  if (!digest.has_value()) {
+    return std::nullopt;
+  }
+  return hex_encode(*digest);
 }
 
 std::vector<Observation> observe_text_hashes(std::string_view library_path, std::span<const std::uint8_t> text_memory) {
@@ -486,6 +556,18 @@ std::vector<Observation> observe_text_hashes(std::string_view library_path, std:
       image.subspan(static_cast<std::size_t>(region->file_offset), static_cast<std::size_t>(region->size));
   const std::span<const std::uint8_t> memory_bytes =
       text_memory.subspan(static_cast<std::size_t>(region->memory_address), static_cast<std::size_t>(region->size));
+
+  // A packed library ships ciphertext where this digest was taken, so its file bytes can never match the decrypted
+  // memory. The packer's fold ships the expected plaintext digest in `.rasp_config` instead; comparing the running
+  // `.text` against it observes the same fact: the running code is the code that shipped.
+  if (const std::optional<std::string> expected = expected_text_hash(image)) {
+    const std::optional<std::string> memory_hash = sha256_hex(memory_bytes);
+    return {
+        observed(kTextHashSignal, kFileSource, *expected),
+        memory_hash ? observed(kTextHashSignal, kMemorySource, *memory_hash) : failed(kTextHashSignal, kMemorySource),
+    };
+  }
+
   const std::optional<std::string> file_hash = sha256_hex(file_bytes);
   const std::optional<std::string> memory_hash = sha256_hex(memory_bytes);
   return {

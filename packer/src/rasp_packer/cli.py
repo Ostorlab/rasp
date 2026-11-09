@@ -6,6 +6,7 @@ import pathlib
 import sys
 from importlib import metadata
 
+from rasp_packer import checks as check_groups
 from rasp_packer import errors
 from rasp_packer import packer
 from rasp_packer import platforms
@@ -50,21 +51,68 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="where to write the protected app",
     )
+    pack.add_argument(
+        "--checks",
+        type=_split_checks,
+        help="the check groups the app runs, comma-separated, such as debugger,hooks; "
+        f"{_required_checks()} always runs (default: only {_required_checks()})",
+    )
     return parser
 
 
+def _split_checks(value: str) -> list[str]:
+    """Splits the comma-separated check groups given on the command line.
+
+    Each id is stripped of the spaces around it, and the empty ones, such as the one after a trailing comma, are
+    dropped.
+
+    Raises:
+        argparse.ArgumentTypeError: No id is left, as with an empty value, so argparse exits with a usage error
+            rather than packing an app that runs the required groups only.
+    """
+    checks = [check.strip() for check in value.split(",")]
+    checks = [check for check in checks if check != ""]
+    if len(checks) == 0:
+        raise argparse.ArgumentTypeError("give at least one check id")
+    return checks
+
+
+def _required_checks() -> str:
+    """Returns the ids of the check groups every protected app runs, sorted and comma-separated."""
+    return ",".join(sorted(check_groups.REQUIRED_CHECKS))
+
+
 def _pack(arguments: argparse.Namespace) -> int:
-    """Packs the app given on the command line and prints the result."""
+    """Packs the app given on the command line and prints the result.
+
+    Without `--checks`, it warns and packs the app with only the required check groups. It warns
+    about each given check id that is not one of the platform's groups, which the packer skips.
+    """
+    checks: list[str] | None = arguments.checks
+    if checks is None:
+        print(
+            "rasp pack: warning: no --checks given, so the app runs only the required checks: "
+            f"{_required_checks()}. Pass --checks, such as --checks debugger,hooks, to choose "
+            "the checks it runs.",
+            file=sys.stderr,
+        )
+        checks = []
     try:
         result = packer.pack(
             app=arguments.app,
             platform=arguments.platform,
             output=arguments.output,
             build_id=arguments.build_id,
+            checks=checks,
         )
     except errors.Error as error:
         print(f"rasp pack: {error}", file=sys.stderr)
         return EXIT_FAILED
+    for check in result.skipped_checks:
+        print(
+            f"rasp pack: warning: {check!r} is not a check of {arguments.platform}, skipped",
+            file=sys.stderr,
+        )
     print(
         f"packed {arguments.platform} app: {result.output} "
         f"(package {result.package_name}, version {result.version}, build {result.build_id})"

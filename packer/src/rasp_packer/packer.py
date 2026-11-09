@@ -1,9 +1,11 @@
 """The packer's entry point: protects a built app (APK, AAB, or IPA)."""
 
+import collections.abc
 import dataclasses
 import pathlib
 import re
 
+from rasp_packer import checks as check_groups
 from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import platforms
@@ -25,12 +27,16 @@ class PackResult:
         version: The app's version, read from the app: the manifest's `android:versionName` on
             Android, the short version string on iOS.
         build_id: The id of the protected build, as written into the app.
+        skipped_checks: The ids of the chosen check groups that are not groups of the platform,
+            each once, in the order the caller gave them. The packer skipped them: the protected
+            app does not run them.
     """
 
     output: pathlib.Path
     package_name: str
     version: str
     build_id: str
+    skipped_checks: tuple[str, ...]
 
 
 def pack(
@@ -39,6 +45,7 @@ def pack(
     platform: platforms.Platform,
     output: pathlib.Path,
     build_id: str,
+    checks: collections.abc.Sequence[str],
 ) -> PackResult:
     """Protects a built app: adds the runtime and writes the protected app to `output`.
 
@@ -48,14 +55,24 @@ def pack(
     runtime's config. The packer does not check the id's format: it only refuses an empty id or
     one with control characters.
 
+    The caller chooses the check groups the protected app runs, from those of the platform in
+    `checks.CHECKS`. The packer adds the required ones, `checks.REQUIRED_CHECKS`, and writes them
+    sorted into the runtime's config. An empty choice runs only the required groups. The packer
+    skips an id that is not one of the platform's groups and reports it in the result's
+    `skipped_checks`, so that a caller still packs when it passes a group that was renamed or
+    removed.
+
     Args:
         app: Path to the built app: an APK or AAB for Android, an IPA for iOS.
         platform: The platform of the app.
         output: Path to write the protected app to. It must not exist.
         build_id: The id of the protected build, written into the runtime's config.
+        checks: The ids of the check groups the protected app runs. An empty sequence runs only
+            the required groups. An id that is not one of the platform's groups is skipped.
 
     Returns:
-        The protected app, the app's package name and version, and the build id.
+        The protected app, the app's package name and version, the build id, and the skipped
+        check ids.
 
     Raises:
         InvalidBuildIdError: The build id is empty or has control characters.
@@ -64,9 +81,14 @@ def pack(
         Error: The app cannot be packed; see the platform's packer.
     """
     _check_build_id(build_id)
+    resolved_checks = check_groups.resolve_checks(platform, checks)
     if output.exists() is True:
         raise errors.OutputExistsError(f"{output} already exists")
-    config = runtime_config.RuntimeConfig(build_id=build_id)
+    config = runtime_config.RuntimeConfig(
+        build_id=build_id,
+        checks=resolved_checks.checks,
+        checks_mask=check_groups.checks_mask(platform, resolved_checks.checks),
+    )
     app_identity: identity.AppIdentity
     match platform:
         case platforms.Platform.ANDROID:
@@ -78,6 +100,7 @@ def pack(
         package_name=app_identity.package_name,
         version=app_identity.version,
         build_id=build_id,
+        skipped_checks=resolved_checks.skipped,
     )
 
 

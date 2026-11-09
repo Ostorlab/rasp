@@ -13,9 +13,10 @@ namespace rasp::ios {
 /// reports `inserted_libraries` on every pass and never reads the environment itself.
 ///
 /// The thread first initialises the plugins compiled into the runtime, with the runtime's config, which the packer
-/// wrote into the framework's binary. Then it runs the built-in checks and the plugins, and runs them again after a
-/// random wait from check_interval, 30 to 90 seconds, drawn again before each wait. A development build logs each
-/// observation and each wait.
+/// wrote into the framework's binary, and the install id it keeps in the sandbox's Library/Application Support,
+/// excluded from backups. Then it runs the built-in checks of the groups the config enables, and the plugins, and
+/// runs them again after a random wait from check_interval, 30 to 90 seconds, drawn again before each wait. No group
+/// runs when the config enables none. A development build logs each observation and each wait.
 ///
 /// The thread beats the heartbeat of monitor_heartbeat when it starts, and before and after each run. Each run also
 /// reports the heartbeat's integ.monitor_alive observation with the built-in checks'.
@@ -30,6 +31,6 @@ namespace rasp::ios {
 ///
 /// @param inserted_libraries The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, as
 /// checks::read_inserted_libraries returns it, read once while the runtime loads.
-void start_monitoring(std::string inserted_libraries) noexcept;
+void start_monitoring() noexcept;
 
 }  // namespace rasp::ios

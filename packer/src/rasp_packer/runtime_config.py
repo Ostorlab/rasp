@@ -21,18 +21,27 @@ class RuntimeConfig:
 
     Attributes:
         build_id: The id of the protected build.
+        checks: The ids of the check groups the protected app runs, sorted.
+        checks_mask: The same groups as a mask, one bit per group in the platform's run order, which
+            is the form the config carries: the shipped library names no check group.
     """
 
     build_id: str
+    checks: tuple[str, ...]
+    checks_mask: int
 
     def to_json(self) -> bytes:
         """Writes the config as the runtime reads it.
 
+        The build id stays readable, for support; the check groups go as their mask.
+
         Returns:
-            A JSON object with one member per attribute, in UTF-8.
+            A JSON object with the build id and the check mask, in UTF-8.
         """
         return json.dumps(
-            dataclasses.asdict(self), ensure_ascii=False, separators=(",", ":")
+            {"build_id": self.build_id, "m": self.checks_mask},
+            ensure_ascii=False,
+            separators=(",", ":"),
         ).encode("utf-8")
 
 

@@ -8,12 +8,15 @@ import pytest
 from rasp_packer import errors
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
+from rasp_packer.android import java_program
+from rasp_packer.android import key_schedule
 from rasp_packer.android import packer
 from rasp_packer.android import resources
 from rasp_packer.android import runtime_library
 from rasp_packer.android import split
 from rasp_packer.android.aab import proto_manifest
 from tests.rasp_packer import conftest
+from tests.rasp_packer.android import schedule_recovery
 
 _FIXTURE = (
     pathlib.Path(__file__).resolve().parents[3]
@@ -25,7 +28,9 @@ _BUILD_ID = "rasp-build/v1:" + "ab" * 32
 _STUB_DEX = b"stub dex bytes"
 _ARM64_SO = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _PACKAGE = "com.android.insecurebankv2"
-_CONFIG = runtime_config.RuntimeConfig(build_id=_BUILD_ID)
+_CONFIG = runtime_config.RuntimeConfig(
+    build_id=_BUILD_ID, checks=("identity",), checks_mask=32
+)
 
 _FRAMEWORK = (b"framework dex zero", b"framework dex one")
 _BUSINESS = (
@@ -94,14 +99,26 @@ def _pack_aab(
     packer.pack(
         app=app,
         output=output,
-        config=runtime_config.RuntimeConfig(build_id=_BUILD_ID),
+        config=runtime_config.RuntimeConfig(
+            build_id=_BUILD_ID, checks=("identity",), checks_mask=32
+        ),
         artifacts=artifacts or _artifacts(),
         aab_splitter=_recorded_aab_split(),
     )
     return output
 
 
-# ── format detection ─────────────────────────────────────────
+def _recover_root(archive: zipfile.ZipFile) -> bytes | None:
+    """Recovers the root key from a packed AAB the way the runtime does on the device."""
+    library = archive.read("base/lib/arm64-v8a/librasp.so")
+    entries = {
+        name.removeprefix("base/"): archive.read(name)
+        for name in archive.namelist()
+        if name.startswith("base/assets/")
+    }
+    return schedule_recovery.recover_root(
+        library, entries, key_schedule.CLEAN_GATES, _PACKAGE.encode()
+    )
 
 
 def testPack_whenAab_detectsFormatAndUsesAabPath(tmp_path: pathlib.Path) -> None:
@@ -111,7 +128,9 @@ def testPack_whenAab_detectsFormatAndUsesAabPath(tmp_path: pathlib.Path) -> None
     packer.pack(
         app=app,
         output=tmp_path / "out.aab",
-        config=runtime_config.RuntimeConfig(build_id=_BUILD_ID),
+        config=runtime_config.RuntimeConfig(
+            build_id=_BUILD_ID, checks=("identity",), checks_mask=32
+        ),
         artifacts=_artifacts(),
         aab_splitter=_recorded_aab_split(captured),
     )
@@ -122,21 +141,42 @@ def testPack_whenAab_detectsFormatAndUsesAabPath(tmp_path: pathlib.Path) -> None
     assert "classes2.dex" in dex_entries
 
 
-# ── key, map, config ────────────────────────────────────────
-
-
-def testPackAab_writesTheRawKey(tmp_path: pathlib.Path) -> None:
+def testPackAab_writesTheScheduleShareUnderBase(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
-        assert len(zf.read(packer.AAB_KEY_ENTRY)) == cipher.KEY_SIZE
+        assert len(zf.read(packer.AAB_SHARE_ENTRY)) == key_schedule.KEY_SIZE
+        names = set(zf.namelist())
+    assert "base/assets/rasp/key.bin" not in names
 
 
-def testPackAab_writesTheConfigIntoLibrasp(tmp_path: pathlib.Path) -> None:
+def testPackAab_writesTheDecoyEntriesUnderBase(tmp_path: pathlib.Path) -> None:
+    # The fold program draws its decoy kinds at random, so a pack may name no decoy entry; a few
+    # packs always draw one, and every pack must write exactly the entries its program names.
+    for attempt in range(10):
+        directory = tmp_path / f"round{attempt}"
+        directory.mkdir()
+        output = _pack_aab(directory)
+        with zipfile.ZipFile(output) as zf:
+            decoys = [name for name in zf.namelist() if "base/assets/rasp/r" in name]
+            if decoys:
+                for name in decoys:
+                    assert len(zf.read(name)) == key_schedule.KEY_SIZE
+                return
+    pytest.fail("no pack drew a decoy entry in ten rounds")
+
+
+def testPackAab_writesTheConfigProgramAndKeystoreIntoLibrasp(
+    tmp_path: pathlib.Path,
+) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
         library = zf.read("base/lib/arm64-v8a/librasp.so")
-    assert library == runtime_library.write_config(_ARM64_SO, _CONFIG)
+    # The placed library is self-encrypted — not the plain config-written library — but the fold's
+    # config, program and keystore still read back from its untouched `.rasp_config` section.
+    assert library != runtime_library.write_config(_ARM64_SO, _CONFIG)
     assert runtime_library.read_config(library) == _CONFIG.to_json()
+    assert len(runtime_library.keystore(library)) == key_schedule.KEY_SIZE
+    assert runtime_library.program(library) != bytes(key_schedule.PROGRAM_SIZE)
 
 
 def testPackAab_writesEncryptedMapThatNamesEveryBusinessClass(
@@ -144,8 +184,11 @@ def testPackAab_writesEncryptedMapThatNamesEveryBusinessClass(
 ) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
-        key = zf.read(packer.AAB_KEY_ENTRY)
-        map_text = cipher.decrypt(key, zf.read(packer.AAB_MAP_ENTRY)).decode("utf-8")
+        frame = zf.read(packer.AAB_MAP_ENTRY)
+        root = _recover_root(zf)
+        assert root is not None
+        key = key_schedule.frame_key(root, frame[: cipher.NONCE_SIZE], packer.MAP_ENTRY)
+        map_text = cipher.decrypt(key, frame).decode("utf-8")
         names = set(zf.namelist())
     lines = [line for line in map_text.splitlines() if len(line) > 0]
     assert len(lines) == 3
@@ -153,28 +196,61 @@ def testPackAab_writesEncryptedMapThatNamesEveryBusinessClass(
     for line in lines:
         name, _, path = line.partition(",")
         mapped[name] = path
-    assert set(mapped) == {
-        f"{_PACKAGE}.A",
-        f"{_PACKAGE}.B",
-        f"{_PACKAGE}.sub.C",
-    }
+    assert set(mapped) == {f"{_PACKAGE}.A", f"{_PACKAGE}.B", f"{_PACKAGE}.sub.C"}
     for path in set(mapped.values()):
         assert f"{packer.AAB_ASSET_PREFIX}{path}" in names
-
-
-# ── encrypted business DEX ───────────────────────────────────
 
 
 def testPackAab_writesEachBusinessDexEncrypted(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
-        key = zf.read(packer.AAB_KEY_ENTRY)
+        root = _recover_root(zf)
+        assert root is not None
+        map_frame = zf.read(packer.AAB_MAP_ENTRY)
+        program_frame = zf.read(packer.AAB_JAVA_PROGRAM_ENTRY)
+        program_key = key_schedule.frame_key(
+            root, program_frame[: cipher.NONCE_SIZE], packer.JAVA_PROGRAM_ENTRY
+        )
+        program = java_program.decode_program(
+            cipher.decrypt(program_key, program_frame)
+        )
+        armed = key_schedule.armed_master(
+            key_schedule.seed_from(root, map_frame), java_program.run_reference(program)
+        )
+        guard = key_schedule.guarded_master(armed, key_schedule.CLEAN_SENSORS)
         for dex in _BUSINESS:
             entry = f"{packer.AAB_ASSET_PREFIX}{dex.path}"
-            assert cipher.decrypt(key, zf.read(entry)) == dex.data
+            encrypted = zf.read(entry)
+            key = key_schedule.frame_key(
+                guard,
+                encrypted[: cipher.NONCE_SIZE],
+                f"{packer.ASSET_PREFIX}{dex.path}",
+            )
+            assert cipher.decrypt(key, encrypted) == dex.data
 
 
-# ── framework + stub as base DEX ─────────────────────────────
+def testPackAab_whenADecoyEntryIsRemoved_theRootNoLongerRecovers(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A pack names decoy entries only when its random fold program drew them; find one that did.
+    for attempt in range(10):
+        directory = tmp_path / f"round{attempt}"
+        directory.mkdir()
+        output = _pack_aab(directory)
+        with zipfile.ZipFile(output) as zf:
+            decoys = [name for name in zf.namelist() if "base/assets/rasp/r" in name]
+        if decoys:
+            break
+    else:
+        pytest.fail("no pack drew a decoy entry in ten rounds")
+    stripped = tmp_path / "stripped.aab"
+    with zipfile.ZipFile(output) as zf, zipfile.ZipFile(stripped, "w") as stripped_zf:
+        for name in zf.namelist():
+            if name == decoys[0]:
+                continue
+            stripped_zf.writestr(zf.getinfo(name), zf.read(name))
+    with zipfile.ZipFile(stripped) as zf:
+        assert _recover_root(zf) is None
 
 
 def testPackAab_shipsFrameworkAndStubUnderBaseDex(tmp_path: pathlib.Path) -> None:
@@ -187,18 +263,14 @@ def testPackAab_shipsFrameworkAndStubUnderBaseDex(tmp_path: pathlib.Path) -> Non
     assert "base/dex/classes4.dex" not in names
 
 
-# ── runtime library ──────────────────────────────────────────
-
-
 def testPackAab_addsRuntimeLibraryUnderBaseLib(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
-        assert zf.read("base/lib/arm64-v8a/librasp.so") == runtime_library.write_config(
-            _ARM64_SO, _CONFIG
-        )
-
-
-# ── manifest patching ────────────────────────────────────────
+        library = zf.read("base/lib/arm64-v8a/librasp.so")
+    # The placed library is the self-encrypted runtime, not the plain config-written library.
+    assert library != runtime_library.write_config(_ARM64_SO, _CONFIG)
+    assert runtime_library.read_config(library) == _CONFIG.to_json()
+    assert runtime_library.keystore(library) != bytes(key_schedule.KEY_SIZE)
 
 
 def testPackAab_setsComponentFactoryAndRaisesMinSdk(tmp_path: pathlib.Path) -> None:
@@ -212,25 +284,16 @@ def testPackAab_setsComponentFactoryAndRaisesMinSdk(tmp_path: pathlib.Path) -> N
     assert proto_manifest.read_min_sdk_version(manifest) == packer.MINIMUM_API_LEVEL
 
 
-# ── original DEX removed ─────────────────────────────────────
-
-
 def testPackAab_removesOriginalDexEntries(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
         assert zf.read("base/dex/classes.dex") != b"app primary dex"
 
 
-# ── preserves BundleConfig.pb ─────────────────────────────────
-
-
 def testPackAab_preservesBundleConfig(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
         assert "BundleConfig.pb" in zf.namelist()
-
-
-# ── already protected ────────────────────────────────────────
 
 
 def testPackAab_whenAlreadyHasMap_raisesAlreadyProtectedError(
@@ -242,13 +305,12 @@ def testPackAab_whenAlreadyHasMap_raisesAlreadyProtectedError(
         packer.pack(
             app=app,
             output=tmp_path / "out.aab",
-            config=runtime_config.RuntimeConfig(build_id=_BUILD_ID),
+            config=runtime_config.RuntimeConfig(
+                build_id=_BUILD_ID, checks=("identity",), checks_mask=32
+            ),
             artifacts=_artifacts(),
             aab_splitter=_recorded_aab_split(),
         )
-
-
-# ── unsupported ABI ──────────────────────────────────────────
 
 
 def testPackAab_whenAppAbiHasNoRuntime_raisesUnsupportedAbiError(
@@ -258,16 +320,15 @@ def testPackAab_whenAppAbiHasNoRuntime_raisesUnsupportedAbiError(
         _pack_aab(tmp_path, native_libraries=["base/lib/armeabi-v7a/libapp.so"])
 
 
-# ── identity ─────────────────────────────────────────────────
-
-
 def testPackAab_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     app = tmp_path / "app.aab"
     _make_aab(app)
     app_identity = packer.pack(
         app=app,
         output=tmp_path / "out.aab",
-        config=runtime_config.RuntimeConfig(build_id=_BUILD_ID),
+        config=runtime_config.RuntimeConfig(
+            build_id=_BUILD_ID, checks=("identity",), checks_mask=32
+        ),
         artifacts=_artifacts(),
         aab_splitter=_recorded_aab_split(),
     )

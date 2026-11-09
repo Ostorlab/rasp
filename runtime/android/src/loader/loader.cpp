@@ -8,8 +8,10 @@
 /// `GeneratingClassLoader.findClass` on the class it just loaded. So neither native method is a `Java_...` symbol, and
 /// the library's symbols can be stripped or renamed.
 
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <jni.h>
@@ -20,9 +22,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
-#include "apk/archive.h"
 #include "apk/location.h"
 #include "checks/debugger.h"
 #include "checks/hooks.h"
@@ -32,6 +34,7 @@
 #include "payload/assets.h"
 #include "payload/cipher.h"
 #include "payload/dex_store.h"
+#include "payload/key_schedule.h"
 #include "rasp/heartbeat.h"
 #include "rasp/observation.h"
 #include "rasp/panic.h"
@@ -46,8 +49,8 @@ namespace {
 struct State {
   /// Where a class defined from a business dex looks for the app's native libraries, for System.loadLibrary.
   std::string library_search_path;
-  /// The class map and key, read from the app's APK in install. Empty when they couldn't be read; every findClass then
-  /// falls back to the base loader.
+  /// The class map and the dex master, opened in `install` from the root key the schedule recovered; empty when the
+  /// recovery or the map failed, and every findClass then falls back to the base loader.
   std::optional<payload::DexStore> store;
   /// A global reference to the app's base class loader, which holds the framework classes.
   jobject base = nullptr;
@@ -123,16 +126,24 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
   static_cast<void>(panic_on_detection(observations, end_process));
 }
 
-/// Reads the payload key from the app's APK, the key that decrypts the class map and every business dex.
+/// The environment the key schedule's gates measure, as the loader sees it at install time.
 ///
-/// @param apk The path of the app's APK.
-/// @return The key. Nothing when the key entry is absent or is not kKeySize bytes.
-[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_payload_key(const std::string& apk) {
-  std::optional<std::vector<std::uint8_t>> key = rasp::android::apk::read_stored_entry(apk, payload::kKeyEntry);
-  if (!key.has_value() || key->size() != payload::kKeySize) {
-    return std::nullopt;
-  }
-  return key;
+/// Each fact holds on a clean device: a JNI environment whose GetVersion reports a JNI 1.x version, no tracer
+/// attached, and the library loaded from a path under /data, as an installed app's is. On anything else — an
+/// emulation without a real Android runtime, a device under a native debugger — one fact flips, the recovered root
+/// key is wrong, and every frame's tag fails. Nothing reports why: the failure looks like a corrupt frame.
+///
+/// @param env The JNI environment of the calling thread.
+/// @param library The library's own path, as the dynamic loader reports it, or nothing when it can't be read.
+/// @return The environment the schedule folds into the root key.
+[[nodiscard]] payload::Environment observe_environment(JNIEnv* env, const std::optional<std::string>& library) {
+  const Observation tracer = checks::observe_tracer_pid("/proc/self/status");
+  const std::int64_t* const tracer_pid = std::get_if<std::int64_t>(&tracer.value);
+  return payload::Environment{
+      .java_environment = (static_cast<unsigned>(env->GetVersion()) & 0xFFFF0000U) == 0x00010000U,
+      .no_tracer = tracer.status == Status::kOk && tracer_pid != nullptr && *tracer_pid == 0,
+      .installed_under_data = library.has_value() && library->starts_with("/data/"),
+  };
 }
 
 /// The loader state, shared by every function in this file.
@@ -257,12 +268,15 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
     }
   }
 
-  const std::optional<std::vector<std::uint8_t>> bytes = payload::decrypt_dex(*current.store, *dex);
+  std::optional<std::vector<std::uint8_t>> bytes = payload::decrypt_dex(*current.store, *dex);
   if (!bytes.has_value()) {
     return nullptr;
   }
   checkpoint(2, name);
   jobject child = make_child_loader(env, generating, *bytes);
+  // ART copies the buffer while it creates the loader, so our copy is wiped right after: no decrypted dex outlives
+  // this call.
+  payload::wipe(*bytes);
   if (child == nullptr) {
     // make_child_loader may leave a JNI exception pending; clear it so the caller's base-loader fallback is clean.
     env->ExceptionClear();
@@ -377,9 +391,11 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
 
 /// Creates the on-demand loader.
 ///
-/// It reads the class map and key from the app's own APK. Without them no business class can be served, and every
-/// findClass falls back to the base loader. It then loads the loader's dex, which is embedded in the library, under the
-/// boot loader, binds the loaded class's native findClass to find_class, and creates the loader.
+/// It recovers the payload's root key from the key schedule — the library's own sections, the s.bin entry and the
+/// environment's gates (payload/key_schedule.h) — and opens the dex store over it. Without a recovered root no
+/// business class can be served, and every findClass falls back to the base loader. It then loads the loader's dex,
+/// which is embedded in the library, under the boot loader, binds the loaded class's native findClass to find_class,
+/// and creates the loader.
 ///
 /// @param env The JNI environment of the calling thread.
 /// @param base The app's base class loader, which holds the framework classes.
@@ -391,10 +407,12 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
   current.library_search_path = to_string(env, library_search_path);
 
   const std::optional<std::string> apk = rasp::android::apk::self_apk_path();
-  if (apk.has_value()) {
-    const std::optional<std::vector<std::uint8_t>> key = read_payload_key(*apk);
-    if (key.has_value()) {
-      current.store = payload::open_dex_store(*apk, *key);
+  const std::optional<std::string> library = rasp::android::apk::self_library_path();
+  if (apk.has_value() && library.has_value()) {
+    const payload::Environment environment = observe_environment(env, library);
+    const std::optional<payload::Key> root = payload::recover_root_key(environment, *library, *apk);
+    if (root.has_value()) {
+      current.store = payload::open_dex_store(*apk, *root);
     }
   }
 
@@ -511,6 +529,53 @@ void install(JNIEnv* env, jclass /*stub*/, jobject base, jstring library_search_
   env->SetObjectField(base, parent, generating);
 }
 
+/// The native body of `RaspStub.program`, which JNI_OnLoad binds with RegisterNatives.
+///
+/// It returns the decrypted Java program the packer shipped — the steps the stub executes through the real runtime —
+/// or null when the store never opened or the app shipped no program. The program is root-sealed, so an emulator
+/// that cannot recover the fold gets nothing to run at all; and the store stays unarmed, so no dex decrypts.
+///
+/// @param env The JNI environment of the calling thread.
+/// @return A new byte array holding the program, or null.
+jbyteArray program(JNIEnv* env, jclass /*stub*/) {
+  State& current = state();
+  if (!current.store.has_value() || current.store->j_program.empty()) {
+    return nullptr;
+  }
+  const std::span<const std::uint8_t> bytes(current.store->j_program);
+  const auto size = static_cast<jsize>(bytes.size());
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  jbyteArray result = env->NewByteArray(size);
+  if (result != nullptr) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+    env->SetByteArrayRegion(result, 0, size, reinterpret_cast<const jbyte*>(bytes.data()));
+  }
+  return result;
+}
+
+/// The native body of `RaspStub.arm`, which JNI_OnLoad binds with RegisterNatives.
+///
+/// It folds the share the stub's Java program produced into the dex master, and lets the dexes decrypt. The share
+/// is 32 bytes or nothing; nothing leaves the store unarmed, and no business class ever decrypts. A wrong share
+/// arms just as quietly, and every frame's tag fails.
+///
+/// @param env The JNI environment of the calling thread.
+/// @param share The share the stub produced, or null.
+void arm(JNIEnv* env, jclass /*stub*/, jbyteArray share) {
+  State& current = state();
+  if (!current.store.has_value() || share == nullptr) {
+    return;
+  }
+  const auto size = static_cast<std::size_t>(env->GetArrayLength(share));
+  if (size != sizeof(payload::Key)) {
+    return;
+  }
+  payload::Key j_share{};
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  env->GetByteArrayRegion(share, 0, static_cast<jsize>(size), reinterpret_cast<jbyte*>(j_share.data()));
+  payload::arm_j_store(*current.store, j_share);
+}
+
 }  // namespace
 
 }  // namespace rasp::android::loader
@@ -531,13 +596,29 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     env->ExceptionClear();
     return JNI_ERR;
   }
-  const JNINativeMethod method = {
-      .name = "install",
-      .signature = "(Ljava/lang/ClassLoader;Ljava/lang/String;)V",
-      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-      .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::install),
+  const std::array<JNINativeMethod, 3> methods = {
+      {
+          {
+              .name = "install",
+              .signature = "(Ljava/lang/ClassLoader;Ljava/lang/String;)V",
+              // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+              .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::install),
+          },
+          {
+              .name = "program",
+              .signature = "()[B",
+              // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+              .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::program),
+          },
+          {
+              .name = "arm",
+              .signature = "([B)V",
+              // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+              .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::arm),
+          },
+      },
   };
-  const jint registered = env->RegisterNatives(stub, &method, 1);
+  const jint registered = env->RegisterNatives(stub, methods.data(), static_cast<jint>(methods.size()));
   env->DeleteLocalRef(stub);
   if (registered != JNI_OK) {
     env->ExceptionClear();

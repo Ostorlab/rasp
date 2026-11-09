@@ -16,13 +16,14 @@ target_link_libraries(rasp_core_test PRIVATE rasp_core rasp_warnings rasp_langua
 target_compile_definitions(rasp_core_test PRIVATE RASP_EXPECTED_VERSION="${PROJECT_VERSION}")
 gtest_discover_tests(rasp_core_test)
 
-foreach(test context embedded_config heartbeat observation panic parse_config plugins/init_plugins plugins/plugin plugins/registry
-    plugins/run_plugins schedule)
+foreach(test config context embedded_config heartbeat install_id observation parse_config plugins/init_plugins plugins/plugin
+    plugins/registry plugins/run_plugins schedule)
   cmake_path(GET test FILENAME name)
   add_executable(rasp_core_${name}_test core/${test}_test.cpp)
   target_link_libraries(rasp_core_${name}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
   gtest_discover_tests(rasp_core_${name}_test)
 endforeach()
+
 # The development build of panic_on_detection logs instead of ending the process. This test compiles it as a
 # development build does, with its own log function, so it doesn't link rasp_core, which is built without logs.
 add_executable(rasp_core_panic_development_test core/panic_development_test.cpp
@@ -33,6 +34,7 @@ target_compile_definitions(rasp_core_panic_development_test PRIVATE RASP_LOGGING
 target_link_libraries(rasp_core_panic_development_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_core_panic_development_test)
 
+target_include_directories(rasp_core_install_id_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 list(LENGTH rasp_compiled_plugins rasp_expected_plugin_count)
 target_link_libraries(rasp_core_registry_test PRIVATE rasp_plugins)
 target_compile_definitions(rasp_core_registry_test PRIVATE RASP_EXPECTED_PLUGIN_COUNT=${rasp_expected_plugin_count})
@@ -101,7 +103,7 @@ target_link_libraries(rasp_android_integrity_test PRIVATE rasp_core rasp_tfpsacr
 gtest_discover_tests(rasp_android_integrity_test)
 
 add_executable(rasp_android_identity_test android/checks/identity_test.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp)
 target_include_directories(rasp_android_identity_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_identity_test PRIVATE rasp_core rasp_warnings rasp_language
@@ -116,6 +118,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_libraries(rasp_android_end_process_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
   gtest_discover_tests(rasp_android_end_process_test)
 endif()
+add_executable(rasp_android_app_storage_test android/util/app_storage_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp)
+target_include_directories(rasp_android_app_storage_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_app_storage_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_app_storage_test)
 
 add_executable(rasp_android_apk_file_test android/util/apk_file_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
@@ -135,8 +142,12 @@ endif()
 
 add_executable(rasp_android_dex_store_test android/payload/dex_store_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/dex_store.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp)
 target_include_directories(rasp_android_dex_store_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_dex_store_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
@@ -148,4 +159,20 @@ target_include_directories(rasp_android_cipher_test PRIVATE ${PROJECT_SOURCE_DIR
 target_link_libraries(rasp_android_cipher_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
   GTest::gtest_main)
 gtest_discover_tests(rasp_android_cipher_test)
+
+# The key schedule's tests check the same fixed vectors as the packer's tests (key_schedule_test.py), and drive the
+# recovery with a library and an APK the packer's tools made, so the ELF reader, the digests, the HKDF and the fold are
+# exercised end to end without a device.
+add_executable(rasp_android_key_schedule_test android/payload/key_schedule_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp)
+target_include_directories(rasp_android_key_schedule_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_android_key_schedule_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
+  GTest::gtest_main)
+gtest_discover_tests(rasp_android_key_schedule_test)
 
