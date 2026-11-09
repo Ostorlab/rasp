@@ -7,6 +7,7 @@
 # RASP_OMVLL_SEED, not this file.
 
 import os
+import re
 from functools import lru_cache
 
 import omvll
@@ -39,6 +40,25 @@ SENSITIVE_FUNCTIONS = [
     "jailbreak",
     "anti_",
 ]
+
+# The literals the runtime reads as constant data: the checks' signal names, the schedule's info strings and
+# APK entry names, the probed paths and fields, and the config and text sections' names. Their bytes must
+# stay readable in the built library, which the canary in .github/workflows/runtime.yml checks, because the
+# local decryption the string pass emits only runs at the uses it rewrites, and which uses it rewrites
+# differs by ABI and by optimization: a constant one ABI leaves alone another folds into a call argument
+# and encrypts. The runtime still reads the same bytes through data pointers, so they must never be
+# encrypted at all; the packer's encryption at rest hides them in the shipped library.
+DATA_READ_LITERALS = re.compile(
+    rb"(?:"
+    rb"(?:root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+"
+    rb"|rasp\.v2\.[a-z_.]*"
+    rb"|assets/rasp/(?:[a-z]+\.bin|r)"
+    rb"|/(?:proc|sys)/.*"
+    rb"|TracerPid:"
+    rb"|\.rasp_config"
+    rb"|\.text"
+    rb")\Z"
+)
 
 # The tf-psa-crypto translation units, by module-name substring.
 CRYPTO_MODULE = "tf-psa-crypto"
@@ -95,6 +115,9 @@ class RaspConfig(omvll.ObfuscationConfig):
 
     def obfuscate_string(self, mod: omvll.Module, func: omvll.Function, string: bytes):
         if not self._cheap_passes_apply(mod, func):
+            return omvll.StringEncOptSkip()
+        content = string if isinstance(string, bytes) else string.encode()
+        if DATA_READ_LITERALS.match(content.rstrip(b"\x00")):
             return omvll.StringEncOptSkip()
         return omvll.StringEncOptLocal()
 
