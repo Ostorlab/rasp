@@ -3,11 +3,16 @@
 /// library's own .text/.rodata/.eh_frame in place. Everything it needs lives in the clear, page-isolated .stubcode /
 /// .stubrodata / .packmeta sections, which the packer never encrypts, so it never touches an encrypted byte of its own.
 ///
-/// It runs an anti-emulation gate (debugger, implausible load base, timing anomaly) first, then derives the ChaCha20
+/// It runs anti-emulation gates (debugger, implausible load base, timing anomaly) first, then derives the ChaCha20
 /// content key through a run-time-built "code-as-data" blob (the HKDF/SHA-256 logic is not present as .text; see
 /// kdf_blob.c and gen_kdf_shovel.py), stages memory with raw svc/syscall mmap/mprotect, and decrypts each region. It is
 /// reached only through a computed-branch trampoline, so a static disassembler cannot trace .init_array to the
 /// decryptor.
+///
+/// No gate aborts. A gate that does not like what it observes folds a poison value into the key material, so a
+/// debugger, an emulated load or a tampered file decrypts to garbage and the process dies on its own code with
+/// nothing that says why: an emulation script gets no abort to hook and no exit code to read, and finding which
+/// gate corrupted the key means reversing the obfuscated bootstrap that folds it in.
 
 #include <cstddef>
 #include <cstdint>
@@ -92,12 +97,6 @@ int raw_munmap(void* addr, std::size_t len) {
   return static_cast<int>(raw_syscall(__NR_munmap, reinterpret_cast<long>(addr), static_cast<long>(len), 0, 0, 0, 0));
 }
 
-/// Terminates the whole process at once; never returns.
-[[noreturn]] void raw_exit_group(int code) {
-  raw_syscall(__NR_exit_group, code, 0, 0, 0, 0, 0);
-  __builtin_unreachable();
-}
-
 /// Rounds `v` down to a multiple of `a` (a must be a power of two).
 [[nodiscard]] std::uintptr_t align_down(std::uintptr_t v, std::uintptr_t a) { return v & ~(a - 1); }
 
@@ -155,9 +154,11 @@ void store32_le(std::uint8_t* p, std::uint32_t v) {
   return -1;
 }
 
-/// Aborts if a debugger is attached (TracerPid in /proc/self/status is non-zero). The path and field name are built on
+/// Whether a debugger is attached (TracerPid in /proc/self/status is non-zero). The path and field name are built on
 /// the stack so they are not greppable; the file is read with raw syscalls, so no libc read is hooked.
-void check_debugger() {
+///
+/// @return Whether the process is being traced.
+[[nodiscard]] bool debugger_attached() {
   char path[18];
   path[0] = '/';
   path[1] = 'p';
@@ -192,64 +193,87 @@ void check_debugger() {
 
   long fd = raw_syscall(__NR_openat, static_cast<long>(AT_FDCWD), reinterpret_cast<long>(path), O_RDONLY, 0, 0, 0);
   if (fd < 0) {
-    return;
+    return false;
   }
   std::uint8_t buf[512];
   long n = raw_syscall(__NR_read, fd, reinterpret_cast<long>(buf), static_cast<long>(sizeof(buf)), 0, 0, 0);
   raw_syscall(__NR_close, fd, 0, 0, 0, 0, 0);
   if (n <= 0) {
-    return;
+    return false;
   }
 
   long pos = find_bytes(buf, n, needle, 10);
   if (pos < 0) {
-    return;
+    return false;
   }
   long k = pos + 10;
   while (k < n && (buf[k] == ' ' || buf[k] == '\t')) {
     k++;
   }
-  if (k < n && buf[k] != '0') {
-    raw_exit_group(1);
-  }
+  return k < n && buf[k] != '0';
 }
 
-/// Aborts if the library's own load base looks implausible. The base is the load bias (link base is 0 for a PIE), so
+/// The smallest load base a real 64-bit Android process maps a shared library at: the loader places libraries in the
+/// high ASLR region, an order of magnitude above 4 GiB. Whole-app emulators map their first module at their own
+/// default base, below this bound, which no real 64-bit device produces.
+inline constexpr std::uintptr_t kMinimumLibraryBase = 1ULL << 32;
+
+/// Whether the library's own load base looks implausible. The base is the load bias (link base is 0 for a PIE), so
 /// it is `&g_meta - meta_vaddr`, and the ELF header sits there in the first LOAD segment, which is always mapped
-/// readable. A base of 0 (what a bare Unicorn run leaves) or no ELF magic at the base means the image was not mapped
-/// normally. It reads only the base page, never the unreadable gaps the loader leaves between segments, so it is safe
-/// on 4 KB- and 16 KB-page devices alike. Reached only once g_meta.packed == 1, so meta_vaddr holds the link address.
-void check_elf_base() {
+/// readable. A base of 0 (what a bare Unicorn run leaves), no ELF magic at the base, or a base below what a 64-bit
+/// loader's ASLR ever produces, means the image was not mapped by a real loader. It reads only the base page, never
+/// the unreadable gaps the loader leaves between segments, so it is safe on 4 KB- and 16 KB-page devices alike.
+/// Reached only once g_meta.packed == 1, so meta_vaddr holds the link address.
+///
+/// @return Whether the load base is implausible.
+[[nodiscard]] bool elf_base_implausible() {
   std::uintptr_t base = reinterpret_cast<std::uintptr_t>(&g_meta) - static_cast<std::uintptr_t>(g_meta.meta_vaddr);
-  if (base == 0) {
-    raw_exit_group(2);
+  if (base < kMinimumLibraryBase) {
+    return true;
   }
   const unsigned char* m = reinterpret_cast<const unsigned char*>(base);
-  if (!(m[0] == 0x7f && m[1] == 'E' && m[2] == 'L' && m[3] == 'F')) {
-    raw_exit_group(2);
-  }
+  return !(m[0] == 0x7f && m[1] == 'E' && m[2] == 'L' && m[3] == 'F');
 }
 
-/// Aborts on a gross timing anomaly. A short fixed loop takes a handful of counter ticks natively; under
-/// single-stepping or a slow emulator it takes orders of magnitude longer. The threshold is deliberately loose so
-/// ordinary scheduling jitter does not trip it.
-void check_timing() {
+/// Whether a gross timing anomaly shows up in a short fixed loop. The loop takes a handful of counter ticks
+/// natively; under single-stepping or a slow emulator it takes orders of magnitude longer. The threshold is
+/// deliberately loose so ordinary scheduling jitter does not trip it.
+///
+/// @return Whether the loop took implausibly long.
+[[nodiscard]] bool timing_anomalous() {
   volatile std::uint32_t acc = 0;
   std::uint64_t t0 = read_counter();
   for (int i = 0; i < 1024; i++) {
     acc = acc + static_cast<std::uint32_t>(i * 3 + 1);
   }
   std::uint64_t t1 = read_counter();
-  if (t1 - t0 > 0x02000000ULL) {
-    raw_exit_group(3);
-  }
+  return t1 - t0 > 0x02000000ULL;
 }
 
-/// Runs the tamper and emulation gate before any decryption; aborts the process on any trip.
-void tamper_gate() {
-  check_debugger();
-  check_elf_base();
-  check_timing();
+/// One poison value per gate, so a tripped gate folds a known corruption into the key material. No gate aborts: a
+/// hooked exit is the first thing an emulator script patches, and an abort reports which gate tripped. A poisoned
+/// key decrypts to garbage, and the process dies on its own code with nothing that says why — the same silent
+/// failure the fold's sensor guard gives on a hooked library.
+inline constexpr std::uint32_t kDebuggerPoison = 0x9e3779b9U;
+inline constexpr std::uint32_t kBasePoison = 0x85ebca6bU;
+inline constexpr std::uint32_t kTimingPoison = 0xc2b2ae35U;
+
+/// Runs the tamper and emulation gates and folds what they observed into one poison value: zero when the process
+/// looks clean, and a distinct non-zero pattern per tripped gate otherwise.
+///
+/// @return The poison to fold into the key material.
+[[nodiscard]] std::uint32_t gate_poison() {
+  std::uint32_t poison = 0;
+  if (debugger_attached()) {
+    poison ^= kDebuggerPoison;
+  }
+  if (elf_base_implausible()) {
+    poison ^= kBasePoison;
+  }
+  if (timing_anomalous()) {
+    poison ^= kTimingPoison;
+  }
+  return poison;
 }
 
 /// Maps a page, materialises the key-derivation blob into it, and makes it executable (RW then RX, so SELinux
@@ -291,9 +315,15 @@ void run_kdf(void* blob, const std::uint8_t ikm[32], const std::uint8_t* stub, s
 }
 
 /// Derives the 32-byte ChaCha20 content key the packer used. Reassembles the eight scattered IKM words from .packmeta
-/// (little-endian) and hands them, with the clear .stubcode location, to the run-time-built derivation blob, which
-/// salts HKDF with SHA-256 over .stubcode. The packer reproduces this exactly.
-void derive_key(std::uintptr_t bias, void* blob, std::uint8_t key[32]) {
+/// (little-endian), folds the gates' poison into them — zero on a clean process, a distinct corruption per tripped gate
+/// otherwise — and hands them, with the clear .stubcode location, to the run-time-built derivation blob, which salts
+/// HKDF with SHA-256 over .stubcode. The packer reproduces this exactly.
+///
+/// @param bias The library's load bias.
+/// @param blob The materialised derivation blob's page.
+/// @param poison The gates' poison: what to fold into the IKM when the process does not look clean.
+/// @param key Out: the derived key.
+void derive_key(std::uintptr_t bias, void* blob, std::uint32_t poison, std::uint8_t key[32]) {
   std::uint8_t ikm[32];
   store32_le(ikm + 0, g_meta.ikm0);
   store32_le(ikm + 4, g_meta.ikm1);
@@ -303,6 +333,13 @@ void derive_key(std::uintptr_t bias, void* blob, std::uint8_t key[32]) {
   store32_le(ikm + 20, g_meta.ikm5);
   store32_le(ikm + 24, g_meta.ikm6);
   store32_le(ikm + 28, g_meta.ikm7);
+
+  // The poison changes the key without a branch that says why: a debugger, an implausible base and a timing anomaly
+  // each corrupt it differently, and only reversing the derivation tells the three apart.
+  ikm[0] = static_cast<std::uint8_t>(ikm[0] ^ static_cast<std::uint8_t>(poison & 0xFFU));
+  ikm[1] = static_cast<std::uint8_t>(ikm[1] ^ static_cast<std::uint8_t>((poison >> 8U) & 0xFFU));
+  ikm[2] = static_cast<std::uint8_t>(ikm[2] ^ static_cast<std::uint8_t>((poison >> 16U) & 0xFFU));
+  ikm[3] = static_cast<std::uint8_t>(ikm[3] ^ static_cast<std::uint8_t>((poison >> 24U) & 0xFFU));
 
   const std::uint8_t* stubcode =
       reinterpret_cast<const std::uint8_t*>(bias + static_cast<std::uintptr_t>(g_meta.stubcode_vaddr));
@@ -350,16 +387,22 @@ void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
   raw_mprotect(reinterpret_cast<void*>(start), span, PROT_READ);
 }
 
-/// Runs the gate, derives the key, and decrypts every region the packer recorded: code via the anonymous-remap path,
+/// Runs the gates, derives the key, and decrypts every region the packer recorded: code via the anonymous-remap path,
 /// read-only data in place. It touches only the clear bootstrap (g_meta, the crypto in .stubcode, the run-time-built
 /// derivation page) and libc; it never calls the library's own encrypted code. Reached only through the computed-branch
 /// trampoline rasp_self_decrypt_init (the DT_INIT entry), never called directly.
+///
+/// Nothing here aborts. On a clean process the gates fold zero into the key and the library decrypts; on anything
+/// else — a debugger, an emulated load, tampered metadata, patched ciphertext — the key is wrong, the regions decrypt
+/// to garbage, and the process dies on its own code with nothing that says why. That silence is the point: an emulator
+/// that hooks the abort cannot make a hooked exit reveal or bypass anything, because there is no abort to hook, and
+/// finding which of the gates corrupted the key means reversing the obfuscated bootstrap that folds it.
 [[gnu::noinline, gnu::used]] void self_decrypt() {
   if (g_meta.packed != 1) {
     return;
   }
 
-  tamper_gate();
+  const std::uint32_t poison = gate_poison();
 
   std::uintptr_t bias = reinterpret_cast<std::uintptr_t>(&g_meta) - static_cast<std::uintptr_t>(g_meta.meta_vaddr);
   std::size_t blob_span = 0;
@@ -373,7 +416,7 @@ void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
   }
 
   std::uint8_t key[32];
-  derive_key(bias, blob, key);
+  derive_key(bias, blob, poison, key);
 
   for (std::uint32_t r = 0; r < count; r++) {
     std::uint32_t size = g_meta.regions[r].size;
@@ -398,10 +441,11 @@ void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
 
   std::memset(key, 0, sizeof(key));
 
-  // The encryption carries no MAC of its own, so verify the decrypted `.text` against the plaintext digest the packer
-  // shipped: a wrong key (tampered metadata, patched ciphertext) produces garbage that fails here instead of
-  // executing. Exit code 4 keeps it distinct from the tamper gate's 1..3.
-  if (g_meta.text_size != 0) {
+  // The encryption carries no MAC of its own, so on a clean-looking process verify the decrypted `.text` against the
+  // plaintext digest the packer shipped: a wrong key (tampered metadata, patched ciphertext) leaves garbage that fails
+  // here — silently, like the gates, so nothing reports which check caught what. With the gates' poison folded in
+  // already, a tripped gate needs no second look; this catches the tamper the gates do not see.
+  if (poison == 0 && g_meta.text_size != 0) {
     std::uint8_t expected[32];
     for (int i = 0; i < 32; i++) {
       expected[i] = g_meta.text_digest[i];
@@ -410,7 +454,7 @@ void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
         reinterpret_cast<const std::uint8_t*>(bias + static_cast<std::uintptr_t>(g_meta.text_vaddr));
     if (!run_verify(blob, text, static_cast<std::size_t>(g_meta.text_size), expected)) {
       raw_munmap(blob, blob_span);
-      raw_exit_group(4);
+      return;
     }
   }
   raw_munmap(blob, blob_span);
