@@ -377,7 +377,7 @@ std::string decoy_entry_name(std::uint16_t index) {
   const std::string_view directory = apk_path.substr(directory_offset, name_start - directory_offset);
   const std::size_t dash = directory.find_first_of('-');
   const std::string_view package = dash == std::string_view::npos ? directory : directory.substr(0, dash);
-  if (package.empty() || package.find('/') != std::string_view::npos) {
+  if (package.empty() || package.contains('/')) {
     return std::nullopt;
   }
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)

@@ -558,9 +558,12 @@ TEST(Package, digest_whenTheApkSitsInItsInstallDirectory_hashesTheDirectoryBefor
       package_digest("/data/app/~~wrGIztjHmk9ddFdqhji5aA==/app.alkahf-TVq-2KMp-660/base.apk");
   ASSERT_TRUE(digest.has_value());
   const std::string package = "app.alkahf";
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-  const std::optional<Key> expected =
-      checks::sha256(std::span(reinterpret_cast<const std::uint8_t*>(package.data()), package.size()));
+  const std::span package_bytes{
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+      reinterpret_cast<const std::uint8_t*>(package.data()),
+      package.size(),
+  };
+  const std::optional<Key> expected = checks::sha256(package_bytes);
   ASSERT_TRUE(expected.has_value());
   EXPECT_EQ(*digest, *expected);
 }

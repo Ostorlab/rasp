@@ -9,6 +9,7 @@
 #include <optional>
 #include <pthread.h>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
