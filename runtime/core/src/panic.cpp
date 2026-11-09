@@ -219,9 +219,22 @@ std::vector<Detection> detect(std::span<const Observation> observations) {
   return detections;
 }
 
+/// Whether the detection's signal shows an active attack on the running process, rather than a risky device. A
+/// debugger, a hooking framework or a Java debugger is an active attack: the one who triggered it knows what they
+/// did, so the panic's window can be short. A rooted device, a VPN or a proxy is a state: the panic's window stays
+/// longer, because the end doesn't advertise which check caught it.
+[[nodiscard]] bool is_severe(std::string_view signal) {
+  return signal.starts_with("dbg.") || signal.starts_with("hook.") || signal.starts_with("virt.");
+}
+
 std::chrono::milliseconds panic_delay() noexcept {
   const auto span = static_cast<std::uint32_t>((kMaxPanicDelay - kMinPanicDelay).count());
   return kMinPanicDelay + std::chrono::milliseconds{arc4random_uniform(span + 1)};
+}
+
+std::chrono::milliseconds severe_panic_delay() noexcept {
+  const auto span = static_cast<std::uint32_t>((kMaxSeverePanicDelay - kMinSeverePanicDelay).count());
+  return kMinSeverePanicDelay + std::chrono::milliseconds{arc4random_uniform(span + 1)};
 }
 
 bool arm_panic(EndProcess end_process, std::chrono::milliseconds delay) noexcept {
@@ -250,7 +263,10 @@ bool panic_on_detection(std::span<const Observation> observations, EndProcess en
     }
     return false;
   } else {
-    return !detections.empty() && arm_panic(end_process, panic_delay());
+    const bool severe = std::ranges::any_of(detections, [](const Detection& detection) {
+      return is_severe(detection.signal);
+    });
+    return !detections.empty() && arm_panic(end_process, severe ? severe_panic_delay() : panic_delay());
   }
 }
 

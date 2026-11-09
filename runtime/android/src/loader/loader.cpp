@@ -19,6 +19,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <sys/mman.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -272,11 +273,15 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
   if (!bytes.has_value()) {
     return nullptr;
   }
+  // Keep the decrypted dex off any swap device: the kernel cannot write it out while it is
+  // locked. The pages are unlocked again right after the wipe.
+  static_cast<void>(::mlock(bytes->data(), bytes->size()));
   checkpoint(2, name);
   jobject child = make_child_loader(env, generating, *bytes);
   // ART copies the buffer while it creates the loader, so our copy is wiped right after: no decrypted dex outlives
   // this call.
   payload::wipe(*bytes);
+  static_cast<void>(::munlock(bytes->data(), bytes->size()));
   if (child == nullptr) {
     // make_child_loader may leave a JNI exception pending; clear it so the caller's base-loader fallback is clean.
     env->ExceptionClear();

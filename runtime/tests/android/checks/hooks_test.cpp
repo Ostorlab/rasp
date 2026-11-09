@@ -114,6 +114,7 @@ TEST(Hooks, hooks_whenOffAndroid_reportsEveryCheckAsUnsupported) {
             (std::vector<Observation>{
                 {.signal = "hook.maps_hits", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.rwx_regions", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
+                {.signal = "hook.threads", .source = "proc_task", .status = Status::kUnsupported, .value = {}},
             }));
 }
 

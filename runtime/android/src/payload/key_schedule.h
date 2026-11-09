@@ -41,17 +41,25 @@ inline constexpr Environment kCleanEnvironment{
 
 /// The state of the process the sensor guard measures, re-observed on every decryption and folded into the dex keys.
 ///
-/// A debugger attached between loads, or a hook patched into the library's code, flips a fact, and the next
-/// decryption derives a wrong key: the frame's tag fails, with no branch anywhere that says why.
+/// A debugger attached between loads, a hook patched into the library's code, an instrumentation framework's mapping
+/// or thread, or a writable-executable region the app didn't make, flips a fact, and the next decryption derives a
+/// wrong key: the frame's tag fails, with no branch anywhere that says why.
 struct Sensors {
   /// The process's TracerPid, from /proc/self/status, is 0.
   bool no_tracer = false;
   /// The library's `.text` in memory matches its file, as the integrity check observes it.
   bool text_intact = false;
+  /// No mapping in the process's memory map names a known instrumentation framework.
+  bool no_framework_maps = false;
+  /// No mapping in the process's memory map is both writable and executable.
+  bool no_rwx_regions = false;
+  /// No thread of the process carries the name a hooking framework gives its own threads.
+  bool no_framework_threads = false;
 };
 
-/// The sensor block of a clean process: no tracer, and the library's code intact.
-inline constexpr Key kCleanSensors{{1U, 1U}};
+/// The sensor block of a clean process: no tracer, the library's code intact, no framework mapping, no
+/// writable-executable memory, no framework-named thread.
+inline constexpr Key kCleanSensors{{1U, 1U, 1U, 1U, 1U}};
 
 /// The size of the fold program, in bytes: the masked recipe the packer writes into the library's `.rasp_config`
 /// section, between the config's zero padding and the keystore share.

@@ -22,6 +22,7 @@
 
 #include "apk/archive.h"
 #include "checks/debugger.h"
+#include "checks/hooks.h"
 #include "checks/integrity.h"
 #include "payload/assets.h"
 #include "payload/cipher.h"
@@ -396,15 +397,45 @@ Key sensor_block(const Sensors& sensors) {
   Key block{};
   block[0] = sensors.no_tracer ? 1U : 0U;
   block[1] = sensors.text_intact ? 1U : 0U;
+  block[2] = sensors.no_framework_maps ? 1U : 0U;
+  block[3] = sensors.no_rwx_regions ? 1U : 0U;
+  block[4] = sensors.no_framework_threads ? 1U : 0U;
   return block;
 }
 
 Sensors observe_sensors() {
   const Observation tracer = checks::observe_tracer_pid("/proc/self/status");
   const std::int64_t* const tracer_pid = std::get_if<std::int64_t>(&tracer.value);
+  const std::vector<Observation> hook_observations = checks::hooks();
+  bool no_framework_maps = true;
+  bool no_rwx_regions = true;
+  bool no_framework_threads = true;
+  for (const Observation& observation : hook_observations) {
+    if (observation.status != Status::kOk) {
+      // An unreadable source is not the same as a clean one: the fold leaves the bit unset, so
+      // the key is wrong on a device whose /proc the process can't read.
+      continue;
+    }
+    const std::vector<std::string>* const lines = std::get_if<std::vector<std::string>>(&observation.value);
+    if (lines == nullptr || lines->empty()) {
+      continue;
+    }
+    if (observation.signal == "hook.maps_hits") {
+      no_framework_maps = false;
+    }
+    if (observation.signal == "hook.rwx_regions") {
+      no_rwx_regions = false;
+    }
+    if (observation.signal == "hook.threads") {
+      no_framework_threads = false;
+    }
+  }
   return Sensors{
       .no_tracer = tracer.status == Status::kOk && tracer_pid != nullptr && *tracer_pid == 0,
       .text_intact = text_is_intact(),
+      .no_framework_maps = no_framework_maps,
+      .no_rwx_regions = no_rwx_regions,
+      .no_framework_threads = no_framework_threads,
   };
 }
 

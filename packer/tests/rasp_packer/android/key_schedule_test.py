@@ -77,16 +77,16 @@ _SEED = bytes.fromhex(
     "8bc6daaea6969e5ad8b4dbab11d077a62c08b90d094aed686908845c1de0fbf7"
 )
 _GUARD = bytes.fromhex(
-    "944e29316ba4b4b4dffd54378aab62ef62807261d48be2e59fb72df663bb6a23"
+    "ad622a681bb4d19cbcce23d03e4c647e928097d6ae79a830fb1e5e06b9d0eaec"
 )
 _DIRTY_GUARD = bytes.fromhex(
-    "83b17fb7baa07c1f89b6ce89d336fae8386fd67786a9e2d48d60e4bf60240620"
+    "389b890ab5d402528541e126f0adba6428c270cc76c8d847e0055d085104cd9a"
 )
 _DEX0_FRAME = bytes.fromhex(
-    "101112131415161718191a1b3bd54b643d169e43202ad27100cb29c136c937d69ecf42797c66003decd2eb93859a42526a25bd33c117d2bf13c70f4e48cb716bf6e5b6f6823988cfa71313a19be2c81c8b6d391caa2d65507b522b"
+    "101112131415161718191a1bea1a50e3fe673ae325558ab438137f77a8f9285544ca65168de25015a99dd52bcb7aa235366ea56c7379f0c85e16cf52d375de6e6f7acac63ba99196fe9942d1df4e19dea4b3fd791163f3e6098af1"
 )
 _DEX1_FRAME = bytes.fromhex(
-    "202122232425262728292a2be6f82c2b5559d83e8e37632b307c749a6b8eda5efdad11e8d677ef75b10fea0174"
+    "202122232425262728292a2b7b65a3dd87fd90dc1e49fe499555c32bb56c607f15be1b46d9d0cc45e62e950930"
 )
 
 # The fixed Java program the vectors' app ships: two hierarchy walks and two resolutions, in a fixed order. Its
@@ -440,15 +440,27 @@ def testGateBlock_whenCleanDevice_isTheCleanGates() -> None:
 
 
 def testSensorBlock_whenCleanProcess_isTheCleanSensors() -> None:
-    clean = key_schedule.sensor_block(no_tracer=True, text_intact=True)
+    clean = key_schedule.sensor_block(
+        no_tracer=True,
+        text_intact=True,
+        no_framework_maps=True,
+        no_rwx_regions=True,
+        no_framework_threads=True,
+    )
 
     assert clean == key_schedule.CLEAN_SENSORS
-    assert clean[0:2] == b"\x01\x01"
-    assert clean[2:] == bytes(30)
+    assert clean[0:5] == b"\x01\x01\x01\x01\x01"
+    assert clean[5:] == bytes(27)
 
 
 def testSensorBlock_whenAFactFails_flipsItsByte() -> None:
-    dirty = key_schedule.sensor_block(no_tracer=False, text_intact=True)
+    dirty = key_schedule.sensor_block(
+        no_tracer=False,
+        text_intact=True,
+        no_framework_maps=True,
+        no_rwx_regions=True,
+        no_framework_threads=True,
+    )
 
     assert dirty[0] == 0
     assert dirty != key_schedule.CLEAN_SENSORS
@@ -478,7 +490,13 @@ def testGuardedMaster_whenTheProcessIsClean_matchesTheVectorGuard() -> None:
 
 
 def testGuardedMaster_whenASensorFails_derivesADifferentMaster() -> None:
-    dirty = key_schedule.sensor_block(no_tracer=False, text_intact=True)
+    dirty = key_schedule.sensor_block(
+        no_tracer=False,
+        text_intact=True,
+        no_framework_maps=True,
+        no_rwx_regions=True,
+        no_framework_threads=True,
+    )
 
     assert key_schedule.guarded_master(_SEED, dirty) == _DIRTY_GUARD
 
@@ -561,7 +579,13 @@ def testDexFrame_whenTheShareIsWrong_doesNotDecryptUnderTheArmedKey() -> None:
 
 
 def testDexFrame_whenTheGuardIsDirty_doesNotDecryptUnderTheCleanKey() -> None:
-    dirty = key_schedule.sensor_block(no_tracer=False, text_intact=True)
+    dirty = key_schedule.sensor_block(
+        no_tracer=False,
+        text_intact=True,
+        no_framework_maps=True,
+        no_rwx_regions=True,
+        no_framework_threads=True,
+    )
     guard = key_schedule.guarded_master(
         key_schedule.armed_master(_SEED, _JAVA_SHARE), dirty
     )

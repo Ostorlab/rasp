@@ -112,7 +112,7 @@ constexpr std::string_view kMapFrameHex =
 
 /// The dex seed and the guarded master of a clean process.
 constexpr std::string_view kSeedHex = "8bc6daaea6969e5ad8b4dbab11d077a62c08b90d094aed686908845c1de0fbf7";
-constexpr std::string_view kGuardHex = "944e29316ba4b4b4dffd54378aab62ef62807261d48be2e59fb72df663bb6a23";
+constexpr std::string_view kGuardHex = "ad622a681bb4d19cbcce23d03e4c647e928097d6ae79a830fb1e5e06b9d0eaec";
 
 /// The vectors' Java program: the frame it ships as (sealed under the root, at assets/rasp/j.bin) and the share its
 /// steps yield on a runtime that resolves them as the packer predicted. The armed master is the seed under that
@@ -127,11 +127,11 @@ constexpr std::string_view kArmedHex = "27ff73c243df33f85ab17a91a3caede3ceb67c79
 
 /// The business dexes at assets/business/0.dex and 1.dex.
 constexpr std::string_view kDex0FrameHex =
-    "101112131415161718191a1b3bd54b643d169e43202ad27100cb29c136c937d69ecf4279"
+    "101112131415161718191a1bea1a50e3fe673ae325558ab438137f77a8f928559ecf4279"
     "7c66003decd2eb93859a42526a25bd33c117d2bf13c70f4e48cb716bf6e5b6f6823988cf"
     "a71313a19be2c81c8b6d391caa2d65507b522b";
 constexpr std::string_view kDex1FrameHex =
-    "202122232425262728292a2be6f82c2b5559d83e8e37632b307c749a6b8eda5efdad11e8"
+    "202122232425262728292a2b7b65a3dd87fd90dc1e49fe499555c32bb56c607ffdad11e8"
     "d677ef75b10fea0174";
 
 /// The library with its config, fold program, keystore and expected text digest, 9408 bytes.
@@ -637,12 +637,21 @@ TEST(KeySchedule, gateBlock_whenTheDeviceIsClean_isOneBytePerFactThenZeros) {
 }
 
 TEST(KeySchedule, sensorBlock_whenTheProcessIsClean_isTheCleanSensors) {
-  const Sensors clean{.no_tracer = true, .text_intact = true};
+  const Sensors clean{
+      .no_tracer = true,
+      .text_intact = true,
+      .no_framework_maps = true,
+      .no_rwx_regions = true,
+      .no_framework_threads = true,
+  };
 
   const Key block = sensor_block(clean);
 
   EXPECT_EQ(block[0], 1U);
   EXPECT_EQ(block[1], 1U);
+  EXPECT_EQ(block[2], 1U);
+  EXPECT_EQ(block[3], 1U);
+  EXPECT_EQ(block[4], 1U);
   EXPECT_EQ(block, kCleanSensors);
 }
 

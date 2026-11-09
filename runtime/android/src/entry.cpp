@@ -6,6 +6,7 @@
 
 #include <jni.h>
 #include <string>
+#include <sys/prctl.h>
 
 #include "monitoring.h"
 #include "rasp/util/logging.h"
@@ -29,6 +30,11 @@ __attribute__((constructor)) void rasp_start() noexcept {
   if (!running_in_jvm()) {
     return;
   }
+  // The process is not dumpable: no ptrace from any other process (gdb, lldb, strace), no
+  // /proc/<pid>/mem or /proc/<pid>/maps reads from other uids, and no core dumps. The
+  // kernel checks this flag on every ptrace attach and every /proc read. A root user can
+  // still re-enable it, but only by ptracing the process first — which the checks detect.
+  static_cast<void>(prctl(PR_SET_DUMPABLE, 0, 0, 0, 0));
   if constexpr (rasp::kLoggingEnabled) {
     rasp::log(std::string(rasp::kRuntimeVersion) + " loaded");
   }

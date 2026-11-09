@@ -145,6 +145,7 @@ add_executable(rasp_android_dex_store_test android/payload/dex_store_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
   ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp)
@@ -165,6 +166,7 @@ gtest_discover_tests(rasp_android_cipher_test)
 # exercised end to end without a device.
 add_executable(rasp_android_key_schedule_test android/payload/key_schedule_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp

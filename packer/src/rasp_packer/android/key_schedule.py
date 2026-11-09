@@ -76,7 +76,7 @@ CLEAN_GATES = bytes((1, 1, 1)) + bytes(KEY_SIZE - 3)
 
 # The sensor block of a clean process at decryption: no tracer, and the library's code in memory
 # matching its file. The packer folds this in; the runtime re-observes it on every decryption.
-CLEAN_SENSORS = bytes((1, 1)) + bytes(KEY_SIZE - 2)
+CLEAN_SENSORS = bytes((1, 1, 1, 1, 1)) + bytes(KEY_SIZE - 5)
 
 
 def new_root() -> bytes:
@@ -159,12 +159,22 @@ def gate_block(
     return bytes(block)
 
 
-def sensor_block(*, no_tracer: bool, text_intact: bool) -> bytes:
+def sensor_block(
+    *,
+    no_tracer: bool,
+    text_intact: bool,
+    no_framework_maps: bool,
+    no_rwx_regions: bool,
+    no_framework_threads: bool,
+) -> bytes:
     """Returns the sensor block of a process, folded into every decryption's key.
 
     Args:
         no_tracer: ``TracerPid`` in ``/proc/self/status`` is 0.
         text_intact: The library's ``.text`` in memory matches its file.
+        no_framework_maps: No mapping in the process's memory map names a known instrumentation framework.
+        no_rwx_regions: No mapping is both writable and executable.
+        no_framework_threads: No thread carries the name a hooking framework gives its own threads.
 
     Returns:
         The block, 32 bytes: one fact per byte at the start, then zeros.
@@ -172,6 +182,9 @@ def sensor_block(*, no_tracer: bool, text_intact: bool) -> bytes:
     block = bytearray(KEY_SIZE)
     block[0] = 1 if no_tracer else 0
     block[1] = 1 if text_intact else 0
+    block[2] = 1 if no_framework_maps else 0
+    block[3] = 1 if no_rwx_regions else 0
+    block[4] = 1 if no_framework_threads else 0
     return bytes(block)
 
 

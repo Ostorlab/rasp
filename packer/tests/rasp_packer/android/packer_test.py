@@ -396,7 +396,13 @@ def testPack_whenASensorWouldFail_theDexesNoLongerDecrypt(
     tmp_path: pathlib.Path,
 ) -> None:
     output = _pack(tmp_path)
-    dirty_sensors = key_schedule.sensor_block(no_tracer=False, text_intact=True)
+    dirty_sensors = key_schedule.sensor_block(
+        no_tracer=False,
+        text_intact=True,
+        no_framework_maps=True,
+        no_rwx_regions=True,
+        no_framework_threads=True,
+    )
     with zipfile.ZipFile(output) as archive:
         root = _recover_root(archive)
         assert root is not None
