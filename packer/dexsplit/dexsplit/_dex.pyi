@@ -1,5 +1,53 @@
 """Type stubs for the native core of the dex splitter (dexsplit._dex)."""
 
+class MethodId:
+    @property
+    def class_descriptor(self) -> str: ...
+
+class FieldId:
+    @property
+    def class_descriptor(self) -> str: ...
+
+class ClassRef:
+    @property
+    def descriptor(self) -> str: ...
+
+class MethodCall:
+    @property
+    def target(self) -> MethodId: ...
+
+class FieldAccess:
+    @property
+    def field(self) -> FieldId: ...
+
+class TypeUse:
+    @property
+    def descriptor(self) -> str: ...
+
+class Method:
+    @property
+    def calls(self) -> list[MethodCall]: ...
+    @property
+    def field_accesses(self) -> list[FieldAccess]: ...
+    @property
+    def type_uses(self) -> list[TypeUse]: ...
+
+class Class:
+    @property
+    def name(self) -> str: ...
+    @property
+    def superclass(self) -> ClassRef | None: ...
+    @property
+    def interfaces(self) -> list[ClassRef]: ...
+    @property
+    def methods(self) -> list[Method]: ...
+
+class AnalysisContext:
+    @staticmethod
+    def from_dex_buffers(dexes: list[bytes]) -> AnalysisContext: ...
+    @property
+    def classes(self) -> list[Class]: ...
+
 class PoolStats:
     @property
     def strings(self) -> int: ...
