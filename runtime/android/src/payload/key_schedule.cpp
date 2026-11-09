@@ -71,8 +71,9 @@ constexpr std::size_t kMaxLibrarySize = std::size_t{64} << 20U;
 /// expected text digest.
 constexpr std::uint64_t kSmallestConfigSection = kProgramSize + (2 * kKeySize) + 1;
 
-/// The name of the library's config section, whose trailing bytes hold the fold program and the keystore share.
-constexpr std::string_view kConfigSection = ".rasp_config";
+/// The name of the library's config section, whose trailing bytes hold the fold program and the keystore share. The
+/// packer renames the section in the shipped library, so this is the renamed name, not the raw build's.
+constexpr std::string_view kConfigSection = ".init";
 
 /// The prefix of every derivation info string of the schedule, followed by "fold.<tag>/<i>", "frame/<entry>", "seed"
 /// or "guard".
@@ -277,6 +278,8 @@ struct FoldInputs {
       return program.constants[record.param];
     case RecordKind::kEntry:
       return entry_digest(apk, record.param);
+    case RecordKind::kPackage:
+      return package_digest(apk);
   }
   return std::nullopt;
 }
@@ -355,6 +358,30 @@ std::optional<FoldProgram> decode_program(std::span<const std::uint8_t> blob) {
 
 std::string decoy_entry_name(std::uint16_t index) {
   return std::string(kDecoyEntryPrefix) + std::to_string(index) + ".bin";
+}
+
+/// The digest of the app's package name, read from its APK's install path: the APK sits in a directory named
+/// `<package>-<random>`, and a package name cannot contain '-', so the name is the part before the first one. The
+/// install path is the loader's own, so a repackaged or virtualized install that runs the library from another
+/// app's directories names a different package and the fold comes out differently.
+///
+/// @param apk_path The path of the app's APK, as the dynamic loader reports it.
+/// @return The digest. Nothing when the path holds no package name.
+[[nodiscard]] std::optional<Key> package_digest(std::string_view apk_path) {
+  const std::size_t name_start = apk_path.find_last_of('/');
+  if (name_start == std::string_view::npos || name_start == 0) {
+    return std::nullopt;
+  }
+  const std::size_t directory_start = apk_path.find_last_of('/', name_start - 1);
+  const std::size_t directory_offset = directory_start == std::string_view::npos ? 0 : directory_start + 1;
+  const std::string_view directory = apk_path.substr(directory_offset, name_start - directory_offset);
+  const std::size_t dash = directory.find_first_of('-');
+  const std::string_view package = dash == std::string_view::npos ? directory : directory.substr(0, dash);
+  if (package.empty() || package.find('/') != std::string_view::npos) {
+    return std::nullopt;
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  return checks::sha256(std::span(reinterpret_cast<const std::uint8_t*>(package.data()), package.size()));
 }
 
 Key gate_block(const Environment& environment) {

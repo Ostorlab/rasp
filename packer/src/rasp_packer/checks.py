@@ -73,3 +73,32 @@ def resolve_checks(
         else:
             skipped[check] = None
     return ResolvedChecks(checks=tuple(sorted(resolved)), skipped=tuple(skipped))
+
+
+def checks_mask(
+    platform: platforms.Platform, checks: collections.abc.Iterable[str]
+) -> int:
+    """Turns the check groups a caller chose into the mask the runtime's config carries.
+
+    The config lists the groups as a mask, not as their names, so the shipped library names no
+    check group. Each bit is its group's position in CHECKS, the order the runtime runs them,
+    which the runtime's own dispatch keeps in step with; new groups append, so old runtimes read
+    the bits they know.
+
+    Args:
+        platform: The platform of the app.
+        checks: The ids of the groups the caller chose. Each must be a group of the platform.
+
+    Returns:
+        The mask, one bit per group.
+
+    Raises:
+        ValueError: A check is not a group of the platform.
+    """
+    order = CHECKS[platform]
+    mask = 0
+    for check in checks:
+        if check not in order:
+            raise ValueError(f"{check!r} is not a check of {platform}")
+        mask |= 1 << order.index(check)
+    return mask

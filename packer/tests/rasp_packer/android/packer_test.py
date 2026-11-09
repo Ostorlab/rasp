@@ -25,7 +25,7 @@ _FIXTURES = pathlib.Path(__file__).parent / "apk" / "fixtures"
 _MANIFEST = "manifest_with_application_and_version.bin"
 _PACKAGE = "com.example.withapp"
 _CONFIG = runtime_config.RuntimeConfig(
-    build_id="rasp-build/v1:" + "ab" * 32, checks=("identity",)
+    build_id="rasp-build/v1:" + "ab" * 32, checks=("identity",), checks_mask=32
 )
 _STUB_DEX = b"stub dex bytes"
 _ARM64_SO = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
@@ -122,7 +122,7 @@ def _recover_root(
         for name in archive.namelist()
         if name.startswith("assets/")
     }
-    return schedule_recovery.recover_root(library, entries, gates)
+    return schedule_recovery.recover_root(library, entries, gates, _PACKAGE.encode())
 
 
 def _decrypt_map(archive: zipfile.ZipFile, root: bytes) -> bytes:
@@ -323,7 +323,7 @@ def testPack_whenTheFoldProgramIsPatched_theMapNoLongerDecrypts(
         _decrypt_map(archive, root)
     elf = lief.ELF.parse(io.BytesIO(library))
     assert elf is not None
-    section = elf.get_section(".rasp_config")
+    section = elf.get_section(".init")
     assert section is not None
     program_offset = (
         section.offset

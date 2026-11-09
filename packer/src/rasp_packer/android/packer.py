@@ -160,7 +160,9 @@ def _pack_apk(
     result = splitter(app, app_identity.package_name)
 
     patched_manifest = apk_manifest_module.set_app_component_factory(
-        apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
+        apk_manifest_module.clear_debuggable(
+            apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL)
+        ),
         resources_module.STUB_FACTORY_CLASS,
     )
     libraries: dict[str, bytes] = {}
@@ -170,7 +172,7 @@ def _pack_apk(
         libraries[name] = self_encrypt.encrypt_library(configured)
         digests[name] = hashlib.sha256(runtime_library.text_region(configured)).digest()
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
-        libraries, digests, config
+        libraries, digests, config, app_identity.package_name.encode()
     )
     map_frame, program_frame, dex_entries = _encrypt_payload(
         result.business, root, random.SystemRandom()
@@ -224,7 +226,9 @@ def _pack_aab(
     result = splitter(dex_entries, app_identity.package_name)
 
     patched_manifest = aab_manifest_module.set_app_component_factory(
-        aab_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
+        aab_manifest_module.clear_debuggable(
+            aab_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL)
+        ),
         resources_module.STUB_FACTORY_CLASS,
     )
     abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
@@ -238,7 +242,7 @@ def _pack_aab(
             runtime_library.text_region(configured)
         ).digest()
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
-        libraries, digests, config
+        libraries, digests, config, app_identity.package_name.encode()
     )
     map_frame, program_frame, dex_data_entries = _encrypt_payload(
         result.business, root, random.SystemRandom()
@@ -270,6 +274,7 @@ def _schedule_libraries(
     libraries: dict[str, bytes],
     digests: dict[str, bytes],
     config: runtime_config.RuntimeConfig,
+    package: bytes,
 ) -> tuple[bytes, bytes, dict[str, bytes], dict[str, bytes]]:
     """Builds the schedule's fold over the app's runtime libraries.
 
@@ -279,6 +284,8 @@ def _schedule_libraries(
         libraries: The runtime libraries with their config written and their code and read-only data self-encrypted, by APK entry name. Each already carries the same config.
         digests: The SHA-256 of each library's plaintext `.text` section, by APK entry name.
         config: The runtime's config.
+        package: The app's package name, which the fold program folds in, the way the runtime reads
+            it from its APK's install path.
 
     Returns:
         The root key, the asset share to ship as the s.bin entry, the finished libraries, by APK
@@ -315,7 +322,7 @@ def _schedule_libraries(
             ),
             digests[name],
         )
-        gather = _resolver(with_digest, program, share_asset, decoys)
+        gather = _resolver(with_digest, program, share_asset, decoys, package)
         a_state = key_schedule.run_chain(
             bytes(key_schedule.KEY_SIZE), program.chain_a, gather, "a"
         )
@@ -333,6 +340,7 @@ def _resolver(
     program: key_schedule.FoldProgram,
     share_asset: bytes,
     decoys: dict[str, bytes],
+    package: bytes,
 ) -> collections.abc.Callable[[key_schedule.FoldRecord], bytes]:
     """Returns the gatherer of one library's fold inputs, the packer's side of the interpreter.
 
@@ -341,6 +349,7 @@ def _resolver(
         program: The fold program the library carries.
         share_asset: The asset share to ship as the s.bin entry.
         decoys: The decoy entries the program names, by APK entry name.
+        package: The app's package name, which the runtime reads from its APK's install path.
 
     Returns:
         A function that returns the 32 bytes each fold record's source holds, the same values the
@@ -368,6 +377,8 @@ def _resolver(
             return key_schedule.CLEAN_GATES
         if record.kind == key_schedule.KIND_CONSTANT:
             return program.constants[record.param]
+        if record.kind == key_schedule.KIND_PACKAGE:
+            return hashlib.sha256(package).digest()
         return hashlib.sha256(
             decoys[key_schedule.decoy_entry_name(record.param)]
         ).digest()

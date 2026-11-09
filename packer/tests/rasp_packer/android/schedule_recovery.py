@@ -14,7 +14,10 @@ from rasp_packer.android import runtime_library
 
 
 def recover_root(
-    library: bytes, entries: collections.abc.Mapping[str, bytes], gates: bytes
+    library: bytes,
+    entries: collections.abc.Mapping[str, bytes],
+    gates: bytes,
+    package: bytes,
 ) -> bytes | None:
     """Recovers the root key of a packed library from the library and its APK's stored entries.
 
@@ -25,19 +28,24 @@ def recover_root(
             the fold program names.
         gates: The gate block of the environment the recovery folds in, the clean device's
             key_schedule.CLEAN_GATES to mirror a clean run.
+        package: The app's package name, which the fold program folds in as the package record's
+            input, the way the runtime reads it from its APK's install path.
 
     Returns:
         The root key. Nothing when the library's fold program or any input it names cannot be read,
         which the runtime serves as no business class, exactly as for a corrupt APK.
     """
     try:
-        return _recover(library, entries, gates)
+        return _recover(library, entries, gates, package)
     except KeyError, IndexError, ValueError:
         return None
 
 
 def _recover(
-    library: bytes, entries: collections.abc.Mapping[str, bytes], gates: bytes
+    library: bytes,
+    entries: collections.abc.Mapping[str, bytes],
+    gates: bytes,
+    package: bytes,
 ) -> bytes:
     """Recovers the root key, raising on any input that cannot be gathered."""
     program = key_schedule.decode_program(runtime_library.program(library))
@@ -68,6 +76,8 @@ def _recover(
             return gates
         if record.kind == key_schedule.KIND_CONSTANT:
             return program.constants[record.param]
+        if record.kind == key_schedule.KIND_PACKAGE:
+            return hashlib.sha256(package).digest()
         return hashlib.sha256(
             entries[key_schedule.decoy_entry_name(record.param)]
         ).digest()

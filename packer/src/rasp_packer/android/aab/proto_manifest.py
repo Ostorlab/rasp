@@ -651,3 +651,52 @@ def set_app_component_factory(manifest: bytes, class_name: str) -> bytes:
         new_element = _add_attr_to_element(old_element, new_attr)
 
     return _replace_element_in_manifest(manifest, old_element, new_element)
+
+
+def remove_debuggable(manifest: bytes) -> bytes:
+    """Return the manifest with ``android:debuggable`` removed from ``<application>``.
+
+    A debug build's app accepts a Java debugger over JDWP, which no native check
+    sees, so the protected app ships not debuggable. A manifest without the
+    attribute is returned unchanged: absence already means not debuggable.
+
+    Args:
+        manifest: Raw proto-encoded AndroidManifest.xml bytes.
+
+    Returns:
+        The edited proto manifest bytes.
+
+    Raises:
+        ProtoManifestError: The manifest cannot be parsed.
+    """
+    result = _find_element(manifest, "application")
+    if result is None:
+        raise ProtoManifestError("no <application> element in proto manifest")
+    old_element, _ = result
+
+    removed: list[tuple[int, int]] = []
+    for field in _parse_fields(old_element):
+        if (
+            field.number != _FIELD_ELEMENT_ATTR
+            or field.wire_type != _WIRE_LENGTH_DELIMITED
+        ):
+            continue
+        assert isinstance(field.value, bytes)
+        for sub in _parse_fields(field.value):
+            if (
+                sub.number == _FIELD_ATTR_NAME
+                and sub.wire_type == _WIRE_LENGTH_DELIMITED
+                and isinstance(sub.value, bytes)
+                and _decode_utf8(sub.value) == "debuggable"
+            ):
+                removed.append((field.start, field.end))
+    if not removed:
+        return manifest
+
+    new_element = bytearray()
+    position = 0
+    for start, end in removed:
+        new_element += old_element[position:start]
+        position = end
+    new_element += old_element[position:]
+    return _replace_element_in_manifest(manifest, old_element, bytes(new_element))

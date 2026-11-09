@@ -55,7 +55,7 @@ DATA_READ_LITERALS = re.compile(
     rb"|assets/rasp/(?:[a-z]+\.bin|r)"
     rb"|/(?:proc|sys)/.*"
     rb"|TracerPid:"
-    rb"|\.rasp_config"
+    rb"|\.init"
     rb"|\.text"
     rb")\Z"
 )

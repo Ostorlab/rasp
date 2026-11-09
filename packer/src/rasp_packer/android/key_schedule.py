@@ -68,6 +68,7 @@ KIND_REGION = 4
 KIND_GATES = 5
 KIND_CONSTANT = 6
 KIND_ENTRY = 7
+KIND_PACKAGE = 8
 
 # The gate block of a clean device at recovery: a JNI environment, no tracer, the library under
 # /data. The packer folds this in; the runtime folds in what it observes.
@@ -304,7 +305,7 @@ def build_program(
 ) -> FoldProgram:
     """Builds a random fold program: the real inputs, in a random order, among random decoys.
 
-    The program always folds in the real inputs — chain A holds the ``.text`` digest, chain S holds the asset share, the config region digest and the environment gates — and hides them among decoys the recipe invents: random constants, digests of the library's sections, digests of library byte ranges, and digests of decoy APK entries, which the packer then writes as ``assets/rasp/r<i>.bin``. Which decoys, of which kinds, how many, and where in each chain's order, is the generator's choice, so no two apps fold the same way.
+    The program always folds in the real inputs — chain A holds the ``.text`` digest, chain S holds the asset share, the config region digest, the environment gates and the app's package name — and hides them among decoys the recipe invents: random constants, digests of the library's sections, digests of library byte ranges, and digests of decoy APK entries, which the packer then writes as ``assets/rasp/r<i>.bin``. Which decoys, of which kinds, how many, and where in each chain's order, is the generator's choice, so no two apps fold the same way.
 
     Args:
         generator: The source of randomness, seeded by the caller.
@@ -334,6 +335,7 @@ def build_program(
         FoldRecord(kind=KIND_SHARE),
         FoldRecord(kind=KIND_REGION),
         FoldRecord(kind=KIND_GATES),
+        FoldRecord(kind=KIND_PACKAGE),
     ]
     constants: list[bytes] = []
     entry_indices: list[int] = []

@@ -85,7 +85,9 @@ def pack(
     if output.exists() is True:
         raise errors.OutputExistsError(f"{output} already exists")
     config = runtime_config.RuntimeConfig(
-        build_id=build_id, checks=resolved_checks.checks
+        build_id=build_id,
+        checks=resolved_checks.checks,
+        checks_mask=check_groups.checks_mask(platform, resolved_checks.checks),
     )
     app_identity: identity.AppIdentity
     match platform:

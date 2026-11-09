@@ -78,6 +78,8 @@ enum class RecordKind : std::uint8_t {
   kConstant = 6,
   /// The digest of a decoy entry, `assets/rasp/r<i>.bin`, chain S.
   kEntry = 7,
+  /// The digest of the app's package name, as its APK's install path names it, chain S.
+  kPackage = 8,
 };
 
 /// One step of a fold chain: a source to gather and fold in as the step's salt.
@@ -115,6 +117,15 @@ struct FoldProgram {
 /// @param index The record's parameter, the decoy's index.
 /// @return The entry name, `assets/rasp/r<index>.bin`.
 [[nodiscard]] std::string decoy_entry_name(std::uint16_t index);
+
+/// The digest of the app's package name, as its APK's install path names it: the directory the APK sits in is
+/// `<package>-<random>`, and a package name cannot contain '-', so the name is the part before the first one. A
+/// repackaged or virtualized install that runs the library from another app's directories names a different
+/// package, and the fold that folds this digest in comes out differently.
+///
+/// @param apk_path The path of the app's APK, as the dynamic loader reports it.
+/// @return The digest. Nothing when the path holds no package name.
+[[nodiscard]] std::optional<Key> package_digest(std::string_view apk_path);
 
 /// The gate block of an environment: one byte per fact, then zeros.
 ///
@@ -196,15 +207,16 @@ struct FoldProgram {
 
 /// Recovers the root key from the app the packer produced, the way the loader does at install time.
 ///
-/// It reads the library's own file for its `.rasp_config` section: the config region, the fold program and the
+/// It reads the library's own file for its `.init` section: the config region, the fold program and the
 /// keystore share. It decodes the program, gathers every input the program names — the `.text` digest, the named
-/// sections and ranges, the s.bin entry, the config region digest, the environment's gates, the program's constants
-/// and the decoy entries — runs the two chains, and folds the keystore share in: the share is what the packer wrote
-/// to cancel its ABI's chains, so the result is the root.
+/// sections and ranges, the s.bin entry, the config region digest, the environment's gates, the program's constants,
+/// the decoy entries and the app's package name — runs the two chains, and folds the keystore share in: the share
+/// is what the packer wrote to cancel its ABI's chains, so the result is the root.
 ///
 /// @param environment The environment the loader observed.
 /// @param library_path The library's path as the dynamic loader reports it.
-/// @param apk The path of the app's APK, which holds the asset share and the decoy entries.
+/// @param apk The path of the app's APK, which holds the asset share, the decoy entries and, in its install path,
+/// the package name.
 /// @return The root key. Nothing when the library, the share entry or any input the program names can't be read; the
 /// caller then serves no business class, exactly as for a corrupt APK.
 [[nodiscard]] std::optional<Key> recover_root_key(const Environment& environment, std::string_view library_path,

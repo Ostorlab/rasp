@@ -61,7 +61,7 @@ _A_STATE = bytes.fromhex(
     "80f696036977bec443168ac195612f3bbef55acceddbccc100170f56d18053b4"
 )
 _S_STATE = bytes.fromhex(
-    "4bea01eb78580ceadcbdde36797bd2d272db507b6fa58067776094534d498a9f"
+    "8a0dfd2c5e3186293ccbe6b4a197a57544b1831cb5950bf0a9e3784ddc31ef0b"
 )
 _MAP_KEY = bytes.fromhex(
     "5148f4c03d5c379482f5e656dfe3ede4a139f570175a397308ae1213c43b014e"
@@ -134,7 +134,7 @@ _DEX1_PLAINTEXT = b"business dex one\n"
 
 _LIBRARY = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _CONFIG = runtime_config.RuntimeConfig(
-    build_id="rasp-build/v1:" + "ab" * 32, checks=("identity",)
+    build_id="rasp-build/v1:" + "ab" * 32, checks=("identity",), checks_mask=32
 )
 # The SHA-256 of the fixture's plaintext `.text`, which the packer writes before the fold's inputs are gathered so
 # the region digest binds the sensor guard's expectation into the root.
@@ -157,6 +157,9 @@ _FIXED_PROGRAM = key_schedule.FoldProgram(
     ),
     constants=(_CONSTANT,),
 )
+# The app's package name, which the fold program folds in as its package record's input.
+_PACKAGE = b"com.example.fold"
+
 _FIXED_ENTRIES = {
     key_schedule.SHARE_ENTRY: _SHARE,
     key_schedule.decoy_entry_name(0): _DECOY0,
@@ -209,6 +212,8 @@ def _gather(
             return key_schedule.CLEAN_GATES
         if record.kind == key_schedule.KIND_CONSTANT:
             return constants[record.param]
+        if record.kind == key_schedule.KIND_PACKAGE:
+            return hashlib.sha256(_PACKAGE).digest()
         return hashlib.sha256(
             entries[key_schedule.decoy_entry_name(record.param)]
         ).digest()
@@ -288,7 +293,7 @@ def testRecovery_whenGivenTheFixedLibraryAndEntries_givesTheVectorRoot() -> None
     library = _fixed_library()
 
     root = schedule_recovery.recover_root(
-        library, _FIXED_ENTRIES, key_schedule.CLEAN_GATES
+        library, _FIXED_ENTRIES, key_schedule.CLEAN_GATES, _PACKAGE
     )
 
     assert root == _ROOT
@@ -303,7 +308,7 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     tampered_program[program_offset + 100] ^= 1
     assert (
         schedule_recovery.recover_root(
-            bytes(tampered_program), _FIXED_ENTRIES, key_schedule.CLEAN_GATES
+            bytes(tampered_program), _FIXED_ENTRIES, key_schedule.CLEAN_GATES, _PACKAGE
         )
         != _ROOT
     )
@@ -317,7 +322,7 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     tampered_text[text.offset] ^= 1
     assert (
         schedule_recovery.recover_root(
-            bytes(tampered_text), _FIXED_ENTRIES, key_schedule.CLEAN_GATES
+            bytes(tampered_text), _FIXED_ENTRIES, key_schedule.CLEAN_GATES, _PACKAGE
         )
         != _ROOT
     )
@@ -330,7 +335,7 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     }
     assert (
         schedule_recovery.recover_root(
-            library, without_decoy1, key_schedule.CLEAN_GATES
+            library, without_decoy1, key_schedule.CLEAN_GATES, _PACKAGE
         )
         is None
     )
@@ -339,7 +344,9 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     wrong_share = dict(_FIXED_ENTRIES)
     wrong_share[key_schedule.SHARE_ENTRY] = bytes(key_schedule.KEY_SIZE)
     assert (
-        schedule_recovery.recover_root(library, wrong_share, key_schedule.CLEAN_GATES)
+        schedule_recovery.recover_root(
+            library, wrong_share, key_schedule.CLEAN_GATES, _PACKAGE
+        )
         != _ROOT
     )
 
@@ -355,6 +362,7 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
             ),
             _FIXED_ENTRIES,
             key_schedule.CLEAN_GATES,
+            _PACKAGE,
         )
         != _ROOT
     )
@@ -363,7 +371,10 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     traced = key_schedule.gate_block(
         java_environment=True, no_tracer=False, installed_under_data=True
     )
-    assert schedule_recovery.recover_root(library, _FIXED_ENTRIES, traced) != _ROOT
+    assert (
+        schedule_recovery.recover_root(library, _FIXED_ENTRIES, traced, _PACKAGE)
+        != _ROOT
+    )
 
 
 def testRecovery_whenBuiltWithRandomPrograms_recoversOnEveryLibrary() -> None:
@@ -406,9 +417,15 @@ def testRecovery_whenBuiltWithRandomPrograms_recoversOnEveryLibrary() -> None:
         for library in libraries:
             assert (
                 schedule_recovery.recover_root(
-                    library, entries, key_schedule.CLEAN_GATES
+                    library, entries, key_schedule.CLEAN_GATES, _PACKAGE
                 )
                 == root
+            )
+            assert (
+                schedule_recovery.recover_root(
+                    library, entries, key_schedule.CLEAN_GATES, b"com.example.other"
+                )
+                != root
             )
 
 

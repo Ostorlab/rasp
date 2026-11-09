@@ -2,6 +2,7 @@
 
 #include "rasp/parse_config.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -44,6 +45,17 @@ namespace {
   return texts;
 }
 
+/// Reads a JSON number as the check mask.
+///
+/// @param value The value, or null.
+/// @return The mask. Nothing when `value` is null or is not a number.
+[[nodiscard]] std::optional<std::uint64_t> read_mask(const yyjson_val* value) {
+  if (!yyjson_is_int(value)) {
+    return std::nullopt;
+  }
+  return yyjson_get_uint(value);
+}
+
 }  // namespace
 
 Config parse_config(std::string_view json) {
@@ -55,6 +67,7 @@ Config parse_config(std::string_view json) {
   Config config{
       .build_id = read_text(yyjson_obj_get(root, "build_id")),
       .checks = read_texts(yyjson_obj_get(root, "checks")),
+      .checks_mask = read_mask(yyjson_obj_get(root, "m")),
   };
   yyjson_doc_free(document);
   return config;

@@ -293,7 +293,7 @@ jobs:
         run: |
           lib=build/android/android/librasp.so
           test -s "$lib"
-          literals="$(grep -rhoE '"((root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+|rasp\.v2\.[a-z_.]*|assets/rasp/([a-z]+\.bin|r)|/(proc|sys)/[^"]+|TracerPid:|\.rasp_config)"' android/src | tr -d '"' | sort -u)"
+          literals="$(grep -rhoE '"((root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+|rasp\.v2\.[a-z_.]*|assets/rasp/([a-z]+\.bin|r)|/(proc|sys)/[^"]+|TracerPid:|\.init|\.text)"' android/src | tr -d '"' | sort -u)"
           test -n "$literals"
           missing="$(comm -23 <(printf '%s\n' "$literals") <(strings -a "$lib" | sort -u) || true)"
           if [ -n "$missing" ]; then
