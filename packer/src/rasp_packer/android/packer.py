@@ -78,7 +78,7 @@ def pack(
         output: Where to write the protected app. It is unsigned.
         config: The runtime's config, written into the app.
         artifacts: The prebuilt stub and libraries. Loaded from the package resources when not given.
-        splitter: Splits an APK's classes. The default runs the bundled splitter.
+        splitter: Splits an APK's classes. The default splits them in process.
         aab_splitter: Splits an AAB's classes from pre-extracted DEX entries.
 
     Returns:
