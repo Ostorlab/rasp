@@ -4,7 +4,6 @@
 
 #include "payload/dex_store.h"
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>

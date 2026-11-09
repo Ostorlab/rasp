@@ -2,7 +2,6 @@
 
 #include "checks/debugger.h"
 
-#include <array>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>

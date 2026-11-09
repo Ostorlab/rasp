@@ -12,7 +12,6 @@
 #include <vector>
 
 #ifdef __ANDROID__
-#include <array>
 #include <unistd.h>
 
 #include "apk/location.h"

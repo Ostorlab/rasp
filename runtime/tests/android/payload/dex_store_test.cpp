@@ -193,23 +193,32 @@ class DexStoreTest : public testing::Test {
     return write_file(path, zip_with_stored_entries(entries)) ? path : std::string();
   }
 
-  /// Writes an APK holding the map, the Java program, and both business dexes as the given frames. Each frame lives
-  /// for the call, so a caller may pass a tampered copy or a freshly decoded fixture.
+  /// The stored frames a full APK holds: the class map, the Java program, and both business dexes. One struct, so
+  /// a frame cannot be passed in another frame's place.
+  struct Frames {
+    /// The stored map frame.
+    std::string_view map;
+    /// The stored Java program frame, or empty to ship none.
+    std::string_view program;
+    /// The stored business/0.dex frame.
+    std::string_view dex0;
+    /// The stored business/1.dex frame.
+    std::string_view dex1;
+  };
+
+  /// Writes an APK holding the map, the Java program, and both business dexes as `frames` holds them. Each frame
+  /// lives for the call, so a caller may pass a tampered copy or a freshly decoded fixture.
   ///
-  /// @param map The stored map frame.
-  /// @param program The stored Java program frame, or empty to ship none.
-  /// @param dex0 The stored business/0.dex frame.
-  /// @param dex1 The stored business/1.dex frame.
+  /// @param frames The stored frames to put in the APK.
   /// @return The APK's path, or empty when the write failed.
-  [[nodiscard]] std::string write_full_apk(std::string_view map, std::string_view program, std::string_view dex0,
-                                           std::string_view dex1) {
+  [[nodiscard]] std::string write_full_apk(const Frames& frames) {
     std::vector<StoredEntry> entries = {
-        {.name = kMapEntry, .content = map},
-        {.name = kDex0Entry, .content = dex0},
-        {.name = kDex1Entry, .content = dex1},
+        {.name = kMapEntry, .content = frames.map},
+        {.name = kDex0Entry, .content = frames.dex0},
+        {.name = kDex1Entry, .content = frames.dex1},
     };
-    if (!program.empty()) {
-      entries.push_back({.name = kJProgramEntry, .content = program});
+    if (!frames.program.empty()) {
+      entries.push_back({.name = kJProgramEntry, .content = frames.program});
     }
     return write_apk(entries);
   }
@@ -218,9 +227,11 @@ class DexStoreTest : public testing::Test {
   ///
   /// @return The store, which has a value whenever the APK was written and the map decrypted.
   [[nodiscard]] std::optional<DexStore> open_clean_store() {
-    return open_dex_store(
-        write_full_apk(bytes_of(kMapFrameHex), bytes_of(kJFrameHex), bytes_of(kDex0FrameHex), bytes_of(kDex1FrameHex)),
-        root());
+    return open_dex_store(write_full_apk({.map = bytes_of(kMapFrameHex),
+                                          .program = bytes_of(kJFrameHex),
+                                          .dex0 = bytes_of(kDex0FrameHex),
+                                          .dex1 = bytes_of(kDex1FrameHex)}),
+                          root());
   }
 
   /// Opens the clean store and arms it with the vectors' Java share, the way the stub arms a real runtime.
@@ -352,8 +363,11 @@ TEST_F(DexStoreTest, decryptDex_whenCalledFromSeveralThreadsAtOnce_decryptsEvery
 TEST_F(DexStoreTest, decryptDex_whenTheDexFrameIsTampered_returnsNothing) {
   std::string dex0 = bytes_of(kDex0FrameHex);
   dex0.back() = flip_low_bit(dex0.back());
-  std::optional<DexStore> store = open_dex_store(
-      write_full_apk(bytes_of(kMapFrameHex), bytes_of(kJFrameHex), dex0, bytes_of(kDex1FrameHex)), root());
+  std::optional<DexStore> store = open_dex_store(write_full_apk({.map = bytes_of(kMapFrameHex),
+                                                                 .program = bytes_of(kJFrameHex),
+                                                                 .dex0 = dex0,
+                                                                 .dex1 = bytes_of(kDex1FrameHex)}),
+                                                 root());
   ASSERT_TRUE(store.has_value());
   arm_j_store(*store, share());
 
@@ -384,8 +398,11 @@ TEST_F(DexStoreTest, openDexStore_whenTheMapFrameIsTampered_returnsNothing) {
   std::string map = bytes_of(kMapFrameHex);
   map.back() = flip_low_bit(map.back());
 
-  EXPECT_FALSE(open_dex_store(
-                   write_full_apk(map, bytes_of(kJFrameHex), bytes_of(kDex0FrameHex), bytes_of(kDex1FrameHex)), root())
+  EXPECT_FALSE(open_dex_store(write_full_apk({.map = map,
+                                              .program = bytes_of(kJFrameHex),
+                                              .dex0 = bytes_of(kDex0FrameHex),
+                                              .dex1 = bytes_of(kDex1FrameHex)}),
+                              root())
                    .has_value());
 }
 
@@ -393,16 +410,20 @@ TEST_F(DexStoreTest, openDexStore_whenTheRootIsWrong_returnsNothing) {
   const std::optional<DexStore> store = open_clean_store();
   ASSERT_TRUE(store.has_value());
 
-  EXPECT_FALSE(open_dex_store(write_full_apk(bytes_of(kMapFrameHex), bytes_of(kJFrameHex), bytes_of(kDex0FrameHex),
-                                             bytes_of(kDex1FrameHex)),
+  EXPECT_FALSE(open_dex_store(write_full_apk({.map = bytes_of(kMapFrameHex),
+                                              .program = bytes_of(kJFrameHex),
+                                              .dex0 = bytes_of(kDex0FrameHex),
+                                              .dex1 = bytes_of(kDex1FrameHex)}),
                               wrong_root())
                    .has_value());
 }
 
 TEST_F(DexStoreTest, decryptDex_whenTheRootWasWrongAtOpenTime_cannotDecryptAnyDex) {
-  const std::optional<DexStore> store = open_dex_store(
-      write_full_apk(bytes_of(kMapFrameHex), bytes_of(kJFrameHex), bytes_of(kDex0FrameHex), bytes_of(kDex1FrameHex)),
-      wrong_root());
+  const std::optional<DexStore> store = open_dex_store(write_full_apk({.map = bytes_of(kMapFrameHex),
+                                                                       .program = bytes_of(kJFrameHex),
+                                                                       .dex0 = bytes_of(kDex0FrameHex),
+                                                                       .dex1 = bytes_of(kDex1FrameHex)}),
+                                                       wrong_root());
   EXPECT_FALSE(store.has_value());
 }
 
@@ -436,8 +457,11 @@ TEST_F(DexStoreTest, openDexStore_whenTheProgramEntryIsPresent_keepsItForTheStub
 }
 
 TEST_F(DexStoreTest, openDexStore_whenTheAppShippedNoProgram_keepsNoProgram) {
-  const std::optional<DexStore> store = open_dex_store(
-      write_full_apk(bytes_of(kMapFrameHex), "", bytes_of(kDex0FrameHex), bytes_of(kDex1FrameHex)), root());
+  const std::optional<DexStore> store = open_dex_store(write_full_apk({.map = bytes_of(kMapFrameHex),
+                                                                       .program = "",
+                                                                       .dex0 = bytes_of(kDex0FrameHex),
+                                                                       .dex1 = bytes_of(kDex1FrameHex)}),
+                                                       root());
   ASSERT_TRUE(store.has_value());
 
   EXPECT_TRUE(store->j_program.empty());
