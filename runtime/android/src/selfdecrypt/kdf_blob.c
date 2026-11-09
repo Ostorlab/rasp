@@ -1,8 +1,8 @@
-/// The key-derivation routine, compiled SEPARATELY and never linked into the shipped library. gen_kdf_shovel.py compiles
-/// this for the target, extracts the machine code of kdf_blob() (verified relocation-free and self-contained), and emits
-/// a builder that materialises those bytes as immediate stores into an RWX page at run time (see selfdecrypt.cpp). So in
-/// the shipped library the HKDF/SHA-256 logic is NOT present as disassemblable .text: a static disassembler sees the
-/// builder shovelling constants, not the round function.
+/// The key-derivation routine, compiled SEPARATELY and never linked into the shipped library. gen_kdf_shovel.py
+/// compiles this for the target, extracts the machine code of kdf_blob() (verified relocation-free and self-contained),
+/// and emits a builder that materialises those bytes as immediate stores into an RWX page at run time (see
+/// selfdecrypt.cpp). So in the shipped library the HKDF/SHA-256 logic is NOT present as disassemblable .text: a static
+/// disassembler sees the builder shovelling constants, not the round function.
 ///
 /// To stay self-contained the blob references nothing outside itself: no libc (hand-rolled byte copy/set), no globals,
 /// no string or constant tables (the SHA-256 round constants are materialised by assignment, not a .rodata table). That
@@ -18,14 +18,14 @@
 #include <stdint.h>
 
 /// Copy `n` bytes from `s` to `d` (no libc).
-static void b_copy(uint8_t *d, const uint8_t *s, unsigned long n) {
+static void b_copy(uint8_t* d, const uint8_t* s, unsigned long n) {
   for (unsigned long i = 0; i < n; i++) {
     d[i] = s[i];
   }
 }
 
 /// Set `n` bytes of `d` to `v` (no libc).
-static void b_set(uint8_t *d, uint8_t v, unsigned long n) {
+static void b_set(uint8_t* d, uint8_t v, unsigned long n) {
   for (unsigned long i = 0; i < n; i++) {
     d[i] = v;
   }
@@ -41,22 +41,70 @@ static void b_set(uint8_t *d, uint8_t v, unsigned long n) {
 
 /// Fill `k` with the 64 SHA-256 round constants by assignment (no table).
 static void kb_round_constants(uint32_t k[64]) {
-  k[0] = 0x428a2f98u;  k[1] = 0x71374491u;  k[2] = 0xb5c0fbcfu;  k[3] = 0xe9b5dba5u;
-  k[4] = 0x3956c25bu;  k[5] = 0x59f111f1u;  k[6] = 0x923f82a4u;  k[7] = 0xab1c5ed5u;
-  k[8] = 0xd807aa98u;  k[9] = 0x12835b01u;  k[10] = 0x243185beu; k[11] = 0x550c7dc3u;
-  k[12] = 0x72be5d74u; k[13] = 0x80deb1feu; k[14] = 0x9bdc06a7u; k[15] = 0xc19bf174u;
-  k[16] = 0xe49b69c1u; k[17] = 0xefbe4786u; k[18] = 0x0fc19dc6u; k[19] = 0x240ca1ccu;
-  k[20] = 0x2de92c6fu; k[21] = 0x4a7484aau; k[22] = 0x5cb0a9dcu; k[23] = 0x76f988dau;
-  k[24] = 0x983e5152u; k[25] = 0xa831c66du; k[26] = 0xb00327c8u; k[27] = 0xbf597fc7u;
-  k[28] = 0xc6e00bf3u; k[29] = 0xd5a79147u; k[30] = 0x06ca6351u; k[31] = 0x14292967u;
-  k[32] = 0x27b70a85u; k[33] = 0x2e1b2138u; k[34] = 0x4d2c6dfcu; k[35] = 0x53380d13u;
-  k[36] = 0x650a7354u; k[37] = 0x766a0abbu; k[38] = 0x81c2c92eu; k[39] = 0x92722c85u;
-  k[40] = 0xa2bfe8a1u; k[41] = 0xa81a664bu; k[42] = 0xc24b8b70u; k[43] = 0xc76c51a3u;
-  k[44] = 0xd192e819u; k[45] = 0xd6990624u; k[46] = 0xf40e3585u; k[47] = 0x106aa070u;
-  k[48] = 0x19a4c116u; k[49] = 0x1e376c08u; k[50] = 0x2748774cu; k[51] = 0x34b0bcb5u;
-  k[52] = 0x391c0cb3u; k[53] = 0x4ed8aa4au; k[54] = 0x5b9cca4fu; k[55] = 0x682e6ff3u;
-  k[56] = 0x748f82eeu; k[57] = 0x78a5636fu; k[58] = 0x84c87814u; k[59] = 0x8cc70208u;
-  k[60] = 0x90befffau; k[61] = 0xa4506cebu; k[62] = 0xbef9a3f7u; k[63] = 0xc67178f2u;
+  k[0] = 0x428a2f98u;
+  k[1] = 0x71374491u;
+  k[2] = 0xb5c0fbcfu;
+  k[3] = 0xe9b5dba5u;
+  k[4] = 0x3956c25bu;
+  k[5] = 0x59f111f1u;
+  k[6] = 0x923f82a4u;
+  k[7] = 0xab1c5ed5u;
+  k[8] = 0xd807aa98u;
+  k[9] = 0x12835b01u;
+  k[10] = 0x243185beu;
+  k[11] = 0x550c7dc3u;
+  k[12] = 0x72be5d74u;
+  k[13] = 0x80deb1feu;
+  k[14] = 0x9bdc06a7u;
+  k[15] = 0xc19bf174u;
+  k[16] = 0xe49b69c1u;
+  k[17] = 0xefbe4786u;
+  k[18] = 0x0fc19dc6u;
+  k[19] = 0x240ca1ccu;
+  k[20] = 0x2de92c6fu;
+  k[21] = 0x4a7484aau;
+  k[22] = 0x5cb0a9dcu;
+  k[23] = 0x76f988dau;
+  k[24] = 0x983e5152u;
+  k[25] = 0xa831c66du;
+  k[26] = 0xb00327c8u;
+  k[27] = 0xbf597fc7u;
+  k[28] = 0xc6e00bf3u;
+  k[29] = 0xd5a79147u;
+  k[30] = 0x06ca6351u;
+  k[31] = 0x14292967u;
+  k[32] = 0x27b70a85u;
+  k[33] = 0x2e1b2138u;
+  k[34] = 0x4d2c6dfcu;
+  k[35] = 0x53380d13u;
+  k[36] = 0x650a7354u;
+  k[37] = 0x766a0abbu;
+  k[38] = 0x81c2c92eu;
+  k[39] = 0x92722c85u;
+  k[40] = 0xa2bfe8a1u;
+  k[41] = 0xa81a664bu;
+  k[42] = 0xc24b8b70u;
+  k[43] = 0xc76c51a3u;
+  k[44] = 0xd192e819u;
+  k[45] = 0xd6990624u;
+  k[46] = 0xf40e3585u;
+  k[47] = 0x106aa070u;
+  k[48] = 0x19a4c116u;
+  k[49] = 0x1e376c08u;
+  k[50] = 0x2748774cu;
+  k[51] = 0x34b0bcb5u;
+  k[52] = 0x391c0cb3u;
+  k[53] = 0x4ed8aa4au;
+  k[54] = 0x5b9cca4fu;
+  k[55] = 0x682e6ff3u;
+  k[56] = 0x748f82eeu;
+  k[57] = 0x78a5636fu;
+  k[58] = 0x84c87814u;
+  k[59] = 0x8cc70208u;
+  k[60] = 0x90befffau;
+  k[61] = 0xa4506cebu;
+  k[62] = 0xbef9a3f7u;
+  k[63] = 0xc67178f2u;
 }
 
 /// Compress one 64-byte block into the eight-word state `s`.
@@ -65,8 +113,8 @@ static void kb_transform(uint32_t s[8], const uint8_t data[64]) {
   kb_round_constants(k);
   uint32_t m[64];
   for (int i = 0, j = 0; i < 16; ++i, j += 4) {
-    m[i] = ((uint32_t)data[j] << 24) | ((uint32_t)data[j + 1] << 16) |
-           ((uint32_t)data[j + 2] << 8) | ((uint32_t)data[j + 3]);
+    m[i] = ((uint32_t)data[j] << 24) | ((uint32_t)data[j + 1] << 16) | ((uint32_t)data[j + 2] << 8) |
+           ((uint32_t)data[j + 3]);
   }
   for (int i = 16; i < 64; ++i) {
     m[i] = KB_SIG1(m[i - 2]) + m[i - 7] + KB_SIG0(m[i - 15]) + m[i - 16];
@@ -76,18 +124,36 @@ static void kb_transform(uint32_t s[8], const uint8_t data[64]) {
   for (int i = 0; i < 64; ++i) {
     uint32_t t1 = h + KB_EP1(e) + KB_CH(e, f, g) + k[i] + m[i];
     uint32_t t2 = KB_EP0(a) + KB_MAJ(a, b, c);
-    h = g; g = f; f = e; e = d + t1;
-    d = c; c = b; b = a; a = t1 + t2;
+    h = g;
+    g = f;
+    f = e;
+    e = d + t1;
+    d = c;
+    c = b;
+    b = a;
+    a = t1 + t2;
   }
-  s[0] += a; s[1] += b; s[2] += c; s[3] += d;
-  s[4] += e; s[5] += f; s[6] += g; s[7] += h;
+  s[0] += a;
+  s[1] += b;
+  s[2] += c;
+  s[3] += d;
+  s[4] += e;
+  s[5] += f;
+  s[6] += g;
+  s[7] += h;
 }
 
 /// One-shot SHA-256 of `data[0..len)` into `out[32]`.
-static void kb_sha256(const uint8_t *data, unsigned long len, uint8_t out[32]) {
+static void kb_sha256(const uint8_t* data, unsigned long len, uint8_t out[32]) {
   uint32_t s[8];
-  s[0] = 0x6a09e667u; s[1] = 0xbb67ae85u; s[2] = 0x3c6ef372u; s[3] = 0xa54ff53au;
-  s[4] = 0x510e527fu; s[5] = 0x9b05688cu; s[6] = 0x1f83d9abu; s[7] = 0x5be0cd19u;
+  s[0] = 0x6a09e667u;
+  s[1] = 0xbb67ae85u;
+  s[2] = 0x3c6ef372u;
+  s[3] = 0xa54ff53au;
+  s[4] = 0x510e527fu;
+  s[5] = 0x9b05688cu;
+  s[6] = 0x1f83d9abu;
+  s[7] = 0x5be0cd19u;
 
   unsigned long full = len / 64;
   for (unsigned long b = 0; b < full; b++) {
@@ -120,8 +186,8 @@ static void kb_sha256(const uint8_t *data, unsigned long len, uint8_t out[32]) {
 }
 
 /// HMAC-SHA256 of `msg` keyed by `key` (key_len <= 64), into `out[32]`.
-static void kb_hmac(const uint8_t *key, unsigned long key_len, const uint8_t *msg,
-                    unsigned long msg_len, uint8_t out[32]) {
+static void kb_hmac(const uint8_t* key, unsigned long key_len, const uint8_t* msg, unsigned long msg_len,
+                    uint8_t out[32]) {
   uint8_t k0[64];
   b_set(k0, 0, 64);
   b_copy(k0, key, key_len);
@@ -144,12 +210,25 @@ static void kb_hmac(const uint8_t *key, unsigned long key_len, const uint8_t *ms
 
 /// The derivation. out = HKDF-SHA256(salt = SHA256(stub), ikm, info = "", 32): PRK = HMAC(salt, ikm); OKM = HMAC(PRK,
 /// 0x01). Reached only via the run-time builder, never present as .text in the shipped library.
-void kdf_blob(const uint8_t *ikm, const uint8_t *stub, unsigned long stublen,
-              uint8_t *out) {
+void kdf_blob(const uint8_t* ikm, const uint8_t* stub, unsigned long stublen, uint8_t* out) {
   uint8_t salt[32];
   kb_sha256(stub, stublen, salt);
   uint8_t prk[32];
   kb_hmac(salt, 32, ikm, 32, prk);
   uint8_t counter = 1;
   kb_hmac(prk, 32, &counter, 1, out);
+}
+
+/// The post-decrypt verification: whether SHA-256 of `data[0..len)` equals `expected`. The bootstrap calls this on the
+/// decrypted `.text` right after the region loop, so a wrong key (tampered metadata, patched ciphertext) produces
+/// garbage that fails the comparison instead of executing. Reached only via the run-time builder, like kdf_blob.
+int verify_blob(const uint8_t* data, unsigned long len, const uint8_t* expected) {
+  uint8_t digest[32];
+  kb_sha256(data, len, digest);
+  for (int i = 0; i < 32; i++) {
+    if (digest[i] != expected[i]) {
+      return 0;
+    }
+  }
+  return 1;
 }

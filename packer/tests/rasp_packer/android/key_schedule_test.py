@@ -57,10 +57,10 @@ _PROGRAM_HEX = (
     "08090a0b0c0d0e0f"
 )
 _A_STATE = bytes.fromhex(
-    "dff2d0608ec81e2760fbf70e0f2775be69288d2235696c766d3fcd39441c45d1"
+    "80f696036977bec443168ac195612f3bbef55acceddbccc100170f56d18053b4"
 )
 _S_STATE = bytes.fromhex(
-    "4943a7688e172a1808edad2bf0340d08e20a7a9759490392691127677fefb046"
+    "29fff7d785e327738baff341bce8c526c4881bb66d6e0bda47a69e2a35da091e"
 )
 _MAP_KEY = bytes.fromhex(
     "5148f4c03d5c379482f5e656dfe3ede4a139f570175a397308ae1213c43b014e"
@@ -140,9 +140,12 @@ def _configured_library() -> bytes:
 
 
 def _fixed_library() -> bytes:
-    """Builds the vectors' final library: the fixture with the fixed program and keystore."""
-    return runtime_library.write_keystore(
-        _configured_library(), key_schedule.fold(_A_STATE, _S_STATE, _ROOT)
+    """Builds the vectors' final library: the fixture with the fixed program, keystore and text digest."""
+    return runtime_library.write_text_digest(
+        runtime_library.write_keystore(
+            _configured_library(), key_schedule.fold(_A_STATE, _S_STATE, _ROOT)
+        ),
+        hashlib.sha256(runtime_library.text_region(_LIBRARY)).digest(),
     )
 
 
@@ -320,7 +323,10 @@ def testRecovery_whenBuiltWithRandomPrograms_recoversOnEveryLibrary() -> None:
     for seed in range(10):
         generator = random.Random(seed)
         program = key_schedule.build_program(
-            generator, sections=sections, library_size=len(_LIBRARY)
+            generator,
+            sections=sections,
+            library_size=len(_LIBRARY),
+            keystore_spans=(runtime_library.keystore_span(_LIBRARY),),
         )
         entries = {
             key_schedule.SHARE_ENTRY: _SHARE,

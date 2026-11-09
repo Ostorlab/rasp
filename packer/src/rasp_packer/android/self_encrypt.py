@@ -56,7 +56,8 @@ _DYNAMIC_ENTRY = struct.Struct("<qQ")
 _RELA = struct.Struct("<QQq")
 _REL = struct.Struct("<QQ")
 _RELR = struct.Struct("<Q")
-_META_HEADER = struct.Struct("<14I")
+_META_HEADER = struct.Struct("<15I")
+_META_TEXT_DIGEST = struct.Struct("<32s")
 _REGION = struct.Struct("<IIII16s")
 _PACKED_FLAG = struct.Struct("<I")
 _ELF_HEADER_OFFSET = 16
@@ -299,10 +300,25 @@ def _section_at(sections: list[_Section], vaddr: int) -> _Section:
 
 
 def _write_meta(
-    data: bytearray, meta: _Section, stub: _Section, ikm: bytes, regions: list[_Region]
+    data: bytearray,
+    meta: _Section,
+    stub: _Section,
+    text: _Section | None,
+    plaintext_text: bytes,
+    ikm: bytes,
+    regions: list[_Region],
 ) -> None:
-    """Writes the metadata header and region table into the ``.packmeta`` section."""
+    """Writes the metadata header, the expected plaintext ``.text`` digest and the region table into the ``.packmeta``
+    section.
+
+    The digest is the SHA-256 of the plaintext ``.text`` section: the bootstrap verifies the decrypted ``.text``
+    against it (the ChaCha20 encryption carries no MAC of its own). The caller passes the section's plaintext,
+    because ``data`` already holds the ciphertext by the time this runs.
+    """
     words = [int.from_bytes(ikm[4 * i : 4 * i + 4], "little") for i in range(IKM_WORDS)]
+    text_addr = text.addr if text is not None else 0
+    text_size = text.size if text is not None else 0
+    digest = hashlib.sha256(plaintext_text).digest()
     _META_HEADER.pack_into(
         data,
         meta.offset,
@@ -317,14 +333,19 @@ def _write_meta(
         stub.size,  # stubcode_size
         words[4],
         words[5],
-        0,  # reserved0
+        text_addr,  # text_vaddr
         words[6],
         words[7],
+        text_size,  # text_size
     )
+    _META_TEXT_DIGEST.pack_into(data, meta.offset + _META_HEADER.size, digest)
     for index, region in enumerate(regions):
         _REGION.pack_into(
             data,
-            meta.offset + _META_HEADER.size + index * _REGION.size,
+            meta.offset
+            + _META_HEADER.size
+            + _META_TEXT_DIGEST.size
+            + index * _REGION.size,
             region.vaddr,
             region.size,
             region.is_code,
@@ -440,12 +461,18 @@ def encrypt_library(library: bytes) -> bytes:
         raise errors.InvalidRuntimeError(
             f"{len(regions)} regions exceeds the bootstrap's maximum of {MAX_REGIONS}"
         )
-    if meta.size < _META_HEADER.size + len(regions) * _REGION.size:
+    if meta.size < (
+        _META_HEADER.size + _META_TEXT_DIGEST.size + len(regions) * _REGION.size
+    ):
         raise errors.InvalidRuntimeError(
-            "the .packmeta section is too small for the region table"
+            "the .packmeta section is too small for the digest and the region table"
         )
 
-    _write_meta(data, meta, stub, ikm, regions)
+    text = next((section for section in sections if section.name == ".text"), None)
+    plaintext_text = (
+        library[text.offset : text.offset + text.size] if text is not None else b""
+    )
+    _write_meta(data, meta, stub, text, plaintext_text, ikm, regions)
     _scrub_section_names(data, header)
     _neutralise_soname(data, header, sections)
     return bytes(data)

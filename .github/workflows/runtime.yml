@@ -295,7 +295,7 @@ jobs:
         run: |
           lib=build/android/android/librasp.so
           test -s "$lib"
-          literals="$(grep -rhoE '"((root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+|/(proc|sys)/[^"]+)"' android/src | tr -d '"' | sort -u)"
+          literals="$(grep -rhoE '"((root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+|rasp\.v2\.[a-z_.]*|assets/rasp/[^"]*|/(proc|sys)/[^"]+)"' android/src | tr -d '"' | sort -u)"
           test -n "$literals"
           readable="$(strings -a "$lib" | grep -xF -- "$literals" || true)"
           if [ -n "$readable" ]; then echo "readable in the release library:"; echo "$readable"; exit 1; fi

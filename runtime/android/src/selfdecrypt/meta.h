@@ -53,12 +53,18 @@ struct Meta {
   std::uint32_t ikm4;
   /// IKM word 5 (bytes 20..23).
   std::uint32_t ikm5;
-  /// Padding kept between scattered IKM fields.
-  std::uint32_t reserved0;
+  /// Link-time vaddr of the encrypted `.text` section (for the post-decrypt verification). 0 when the library has
+  /// no `.text`, which tells the bootstrap to skip the verification.
+  std::uint32_t text_vaddr;
   /// IKM word 6 (bytes 24..27).
   std::uint32_t ikm6;
   /// IKM word 7 (bytes 28..31).
   std::uint32_t ikm7;
+  /// Byte length of the encrypted `.text` section (for the post-decrypt verification).
+  std::uint32_t text_size;
+  /// The SHA-256 of the plaintext `.text` section: the decryption carries no MAC of its own, so the bootstrap
+  /// verifies the decrypted `.text` against this digest and aborts the process on a mismatch.
+  std::uint8_t text_digest[32];
   /// The encrypted regions.
   Region regions[kMaxRegions];
 };

@@ -39,8 +39,8 @@ def _tool(cc: str, name: str) -> str:
     return str(candidate) if candidate.exists() else name
 
 
-def _blob(cc: str, target: str, arch: str, src: str, work: pathlib.Path) -> tuple[bytes, int]:
-    """Compiles the blob, verifies it is self-contained, and returns (text_bytes, entry_offset)."""
+def _blob(cc: str, target: str, arch: str, src: str, work: pathlib.Path) -> tuple[bytes, dict[str, int]]:
+    """Compiles the blob, verifies it is self-contained, and returns (text_bytes, entry_offsets)."""
     obj = work / "kdf_blob.o"
     binf = work / "kdf_blob.bin"
     flags = list(_BASE_FLAGS)
@@ -64,18 +64,18 @@ def _blob(cc: str, target: str, arch: str, src: str, work: pathlib.Path) -> tupl
     subprocess.run([objcopy, "--dump-section", f".text={binf}", str(obj)], check=True)
     text = binf.read_bytes()
 
-    entry = None
+    entries: dict[str, int] = {}
     for line in subprocess.run([nm, str(obj)], check=True, capture_output=True, text=True).stdout.splitlines():
         parts = line.split()
-        if len(parts) == 3 and parts[2] == "kdf_blob":
-            entry = int(parts[0], 16)
-            break
-    if entry is None:
-        raise SystemExit("kdf_blob symbol not found")
-    return text, entry
+        if len(parts) == 3 and parts[2] in ("kdf_blob", "verify_blob"):
+            entries[parts[2]] = int(parts[0], 16)
+    missing = {"kdf_blob", "verify_blob"} - set(entries)
+    if missing:
+        raise SystemExit(f"symbols not found: {sorted(missing)}")
+    return text, entries
 
 
-def _emit(out_dir: pathlib.Path, text: bytes, entry: int) -> None:
+def _emit(out_dir: pathlib.Path, text: bytes, entries: dict[str, int]) -> None:
     """Writes kdf_shovel.h and kdf_shovel.cpp for the given blob bytes."""
     padded = text + b"\x00" * ((-len(text)) % 8)
     words = [int.from_bytes(padded[i : i + 8], "little") for i in range(0, len(padded), 8)]
@@ -87,8 +87,10 @@ def _emit(out_dir: pathlib.Path, text: bytes, entry: int) -> None:
         "namespace rasp::android::selfdecrypt {\n\n"
         "/// The length of the key-derivation blob, in bytes (a multiple of eight).\n"
         f"inline constexpr std::size_t kKdfBlobLen = {len(padded)};\n\n"
-        "/// The offset of the blob's entry point within the materialised bytes.\n"
-        f"inline constexpr std::size_t kKdfBlobEntry = {entry};\n\n"
+        "/// The offset of the key-derivation entry point within the materialised bytes.\n"
+        f"inline constexpr std::size_t kKdfBlobEntry = {entries['kdf_blob']};\n\n"
+        "/// The offset of the post-decrypt verification entry point within the materialised bytes.\n"
+        f"inline constexpr std::size_t kVerifyBlobEntry = {entries['verify_blob']};\n\n"
         "/// Writes the key-derivation blob into `page` as a run of immediate stores.\n"
         "void kdf_shovel_emit(unsigned char* page);\n\n"
         "}  // namespace rasp::android::selfdecrypt\n"
@@ -131,9 +133,12 @@ def main(argv: list[str]) -> int:
     work = out_dir / "_kdf_work"
     work.mkdir(exist_ok=True)
 
-    text, entry = _blob(args.cc, args.target, args.arch, args.src, work)
-    _emit(out_dir, text, entry)
-    print(f"gen_kdf_shovel: {args.arch} blob={len(text)} bytes entry={entry}", file=sys.stderr)
+    text, entries = _blob(args.cc, args.target, args.arch, args.src, work)
+    _emit(out_dir, text, entries)
+    print(
+        f"gen_kdf_shovel: {args.arch} blob={len(text)} bytes kdf={entries['kdf_blob']} verify={entries['verify_blob']}",
+        file=sys.stderr,
+    )
     return 0
 
 

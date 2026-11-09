@@ -104,6 +104,9 @@ int raw_munmap(void* addr, std::size_t len) {
 /// Rounds `v` up to a multiple of `a` (a must be a power of two).
 [[nodiscard]] std::uintptr_t align_up(std::uintptr_t v, std::uintptr_t a) { return (v + a - 1) & ~(a - 1); }
 
+/// The system page size, which bounds the bootstrap's page-aligned remaps.
+[[nodiscard]] std::uintptr_t page_size() { return static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE)); }
+
 /// Flushes the instruction cache over `[start, start + len)`. This is the standard aarch64 cache-maintenance sequence
 /// (the one __builtin___clear_cache stands for), inlined here so the bootstrap does not call an external __clear_cache
 /// that lives in the encrypted .text. On x86_64 the instruction cache is coherent, so nothing is needed.
@@ -249,36 +252,48 @@ void tamper_gate() {
   check_timing();
 }
 
-/// Builds and runs the key-derivation in an RWX page and writes the 32-byte key to `key`. The derivation is not present
-/// as .text: kdf_shovel_emit writes its machine code into a fresh anonymous page as immediate stores, the page is made
-/// executable (RW then RX, so SELinux W^X holds), and the code is branched into. On any mapping failure the key is left
-/// as-is and decryption fails safely.
-void run_kdf(const std::uint8_t ikm[32], const std::uint8_t* stub, std::size_t stublen, std::uint8_t key[32]) {
-  std::uintptr_t page = static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
-  std::size_t span = static_cast<std::size_t>(align_up(static_cast<std::uintptr_t>(kKdfBlobLen), page));
+/// Maps a page, materialises the key-derivation blob into it, and makes it executable (RW then RX, so SELinux
+/// W^X holds). The caller keeps the page for both the derivation and the post-decrypt verification, then unmaps it.
+///
+/// @param span Out: the page-aligned span that was mapped.
+/// @return The page's address, or null when mapping failed (the bootstrap then leaves the library encrypted).
+[[nodiscard]] void* build_blob(std::size_t* span) {
+  const std::uintptr_t page = page_size();
+  *span = static_cast<std::size_t>(align_up(static_cast<std::uintptr_t>(kKdfBlobLen), page));
 
-  void* mem = raw_mmap(nullptr, span, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  void* mem = raw_mmap(nullptr, *span, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (mem == MAP_FAILED) {
-    return;
+    return nullptr;
   }
   kdf_shovel_emit(reinterpret_cast<unsigned char*>(mem));
-  if (raw_mprotect(mem, span, PROT_READ | PROT_EXEC) != 0) {
-    raw_munmap(mem, span);
-    return;
+  if (raw_mprotect(mem, *span, PROT_READ | PROT_EXEC) != 0) {
+    raw_munmap(mem, *span);
+    return nullptr;
   }
-  flush_icache(mem, span);
+  flush_icache(mem, *span);
+  return mem;
+}
 
+/// Runs the key-derivation entry of the materialised blob and writes the 32-byte key to `key`. The derivation is
+/// not present as .text: kdf_shovel_emit wrote its machine code into the page as immediate stores.
+void run_kdf(void* blob, const std::uint8_t ikm[32], const std::uint8_t* stub, std::size_t stublen,
+             std::uint8_t key[32]) {
   using kdf_fn = void (*)(const std::uint8_t*, const std::uint8_t*, unsigned long, std::uint8_t*);
-  kdf_fn run = reinterpret_cast<kdf_fn>(reinterpret_cast<unsigned char*>(mem) + kKdfBlobEntry);
+  kdf_fn run = reinterpret_cast<kdf_fn>(reinterpret_cast<unsigned char*>(blob) + kKdfBlobEntry);
   run(ikm, stub, static_cast<unsigned long>(stublen), key);
+}
 
-  raw_munmap(mem, span);
+/// Runs the verification entry of the materialised blob: whether SHA-256 of `text[0..len)` equals `expected`.
+[[nodiscard]] bool run_verify(void* blob, const std::uint8_t* text, std::size_t len, const std::uint8_t expected[32]) {
+  using verify_fn = int (*)(const std::uint8_t*, unsigned long, const std::uint8_t*);
+  verify_fn verify = reinterpret_cast<verify_fn>(reinterpret_cast<unsigned char*>(blob) + kVerifyBlobEntry);
+  return verify(text, static_cast<unsigned long>(len), expected) == 1;
 }
 
 /// Derives the 32-byte ChaCha20 content key the packer used. Reassembles the eight scattered IKM words from .packmeta
 /// (little-endian) and hands them, with the clear .stubcode location, to the run-time-built derivation blob, which
 /// salts HKDF with SHA-256 over .stubcode. The packer reproduces this exactly.
-void derive_key(std::uintptr_t bias, std::uint8_t key[32]) {
+void derive_key(std::uintptr_t bias, void* blob, std::uint8_t key[32]) {
   std::uint8_t ikm[32];
   store32_le(ikm + 0, g_meta.ikm0);
   store32_le(ikm + 4, g_meta.ikm1);
@@ -291,7 +306,7 @@ void derive_key(std::uintptr_t bias, std::uint8_t key[32]) {
 
   const std::uint8_t* stubcode =
       reinterpret_cast<const std::uint8_t*>(bias + static_cast<std::uintptr_t>(g_meta.stubcode_vaddr));
-  run_kdf(ikm, stubcode, static_cast<std::size_t>(g_meta.stubcode_size), key);
+  run_kdf(blob, ikm, stubcode, static_cast<std::size_t>(g_meta.stubcode_size), key);
 
   std::memset(ikm, 0, sizeof(ikm));
 }
@@ -347,14 +362,18 @@ void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
   tamper_gate();
 
   std::uintptr_t bias = reinterpret_cast<std::uintptr_t>(&g_meta) - static_cast<std::uintptr_t>(g_meta.meta_vaddr);
-  std::uintptr_t page = static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
+  std::size_t blob_span = 0;
+  void* blob = build_blob(&blob_span);
+  if (blob == nullptr) {
+    return;
+  }
   std::uint32_t count = g_meta.region_count;
   if (count > kMaxRegions) {
     count = kMaxRegions;
   }
 
   std::uint8_t key[32];
-  derive_key(bias, key);
+  derive_key(bias, blob, key);
 
   for (std::uint32_t r = 0; r < count; r++) {
     std::uint32_t size = g_meta.regions[r].size;
@@ -366,8 +385,8 @@ void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
       nonce[i] = g_meta.regions[r].nonce[i];
     }
 
-    std::uintptr_t start = align_down(reinterpret_cast<std::uintptr_t>(addr), page);
-    std::uintptr_t end = align_up(reinterpret_cast<std::uintptr_t>(addr) + size, page);
+    std::uintptr_t start = align_down(reinterpret_cast<std::uintptr_t>(addr), page_size());
+    std::uintptr_t end = align_up(reinterpret_cast<std::uintptr_t>(addr) + size, page_size());
     std::size_t span = static_cast<std::size_t>(end - start);
 
     if (is_code == 1) {
@@ -378,6 +397,23 @@ void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
   }
 
   std::memset(key, 0, sizeof(key));
+
+  // The encryption carries no MAC of its own, so verify the decrypted `.text` against the plaintext digest the packer
+  // shipped: a wrong key (tampered metadata, patched ciphertext) produces garbage that fails here instead of
+  // executing. Exit code 4 keeps it distinct from the tamper gate's 1..3.
+  if (g_meta.text_size != 0) {
+    std::uint8_t expected[32];
+    for (int i = 0; i < 32; i++) {
+      expected[i] = g_meta.text_digest[i];
+    }
+    const std::uint8_t* text =
+        reinterpret_cast<const std::uint8_t*>(bias + static_cast<std::uintptr_t>(g_meta.text_vaddr));
+    if (!run_verify(blob, text, static_cast<std::size_t>(g_meta.text_size), expected)) {
+      raw_munmap(blob, blob_span);
+      raw_exit_group(4);
+    }
+  }
+  raw_munmap(blob, blob_span);
 }
 
 }  // namespace
@@ -388,9 +424,10 @@ void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
 /// priority-0 constructor beats priority 1), so those obfuscator constructors -- which live in the encrypted .text --
 /// would run, and crash on ciphertext, before a constructor-based bootstrap got its turn. DT_INIT runs before all of
 /// them regardless of priority. The bootstrap uses no atomics, so running this early is safe. It does not call the
-/// decryptor directly: it folds self_decrypt's address through the live frame pointer and return address (which a static
-/// disassembler cannot know) and reaches it with a computed indirect branch, so the trace from DT_INIT to the decryptor
-/// is broken. The two XORs by the same volatile runtime value cancel, so at run time the call lands on self_decrypt.
+/// decryptor directly: it folds self_decrypt's address through the live frame pointer and return address (which a
+/// static disassembler cannot know) and reaches it with a computed indirect branch, so the trace from DT_INIT to the
+/// decryptor is broken. The two XORs by the same volatile runtime value cancel, so at run time the call lands on
+/// self_decrypt.
 extern "C" [[gnu::used]] void rasp_self_decrypt_init() {
   volatile std::uintptr_t mask = reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)) ^
                                  reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));

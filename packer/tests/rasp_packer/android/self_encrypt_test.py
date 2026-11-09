@@ -53,6 +53,7 @@ def _decrypt_text(library: bytes) -> bytes:
         offset = (
             meta.offset
             + self_encrypt._META_HEADER.size
+            + self_encrypt._META_TEXT_DIGEST.size
             + index * self_encrypt._REGION.size
         )
         vaddr, size, _is_code, _reserved, nonce = self_encrypt._REGION.unpack_from(
@@ -90,6 +91,22 @@ def test_encryptLibrary_marksTheMetadataPacked() -> None:
     encrypted = self_encrypt.encrypt_library(_LIBRARY)
     meta = _section(encrypted, self_encrypt.SECTION_RENAMES[".packmeta"])
     assert self_encrypt._PACKED_FLAG.unpack_from(encrypted, meta.offset)[0] == 1
+
+
+def test_encryptLibrary_shipsTheExpectedTextDigest() -> None:
+    encrypted = self_encrypt.encrypt_library(_LIBRARY)
+    meta = _section(encrypted, self_encrypt.SECTION_RENAMES[".packmeta"])
+    text = _section(_LIBRARY, ".text")
+    fields = self_encrypt._META_HEADER.unpack_from(encrypted, meta.offset)
+    assert fields[11] == text.addr
+    assert fields[14] == text.size
+    digest = self_encrypt._META_TEXT_DIGEST.unpack_from(
+        encrypted, meta.offset + self_encrypt._META_HEADER.size
+    )[0]
+    assert (
+        digest
+        == hashlib.sha256(_LIBRARY[text.offset : text.offset + text.size]).digest()
+    )
 
 
 def test_encryptLibrary_scrubsTheTelltaleSectionNames() -> None:
