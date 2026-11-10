@@ -171,17 +171,22 @@ def _pack_apk(
         configured = runtime_library.write_config(library, config)
         libraries[name] = self_encrypt.encrypt_library(configured)
         digests[name] = hashlib.sha256(runtime_library.text_region(configured)).digest()
+    base_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
+    remove_set = set(dex_names) | injection.stale_signature_entries(apk)
+    apk_stored_entries = _stored_apk_entries(
+        apk, patched_manifest, base_dexes, libraries, remove_set
+    )
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
         libraries,
         digests,
         config,
         app_identity.package_name.encode(),
         artifacts.stub_dex,
+        apk_stored_entries,
     )
     map_frame, program_frame, dex_entries = _encrypt_payload(
         result.business, root, random.SystemRandom()
     )
-    base_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
     apk.write(
         output,
         replace={apk_archive.MANIFEST_ENTRY: patched_manifest},
@@ -251,6 +256,7 @@ def _pack_aab(
         config,
         app_identity.package_name.encode(),
         artifacts.stub_dex,
+        None,
     )
     map_frame, program_frame, dex_data_entries = _encrypt_payload(
         result.business, root, random.SystemRandom()
@@ -278,12 +284,45 @@ def _pack_aab(
     return app_identity
 
 
+def _stored_apk_entries(
+    apk: apk_archive.Apk,
+    manifest: bytes,
+    base_dexes: dict[str, bytes],
+    libraries: dict[str, bytes],
+    remove: set[str],
+) -> dict[str, bytes]:
+    """Returns the stored entries the APK digest will cover: the original APK's stored entries that survive the
+    pack, with the replaced manifest, plus the dexes and libraries the packer adds.
+
+    Args:
+        apk: The original APK.
+        manifest: The patched manifest that will replace the original.
+        base_dexes: The framework dexes and stub, by entry name.
+        libraries: The runtime libraries, by entry name (excluded by the digest function itself).
+        remove: The names of the entries the pack removes from the original APK.
+
+    Returns:
+        The stored entries by name.
+    """
+    entries = {
+        name: data for name, data in apk.stored_entries().items() if name not in remove
+    }
+    # The manifest is only in the digest when the APK stores it uncompressed: the runtime reads only
+    # stored entries. A deflated manifest is not bound by this record.
+    if apk_archive.MANIFEST_ENTRY in entries:
+        entries[apk_archive.MANIFEST_ENTRY] = manifest
+    entries.update(base_dexes)
+    entries.update(libraries)
+    return entries
+
+
 def _schedule_libraries(
     libraries: dict[str, bytes],
     digests: dict[str, bytes],
     config: runtime_config.RuntimeConfig,
     package: bytes,
     stub_dex: bytes,
+    apk_entries: dict[str, bytes] | None,
 ) -> tuple[bytes, bytes, dict[str, bytes], dict[str, bytes]]:
     """Builds the schedule's fold over the app's runtime libraries.
 
@@ -297,6 +336,8 @@ def _schedule_libraries(
             it from its APK's install path.
         stub_dex: The stub dex's bytes, which the fold program folds in, the way the runtime reads
             the highest-numbered classesN.dex entry.
+        apk_entries: The APK's stored entries by name, which the fold program folds in as the APK digest,
+            or None when the pack can't know the installed entry set (an AAB).
 
     Returns:
         The root key, the asset share to ship as the s.bin entry, the finished libraries, by APK
@@ -315,7 +356,11 @@ def _schedule_libraries(
         runtime_library.keystore_span(library) for library in libraries.values()
     )
     program = key_schedule.build_program(
-        generator, sections=tuple(sections), library_size=smallest, keystore_spans=spans
+        generator,
+        sections=tuple(sections),
+        library_size=smallest,
+        keystore_spans=spans,
+        include_apk_digest=apk_entries is not None,
     )
     encoded = key_schedule.encode_program(program)
     decoys = {
@@ -333,7 +378,9 @@ def _schedule_libraries(
             ),
             digests[name],
         )
-        gather = _resolver(with_digest, program, share_asset, decoys, package, stub_dex)
+        gather = _resolver(
+            with_digest, program, share_asset, decoys, package, stub_dex, apk_entries
+        )
         a_state = key_schedule.run_chain(
             bytes(key_schedule.KEY_SIZE), program.chain_a, gather, "a"
         )
@@ -353,6 +400,7 @@ def _resolver(
     decoys: dict[str, bytes],
     package: bytes,
     stub_dex: bytes,
+    apk_entries: dict[str, bytes] | None,
 ) -> collections.abc.Callable[[key_schedule.FoldRecord], bytes]:
     """Returns the gatherer of one library's fold inputs, the packer's side of the interpreter.
 
@@ -363,6 +411,7 @@ def _resolver(
         decoys: The decoy entries the program names, by APK entry name.
         package: The app's package name, which the runtime reads from its APK's install path.
         stub_dex: The stub dex's bytes, which the runtime reads as the highest-numbered classesN.dex entry.
+        apk_entries: The APK's stored entries by name, the ones the runtime will see in its central-directory walk.
 
     Returns:
         A function that returns the 32 bytes each fold record's source holds, the same values the
@@ -394,6 +443,8 @@ def _resolver(
             return hashlib.sha256(package).digest()
         if record.kind == key_schedule.KIND_STUB:
             return hashlib.sha256(stub_dex).digest()
+        if record.kind == key_schedule.KIND_APK:
+            return key_schedule.apk_digest(apk_entries or {})
         return hashlib.sha256(
             decoys[key_schedule.decoy_entry_name(record.param)]
         ).digest()

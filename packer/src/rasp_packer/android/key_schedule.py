@@ -70,6 +70,12 @@ KIND_CONSTANT = 6
 KIND_ENTRY = 7
 KIND_PACKAGE = 8
 KIND_STUB = 9
+KIND_APK = 10
+
+# The prefixes of APK entries the fold's APK digest excludes: the signing step's own entries, the fold's own
+# outputs, and the runtime library itself (chain A already covers its bytes).
+_APK_DIGEST_EXCLUDED_PREFIXES = ("META-INF/", "assets/rasp/", "assets/business/")
+_APK_DIGEST_EXCLUDED_SUFFIX = "librasp.so"
 
 # The gate block of a clean device at recovery: a JNI environment, no tracer, the library under
 # /data. The packer folds this in; the runtime folds in what it observes.
@@ -110,6 +116,32 @@ def decoy_entry_name(index: int) -> str:
 def _digest(data: bytes) -> bytes:
     """Returns the SHA-256 of `data`."""
     return hashlib.sha256(data).digest()
+
+
+def apk_digest(stored_entries: collections.abc.Mapping[str, bytes]) -> bytes:
+    """Computes the digest over the APK's stored entries, the way the runtime does at recovery.
+
+    The runtime walks the APK's central directory and feeds each qualifying stored entry's name and content into one
+    SHA-256, in central-directory order. The packer does the same over the entries it writes, skipping the same set:
+    `META-INF/` (the signing step adds those), `assets/rasp/` and `assets/business/` (the fold's own outputs), and
+    `lib/*/librasp.so` (chain A already covers its bytes). A repackaged APK that edits any dex, the manifest, a
+    resource, or adds any library changes the digest and the fold comes out differently.
+
+    Args:
+        stored_entries: The APK's stored entries by name. The function itself filters the excluded set.
+
+    Returns:
+        The 32-byte digest.
+    """
+    digest = hashlib.sha256()
+    for name in sorted(stored_entries):
+        if name.startswith(_APK_DIGEST_EXCLUDED_PREFIXES) or name.endswith(
+            _APK_DIGEST_EXCLUDED_SUFFIX
+        ):
+            continue
+        digest.update(name.encode("utf-8"))
+        digest.update(stored_entries[name])
+    return digest.digest()
 
 
 def _hkdf(secret: bytes, salt: bytes, info: bytes) -> bytes:
@@ -319,6 +351,7 @@ def build_program(
     sections: tuple[str, ...] = (),
     library_size: int = 0,
     keystore_spans: tuple[tuple[int, int], ...] = (),
+    include_apk_digest: bool = False,
 ) -> FoldProgram:
     """Builds a random fold program: the real inputs, in a random order, among random decoys.
 
@@ -355,6 +388,9 @@ def build_program(
         FoldRecord(kind=KIND_PACKAGE),
         FoldRecord(kind=KIND_STUB),
     ]
+    if include_apk_digest:
+        # The APK digest binds the whole APK's stored content: only an APK pack knows the installed entry set.
+        chain_s.append(FoldRecord(kind=KIND_APK))
     constants: list[bytes] = []
     entry_indices: list[int] = []
     for _ in range(generator.randint(3, 6)):

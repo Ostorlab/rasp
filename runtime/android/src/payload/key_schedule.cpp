@@ -288,6 +288,15 @@ struct FoldInputs {
       }
       return checks::sha256(*stub);
     }
+    case RecordKind::kApk: {
+      const std::optional<std::vector<std::uint8_t>> digest = apk::read_apk_digest(apk);
+      if (!digest.has_value() || digest->size() != kKeySize) {
+        return std::nullopt;
+      }
+      Key key{};
+      std::ranges::copy(*digest, key.begin());
+      return key;
+    }
   }
   return std::nullopt;
 }

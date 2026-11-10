@@ -94,6 +94,10 @@ enum class RecordKind : std::uint8_t {
   /// The digest of the stub dex, the highest-numbered `classesN.dex` entry, chain S. A repackaged APK whose stub was
   /// edited to load extra code derives a different key.
   kStub = 9,
+  /// The digest over every stored entry of the APK, excluding signing artifacts, fold outputs and the runtime's own
+  /// library, chain S. A repackaged APK that edits any dex, the manifest, a resource, or adds any library derives
+  /// a different key.
+  kApk = 10,
 };
 
 /// One step of a fold chain: a source to gather and fold in as the step's salt.

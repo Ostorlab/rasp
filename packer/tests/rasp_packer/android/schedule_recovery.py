@@ -19,6 +19,7 @@ def recover_root(
     gates: bytes,
     package: bytes,
     stub_dex: bytes,
+    apk_entries: dict[str, bytes] | None = None,
 ) -> bytes | None:
     """Recovers the root key of a packed library from the library and its APK's stored entries.
 
@@ -39,7 +40,7 @@ def recover_root(
         which the runtime serves as no business class, exactly as for a corrupt APK.
     """
     try:
-        return _recover(library, entries, gates, package, stub_dex)
+        return _recover(library, entries, gates, package, stub_dex, apk_entries)
     except KeyError, IndexError, ValueError:
         return None
 
@@ -50,6 +51,7 @@ def _recover(
     gates: bytes,
     package: bytes,
     stub_dex: bytes,
+    apk_entries: dict[str, bytes] | None = None,
 ) -> bytes:
     """Recovers the root key, raising on any input that cannot be gathered."""
     program = key_schedule.decode_program(runtime_library.program(library))
@@ -84,6 +86,8 @@ def _recover(
             return hashlib.sha256(package).digest()
         if record.kind == key_schedule.KIND_STUB:
             return hashlib.sha256(stub_dex).digest()
+        if record.kind == key_schedule.KIND_APK:
+            return key_schedule.apk_digest(apk_entries or {})
         return hashlib.sha256(
             entries[key_schedule.decoy_entry_name(record.param)]
         ).digest()

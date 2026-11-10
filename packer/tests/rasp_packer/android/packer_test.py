@@ -122,8 +122,14 @@ def _recover_root(
         for name in archive.namelist()
         if name.startswith("assets/")
     }
+    # The APK digest covers every stored entry the runtime sees in the central directory.
+    apk_entries = {
+        name: archive.read(name)
+        for name in archive.namelist()
+        if archive.getinfo(name).compress_type == zipfile.ZIP_STORED
+    }
     return schedule_recovery.recover_root(
-        library, entries, gates, _PACKAGE.encode(), _STUB_DEX
+        library, entries, gates, _PACKAGE.encode(), _STUB_DEX, apk_entries
     )
 
 

@@ -163,6 +163,9 @@ _PACKAGE = b"com.example.fold"
 # The stub dex's bytes, which the fold program folds in as its stub record's input.
 _STUB_DEX = b"stub dex bytes"
 
+# The APK's stored entries, which the fold program folds in as the APK digest.
+_APK_ENTRIES: dict[str, bytes] = {}
+
 _FIXED_ENTRIES = {
     key_schedule.SHARE_ENTRY: _SHARE,
     key_schedule.decoy_entry_name(0): _DECOY0,
@@ -219,6 +222,8 @@ def _gather(
             return hashlib.sha256(_PACKAGE).digest()
         if record.kind == key_schedule.KIND_STUB:
             return hashlib.sha256(_STUB_DEX).digest()
+        if record.kind == key_schedule.KIND_APK:
+            return key_schedule.apk_digest(_APK_ENTRIES)
         return hashlib.sha256(
             entries[key_schedule.decoy_entry_name(record.param)]
         ).digest()
@@ -402,6 +407,7 @@ def testRecovery_whenBuiltWithRandomPrograms_recoversOnEveryLibrary() -> None:
             sections=sections,
             library_size=len(_LIBRARY),
             keystore_spans=(runtime_library.keystore_span(_LIBRARY),),
+            include_apk_digest=True,
         )
         entries = {
             key_schedule.SHARE_ENTRY: _SHARE,

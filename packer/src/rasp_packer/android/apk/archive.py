@@ -115,6 +115,12 @@ class Apk:
         """Returns the names of all entries, in their original order."""
         return [entry.name for entry in self._entries]
 
+    def stored_entries(self) -> dict[str, bytes]:
+        """Returns the stored (uncompressed) entries by name."""
+        return {
+            entry.name: entry.data for entry in self._entries if not entry.compressed
+        }
+
     def get(self, name: str) -> bytes | None:
         """Returns the bytes of an entry, or None if it is absent."""
         entry = self._by_name.get(name)
