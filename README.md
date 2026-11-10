@@ -129,7 +129,7 @@ Don't want to build the runtime yourself, or want to see what your protected app
 apps with rasp and shows their events:
 
 1. Create an account on the [Ostorlab platform](https://report.ostorlab.co) and open **Mobile ADR**.
-2. Upload your APK, AAB or IPA, choose the checks, and download the protected app
+2. Upload your APK or IPA, choose the checks, and download the protected app
    ([Protect an app](https://docs.ostorlab.co/mobile_adr/protect_an_app.html)).
 
    ![Protect an app: choose the checks](docs/images/mobile_adr/protect_an_app.png)
