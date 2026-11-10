@@ -8,8 +8,9 @@ itself with this plugin; see `runtime/cmake/omvll_ios.cmake` and the scheme in
 
 This is Phase 1: compile-time obfuscation only (Layer A). There is no at-rest
 encryption or self-decrypt bootstrap yet (Layer B / Phase 2), so the whole
-framework is obfuscated in place and the `DATA_READ_LITERALS` in the scheme stay
-readable in the shipped framework until Phase 2 adds an at-rest layer.
+framework is obfuscated in place, but the string literals the `DATA_READ_LITERALS`
+pass protects remain recoverable with `strings` in the shipped framework until
+Phase 2 adds an at-rest layer.
 
 ## What is here
 
@@ -20,7 +21,7 @@ readable in the shipped framework until Phase 2 adds an at-rest layer.
   build checks its SHA-256, extracts it into the build tree and loads the plugin
   from there.
 
-## The version, and why it is pinned
+## Why is the plugin pinned to Xcode 27's clang?
 
 O-MVLL is ABI-locked to one clang. The plugin and the clang that loads it must
 come from the same LLVM, or clang refuses the plugin or crashes while it runs.
@@ -36,7 +37,7 @@ clear message on a mismatch, rather than letting it surface later as an opaque
 plugin-load error. A Debug or host build does not obfuscate, so it needs none of
 this.
 
-## The host limit
+## Which build hosts can run the obfuscator?
 
 The plugin is a macOS arm64 shared object (`omvll-xcode.dylib`). It runs only on
 a macOS arm64 build host, so obfuscation is available only there. A build on any
@@ -57,6 +58,6 @@ shape as the vendored Android archive.
 
 - Phase 2: at-rest encryption + a Mach-O self-decrypt bootstrap.
 - An iOS CI canary mirroring the Android one: build Release with a random
-  `RASP_OMVLL_SEED` and assert the `DATA_READ_LITERALS` stay `strings`-visible.
+  `RASP_OMVLL_SEED` and assert the protected literals remain `strings`-visible.
 - A device build on a real iPhone to confirm the obfuscated framework runs (the
   Android effort only caught its worst bug on device).

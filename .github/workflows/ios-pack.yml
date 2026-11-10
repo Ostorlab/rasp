@@ -3,16 +3,20 @@
 # This is a manual (workflow_dispatch) job: it builds RaspRuntime.framework with O-MVLL obfuscation on
 # (RASP_OBFUSCATE_IOS=ON), embeds it in the packer, packs the IPA you point it at, and uploads the packed
 # (unsigned) IPA as an artifact. Signing and installing on a device are done separately -- the runner has no
-# device and no signing identity. The IPA to pack is not committed; pass it as a base64 input, or adapt the
-# "Fetch the app" step to download it from where you keep it.
+# device and no signing identity. The IPA to pack is not committed; pass its URL in app_url (preferred for real
+# apps), or, for a tiny test app, pass it base64-encoded in app_base64.
 name: iOS pack
 
 on:
   workflow_dispatch:
     inputs:
+      app_url:
+        description: "URL to download the IPA from (preferred; use for real multi-MB apps)"
+        required: false
+        type: string
       app_base64:
-        description: "The IPA to pack, base64-encoded (e.g. `base64 -i app.ipa | pbcopy`)"
-        required: true
+        description: "The IPA base64-encoded (fallback for tiny test apps only; large apps get truncated)"
+        required: false
         type: string
       build_id:
         description: "Build id written into the protected app"
@@ -60,8 +64,17 @@ jobs:
         run: |
           binary=build/ios/ios/RaspRuntime.framework/RaspRuntime
           file "$binary" | grep -q "Mach-O 64-bit dynamically linked shared library arm64"
-          # The jailbreak signal strings must not be readable in the obfuscated binary.
-          test -z "$(strings -a "$binary" | grep -iF 'jailbreak_signal')"
+          # The canary exercises both the string-encryption pass and the data-read skip list, against real
+          # signal names from omvll_config.py:
+          #  - 'jb.sandbox_escape' is NOT in DATA_READ_LITERALS, so the string pass encrypts it: it must be absent.
+          #    If O-MVLL were disabled, this plaintext would still be present, failing the check.
+          #  - 'dbg.traced' matches the data-read skip list, so it is left readable: it must still be present.
+          if strings -a "$binary" | grep -qF 'jb.sandbox_escape'; then
+            echo "FAIL: 'jb.sandbox_escape' is readable; string encryption did not run (O-MVLL disabled?)"; exit 1
+          fi
+          if ! strings -a "$binary" | grep -qF 'dbg.traced'; then
+            echo "FAIL: 'dbg.traced' is missing; a data-read literal was encrypted (skip list broken?)"; exit 1
+          fi
 
       - name: Embed the framework in the packer
         working-directory: runtime
@@ -78,9 +91,15 @@ jobs:
           "$RUNNER_TEMP/packer/bin/pip" install .
           echo "$RUNNER_TEMP/packer/bin" >> "$GITHUB_PATH"
 
-      - name: Decode the app
+      - name: Fetch the app
         run: |
-          echo '${{ inputs.app_base64 }}' | base64 --decode > "$RUNNER_TEMP/app.ipa"
+          if [ -n '${{ inputs.app_url }}' ]; then
+            curl -fsSL -o "$RUNNER_TEMP/app.ipa" '${{ inputs.app_url }}'
+          elif [ -n '${{ inputs.app_base64 }}' ]; then
+            echo '${{ inputs.app_base64 }}' | base64 --decode > "$RUNNER_TEMP/app.ipa"
+          else
+            echo "Provide either app_url (preferred) or app_base64"; exit 1
+          fi
           file "$RUNNER_TEMP/app.ipa"
 
       - name: Pack the app

@@ -77,6 +77,9 @@ if(RASP_OBFUSCATE_IOS)
       "vendored iOS O-MVLL ${RASP_OMVLL_IOS_ARCHIVE} has sha256 ${_rasp_omvll_ios_actual}, "
       "expected ${RASP_OMVLL_IOS_SHA256}")
   endif()
+  # Extract into a directory named after the verified SHA, so the loaded plugin always matches the pinned archive:
+  # when the archive is updated, the new SHA gives a new directory, and a stale dylib from an old archive is never used.
+  set(RASP_OMVLL_IOS_DIR ${RASP_OMVLL_IOS_DIR}/${RASP_OMVLL_IOS_SHA256})
   if(NOT EXISTS ${RASP_OMVLL_IOS_DIR}/omvll-xcode.dylib)
     file(MAKE_DIRECTORY ${RASP_OMVLL_IOS_DIR})
     file(ARCHIVE_EXTRACT INPUT ${RASP_OMVLL_IOS_ARCHIVE} DESTINATION ${RASP_OMVLL_IOS_DIR})

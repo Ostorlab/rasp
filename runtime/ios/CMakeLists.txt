@@ -1,5 +1,5 @@
-# O-MVLL obfuscation of the first-party iOS runtime (Phase 1, compile-time only; see cmake/omvll_ios.cmake). Off by
-# default until an iOS-matched O-MVLL plugin is vendored under third_party/omvll.
+# O-MVLL obfuscation of the first-party iOS runtime (Phase 1, compile-time only; see cmake/omvll_ios.cmake). The plugin
+# is vendored under third_party/omvll; obfuscation is on by default for Release builds, off for Debug and host builds.
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/omvll_ios.cmake)
 
 add_library(RaspRuntime SHARED

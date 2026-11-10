@@ -35,6 +35,7 @@ SENSITIVE_FUNCTIONS = [
     "rasp::android::loader::",
     "rasp::android::payload::",
     "rasp::util::macho::",
+    "rasp::ios::util::",
     "observe_",
     "find_text",
     "code_signature",
