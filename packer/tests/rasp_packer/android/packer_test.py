@@ -411,6 +411,8 @@ def testPack_whenAGateFails_theMapNoLongerDecrypts(tmp_path: pathlib.Path) -> No
         installed_under_data=False,
         counter_frequency_plausible=True,
         cpu_identity_plausible=True,
+        owns_package_data=True,
+        release_build=True,
     )
     with zipfile.ZipFile(output) as archive:
         root = _recover_root(archive, gates=dirty_gates)

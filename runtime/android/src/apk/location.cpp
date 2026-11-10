@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -138,6 +139,30 @@ std::optional<std::string> self_library_dir() {
     return std::nullopt;
   }
   return path->substr(0, slash);
+}
+
+bool owns_package_data(const std::string& apk_path) {
+  const std::size_t name_start = apk_path.find_last_of('/');
+  if (name_start == std::string::npos || name_start == 0) {
+    return false;
+  }
+  const std::size_t directory_start = apk_path.find_last_of('/', name_start - 1);
+  if (directory_start == std::string::npos) {
+    return false;
+  }
+  const std::string directory = apk_path.substr(directory_start + 1, name_start - directory_start - 1);
+  // The package is the directory component before the first dash, the way the schedule's package
+  // record parses the same path.
+  const std::size_t dash = directory.find('-');
+  const std::string package =
+      dash == std::string_view::npos ? std::string(directory) : std::string(directory.substr(0, dash));
+  if (package.empty() || package.contains('/')) {
+    return false;
+  }
+  const long uid = getuid();
+  const std::string data_directory = "/data/user/" + std::to_string(uid / 100000L) + "/" + package;
+  struct stat status = {};
+  return stat(data_directory.c_str(), &status) == 0 && status.st_uid == static_cast<uid_t>(uid);
 }
 
 }  // namespace rasp::android::apk

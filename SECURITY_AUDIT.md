@@ -76,6 +76,30 @@ The keystore share compensates per ABI so every ABI recovers the same root: emul
 as emulating the arm64 one. An app that ships both slices hands the analyst the cheaper architecture. Per-ABI
 roots would need per-ABI dex assets, which multiplies the APK's encrypted entries; not proposed.
 
+### W17 — A host app runs a genuine install inside its own process **done**
+
+The schedule's bindings cover the app's *files*: the base APK's entries, the APKs installed beside it,
+the package in the install path. They did not cover the *process*: any app can read another app's
+installed APK, so a virtualization host loads the genuine base's classes and library from the real
+install path, every file-derived input matches, and the app decrypts inside the host's process, where
+the host's code reads the plaintext (demonstrated on a clean device: a host resolved
+`app.alkahf.MainActivity` from the genuine base). **Fixed** with two environment facts the host cannot
+arrange, folded as gates:
+- `owns_package_data` — the process's uid owns the package's data directory
+  (`/data/user/<user>/<package>`), as the package's own process always does. A host carries its own
+  uid and the fold comes out wrong; nothing decrypts. Verified: the same host attack now recovers
+  nothing, while the genuine install of the same pack runs.
+- `release_build` — `ro.debuggable` is absent or 0, so the platform opens no debugging channel to any
+  app. On userdebug and eng builds (which run every app debuggable — `am dumpheap`, JDWP), nothing
+  decrypts either; this also closes the debuggable-emulator route at the fold level, on top of the
+  bootstrap canaries that already end such processes.
+
+External channels on a release build were re-verified blocked: ptrace (`EPERM`, dumpable=0),
+`/proc/<pid>/mem` and maps (`EPERM`), JDWP (no socket, `debuggable` stripped), `am dumpheap`
+(`SecurityException: not debuggable`), and a repackaged base (the class resolution fails before any
+code runs). A host extracting the library into its own data dir already failed the foreign-library
+guard; the surviving variant — loading from the real install — is what the two new gates close.
+
 ### W16 — A split APK installed beside a genuine base **done (APK), open (AAB)**
 
 The entry binding covers `base.apk` only, but Android runs code from split APKs installed beside the
@@ -148,4 +172,6 @@ product. Keep raw artifacts private.
 W7's surface (per-app names for the manifest, the classes, the library and the stub's origin) delivered on
 `feature/lifecycle-checks`; the rest ordered by leverage: W7's asset names, W11 (sensor guard widening, delivered),
 W1 (IKM), W9 (stub methods), W13 (enrollment). Renaming the classes also binds them: the armed master folds the
-class name the runtime resolves, so a renamed-by-analyst stub class derives a wrong key and nothing decrypts.*
+class name the runtime resolves, so a renamed-by-analyst stub class derives a wrong key and nothing decrypts.
+Later rounds on `feature/lifecycle-checks`: W16 (the split-APK set bound into the fold), W17 (the process bound to
+the package that owns it, and the build to a release build).*

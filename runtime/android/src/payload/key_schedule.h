@@ -30,11 +30,19 @@ struct Environment {
   bool no_tracer = false;
   /// The library is loaded from a path under /data, as an installed app's is.
   bool installed_under_data = false;
-  /// The system counter frequency (CNTFRQ_EL0) is in the range a real mobile SoC reports, 1–100 MHz.
+  /// The system counter frequency (CNTFRQ_EL0) is in the range a real mobile SoC reports, 1-100 MHz.
   /// QEMU and unicorn default to 1 GHz or 0, which a real device never produces.
   bool counter_frequency_plausible = false;
   /// The CPU identity register (MIDR_EL1) is non-zero, as a real CPU always reports. Some emulators report 0.
   bool cpu_identity_plausible = false;
+  /// The process's uid is the one that owns the package's data directory, as an installed app's process always is:
+  /// the package's name comes from the APK's install path, and /data/user/<user>/<package> is stat-ed, where the
+  /// user is the uid's user id. A host that runs a genuine install inside another app's process carries the host's
+  /// uid, which does not own the package's directory, so the fact flips and nothing decrypts.
+  bool owns_package_data = false;
+  /// The build is a release build: ro.debuggable is absent or 0, so the platform opens no debugging channel to any
+  /// app. A userdebug or eng build runs every app debuggable, so the fact flips and nothing decrypts.
+  bool release_build = false;
 };
 
 /// The environment every clean device has, the one the packer folds into the fold program's gates input.
@@ -44,6 +52,8 @@ inline constexpr Environment kCleanEnvironment{
     .installed_under_data = true,
     .counter_frequency_plausible = true,
     .cpu_identity_plausible = true,
+    .owns_package_data = true,
+    .release_build = true,
 };
 
 /// The state of the process the sensor guard measures, re-observed on every decryption and folded into the dex keys.

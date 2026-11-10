@@ -44,6 +44,7 @@
 #include "rasp/panic.h"
 #include "rasp/schedule.h"
 #include "rasp/util/logging.h"
+#include "util/system_property.h"
 
 namespace rasp::android::loader {
 
@@ -148,6 +149,14 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
   environment.java_environment = (static_cast<unsigned>(env->GetVersion()) & 0xFFFF0000U) == 0x00010000U;
   environment.no_tracer = tracer.status == Status::kOk && tracer_pid != nullptr && *tracer_pid == 0;
   environment.installed_under_data = library.has_value() && library->starts_with("/data/");
+  // The process must be the package's own: a host that runs a genuine install inside another app's
+  // process carries the host's uid, which does not own the package's data directory.
+  const std::optional<std::string> apk = apk::self_apk_path();
+  environment.owns_package_data = apk.has_value() && apk::owns_package_data(*apk);
+  // A userdebug or eng build runs every app debuggable; a release build is the only one the packer
+  // folds as clean.
+  const std::optional<std::string> debuggable = util::read_system_property("ro.debuggable");
+  environment.release_build = !debuggable.has_value() || *debuggable != "1";
 #if defined(__aarch64__)
   {
     std::uint64_t frequency = 0;

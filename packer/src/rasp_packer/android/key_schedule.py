@@ -81,8 +81,9 @@ _APK_DIGEST_EXCLUDED_PREFIXES = ("META-INF/", "assets/rasp/", "assets/business/"
 _APK_DIGEST_EXCLUDED_SUFFIX = "librasp.so"
 
 # The gate block of a clean device at recovery: a JNI environment, no tracer, the library under
-# /data. The packer folds this in; the runtime folds in what it observes.
-CLEAN_GATES = bytes((1, 1, 1, 1, 1)) + bytes(KEY_SIZE - 5)
+# /data, the process owning its package's data directory, a release build, plausible hardware
+# registers. The packer folds this in; the runtime folds in what it observes.
+CLEAN_GATES = bytes((1, 1, 1, 1, 1, 1, 1)) + bytes(KEY_SIZE - 7)
 
 # The sensor block of a clean process at decryption: no tracer, and the library's code in memory
 # matching its file. The packer folds this in; the runtime re-observes it on every decryption.
@@ -222,6 +223,8 @@ def gate_block(
     installed_under_data: bool,
     counter_frequency_plausible: bool,
     cpu_identity_plausible: bool,
+    owns_package_data: bool,
+    release_build: bool,
 ) -> bytes:
     """Returns the gate block of an environment, one input of chain S.
 
@@ -232,6 +235,11 @@ def gate_block(
         counter_frequency_plausible: The system counter frequency is in the range a real mobile SoC
             reports, 1-100 MHz. QEMU and unicorn default to 1 GHz or 0.
         cpu_identity_plausible: The CPU identity register is non-zero, as a real CPU always reports.
+        owns_package_data: The process's uid owns the package's data directory, as an installed
+            app's process always does: a host running a genuine install inside another app's
+            process carries the host's uid, which does not own the package's directory.
+        release_build: The build is a release build: ``ro.debuggable`` is absent or 0, so the
+            platform opens no debugging channel to any app.
 
     Returns:
         The block, 32 bytes: one fact per byte at the start, then zeros.
@@ -242,6 +250,8 @@ def gate_block(
     block[2] = 1 if installed_under_data else 0
     block[3] = 1 if counter_frequency_plausible else 0
     block[4] = 1 if cpu_identity_plausible else 0
+    block[5] = 1 if owns_package_data else 0
+    block[6] = 1 if release_build else 0
     return bytes(block)
 
 

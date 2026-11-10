@@ -16,8 +16,8 @@
 #include <string_view>
 #include <vector>
 
-#include "checks/integrity.h"
 #include "apk/archive.h"
+#include "checks/integrity.h"
 #include "payload/assets.h"
 #include "payload/cipher.h"
 #include "support/files.h"
@@ -299,8 +299,8 @@ constexpr std::string_view kLibraryHex =
     "08090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f0001020304050607"
     "08090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f0001020304050607"
     "08090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f503612269138deae"
-    "576e0d2324914130f6b6cababc654b9a23c3620729ced3aedf99cbd1b734e33d"
-    "d931606c62ca90de4a2ab1b4c413d106feadbd015bf1bf030000000000000000"
+    "576e0d2324914130f6b6cababc654b9a23c3620729ced3aeb5ad7c397454e67c"
+    "011d66e42c227600e9f0790ae0d43d3b9049023215d18ca60000000000000000"
     "0000000000000000000000000000000000000000000000000000000000000000"
     "0000000000000000000000000000000000000000000000000000000000000000"
     "0000000000000000000000000000000000000000000000000000000000000000"
@@ -430,8 +430,7 @@ constexpr std::string_view kLibraryHex =
     "920000000300000000000000000000000000000000000000401f000000000000"
     "a400000000000000000000000000000001000000000000000000000000000000"
     "9c0000000300000000000000000000000000000000000000e41f000000000000"
-    "5800000000000000000000000000000001000000000000000000000000000000"
-;
+    "5800000000000000000000000000000001000000000000000000000000000000";
 
 /// The vectors' plaintexts, as text.
 constexpr std::string_view kMapText =
@@ -591,8 +590,7 @@ TEST(Apk, splitDigest_whenTheBaseSitsAlone_hashesTheEmptySet) {
   ASSERT_TRUE(write_file(directory.path() + "/base.apk", "apk"));
   ASSERT_TRUE(write_file(directory.path() + "/lib", "not an apk"));
 
-  const std::optional<std::vector<std::uint8_t>> digest =
-      apk::read_split_digest(directory.path() + "/base.apk");
+  const std::optional<std::vector<std::uint8_t>> digest = apk::read_split_digest(directory.path() + "/base.apk");
 
   ASSERT_TRUE(digest.has_value());
   const std::vector<std::uint8_t> empty;
@@ -605,13 +603,11 @@ TEST(Apk, splitDigest_whenASplitSitsBesideTheBase_hashesItsName) {
   const TemporaryDirectory directory;
   ASSERT_TRUE(write_file(directory.path() + "/base.apk", "apk"));
 
-  const std::optional<std::vector<std::uint8_t>> alone =
-      apk::read_split_digest(directory.path() + "/base.apk");
+  const std::optional<std::vector<std::uint8_t>> alone = apk::read_split_digest(directory.path() + "/base.apk");
   ASSERT_TRUE(alone.has_value());
   ASSERT_TRUE(write_file(directory.path() + "/split_inj.apk", "split"));
 
-  const std::optional<std::vector<std::uint8_t>> beside =
-      apk::read_split_digest(directory.path() + "/base.apk");
+  const std::optional<std::vector<std::uint8_t>> beside = apk::read_split_digest(directory.path() + "/base.apk");
   ASSERT_TRUE(beside.has_value());
   EXPECT_NE(*alone, *beside);
   const std::vector<std::uint8_t> name{'s', 'p', 'l', 'i', 't', '_', 'i', 'n', 'j', '.', 'a', 'p', 'k', '\0'};
@@ -667,13 +663,21 @@ TEST(KeySchedule, seedFrom_whenTheMapFrameIsTampered_changes) {
 }
 
 TEST(KeySchedule, gateBlock_whenTheDeviceIsClean_isOneBytePerFactThenZeros) {
-  const Environment clean{.java_environment = true, .no_tracer = true, .installed_under_data = true};
+  const Environment clean{
+      .java_environment = true,
+      .no_tracer = true,
+      .installed_under_data = true,
+  };
 
   const Key block = gate_block(clean);
 
   EXPECT_EQ(block[0], 1U);
   EXPECT_EQ(block[1], 1U);
   EXPECT_EQ(block[2], 1U);
+  EXPECT_EQ(block[3], 0U);
+  EXPECT_EQ(block[4], 0U);
+  EXPECT_EQ(block[5], 0U);
+  EXPECT_EQ(block[6], 0U);
 }
 
 TEST(KeySchedule, sensorBlock_whenTheProcessIsClean_isTheCleanSensors) {

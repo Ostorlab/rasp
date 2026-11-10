@@ -61,7 +61,7 @@ _A_STATE = bytes.fromhex(
     "80f696036977bec443168ac195612f3bbef55acceddbccc100170f56d18053b4"
 )
 _S_STATE = bytes.fromhex(
-    "5f6e5fd1da465bfe922ee0a6fba6b1eae4cef96b3ddd0bd0e6a3a84c966cf2a8"
+    "355ae83919265ebf4a02e62eb54e5734471431d5191ae7ed8847177fd84cc10d"
 )
 _MAP_KEY = bytes.fromhex(
     "5148f4c03d5c379482f5e656dfe3ede4a139f570175a397308ae1213c43b014e"
@@ -395,6 +395,8 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
         installed_under_data=True,
         counter_frequency_plausible=True,
         cpu_identity_plausible=True,
+        owns_package_data=True,
+        release_build=True,
     )
     assert (
         schedule_recovery.recover_root(
@@ -468,11 +470,13 @@ def testGateBlock_whenCleanDevice_isTheCleanGates() -> None:
         installed_under_data=True,
         counter_frequency_plausible=True,
         cpu_identity_plausible=True,
+        owns_package_data=True,
+        release_build=True,
     )
 
     assert clean == key_schedule.CLEAN_GATES
-    assert clean[0:5] == b"\x01\x01\x01\x01\x01"
-    assert clean[5:] == bytes(27)
+    assert clean[0:7] == b"\x01" * 7
+    assert clean[7:] == bytes(25)
 
 
 def testSplitsDigest_whenTheBaseSitsAlone_hashesTheEmptySet() -> None:
