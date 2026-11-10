@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <initializer_list>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -320,11 +321,27 @@ TEST(Debugger, observeJdwpThreads_whenTheFolderIsMissing_reportsAnError) {
   EXPECT_EQ(observe_jdwp_threads(directory.path() + "/missing"), unreadable_jdwp_threads());
 }
 
+TEST(Debugger, observeDebugApi_whenADebuggerIsConnected_reportsTrue) {
+  EXPECT_EQ(observe_debug_api(true),
+            (Observation{.signal = "dbg.java_debugger", .source = "debug_api", .status = Status::kOk, .value = true}));
+}
+
+TEST(Debugger, observeDebugApi_whenNoDebuggerIsConnected_reportsFalse) {
+  EXPECT_EQ(observe_debug_api(false),
+            (Observation{.signal = "dbg.java_debugger", .source = "debug_api", .status = Status::kOk, .value = false}));
+}
+
+TEST(Debugger, observeDebugApi_whenTheCallFailed_reportsAnError) {
+  EXPECT_EQ(observe_debug_api(std::nullopt),
+            (Observation{.signal = "dbg.java_debugger", .source = "debug_api", .status = Status::kError, .value = {}}));
+}
+
 TEST(Debugger, debugger_whenOffAndroid_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(debugger(),
             (std::vector<Observation>{
                 {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kUnsupported, .value = {}},
                 {.signal = "dbg.java_debugger", .source = "jdwp_threads", .status = Status::kUnsupported, .value = {}},
+                {.signal = "dbg.java_debugger", .source = "debug_api", .status = Status::kUnsupported, .value = {}},
             }));
 }
 

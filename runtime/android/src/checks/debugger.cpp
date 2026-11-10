@@ -1,4 +1,5 @@
-/// The Android debugger checks: the tracer and JDWP thread probes, and their unsupported results off Android.
+/// The Android debugger checks: the tracer, JDWP thread and debug API probes, and their unsupported results off
+/// Android.
 
 #include "checks/debugger.h"
 
@@ -17,6 +18,12 @@
 #include <string_view>
 #include <system_error>
 #include <vector>
+
+#ifdef __ANDROID__
+#include <jni.h>
+
+#include "util/jni.h"
+#endif
 
 #include "rasp/observation.h"
 #include "rasp/util/read_file.h"
@@ -60,6 +67,9 @@ constexpr std::size_t kMaxThreads = 4096;
 constexpr std::size_t kMaxJdwpThreadNames = 16;
 /// The starts of the names ART gives the threads of a JDWP connection.
 constexpr std::array<std::string_view, 2> kJdwpThreadPrefixes = {"JDWP", "ADB-JDWP"};
+
+/// The source of the debug API probe.
+constexpr std::string_view kDebugApiSource = "debug_api";
 
 /// The process id that `text` holds after optional tabs and spaces, or nothing when it holds anything else.
 [[nodiscard]] std::optional<std::int64_t> parse_pid(std::string_view text) {
@@ -140,6 +150,49 @@ constexpr std::array<std::string_view, 2> kJdwpThreadPrefixes = {"JDWP", "ADB-JD
   return names;
 }
 
+#ifdef __ANDROID__
+/// The local references a pass of debugger_connected makes.
+constexpr jint kLocalFrameCapacity = 4;
+
+/// Calls `android.os.Debug.isDebuggerConnected`, inside a local frame that the caller pops.
+///
+/// @param env The thread's JNI environment.
+/// @return Whether a debugger is connected, or nothing when a call fails or throws.
+[[nodiscard]] std::optional<bool> read_debugger_connected(JNIEnv* env) {
+  jclass debug = env->FindClass("android/os/Debug");
+  if (util::threw(env) || debug == nullptr) {
+    return std::nullopt;
+  }
+  jmethodID is_debugger_connected = env->GetStaticMethodID(debug, "isDebuggerConnected", "()Z");
+  if (util::threw(env) || is_debugger_connected == nullptr) {
+    return std::nullopt;
+  }
+  const jboolean connected = env->CallStaticBooleanMethodA(debug, is_debugger_connected, nullptr);
+  if (util::threw(env)) {
+    return std::nullopt;
+  }
+  return connected == JNI_TRUE;
+}
+
+/// Whether ART says a debugger is connected, through `android.os.Debug.isDebuggerConnected` called on the calling
+/// thread, which is attached to the app's Java VM for it. Every local reference is freed.
+///
+/// @return Whether a debugger is connected, or nothing when the thread can't reach the VM, or a call fails or throws.
+[[nodiscard]] std::optional<bool> debugger_connected() {
+  JNIEnv* env = util::attached_env();
+  if (env == nullptr) {
+    return std::nullopt;
+  }
+  if (env->PushLocalFrame(kLocalFrameCapacity) != JNI_OK) {
+    static_cast<void>(util::threw(env));
+    return std::nullopt;
+  }
+  const std::optional<bool> connected = read_debugger_connected(env);
+  env->PopLocalFrame(nullptr);
+  return connected;
+}
+#endif
+
 }  // namespace
 
 Observation observe_tracer_pid(std::string_view status_path) {
@@ -162,11 +215,26 @@ Observation observe_jdwp_threads(std::string_view task_path) {
   return observed(kJavaDebuggerSignal, kJdwpThreadsSource, std::vector<std::string>{names->begin(), names->end()});
 }
 
+Observation observe_debug_api(std::optional<bool> connected) {
+  if (!connected) {
+    return failed(kJavaDebuggerSignal, kDebugApiSource);
+  }
+  return observed(kJavaDebuggerSignal, kDebugApiSource, *connected);
+}
+
 std::vector<Observation> debugger() {
   if (!kOnAndroid) {
-    return {unsupported(kTracerPidSignal, kTracerPidSource), unsupported(kJavaDebuggerSignal, kJdwpThreadsSource)};
+    return {
+        unsupported(kTracerPidSignal, kTracerPidSource),
+        unsupported(kJavaDebuggerSignal, kJdwpThreadsSource),
+        unsupported(kJavaDebuggerSignal, kDebugApiSource),
+    };
   }
-  return {observe_tracer_pid(kStatusPath), observe_jdwp_threads(kTaskPath)};
+  std::vector<Observation> observations{observe_tracer_pid(kStatusPath), observe_jdwp_threads(kTaskPath)};
+#ifdef __ANDROID__
+  observations.push_back(observe_debug_api(debugger_connected()));
+#endif
+  return observations;
 }
 
 }  // namespace rasp::android::checks

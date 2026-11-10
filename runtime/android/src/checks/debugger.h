@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -15,7 +16,7 @@ namespace rasp::android::checks {
 /// is unsupported instead, so the server still sees that the check ran.
 ///
 /// @return One observation per signal and source, in this order: dbg.tracer_pid through proc_status, then
-/// dbg.java_debugger through jdwp_threads.
+/// dbg.java_debugger through jdwp_threads, then dbg.java_debugger through debug_api.
 [[nodiscard]] std::vector<Observation> debugger();
 
 /// Reports the process id of the debugger attached to the app, from the status file at `status_path`.
@@ -44,5 +45,15 @@ namespace rasp::android::checks {
 /// `ADB-JDWP`, sorted and without duplicates, the 16 smallest when there are more. It is empty when the app can't be
 /// debugged. It has an error status when the folder can't be read, or holds more than 4096 threads.
 [[nodiscard]] Observation observe_jdwp_threads(std::string_view task_path);
+
+/// Reports whether ART says a Java debugger is connected, as `android.os.Debug.isDebuggerConnected` returns it.
+///
+/// It is a second source for dbg.java_debugger, read through Java rather than the thread folder, so a tool that hides
+/// one of the two makes them disagree. `debugger` calls the method through JNI on the runtime's own thread.
+///
+/// @param connected What the method returned, or nothing when it couldn't be called or threw.
+/// @return One dbg.java_debugger observation through debug_api: whether a debugger is connected. It has an error status
+/// when `connected` is nothing.
+[[nodiscard]] Observation observe_debug_api(std::optional<bool> connected);
 
 }  // namespace rasp::android::checks
