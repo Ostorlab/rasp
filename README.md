@@ -131,11 +131,17 @@ apps with rasp and shows their events:
 1. Create an account on the [Ostorlab platform](https://report.ostorlab.co) and open **Mobile ADR**.
 2. Upload your APK, AAB or IPA, choose the checks, and download the protected app
    ([Protect an app](https://docs.ostorlab.co/mobile_adr/protect_an_app.html)).
+
+   ![Protect an app: choose the checks](docs/images/mobile_adr/protect_an_app.png)
 3. Sign it and ship it as usual.
 4. See the events in the **Events** tab: each check run on a device, what it found (root files, Frida, a VPN
    tunnel…), and whether the check could run ([Events](https://docs.ostorlab.co/mobile_adr/events.html)).
+
+   ![The events of the protected apps](docs/images/mobile_adr/events.png)
 5. Find every protected version of your app, with its checks and RASP release
    ([Applications and builds](https://docs.ostorlab.co/mobile_adr/applications_and_builds.html)).
+
+   ![An app and its protected builds](docs/images/mobile_adr/applications_and_builds.png)
 
 ## Contributing
 
