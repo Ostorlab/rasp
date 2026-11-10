@@ -215,25 +215,29 @@ struct LocalEntry {
   return file.subspan(start + kSigningBlockHeaderSize, static_cast<std::size_t>(size) - kSigningBlockFooterSize);
 }
 
-/// The value of the pair whose id is `id` among the APK Signing Block's `pairs`, or nothing when there is none or a
-/// pair's length runs past the block.
-[[nodiscard]] std::optional<std::span<const std::uint8_t>> scheme_value(std::span<const std::uint8_t> pairs,
-                                                                        std::uint32_t id) {
+/// A signature scheme block, or an id-value pair of the APK Signing Block, whose lengths don't fit what holds them.
+struct MalformedScheme {};
+
+/// The value of the pair whose id is `id` among the APK Signing Block's `pairs`: the value when a pair has the id,
+/// nothing when the pairs are walked to the end without it, or MalformedScheme when a pair's length runs past the
+/// block, so a malformed block is refused whatever the order of its pairs.
+[[nodiscard]] std::expected<std::optional<std::span<const std::uint8_t>>, MalformedScheme> scheme_value(
+    std::span<const std::uint8_t> pairs, std::uint32_t id) {
   while (!pairs.empty()) {
     if (pairs.size() < 12) {
-      return std::nullopt;
+      return std::unexpected(MalformedScheme{});
     }
     const std::uint64_t length = read_u64(pairs);
     if (length < 4 || length > pairs.size() - 8) {
-      return std::nullopt;
+      return std::unexpected(MalformedScheme{});
     }
     const std::span<const std::uint8_t> pair = pairs.subspan(8, static_cast<std::size_t>(length));
     if (read_u32(pair) == id) {
-      return pair.subspan(4);
+      return std::optional<std::span<const std::uint8_t>>(pair.subspan(4));
     }
     pairs = pairs.subspan(8 + static_cast<std::size_t>(length));
   }
-  return std::nullopt;
+  return std::optional<std::span<const std::uint8_t>>(std::nullopt);
 }
 
 /// The first certificate in a signer's `signed_data`: past its digests, then its certificates, both length-prefixed.
@@ -249,9 +253,6 @@ struct LocalEntry {
   }
   return take_length_prefixed(*certificates);
 }
-
-/// A signature scheme block whose lengths don't fit what holds them.
-struct MalformedScheme {};
 
 /// The certificate of the signer that Android uses from `scheme`, the value of the block whose id is `scheme_id`, on a
 /// device at `api_level`. A v2 block's first signer applies to every device. A v3 or v3.1 signer gives the range of API
@@ -337,12 +338,16 @@ std::optional<std::vector<std::uint8_t>> find_signing_certificate(std::span<cons
     if (id == kV31SchemeId && api_level < kMinApiLevelForV31) {
       continue;
     }
-    const std::optional<std::span<const std::uint8_t>> scheme = scheme_value(*pairs, id);
+    const std::expected<std::optional<std::span<const std::uint8_t>>, MalformedScheme> scheme =
+        scheme_value(*pairs, id);
     if (!scheme) {
+      return std::nullopt;
+    }
+    if (!*scheme) {
       continue;
     }
     const std::expected<std::optional<std::span<const std::uint8_t>>, MalformedScheme> found =
-        scheme_certificate(*scheme, id, api_level);
+        scheme_certificate(**scheme, id, api_level);
     if (!found) {
       return std::nullopt;
     }

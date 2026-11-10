@@ -237,6 +237,15 @@ TEST(Archive, findSigningCertificate_whenACertificateIsEmpty_returnsNothing) {
   EXPECT_EQ(certificate_of(apk), std::nullopt);
 }
 
+TEST(Archive, findSigningCertificate_whenAValidPairIsFollowedByAMalformedPair_returnsNothing) {
+  std::string pairs = pair(kV2, v2_scheme("v2 certificate"));
+  append_le(pairs, Field{.value = 1000, .width = 8});
+  append_le(pairs, Field{.value = kV3, .width = 4});
+  const std::string apk = signed_apk(signing_block(pairs));
+
+  EXPECT_EQ(certificate_of(apk), std::nullopt);
+}
+
 TEST(Archive, findSigningCertificate_whenThePairLengthRunsPastTheBlock_returnsNothing) {
   std::string pairs;
   append_le(pairs, Field{.value = 1000, .width = 8});
