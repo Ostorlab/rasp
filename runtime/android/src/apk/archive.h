@@ -41,4 +41,16 @@ namespace rasp::android::apk {
 /// @return The 32-byte digest. Nothing when the file can't be mapped or the archive is malformed.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_apk_digest(const std::string& apk_path);
 
+/// Reads a digest over the APKs installed beside the base APK: their filenames, sorted, each followed by a null,
+/// fed into one SHA-256 — the same digest the packer computes over its prediction of the installed set. A split APK
+/// installed beside a genuine base shares the app's process and class loader, so its code runs in-process while
+/// every base-derived input still matches; the key schedule folds this digest into the root key, so any APK beside
+/// the base derives a different key and nothing decrypts.
+///
+/// @param apk_path The base APK's path, as the runtime resolved it; its directory is the one the store installs
+/// splits into.
+/// @return The 32-byte digest. Nothing when the install directory can't be read, which fails the recovery the way
+/// every unread input does.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_split_digest(const std::string& apk_path);
+
 }  // namespace rasp::android::apk

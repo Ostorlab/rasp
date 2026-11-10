@@ -97,6 +97,9 @@ def _recover(
             return hashlib.sha256(stub_dex).digest()
         if record.kind == key_schedule.KIND_APK:
             return key_schedule.apk_digest(apk_entries or {}, library_filenames)
+        if record.kind == key_schedule.KIND_SPLITS:
+            # The pack ships alone; the fixtures model a clean install, whose set beside the base is empty.
+            return key_schedule.splits_digest()
         return hashlib.sha256(
             entries[key_schedule.decoy_entry_name(record.param)]
         ).digest()

@@ -55,6 +55,16 @@ def testGenerateNames_keepsEveryStringInsideItsRangeInTheSortedTable() -> None:
         assert library_range.lower < names.library_name < library_range.upper
 
 
+def testGenerateNames_sharesOnePackageBetweenTheStubAndTheArm() -> None:
+    """The stub calls the arm class's package-private static method, so the two renamed classes must
+    land in one package for the call to resolve — the dex's own access rule, not a naming whim."""
+    for seed in range(16):
+        names = defingerprint.generate_names(
+            random.Random(seed), frozenset(), _STUB_DEX
+        )
+        assert names.stub_class.rpartition("/")[0] == names.arm_class.rpartition("/")[0]
+
+
 def testGenerateNames_whenAFilenameIsTaken_drawsAnother() -> None:
     taken: frozenset[str] = frozenset()
     for _ in range(16):

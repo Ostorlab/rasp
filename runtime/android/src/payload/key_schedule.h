@@ -105,6 +105,12 @@ enum class RecordKind : std::uint8_t {
   /// library, chain S. A repackaged APK that edits any dex, the manifest, a resource, or adds any library derives
   /// a different key.
   kApk = 10,
+  /// The digest over the APKs installed beside the base APK — their filenames, sorted — chain S. A split APK
+  /// installed beside a genuine base shares the app's process and class loader, so its code runs in-process while
+  /// every base-derived input still matches; the packer folds the clean install's set (the base alone), so any
+  /// split beside the base derives a different key and nothing decrypts. Absent when the pack cannot know the
+  /// installed set: an AAB the store splits.
+  kSplits = 11,
 };
 
 /// One step of a fold chain: a source to gather and fold in as the step's salt.

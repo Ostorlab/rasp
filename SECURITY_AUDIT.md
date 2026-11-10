@@ -76,6 +76,20 @@ The keystore share compensates per ABI so every ABI recovers the same root: emul
 as emulating the arm64 one. An app that ships both slices hands the analyst the cheaper architecture. Per-ABI
 roots would need per-ABI dex assets, which multiplies the APK's encrypted entries; not proposed.
 
+### W16 — A split APK installed beside a genuine base **done (APK), open (AAB)**
+
+The entry binding covers `base.apk` only, but Android runs code from split APKs installed beside the
+base (`install-multiple`): a split shares the app's process and class loader while the base stays
+byte-for-byte genuine — every base-derived input matches, the app decrypts, and the split's code reads
+the decrypted classes in-process (demonstrated: `2026-11-10-rasp-path2-fix3-split-apk-bypass.md`).
+**Fixed for APK packs**: the schedule folds the installed APK set — a new record beside the APK entry
+digest. The runtime lists the directory holding its base and hashes every other APK's filename; the
+packer folds the clean install's set (the base alone), so any split beside the base derives a different
+key and nothing decrypts. Verified on the device: a split installed beside a genuine packed base fails
+the app at startup with its business classes unresolved, and the same base installed alone runs.
+**Open for AAB packs**: the store generates the splits, so the packer cannot predict them; the record
+stays absent, the way the APK entry digest does.
+
 ## The stub and the Java arm
 
 ### W9 — The stub dex is a plain, unobfuscated 4 KB dex **open (reduced)**

@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "checks/integrity.h"
+#include "apk/archive.h"
 #include "payload/assets.h"
 #include "payload/cipher.h"
 #include "support/files.h"
@@ -583,6 +584,44 @@ TEST(Package, digest_whenThePathHoldsNoPackageName_returnsNothing) {
   EXPECT_FALSE(package_digest("base.apk").has_value());
   EXPECT_FALSE(package_digest("/base.apk").has_value());
   EXPECT_FALSE(package_digest("").has_value());
+}
+
+TEST(Apk, splitDigest_whenTheBaseSitsAlone_hashesTheEmptySet) {
+  const TemporaryDirectory directory;
+  ASSERT_TRUE(write_file(directory.path() + "/base.apk", "apk"));
+  ASSERT_TRUE(write_file(directory.path() + "/lib", "not an apk"));
+
+  const std::optional<std::vector<std::uint8_t>> digest =
+      apk::read_split_digest(directory.path() + "/base.apk");
+
+  ASSERT_TRUE(digest.has_value());
+  const std::vector<std::uint8_t> empty;
+  const std::optional<std::array<std::uint8_t, checks::kDigestSize>> expected = checks::sha256(empty);
+  ASSERT_TRUE(expected.has_value());
+  EXPECT_EQ(*digest, (std::vector<std::uint8_t>(expected->begin(), expected->end())));
+}
+
+TEST(Apk, splitDigest_whenASplitSitsBesideTheBase_hashesItsName) {
+  const TemporaryDirectory directory;
+  ASSERT_TRUE(write_file(directory.path() + "/base.apk", "apk"));
+
+  const std::optional<std::vector<std::uint8_t>> alone =
+      apk::read_split_digest(directory.path() + "/base.apk");
+  ASSERT_TRUE(alone.has_value());
+  ASSERT_TRUE(write_file(directory.path() + "/split_inj.apk", "split"));
+
+  const std::optional<std::vector<std::uint8_t>> beside =
+      apk::read_split_digest(directory.path() + "/base.apk");
+  ASSERT_TRUE(beside.has_value());
+  EXPECT_NE(*alone, *beside);
+  const std::vector<std::uint8_t> name{'s', 'p', 'l', 'i', 't', '_', 'i', 'n', 'j', '.', 'a', 'p', 'k', '\0'};
+  const std::optional<std::array<std::uint8_t, checks::kDigestSize>> expected = checks::sha256(name);
+  ASSERT_TRUE(expected.has_value());
+  EXPECT_EQ(*beside, (std::vector<std::uint8_t>(expected->begin(), expected->end())));
+}
+
+TEST(Apk, splitDigest_whenTheDirectoryCannotBeRead_returnsNothing) {
+  EXPECT_FALSE(apk::read_split_digest("/no/such/directory/base.apk").has_value());
 }
 
 TEST(Fold, chains_whenReordered_changeTheirStates) {

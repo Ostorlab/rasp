@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <dirent.h>
 #include <fcntl.h>
 #include <map>
 #include <optional>
@@ -20,6 +21,7 @@
 #include <vector>
 
 #include "apk/location.h"
+#include "checks/integrity.h"
 
 namespace rasp::android::apk {
 
@@ -434,6 +436,39 @@ std::optional<std::vector<std::uint8_t>> read_apk_digest(const std::string& apk_
   const std::optional<std::vector<std::uint8_t>> result = find_apk_digest(file, own_library_suffix());
   munmap(mapping, size);
   return result;
+}
+
+std::optional<std::vector<std::uint8_t>> read_split_digest(const std::string& apk_path) {
+  const std::size_t separator = apk_path.find_last_of('/');
+  if (separator == std::string::npos || separator == 0) {
+    return std::nullopt;
+  }
+  const std::string directory = apk_path.substr(0, separator);
+  const std::string base = apk_path.substr(separator + 1);
+  DIR* const handle = opendir(directory.c_str());
+  if (handle == nullptr) {
+    return std::nullopt;
+  }
+  std::vector<std::string> splits;
+  while (const dirent* const entry = readdir(handle)) {
+    const std::string_view name(entry->d_name);
+    if (!name.ends_with(".apk") || name == base) {
+      continue;
+    }
+    splits.emplace_back(name);
+  }
+  closedir(handle);
+  std::ranges::sort(splits);
+  std::vector<std::uint8_t> names;
+  for (const std::string& split : splits) {
+    names.insert(names.end(), split.begin(), split.end());
+    names.push_back('\0');
+  }
+  const std::optional<std::array<std::uint8_t, checks::kDigestSize>> digest = checks::sha256(names);
+  if (!digest.has_value()) {
+    return std::nullopt;
+  }
+  return std::vector<std::uint8_t>(digest->begin(), digest->end());
 }
 
 }  // namespace rasp::android::apk

@@ -224,6 +224,8 @@ def _gather(
             return hashlib.sha256(_STUB_DEX).digest()
         if record.kind == key_schedule.KIND_APK:
             return key_schedule.apk_digest(_APK_ENTRIES)
+        if record.kind == key_schedule.KIND_SPLITS:
+            return key_schedule.splits_digest()
         return hashlib.sha256(
             entries[key_schedule.decoy_entry_name(record.param)]
         ).digest()
@@ -471,6 +473,39 @@ def testGateBlock_whenCleanDevice_isTheCleanGates() -> None:
     assert clean == key_schedule.CLEAN_GATES
     assert clean[0:5] == b"\x01\x01\x01\x01\x01"
     assert clean[5:] == bytes(27)
+
+
+def testSplitsDigest_whenTheBaseSitsAlone_hashesTheEmptySet() -> None:
+    assert key_schedule.splits_digest() == hashlib.sha256(b"").digest()
+
+
+def testSplitsDigest_whenASplitSitsBesideTheBase_hashesItsName() -> None:
+    alone = key_schedule.splits_digest()
+    beside = key_schedule.splits_digest(["split_inj.apk"])
+    assert beside != alone
+    assert beside == hashlib.sha256(b"split_inj.apk\x00").digest()
+
+
+def testSplitsDigest_whenSeveralSplitsSitBesideTheBase_hashesThemSorted() -> None:
+    digest = key_schedule.splits_digest(["split_inj.apk", "split_config.arm64_v8a.apk"])
+    assert (
+        digest
+        == hashlib.sha256(b"split_config.arm64_v8a.apk\x00split_inj.apk\x00").digest()
+    )
+
+
+def testBuildProgram_whenThePackKnowsTheInstalledSet_foldsTheSplitSet() -> None:
+    for seed in range(8):
+        program = key_schedule.build_program(
+            random.Random(seed), include_apk_digest=True
+        )
+        kinds = [record.kind for record in program.chain_s]
+        assert key_schedule.KIND_APK in kinds
+        assert key_schedule.KIND_SPLITS in kinds
+    for seed in range(8):
+        program = key_schedule.build_program(random.Random(seed))
+        assert key_schedule.KIND_APK not in [r.kind for r in program.chain_s]
+        assert key_schedule.KIND_SPLITS not in [r.kind for r in program.chain_s]
 
 
 def testSensorBlock_whenCleanProcess_isTheCleanSensors() -> None:

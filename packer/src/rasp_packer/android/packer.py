@@ -494,6 +494,10 @@ def _resolver(
             return hashlib.sha256(stub_dex).digest()
         if record.kind == key_schedule.KIND_APK:
             return key_schedule.apk_digest(apk_entries or {}, library_filenames)
+        if record.kind == key_schedule.KIND_SPLITS:
+            # The pack ships alone: the installed set beside its base is empty, and the runtime lists the
+            # install directory to gather the same digest.
+            return key_schedule.splits_digest()
         return hashlib.sha256(
             decoys[key_schedule.decoy_entry_name(record.param)]
         ).digest()

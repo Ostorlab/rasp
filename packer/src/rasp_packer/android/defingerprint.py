@@ -251,66 +251,6 @@ def generate_library_name(
             return name
 
 
-def generate_class_name(
-    length: int,
-    generator: random.Random,
-    lower: str | None = None,
-    upper: str | None = None,
-) -> str:
-    """Generates a Java class name of exactly ``length`` bytes in the ``a/b/ClassName`` form.
-
-    The name keeps its class descriptor's position in the dex's sorted table: the descriptor
-    ``L<name>;`` is drawn strictly between the descriptors the original sits between. The
-    package's first character drives the order, so it is drawn from the range the position allows
-    and the rest of the name follows.
-
-    Args:
-        length: The number of bytes between ``L`` and ``;`` in the descriptor.
-        generator: The source of randomness.
-        lower: The descriptor the new one must sort after, or None.
-        upper: The descriptor the new one must sort before, or None.
-
-    Returns:
-        The class name with ``/`` separators, exactly ``length`` bytes.
-
-    Raises:
-        ValueError: No name of the length fits the range.
-    """
-    alphabet = "abcdefghijklmnopqrstuvwxyz"
-    # The position's range constrains the package's first character: the descriptor's first
-    # character is the fixed ``L``, the second is the package's first.
-    first_choices = [
-        character
-        for character in alphabet
-        if (lower is None or character >= lower[1])
-        and (upper is None or character <= upper[1])
-    ]
-    for _ in range(_SAMPLE_TRIES):
-        for package_parts in (1, 2, 3):
-            first = generator.choice(first_choices if first_choices else alphabet)
-            package = first + "".join(
-                generator.choice(alphabet) for _ in range(2 * package_parts - 1)
-            )
-            package = "/".join(package[i : i + 2] for i in range(0, len(package), 2))
-            class_length = length - len(package) - 1  # -1 for the / separator
-            if class_length < 3 or class_length > 30:
-                continue
-            cls = generator.choice(alphabet.upper()) + "".join(
-                generator.choice(alphabet) for _ in range(class_length - 1)
-            )
-            candidate = f"{package}/{cls}"
-            if len(candidate.encode("utf-8")) != length:
-                continue
-            descriptor = f"L{candidate};"
-            if (lower is None or descriptor > lower) and (
-                upper is None or descriptor < upper
-            ):
-                return candidate
-    raise ValueError(
-        "no class name of the requested length fits between the neighbouring strings"
-    )
-
-
 def generate_source_file_name(
     generator: random.Random, lower: str | None = None, upper: str | None = None
 ) -> str:
@@ -378,12 +318,13 @@ def generate_names(
 def _class_pair(
     generator: random.Random, stub_range: _Range, arm_range: _Range
 ) -> tuple[str, str]:
-    """Draws the stub and arm class names, keeping each in the table's order.
+    """Draws the stub and arm class names, in one package, keeping the table's order.
 
-    The two descriptors are neighbours in the dex's sorted table: the arm sorts before the stub, so
-    the arm's successor is the stub's replacement and the stub's predecessor is the arm's
-    replacement. When the two are neighbours the pair shares the unpatched strings around it and the
-    arm must sort before the drawn stub; when they are not, each keeps its own unpatched range.
+    The stub calls the arm class's package-private static method, so the two renamed classes must
+    land in one package for the call to resolve; the arm's class part then sorts before the stub's,
+    which also keeps the pair's order in the dex's sorted table, where the two are neighbours: the
+    arm before the stub, both inside the unpatched strings around the pair. When they are not
+    neighbours, each keeps its own range, and the shared package holds.
 
     Args:
         generator: The source of randomness.
@@ -396,30 +337,89 @@ def _class_pair(
     Raises:
         ValueError: The table leaves no room for the pair.
     """
+    alphabet = "abcdefghijklmnopqrstuvwxyz"
+    upper_alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     adjacent = arm_range.upper == _STUB_CLASS.decode(
         "utf-8"
     ) and stub_range.lower == _ARM_CLASS.decode("utf-8")
-    if not adjacent:
-        return (
-            generate_class_name(
-                len(_STUB_CLASS) - 2, generator, stub_range.lower, stub_range.upper
-            ),
-            generate_class_name(
-                len(_ARM_CLASS) - 2, generator, arm_range.lower, arm_range.upper
-            ),
-        )
+    low = arm_range.lower if adjacent else None
+    high = stub_range.upper if adjacent else None
+    # The position's range constrains the package's first character: the descriptor's first
+    # character is the fixed ``L``, the second is the package's first.
+    firsts = [
+        character
+        for character in alphabet
+        if (low is None or character >= low[1])
+        and (high is None or character <= high[1])
+    ]
     for _ in range(_SAMPLE_TRIES):
-        arm = generate_class_name(
-            len(_ARM_CLASS) - 2, generator, arm_range.lower, stub_range.upper
-        )
-        try:
-            stub = generate_class_name(
-                len(_STUB_CLASS) - 2, generator, f"L{arm};", stub_range.upper
+        for package_parts in (1, 2, 3):
+            first = generator.choice(firsts if firsts else alphabet)
+            package = first + "".join(
+                generator.choice(alphabet) for _ in range(2 * package_parts - 1)
             )
-        except ValueError:
-            continue
-        return stub, arm
+            package = "/".join(package[i : i + 2] for i in range(0, len(package), 2))
+            arm_length = len(_ARM_CLASS) - 2 - len(package) - 1
+            stub_length = len(_STUB_CLASS) - 2 - len(package) - 1
+            if arm_length < 3 or stub_length < 3:
+                continue
+            if adjacent:
+                # The arm's class part sorts first, and leaves the stub a later first character.
+                arm_first = generator.choice(upper_alphabet[:-1])
+                stub_first = generator.choice(
+                    upper_alphabet[upper_alphabet.index(arm_first) + 1 :]
+                )
+            else:
+                arm_first = generator.choice(upper_alphabet)
+                stub_first = generator.choice(upper_alphabet)
+            arm = (
+                f"{package}/"
+                + arm_first
+                + "".join(generator.choice(alphabet) for _ in range(arm_length - 1))
+            )
+            stub = (
+                f"{package}/"
+                + stub_first
+                + "".join(generator.choice(alphabet) for _ in range(stub_length - 1))
+            )
+            if len(arm.encode("utf-8")) != len(_ARM_CLASS) - 2:
+                continue
+            if len(stub.encode("utf-8")) != len(_STUB_CLASS) - 2:
+                continue
+            arm_descriptor = f"L{arm};"
+            stub_descriptor = f"L{stub};"
+            if adjacent:
+                if low is not None and not arm_descriptor > low:
+                    continue
+                if high is not None and not stub_descriptor < high:
+                    continue
+            elif not _inside(arm_descriptor, arm_range) or not _inside(
+                stub_descriptor, stub_range
+            ):
+                continue
+            if any(
+                banned.decode("utf-8") in name
+                for banned in _BANNED_STRINGS
+                for name in (package, arm, stub)
+            ):
+                continue
+            return stub, arm
     raise ValueError("the table leaves no room for the stub and arm class names")
+
+
+def _inside(candidate: str, bounds: _Range) -> bool:
+    """Whether a descriptor sits strictly inside its range.
+
+    Args:
+        candidate: The descriptor.
+        bounds: The strings it must sort between, either of which may be absent.
+
+    Returns:
+        Whether the candidate is inside.
+    """
+    return (bounds.lower is None or candidate > bounds.lower) and (
+        bounds.upper is None or candidate < bounds.upper
+    )
 
 
 def fingerprint_free_artifacts(

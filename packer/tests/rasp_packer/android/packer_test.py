@@ -517,7 +517,10 @@ def testPack_whenValidApk_addsTheRuntimeLibraryWithTheConfigProgramAndKeystore(
     assert library != runtime_library.write_config(_ARM64_SO, _PACKED_CONFIG)
     assert runtime_library.read_config(library) == _PACKED_CONFIG.to_json()
     assert len(runtime_library.keystore(library)) == key_schedule.KEY_SIZE
-    assert key_schedule.decode_program(runtime_library.program(library)) is not None
+    # The pack's program folds the split set, so an APK installed beside the base changes the fold.
+    program = key_schedule.decode_program(runtime_library.program(library))
+    assert program is not None
+    assert key_schedule.KIND_SPLITS in [record.kind for record in program.chain_s]
     assert "assets/rasp/config.json" not in names
 
 

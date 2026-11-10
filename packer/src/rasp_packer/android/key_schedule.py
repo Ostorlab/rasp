@@ -72,6 +72,7 @@ KIND_ENTRY = 7
 KIND_PACKAGE = 8
 KIND_STUB = 9
 KIND_APK = 10
+KIND_SPLITS = 11
 
 # The prefixes of APK entries the fold's APK digest excludes: the signing step's own entries and the fold's own
 # outputs.
@@ -162,6 +163,27 @@ def apk_digest(
         if method == 0:
             blob += data
         digest.update(blob)
+    return digest.digest()
+
+
+def splits_digest(names: collections.abc.Iterable[str] = ()) -> bytes:
+    """Computes the digest over the APKs installed beside the base APK, the way the runtime does at recovery.
+
+    The runtime lists the directory that holds its base APK and feeds every other APK's filename, sorted, into
+    one SHA-256. A split APK installed beside the base shares the app's process and class loader, so its code
+    runs in-process while every base-derived input still matches; binding the installed set closes that: the
+    packer folds the clean install's set — the base alone — so any split beside the base changes the digest,
+    the fold, and every key under it.
+
+    Args:
+        names: The filenames of the APKs installed beside the base, in any order.
+
+    Returns:
+        The 32-byte digest.
+    """
+    digest = hashlib.sha256()
+    for name in sorted(names):
+        digest.update(name.encode("utf-8") + b"\x00")
     return digest.digest()
 
 
@@ -422,6 +444,9 @@ def build_program(
     if include_apk_digest:
         # The APK digest binds the whole APK's stored content: only an APK pack knows the installed entry set.
         chain_s.append(FoldRecord(kind=KIND_APK))
+        # The split set binds the APKs installed beside the base: an APK pack ships alone, so any APK the
+        # runtime finds beside its base changes the fold.
+        chain_s.append(FoldRecord(kind=KIND_SPLITS))
     constants: list[bytes] = []
     entry_indices: list[int] = []
     for _ in range(generator.randint(3, 6)):

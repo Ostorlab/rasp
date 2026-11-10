@@ -297,6 +297,15 @@ struct FoldInputs {
       std::ranges::copy(*digest, key.begin());
       return key;
     }
+    case RecordKind::kSplits: {
+      const std::optional<std::vector<std::uint8_t>> digest = apk::read_split_digest(apk);
+      if (!digest.has_value() || digest->size() != kKeySize) {
+        return std::nullopt;
+      }
+      Key key{};
+      std::ranges::copy(*digest, key.begin());
+      return key;
+    }
   }
   return std::nullopt;
 }
