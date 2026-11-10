@@ -1,10 +1,13 @@
-/// Reading a stored APK entry: memory-map the file, walk the ZIP central directory, and copy the entry's bytes.
+/// Reading an APK from its bytes: memory-map the file, then walk the ZIP central directory to copy a stored entry, or
+/// the APK Signing Block before it to copy the signer's certificate.
 
 #include "apk/archive.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <fcntl.h>
 #include <optional>
 #include <span>
@@ -36,6 +39,28 @@ constexpr std::size_t kLocalHeaderSize = 30;
 constexpr std::uint16_t kStored = 0;
 /// The largest ZIP comment, which bounds how far back the end record is searched.
 constexpr std::size_t kMaxComment = 65535;
+/// The offset, in the end-of-central-directory record, of the central directory's offset in the file.
+constexpr std::size_t kDirectoryOffsetField = 16;
+
+/// The magic that ends the APK Signing Block.
+constexpr std::string_view kSigningBlockMagic = "APK Sig Block 42";
+/// The size of the APK Signing Block's footer: its size, then its magic.
+constexpr std::size_t kSigningBlockFooterSize = 24;
+/// The size of the APK Signing Block's header: its size, repeated.
+constexpr std::size_t kSigningBlockHeaderSize = 8;
+/// The id of the APK Signature Scheme v3.1 block, which holds the signers of a rotated key for newer Android versions.
+constexpr std::uint32_t kV31SchemeId = 0x1b93ad61U;
+/// The id of the APK Signature Scheme v3 block.
+constexpr std::uint32_t kV3SchemeId = 0xf05368c0U;
+/// The id of the APK Signature Scheme v2 block.
+constexpr std::uint32_t kV2SchemeId = 0x7109871aU;
+/// The signature schemes read, newest first, as Android verifies them: the certificate comes from the newest one that
+/// has a signer for the device.
+constexpr std::array<std::uint32_t, 3> kSchemeIds = {kV31SchemeId, kV3SchemeId, kV2SchemeId};
+/// The size of the SDK range a v3 or v3.1 signer has after its signed data: its lowest and highest API levels.
+constexpr std::size_t kSdkRangeSize = 8;
+/// The largest certificate copied. A real one is about 1.5 KiB.
+constexpr std::size_t kMaxCertificateSize = std::size_t{64} << 10U;
 
 /// Reads a little-endian 16-bit number from the start of `data`, which must hold at least two bytes.
 [[nodiscard]] std::uint16_t read_u16(std::span<const std::uint8_t> data) {
@@ -46,6 +71,11 @@ constexpr std::size_t kMaxComment = 65535;
 [[nodiscard]] std::uint32_t read_u32(std::span<const std::uint8_t> data) {
   return static_cast<std::uint32_t>(data[0]) | (static_cast<std::uint32_t>(data[1]) << 8U) |
          (static_cast<std::uint32_t>(data[2]) << 16U) | (static_cast<std::uint32_t>(data[3]) << 24U);
+}
+
+/// Reads a little-endian 64-bit number from the start of `data`, which must hold at least eight bytes.
+[[nodiscard]] std::uint64_t read_u64(std::span<const std::uint8_t> data) {
+  return static_cast<std::uint64_t>(read_u32(data)) | (static_cast<std::uint64_t>(read_u32(data.subspan(4))) << 32U);
 }
 
 /// Whether `bytes` holds the same characters as `text`.
@@ -144,9 +174,121 @@ struct LocalEntry {
   return std::nullopt;
 }
 
-}  // namespace
+/// The value of the 32-bit length-prefixed field at the start of `data`, which then starts after it, or nothing when
+/// the length runs past the end of `data`.
+[[nodiscard]] std::optional<std::span<const std::uint8_t>> take_length_prefixed(std::span<const std::uint8_t>& data) {
+  if (data.size() < 4) {
+    return std::nullopt;
+  }
+  const std::uint32_t length = read_u32(data);
+  if (length > data.size() - 4) {
+    return std::nullopt;
+  }
+  const std::span<const std::uint8_t> value = data.subspan(4, length);
+  data = data.subspan(4 + static_cast<std::size_t>(length));
+  return value;
+}
 
-std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& apk_path, std::string_view name) {
+/// The id-value pairs of the APK Signing Block that ends right before the central directory at `directory_offset`, or
+/// nothing when there is no such block, as in an APK signed only with the JAR scheme, or its sizes don't match.
+[[nodiscard]] std::optional<std::span<const std::uint8_t>> signing_block_pairs(std::span<const std::uint8_t> file,
+                                                                               std::size_t directory_offset) {
+  if (directory_offset > file.size() || directory_offset < kSigningBlockHeaderSize + kSigningBlockFooterSize) {
+    return std::nullopt;
+  }
+  const std::span<const std::uint8_t> footer =
+      file.subspan(directory_offset - kSigningBlockFooterSize, kSigningBlockFooterSize);
+  if (!equals(footer.subspan(8), kSigningBlockMagic)) {
+    return std::nullopt;
+  }
+  const std::uint64_t size = read_u64(footer);
+  if (size < kSigningBlockFooterSize || size > directory_offset - kSigningBlockHeaderSize) {
+    return std::nullopt;
+  }
+  const std::size_t start = directory_offset - static_cast<std::size_t>(size) - kSigningBlockHeaderSize;
+  if (read_u64(file.subspan(start)) != size) {
+    return std::nullopt;
+  }
+  return file.subspan(start + kSigningBlockHeaderSize, static_cast<std::size_t>(size) - kSigningBlockFooterSize);
+}
+
+/// The value of the pair whose id is `id` among the APK Signing Block's `pairs`, or nothing when there is none or a
+/// pair's length runs past the block.
+[[nodiscard]] std::optional<std::span<const std::uint8_t>> scheme_value(std::span<const std::uint8_t> pairs,
+                                                                        std::uint32_t id) {
+  while (!pairs.empty()) {
+    if (pairs.size() < 12) {
+      return std::nullopt;
+    }
+    const std::uint64_t length = read_u64(pairs);
+    if (length < 4 || length > pairs.size() - 8) {
+      return std::nullopt;
+    }
+    const std::span<const std::uint8_t> pair = pairs.subspan(8, static_cast<std::size_t>(length));
+    if (read_u32(pair) == id) {
+      return pair.subspan(4);
+    }
+    pairs = pairs.subspan(8 + static_cast<std::size_t>(length));
+  }
+  return std::nullopt;
+}
+
+/// The first certificate in a signer's `signed_data`: past its digests, then its certificates, both length-prefixed.
+/// Nothing when a length runs past its parent.
+[[nodiscard]] std::optional<std::span<const std::uint8_t>> first_certificate(
+    std::span<const std::uint8_t> signed_data) {
+  if (!take_length_prefixed(signed_data)) {
+    return std::nullopt;
+  }
+  std::optional<std::span<const std::uint8_t>> certificates = take_length_prefixed(signed_data);
+  if (!certificates) {
+    return std::nullopt;
+  }
+  return take_length_prefixed(*certificates);
+}
+
+/// A signature scheme block whose lengths don't fit what holds them.
+struct MalformedScheme {};
+
+/// The certificate of the signer that Android uses from `scheme`, the value of the block whose id is `scheme_id`, on a
+/// device at `api_level`. A v2 block's first signer applies to every device. A v3 or v3.1 signer gives the range of API
+/// levels it applies to after its signed data, and the first signer whose range holds `api_level` is used.
+///
+/// @return The certificate, nothing when no signer of the block applies to the device, or MalformedScheme when a length
+/// runs past what holds it.
+[[nodiscard]] std::expected<std::optional<std::span<const std::uint8_t>>, MalformedScheme> scheme_certificate(
+    std::span<const std::uint8_t> scheme, std::uint32_t scheme_id, std::uint32_t api_level) {
+  std::optional<std::span<const std::uint8_t>> signers = take_length_prefixed(scheme);
+  if (!signers) {
+    return std::unexpected(MalformedScheme{});
+  }
+  while (!signers->empty()) {
+    std::optional<std::span<const std::uint8_t>> signer = take_length_prefixed(*signers);
+    if (!signer) {
+      return std::unexpected(MalformedScheme{});
+    }
+    const std::optional<std::span<const std::uint8_t>> signed_data = take_length_prefixed(*signer);
+    if (!signed_data || (scheme_id != kV2SchemeId && signer->size() < kSdkRangeSize)) {
+      return std::unexpected(MalformedScheme{});
+    }
+    const bool applies =
+        scheme_id == kV2SchemeId || (read_u32(*signer) <= api_level && api_level <= read_u32(signer->subspan(4)));
+    if (!applies) {
+      continue;
+    }
+    const std::optional<std::span<const std::uint8_t>> certificate = first_certificate(*signed_data);
+    if (!certificate) {
+      return std::unexpected(MalformedScheme{});
+    }
+    return certificate;
+  }
+  return std::nullopt;
+}
+
+/// The result of `read` over the whole file at `apk_path`, memory-mapped read-only for the call, or nothing when the
+/// file can't be opened, is empty, or can't be mapped.
+template <typename Read>
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_mapped(const std::string& apk_path, Read read) {
   // open is a libc variadic function, and its flags come from the included <fcntl.h>.
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
   const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
@@ -166,9 +308,54 @@ std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& ap
     return std::nullopt;
   }
   const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
-  const std::optional<std::vector<std::uint8_t>> data = find_stored_entry(file, name);
+  std::optional<std::vector<std::uint8_t>> data = read(file);
   munmap(mapping, size);
   return data;
+}
+
+}  // namespace
+
+std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& apk_path, std::string_view name) {
+  return read_mapped(apk_path, [name](std::span<const std::uint8_t> file) { return find_stored_entry(file, name); });
+}
+
+std::optional<std::vector<std::uint8_t>> find_signing_certificate(std::span<const std::uint8_t> apk,
+                                                                  std::uint32_t api_level) {
+  const std::optional<std::span<const std::uint8_t>> record = find_end_record(apk);
+  if (!record) {
+    return std::nullopt;
+  }
+  const std::optional<std::span<const std::uint8_t>> pairs =
+      signing_block_pairs(apk, read_u32(record->subspan(kDirectoryOffsetField)));
+  if (!pairs) {
+    return std::nullopt;
+  }
+  for (const std::uint32_t id : kSchemeIds) {
+    const std::optional<std::span<const std::uint8_t>> scheme = scheme_value(*pairs, id);
+    if (!scheme) {
+      continue;
+    }
+    const std::expected<std::optional<std::span<const std::uint8_t>>, MalformedScheme> found =
+        scheme_certificate(*scheme, id, api_level);
+    if (!found) {
+      return std::nullopt;
+    }
+    if (!*found) {
+      continue;
+    }
+    const std::span<const std::uint8_t> certificate = **found;
+    if (certificate.empty() || certificate.size() > kMaxCertificateSize) {
+      return std::nullopt;
+    }
+    return std::vector<std::uint8_t>(certificate.begin(), certificate.end());
+  }
+  return std::nullopt;
+}
+
+std::optional<std::vector<std::uint8_t>> read_signing_certificate(const std::string& apk_path,
+                                                                  std::uint32_t api_level) {
+  return read_mapped(
+      apk_path, [api_level](std::span<const std::uint8_t> file) { return find_signing_certificate(file, api_level); });
 }
 
 }  // namespace rasp::android::apk
