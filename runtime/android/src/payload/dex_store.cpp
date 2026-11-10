@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "apk/archive.h"
+#include "rasp/util/logging.h"
 #include "payload/assets.h"
 #include "payload/cipher.h"
 #include "payload/key_schedule.h"
@@ -72,18 +73,30 @@ void index_map(std::string_view text, DexStore& store) {
 std::optional<DexStore> open_dex_store(std::string apk, const Key& root) {
   const std::optional<std::vector<std::uint8_t>> frame = rasp::android::apk::read_stored_entry(apk, kMapEntry);
   if (!frame.has_value()) {
+    if constexpr (rasp::kLoggingEnabled) {
+      rasp::log("the store did not open: the map entry is unreadable");
+    }
     return std::nullopt;
   }
   const std::optional<Key> map_key = key_of(root, *frame, kMapEntry);
   if (!map_key.has_value()) {
+    if constexpr (rasp::kLoggingEnabled) {
+      rasp::log("the store did not open: the map key did not derive");
+    }
     return std::nullopt;
   }
   std::optional<std::vector<std::uint8_t>> map = decrypt(*map_key, *frame);
   if (!map.has_value()) {
+    if constexpr (rasp::kLoggingEnabled) {
+      rasp::log("the store did not open: the map frame did not decrypt");
+    }
     return std::nullopt;
   }
   const std::optional<Key> seed = seed_from(root, *frame);
   if (!seed.has_value()) {
+    if constexpr (rasp::kLoggingEnabled) {
+      rasp::log("the store did not open: the seed did not derive");
+    }
     return std::nullopt;
   }
 

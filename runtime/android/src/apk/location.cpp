@@ -119,7 +119,17 @@ std::optional<std::string> self_apk_path() {
   if (path.has_value()) {
     const std::size_t bang = path->find("!/");
     if (bang != std::string::npos) {
-      return path->substr(0, bang);
+      const std::string apk = path->substr(0, bang);
+      // A store split install maps the library from a config split; the app's own APK — the one that
+      // holds the class dexes and the fold's asset entries — is the base beside it.
+      const std::size_t slash = apk.find_last_of('/');
+      if (slash != std::string::npos && apk.substr(slash + 1) != "base.apk") {
+        const std::string base = apk.substr(0, slash + 1) + "base.apk";
+        if (access(base.c_str(), R_OK) == 0) {
+          return base;
+        }
+      }
+      return apk;
     }
     const std::optional<std::string> beside = apk_beside_library(*path);
     if (beside.has_value()) {

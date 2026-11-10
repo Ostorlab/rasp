@@ -176,6 +176,18 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
     environment.cpu_identity_plausible = !(ebx == 0 && edx == 0 && ecx == 0);
   }
 #endif
+  if constexpr (kLoggingEnabled) {
+    // A development build says what the environment was observed to be, so a gate that flips on some
+    // install shape names itself instead of failing silently.
+    rasp::log("environment java=" + std::to_string(environment.java_environment ? 1 : 0) +
+              " no_tracer=" + std::to_string(environment.no_tracer ? 1 : 0) +
+              " under_data=" + std::to_string(environment.installed_under_data ? 1 : 0) +
+              " counter=" + std::to_string(environment.counter_frequency_plausible ? 1 : 0) +
+              " cpu=" + std::to_string(environment.cpu_identity_plausible ? 1 : 0) +
+              " owns_data=" + std::to_string(environment.owns_package_data ? 1 : 0) +
+              " release=" + std::to_string(environment.release_build ? 1 : 0) +
+              " apk=" + (apk.has_value() ? *apk : std::string("(none)")));
+  }
   return environment;
 }
 
@@ -448,8 +460,14 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
   if (apk.has_value() && library.has_value()) {
     const payload::Environment environment = observe_environment(env, library);
     const std::optional<payload::Key> root = payload::recover_root_key(environment, *library, *apk);
+    if constexpr (kLoggingEnabled) {
+      rasp::log(root.has_value() ? "the root key recovered" : "the root key did not recover");
+    }
     if (root.has_value()) {
       current.store = payload::open_dex_store(*apk, *root);
+      if constexpr (kLoggingEnabled) {
+        rasp::log(current.store.has_value() ? "the store opened" : "the store did not open");
+      }
     }
   }
 
@@ -576,6 +594,11 @@ void install(JNIEnv* env, jclass /*stub*/, jobject base, jstring library_search_
 /// @return A new byte array holding the program, or null.
 jbyteArray program(JNIEnv* env, jclass /*stub*/) {
   State& current = state();
+  if constexpr (kLoggingEnabled) {
+    rasp::log(current.store.has_value()
+                  ? "the program is " + std::to_string(current.store->j_program.size()) + " bytes"
+                  : "the program is not served: no store");
+  }
   if (!current.store.has_value() || current.store->j_program.empty()) {
     return nullptr;
   }
@@ -600,6 +623,12 @@ jbyteArray program(JNIEnv* env, jclass /*stub*/) {
 /// @param share The share the stub produced, or null.
 void arm(JNIEnv* env, jclass /*stub*/, jbyteArray share) {
   State& current = state();
+  if constexpr (kLoggingEnabled) {
+    rasp::log(share == nullptr ? "the store was offered no share"
+                               : "the store was offered a share of " +
+                                     std::to_string(static_cast<std::size_t>(env->GetArrayLength(share))) +
+                                     " bytes" + (current.store.has_value() ? "" : " without a store"));
+  }
   if (!current.store.has_value() || share == nullptr) {
     return;
   }

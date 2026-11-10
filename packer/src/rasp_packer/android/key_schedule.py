@@ -73,6 +73,8 @@ KIND_PACKAGE = 8
 KIND_STUB = 9
 KIND_APK = 10
 KIND_SPLITS = 11
+KIND_DEXES = 12
+KIND_DEXLESS_SPLITS = 13
 
 # The prefixes of APK entries the fold's APK digest excludes: the signing step's own entries and the fold's own
 # outputs.
@@ -186,6 +188,42 @@ def splits_digest(names: collections.abc.Iterable[str] = ()) -> bytes:
     for name in sorted(names):
         digest.update(name.encode("utf-8") + b"\x00")
     return digest.digest()
+
+
+def dex_digest(entries: collections.abc.Mapping[str, bytes]) -> bytes:
+    """Computes the digest over the base module's class dexes, the way the runtime does at recovery.
+
+    The runtime walks the installed base APK's central directory and feeds every `classes.dex` /
+    `classesN.dex` entry's name and uncompressed content into one SHA-256, sorted by name. The store's
+    split generation preserves the base module's dex content and names, whichever way it splits the rest,
+    so the packer can predict this digest for an AAB when it cannot predict the installed entry set: an
+    edit, addition or removal of any class dex changes the digest, the fold, and every key under it.
+
+    Args:
+        entries: The base module's class dexes by entry name, in any order.
+
+    Returns:
+        The 32-byte digest.
+    """
+    digest = hashlib.sha256()
+    for name in sorted(entries):
+        digest.update(name.encode("utf-8") + b"\x00")
+        digest.update(hashlib.sha256(entries[name]).digest())
+    return digest.digest()
+
+
+def dexless_splits() -> bytes:
+    """Returns the clean observation of the APKs an AAB pack installs beside the base.
+
+    The store's config splits — ABI, density, language — never hold a class dex, so an AAB pack folds
+    this constant instead of the installed set it cannot predict: the runtime walks every APK installed
+    beside the base and reads one fact, whether any of them holds a class dex. A split that carries code
+    flips the fact, the fold comes out wrong, and nothing decrypts.
+
+    Returns:
+        The block, 32 bytes: the fact in the first byte, then zeros.
+    """
+    return bytes((1,)) + bytes(KEY_SIZE - 1)
 
 
 def _hkdf(secret: bytes, salt: bytes, info: bytes) -> bytes:
@@ -457,6 +495,11 @@ def build_program(
         # The split set binds the APKs installed beside the base: an APK pack ships alone, so any APK the
         # runtime finds beside its base changes the fold.
         chain_s.append(FoldRecord(kind=KIND_SPLITS))
+    else:
+        # An AAB the store splits: the entry digest and the installed set are unknowable at pack time, so
+        # the module's dex content and the splits' emptiness stand in for them.
+        chain_s.append(FoldRecord(kind=KIND_DEXES))
+        chain_s.append(FoldRecord(kind=KIND_DEXLESS_SPLITS))
     constants: list[bytes] = []
     entry_indices: list[int] = []
     for _ in range(generator.randint(3, 6)):

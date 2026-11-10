@@ -27,6 +27,7 @@
 #include "payload/assets.h"
 #include "payload/cipher.h"
 #include "rasp/observation.h"
+#include "rasp/util/logging.h"
 #include "util/apk_file.h"
 
 namespace rasp::android::payload {
@@ -306,6 +307,24 @@ struct FoldInputs {
       std::ranges::copy(*digest, key.begin());
       return key;
     }
+    case RecordKind::kDexes: {
+      const std::optional<std::vector<std::uint8_t>> digest = apk::read_dex_digest(apk);
+      if (!digest.has_value() || digest->size() != kKeySize) {
+        return std::nullopt;
+      }
+      Key key{};
+      std::ranges::copy(*digest, key.begin());
+      return key;
+    }
+    case RecordKind::kDexlessSplits: {
+      const std::optional<std::vector<std::uint8_t>> block = apk::read_split_dex_flag(apk);
+      if (!block.has_value() || block->size() != kKeySize) {
+        return std::nullopt;
+      }
+      Key key{};
+      std::ranges::copy(*block, key.begin());
+      return key;
+    }
   }
   return std::nullopt;
 }
@@ -327,6 +346,11 @@ struct FoldInputs {
   for (const FoldRecord& record : records) {
     const std::optional<Key> input = gather_record(program, record, inputs, environment, apk);
     if (!input.has_value()) {
+      // A development build says which record's source cannot be read; a release build stays silent,
+      // the way the fold's every failure does.
+      if constexpr (rasp::kLoggingEnabled) {
+        rasp::log("fold record " + std::to_string(static_cast<std::uint8_t>(record.kind)) + " failed to gather");
+      }
       return std::nullopt;
     }
     gathered.push_back(*input);

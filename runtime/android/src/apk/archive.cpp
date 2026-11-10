@@ -221,6 +221,137 @@ struct LocalEntry {
 /// @param file The APK's whole file bytes, memory-mapped.
 /// @param own_library The runtime library's filename, with its directory separator, or the legacy name.
 /// @return The 32-byte digest. Nothing when the archive is malformed or the hash fails.
+/// Computes the digest over the APK's class dexes — the core of read_dex_digest. Walks the central
+/// directory and feeds every `classes.dex` / `classesN.dex` entry's name and uncompressed content into one
+/// SHA-256, sorted by name, the way the packer does over the base module's dexes.
+///
+/// @param file The APK's whole file bytes, memory-mapped.
+/// @return The 32-byte digest. Nothing when the archive is malformed, a class dex is compressed (a store
+/// install ships dexes uncompressed, so a compressed one is not a shape the packer predicted), or the hash fails.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> find_dex_digest(std::span<const std::uint8_t> file) {
+  const std::optional<std::span<const std::uint8_t>> record = find_end_record(file);
+  if (!record.has_value()) {
+    return std::nullopt;
+  }
+  const std::uint16_t count = read_u16(record->subspan(10));
+  const std::uint32_t directory_size = read_u32(record->subspan(12));
+  const std::uint32_t directory_offset = read_u32(record->subspan(16));
+  if (directory_offset > file.size() || directory_size > file.size() - directory_offset) {
+    return std::nullopt;
+  }
+
+  // Collect each class dex's contribution: its name, a null, and the SHA-256 of its content.
+  std::map<std::string, std::vector<std::uint8_t>> contributions;
+  std::span<const std::uint8_t> rest = file.subspan(directory_offset, directory_size);
+  for (std::uint16_t index = 0; index < count; ++index) {
+    if (rest.size() < kCentralEntrySize || read_u32(rest) != kCentralSignature) {
+      return std::nullopt;
+    }
+    const std::uint16_t method = read_u16(rest.subspan(10));
+    const std::uint32_t stored_size = read_u32(rest.subspan(20));
+    const std::size_t name_length = read_u16(rest.subspan(28));
+    const std::size_t extra_length = read_u16(rest.subspan(30));
+    const std::size_t comment_length = read_u16(rest.subspan(32));
+    const std::uint32_t local_offset = read_u32(rest.subspan(42));
+    if (rest.size() < kCentralEntrySize + name_length) {
+      return std::nullopt;
+    }
+    const std::string_view name(reinterpret_cast<const char*>(rest.data()) + kCentralEntrySize, name_length);
+    if (is_classes_entry(name)) {
+      if (method != kStored) {
+        return std::nullopt;
+      }
+      const std::optional<std::vector<std::uint8_t>> data =
+          read_local_data(file, LocalEntry{.local_offset = local_offset, .data_size = stored_size});
+      if (!data.has_value()) {
+        return std::nullopt;
+      }
+      const std::optional<std::array<std::uint8_t, checks::kDigestSize>> content = checks::sha256(*data);
+      if (!content.has_value()) {
+        return std::nullopt;
+      }
+      std::vector<std::uint8_t> blob(name.begin(), name.end());
+      blob.push_back('\0');
+      blob.insert(blob.end(), content->begin(), content->end());
+      contributions.emplace(std::string(name), std::move(blob));
+    }
+    const std::size_t entry_size = kCentralEntrySize + name_length + extra_length + comment_length;
+    if (rest.size() < entry_size) {
+      return std::nullopt;
+    }
+    rest = rest.subspan(entry_size);
+  }
+
+  std::vector<std::uint8_t> all;
+  for (const auto& [name, blob] : contributions) {
+    all.insert(all.end(), blob.begin(), blob.end());
+  }
+  const std::optional<std::array<std::uint8_t, checks::kDigestSize>> digest = checks::sha256(all);
+  if (!digest.has_value()) {
+    return std::nullopt;
+  }
+  return std::vector<std::uint8_t>(digest->begin(), digest->end());
+}
+
+/// Whether the APK at `path` holds a class dex entry, by a walk of its central directory. The store's config
+/// splits never hold one; a split that does carries code.
+///
+/// @param path The APK to inspect.
+/// @return Whether the APK holds a class dex. Nothing when the file can't be mapped or the archive is malformed.
+[[nodiscard]] std::optional<bool> split_holds_dex(const std::string& path) {
+  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
+  const int descriptor = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (descriptor < 0) {
+    return std::nullopt;
+  }
+  struct stat status = {};
+  if (fstat(descriptor, &status) != 0 || status.st_size <= 0 || !std::in_range<std::size_t>(status.st_size)) {
+    close(descriptor);
+    return std::nullopt;
+  }
+  const auto size = static_cast<std::size_t>(status.st_size);
+  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
+  void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
+  close(descriptor);
+  if (mapping == MAP_FAILED) {
+    return std::nullopt;
+  }
+  const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
+  const std::optional<std::span<const std::uint8_t>> record = find_end_record(file);
+  if (!record.has_value()) {
+    munmap(mapping, size);
+    return std::nullopt;
+  }
+  const std::uint16_t count = read_u16(record->subspan(10));
+  const std::uint32_t directory_size = read_u32(record->subspan(12));
+  const std::uint32_t directory_offset = read_u32(record->subspan(16));
+  bool holds_dex = false;
+  if (directory_offset <= file.size() && directory_size <= file.size() - directory_offset) {
+    std::span<const std::uint8_t> rest = file.subspan(directory_offset, directory_size);
+    for (std::uint16_t index = 0; index < count && !holds_dex; ++index) {
+      if (rest.size() < kCentralEntrySize || read_u32(rest) != kCentralSignature) {
+        break;
+      }
+      const std::size_t name_length = read_u16(rest.subspan(28));
+      const std::size_t extra_length = read_u16(rest.subspan(30));
+      const std::size_t comment_length = read_u16(rest.subspan(32));
+      if (rest.size() < kCentralEntrySize + name_length) {
+        break;
+      }
+      const std::string_view name(reinterpret_cast<const char*>(rest.data()) + kCentralEntrySize, name_length);
+      holds_dex = is_classes_entry(name);
+      const std::size_t entry_size = kCentralEntrySize + name_length + extra_length + comment_length;
+      if (rest.size() < entry_size) {
+        break;
+      }
+      rest = rest.subspan(entry_size);
+    }
+  }
+  munmap(mapping, size);
+  return holds_dex;
+}
+
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> find_apk_digest(std::span<const std::uint8_t> file,
                                                                        std::string_view own_library) {
   const std::optional<std::span<const std::uint8_t>> record = find_end_record(file);
@@ -439,6 +570,23 @@ std::optional<std::vector<std::uint8_t>> read_apk_digest(const std::string& apk_
 }
 
 std::optional<std::vector<std::uint8_t>> read_split_digest(const std::string& apk_path) {
+  const std::optional<std::vector<std::string>> splits = list_split_apks(apk_path);
+  if (!splits.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<std::uint8_t> names;
+  for (const std::string& split : *splits) {
+    names.insert(names.end(), split.begin(), split.end());
+    names.push_back('\0');
+  }
+  const std::optional<std::array<std::uint8_t, checks::kDigestSize>> digest = checks::sha256(names);
+  if (!digest.has_value()) {
+    return std::nullopt;
+  }
+  return std::vector<std::uint8_t>(digest->begin(), digest->end());
+}
+
+std::optional<std::vector<std::string>> list_split_apks(const std::string& apk_path) {
   const std::size_t separator = apk_path.find_last_of('/');
   if (separator == std::string::npos || separator == 0) {
     return std::nullopt;
@@ -459,16 +607,54 @@ std::optional<std::vector<std::uint8_t>> read_split_digest(const std::string& ap
   }
   closedir(handle);
   std::ranges::sort(splits);
-  std::vector<std::uint8_t> names;
-  for (const std::string& split : splits) {
-    names.insert(names.end(), split.begin(), split.end());
-    names.push_back('\0');
-  }
-  const std::optional<std::array<std::uint8_t, checks::kDigestSize>> digest = checks::sha256(names);
-  if (!digest.has_value()) {
+  return splits;
+}
+
+std::optional<std::vector<std::uint8_t>> read_dex_digest(const std::string& apk_path) {
+  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
+  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (descriptor < 0) {
     return std::nullopt;
   }
-  return std::vector<std::uint8_t>(digest->begin(), digest->end());
+  struct stat status = {};
+  if (fstat(descriptor, &status) != 0 || status.st_size <= 0 || !std::in_range<std::size_t>(status.st_size)) {
+    close(descriptor);
+    return std::nullopt;
+  }
+  const auto size = static_cast<std::size_t>(status.st_size);
+  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
+  void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
+  close(descriptor);
+  if (mapping == MAP_FAILED) {
+    return std::nullopt;
+  }
+  const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
+  const std::optional<std::vector<std::uint8_t>> result = find_dex_digest(file);
+  munmap(mapping, size);
+  return result;
+}
+
+std::optional<std::vector<std::uint8_t>> read_split_dex_flag(const std::string& apk_path) {
+  const std::optional<std::vector<std::string>> splits = list_split_apks(apk_path);
+  if (!splits.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<std::uint8_t> block(checks::kDigestSize, 0);
+  block[0] = 1U;
+  const std::size_t separator = apk_path.find_last_of('/');
+  if (separator == std::string::npos) {
+    return std::nullopt;
+  }
+  const std::string directory = apk_path.substr(0, separator + 1);
+  for (const std::string& split : *splits) {
+    // A split that cannot be read counts as one that carries code: the observation fails closed.
+    if (split_holds_dex(directory + split).value_or(true)) {
+      block[0] = 0U;
+      break;
+    }
+  }
+  return block;
 }
 
 }  // namespace rasp::android::apk

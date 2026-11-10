@@ -132,8 +132,19 @@ def _recover_root(archive: zipfile.ZipFile) -> bytes | None:
         for name in archive.namelist()
         if name.startswith("base/assets/")
     }
+    # The base module's class dexes as the packer wrote them, which the dex record binds.
+    module_dexes = {
+        "classes.dex": _FRAMEWORK[0],
+        "classes2.dex": _FRAMEWORK[1],
+        "classes3.dex": _PATCHED_STUB_DEX,
+    }
     return schedule_recovery.recover_root(
-        library, entries, key_schedule.CLEAN_GATES, _PACKAGE.encode(), _PATCHED_STUB_DEX
+        library,
+        entries,
+        key_schedule.CLEAN_GATES,
+        _PACKAGE.encode(),
+        _PATCHED_STUB_DEX,
+        module_dexes=module_dexes,
     )
 
 
@@ -192,6 +203,59 @@ def testPackAab_writesTheConfigProgramAndKeystoreIntoTheRuntimeLibrary(
     assert runtime_library.read_config(library) == _PACKED_CONFIG.to_json()
     assert len(runtime_library.keystore(library)) == key_schedule.KEY_SIZE
     assert runtime_library.program(library) != bytes(key_schedule.PROGRAM_SIZE)
+    # The AAB pack cannot know the installed entry set, so its program binds the module's dex
+    # content and the splits' emptiness instead of the entry digest and the installed set.
+    program = key_schedule.decode_program(runtime_library.program(library))
+    assert program is not None
+    kinds = [record.kind for record in program.chain_s]
+    assert key_schedule.KIND_DEXES in kinds
+    assert key_schedule.KIND_DEXLESS_SPLITS in kinds
+    assert key_schedule.KIND_APK not in kinds
+    assert key_schedule.KIND_SPLITS not in kinds
+
+
+def testPackAab_whenAClassDexIsEdited_theRootNoLongerRecovers(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The store preserves the base module's dex content, so the packer can bind it: a repackaged
+    base whose framework dex was edited derives a different key and nothing decrypts."""
+    output = _pack_aab(tmp_path)
+    with zipfile.ZipFile(output) as zf:
+        library = zf.read(_LIBRARY_ENTRY)
+        module_dexes = {
+            "classes.dex": _FRAMEWORK[0],
+            "classes2.dex": _FRAMEWORK[1],
+            "classes3.dex": _PATCHED_STUB_DEX,
+        }
+        root = _recover_root_with(zf, library, module_dexes)
+        assert root is not None
+    # A repack that edits a framework dex: the dex record sees different content.
+    with zipfile.ZipFile(output) as zf:
+        patched = dict(module_dexes)
+        patched["classes.dex"] = b"patched framework dex"
+        assert _recover_root_with(zf, library, patched) != root
+        # An added dex, the way an injected carrier names one: the record sees it too.
+        added = dict(module_dexes)
+        added["classes4.dex"] = b"injected dex"
+        assert _recover_root_with(zf, library, added) != root
+
+
+def _recover_root_with(
+    archive: zipfile.ZipFile, library: bytes, module_dexes: dict[str, bytes]
+) -> bytes | None:
+    entries = {
+        name.removeprefix("base/"): archive.read(name)
+        for name in archive.namelist()
+        if name.startswith("base/assets/")
+    }
+    return schedule_recovery.recover_root(
+        library,
+        entries,
+        key_schedule.CLEAN_GATES,
+        _PACKAGE.encode(),
+        _PATCHED_STUB_DEX,
+        module_dexes=module_dexes,
+    )
 
 
 def testPackAab_writesEncryptedMapThatNamesEveryBusinessClass(

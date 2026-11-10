@@ -20,6 +20,7 @@ def recover_root(
     package: bytes,
     stub_dex: bytes,
     apk_entries: dict[str, tuple[bytes, int, int]] | None = None,
+    module_dexes: dict[str, bytes] | None = None,
 ) -> bytes | None:
     """Recovers the root key of a packed library from the library and its APK's stored entries.
 
@@ -34,13 +35,16 @@ def recover_root(
             input, the way the runtime reads it from its APK's install path.
         stub_dex: The stub dex's bytes, which the fold program folds in as the stub record's input,
             the way the runtime reads the highest-numbered `classesN.dex` entry.
+        module_dexes: The base module's class dexes by entry name, for an AAB pack's dex record.
 
     Returns:
         The root key. Nothing when the library's fold program or any input it names cannot be read,
         which the runtime serves as no business class, exactly as for a corrupt APK.
     """
     try:
-        return _recover(library, entries, gates, package, stub_dex, apk_entries)
+        return _recover(
+            library, entries, gates, package, stub_dex, apk_entries, module_dexes
+        )
     except KeyError, IndexError, ValueError:
         return None
 
@@ -52,6 +56,7 @@ def _recover(
     package: bytes,
     stub_dex: bytes,
     apk_entries: dict[str, tuple[bytes, int, int]] | None = None,
+    module_dexes: dict[str, bytes] | None = None,
 ) -> bytes:
     """Recovers the root key, raising on any input that cannot be gathered."""
     program = key_schedule.decode_program(runtime_library.program(library))
@@ -100,6 +105,12 @@ def _recover(
         if record.kind == key_schedule.KIND_SPLITS:
             # The pack ships alone; the fixtures model a clean install, whose set beside the base is empty.
             return key_schedule.splits_digest()
+        if record.kind == key_schedule.KIND_DEXES:
+            # The fixtures model the store's install: the base module's dexes as the packer wrote them.
+            return key_schedule.dex_digest(module_dexes or {})
+        if record.kind == key_schedule.KIND_DEXLESS_SPLITS:
+            # The fixtures model a clean store install: no APK beside the base holds a class dex.
+            return key_schedule.dexless_splits()
         return hashlib.sha256(
             entries[key_schedule.decoy_entry_name(record.param)]
         ).digest()

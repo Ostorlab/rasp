@@ -506,10 +506,48 @@ def testBuildProgram_whenThePackKnowsTheInstalledSet_foldsTheSplitSet() -> None:
         kinds = [record.kind for record in program.chain_s]
         assert key_schedule.KIND_APK in kinds
         assert key_schedule.KIND_SPLITS in kinds
+        assert key_schedule.KIND_DEXES not in kinds
+        assert key_schedule.KIND_DEXLESS_SPLITS not in kinds
     for seed in range(8):
         program = key_schedule.build_program(random.Random(seed))
         assert key_schedule.KIND_APK not in [r.kind for r in program.chain_s]
         assert key_schedule.KIND_SPLITS not in [r.kind for r in program.chain_s]
+        # An AAB the store splits: the module's dex content and the splits' emptiness stand in.
+        assert key_schedule.KIND_DEXES in [r.kind for r in program.chain_s]
+        assert key_schedule.KIND_DEXLESS_SPLITS in [r.kind for r in program.chain_s]
+
+
+def testDexDigest_whenGivenTheModuleDexes_hashesNameAndContent() -> None:
+    alone = key_schedule.dex_digest({"classes.dex": b"dex zero"})
+    beside = key_schedule.dex_digest(
+        {"classes.dex": b"dex zero", "classes2.dex": b"dex one"}
+    )
+    assert beside != alone
+    assert (
+        beside
+        == hashlib.sha256(
+            b"classes.dex\x00"
+            + hashlib.sha256(b"dex zero").digest()
+            + b"classes2.dex\x00"
+            + hashlib.sha256(b"dex one").digest()
+        ).digest()
+    )
+
+
+def testDexDigest_whenADexIsEdited_changes() -> None:
+    clean = key_schedule.dex_digest({"classes.dex": b"dex zero"})
+    edited = key_schedule.dex_digest({"classes.dex": b"dex one "})
+    added = key_schedule.dex_digest(
+        {"classes.dex": b"dex zero", "classes2.dex": b"anything"}
+    )
+    assert clean != edited
+    assert clean != added
+
+
+def testDexlessSplits_isTheCleanFact() -> None:
+    assert key_schedule.dexless_splits() == bytes((1,)) + bytes(
+        key_schedule.KEY_SIZE - 1
+    )
 
 
 def testSensorBlock_whenCleanProcess_isTheCleanSensors() -> None:

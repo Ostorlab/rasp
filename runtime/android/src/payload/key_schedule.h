@@ -121,6 +121,15 @@ enum class RecordKind : std::uint8_t {
   /// split beside the base derives a different key and nothing decrypts. Absent when the pack cannot know the
   /// installed set: an AAB the store splits.
   kSplits = 11,
+  /// The digest over the base APK's class dexes — each entry's name and content — chain S, drawn for an AAB pack
+  /// whose installed entry set the store's split generation makes unknowable. The store preserves the base
+  /// module's dex names and content, so the packer predicts this digest from what it wrote: an edit, addition or
+  /// removal of any class dex changes the fold and nothing decrypts.
+  kDexes = 12,
+  /// The observation that no APK installed beside the base holds a class dex, chain S, drawn for an AAB pack.
+  /// The store's config splits — ABI, density, language — never hold code, so the packer folds the clean fact; a
+  /// split that carries a dex flips it, the fold comes out wrong, and nothing decrypts.
+  kDexlessSplits = 13,
 };
 
 /// One step of a fold chain: a source to gather and fold in as the step's salt.

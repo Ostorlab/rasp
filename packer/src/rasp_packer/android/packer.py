@@ -208,6 +208,7 @@ def _pack_apk(
         app_identity.package_name.encode(),
         artifacts.stub_dex,
         apk_stored_entries,
+        None,
     )
     map_frame, program_frame, dex_entries = _encrypt_payload(
         result.business, root, random.SystemRandom(), names.stub_class_dotted
@@ -286,6 +287,9 @@ def _pack_aab(
         digests[entry] = hashlib.sha256(
             runtime_library.text_region(configured)
         ).digest()
+    # The dex record binds the base module's class dexes as the store installs them: the names the
+    # base APK holds, with the content the packer wrote.
+    module_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
         libraries,
         digests,
@@ -293,6 +297,7 @@ def _pack_aab(
         app_identity.package_name.encode(),
         artifacts.stub_dex,
         None,
+        module_dexes,
     )
     map_frame, program_frame, dex_data_entries = _encrypt_payload(
         result.business, root, random.SystemRandom(), names.stub_class_dotted
@@ -363,6 +368,7 @@ def _schedule_libraries(
     package: bytes,
     stub_dex: bytes,
     apk_entries: dict[str, tuple[bytes, int, int]] | None,
+    module_dexes: dict[str, bytes] | None,
 ) -> tuple[bytes, bytes, dict[str, bytes], dict[str, bytes]]:
     """Builds the schedule's fold over the app's runtime libraries.
 
@@ -378,6 +384,9 @@ def _schedule_libraries(
             the highest-numbered classesN.dex entry.
         apk_entries: The APK's stored entries by name, which the fold program folds in as the APK digest,
             or None when the pack can't know the installed entry set (an AAB).
+        module_dexes: The base module's class dexes by entry name, which the fold program folds in as
+            the dex digest when the pack is an AAB; None for an APK pack, whose entry digest already
+            covers them.
 
     Returns:
         The root key, the asset share to ship as the s.bin entry, the finished libraries, by APK
@@ -427,6 +436,7 @@ def _schedule_libraries(
             stub_dex,
             apk_entries,
             frozenset(name.rpartition("/")[2] for name in libraries),
+            module_dexes,
         )
         a_state = key_schedule.run_chain(
             bytes(key_schedule.KEY_SIZE), program.chain_a, gather, "a"
@@ -449,6 +459,7 @@ def _resolver(
     stub_dex: bytes,
     apk_entries: dict[str, tuple[bytes, int, int]] | None,
     library_filenames: frozenset[str],
+    module_dexes: dict[str, bytes] | None,
 ) -> collections.abc.Callable[[key_schedule.FoldRecord], bytes]:
     """Returns the gatherer of one library's fold inputs, the packer's side of the interpreter.
 
@@ -461,6 +472,8 @@ def _resolver(
         stub_dex: The stub dex's bytes, which the runtime reads as the highest-numbered classesN.dex entry.
         apk_entries: The APK's stored entries by name, the ones the runtime will see in its central-directory walk.
         library_filenames: The runtime library's filename, which the APK digest skips.
+        module_dexes: The base module's class dexes by entry name, for an AAB pack's dex record; None
+            for an APK pack, which never draws the record.
 
     Returns:
         A function that returns the 32 bytes each fold record's source holds, the same values the
@@ -498,6 +511,12 @@ def _resolver(
             # The pack ships alone: the installed set beside its base is empty, and the runtime lists the
             # install directory to gather the same digest.
             return key_schedule.splits_digest()
+        if record.kind == key_schedule.KIND_DEXES:
+            # The store preserves the base module's dex content, whichever way it splits the rest.
+            return key_schedule.dex_digest(module_dexes or {})
+        if record.kind == key_schedule.KIND_DEXLESS_SPLITS:
+            # The store's config splits never hold a class dex; a split that does changes the fold.
+            return key_schedule.dexless_splits()
         return hashlib.sha256(
             decoys[key_schedule.decoy_entry_name(record.param)]
         ).digest()

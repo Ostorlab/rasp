@@ -76,6 +76,30 @@ The keystore share compensates per ABI so every ABI recovers the same root: emul
 as emulating the arm64 one. An app that ships both slices hands the analyst the cheaper architecture. Per-ABI
 roots would need per-ABI dex assets, which multiplies the APK's encrypted entries; not proposed.
 
+### W18 — The AAB pack skipped the APK-set bindings **done**
+
+The entry digest and the installed-APK-set record were drawn only for APK packs: the packer cannot
+predict how the store splits an AAB, so `_pack_aab` folded nothing in their place — and AAB is the
+format Play requires, so the mainstream distribution path sat at the pre-entry-binding protection
+level. Demonstrated black-box: an AAB-packed app's framework `classes.dex` was edited to load an
+injected library, the stub left intact, and the app decrypted and ran the injected code
+(`2026-11-10-rasp-path2-fix4-aab-unbound.md`). **Fixed** with two records drawn exactly where the
+APK pair is absent, binding what the store's split generation provably preserves:
+- the dex record: a digest over the base module's class-dex names and content. The store copies
+  base-module dexes uncompressed, whichever way it splits the rest, so the packer predicts this
+  digest from what it wrote. A repack that edits, adds or removes any class dex derives a different
+  key and nothing decrypts — verified on the device.
+- the dexless-splits record: the store's config splits (ABI, density, language) never hold a class
+  dex, so the packer folds that fact; a split that carries code flips it. Verified: a dex-carrying
+  split installed beside a genuine AAB-packed base fails the app at startup.
+
+Also fixed in the same pass, exposed by testing the real split install: the runtime resolved its
+APK from the config split its library maps from, where no stub or assets live — a real store split
+install never decrypted at all. `self_apk_path` now resolves the `base.apk` beside the split, and
+a clean device-split install of the packed AAB runs. The remaining unbound surface for an AAB
+install: the base manifest and resources the store regenerates (a manifest edit alone cannot load
+code once the dexes are bound), and any dynamic-feature modules, which the packer does not yet read.
+
 ### W17 — A host app runs a genuine install inside its own process **done**
 
 The schedule's bindings cover the app's *files*: the base APK's entries, the APKs installed beside it,

@@ -53,4 +53,32 @@ namespace rasp::android::apk {
 /// every unread input does.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_split_digest(const std::string& apk_path);
 
+/// Reads the APKs installed beside the base APK, the base excluded, or nothing when the install directory can't
+/// be read.
+///
+/// @param apk_path The base APK's path, as the runtime resolved it.
+/// @return The sibling APKs' filenames, sorted. Nothing when the directory can't be read.
+[[nodiscard]] std::optional<std::vector<std::string>> list_split_apks(const std::string& apk_path);
+
+/// Reads a digest over the base APK's class dexes — every `classes.dex` / `classesN.dex` entry's name and
+/// uncompressed content, sorted by name, fed into one SHA-256 — the same digest the packer computes over the base
+/// module's dexes it wrote. The store's split generation preserves the base module's dex names and content, so an
+/// AAB pack can predict this digest where it cannot predict the installed entry set: an edit, addition or removal
+/// of any class dex changes the fold and nothing decrypts.
+///
+/// @param apk_path The base APK's path, as the runtime resolved it.
+/// @return The 32-byte digest. Nothing when the file can't be mapped, the archive is malformed, or a class dex is
+/// compressed — a store install ships dexes uncompressed, so a compressed one is not a shape the packer predicted.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_dex_digest(const std::string& apk_path);
+
+/// Reads the observation that no APK installed beside the base holds a class dex: the store's config splits —
+/// ABI, density, language — never hold code, so an AAB pack folds the clean fact. A split that carries a dex
+/// flips the first byte, the fold comes out wrong, and nothing decrypts.
+///
+/// @param apk_path The base APK's path, as the runtime resolved it; its directory is the one the store installs
+/// splits into.
+/// @return The 32-byte block, the fact in the first byte and zeros behind it. Nothing when the install directory
+/// or a sibling APK can't be read, which fails the recovery the way every unread input does.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_split_dex_flag(const std::string& apk_path);
+
 }  // namespace rasp::android::apk

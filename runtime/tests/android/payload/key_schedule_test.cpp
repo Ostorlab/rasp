@@ -8,12 +8,14 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <optional>
 #include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "apk/archive.h"
@@ -618,6 +620,103 @@ TEST(Apk, splitDigest_whenASplitSitsBesideTheBase_hashesItsName) {
 
 TEST(Apk, splitDigest_whenTheDirectoryCannotBeRead_returnsNothing) {
   EXPECT_FALSE(apk::read_split_digest("/no/such/directory/base.apk").has_value());
+}
+
+TEST(Apk, dexDigest_whenGivenTheModuleDexes_hashesNameAndContent) {
+  const TemporaryDirectory directory;
+  const std::vector<StoredEntry> entries{
+      {.name = "classes.dex", .content = std::string("dex zero")},
+      {.name = "classes2.dex", .content = std::string("dex one")},
+      {.name = "resources.arsc", .content = std::string("not a dex")},
+  };
+  ASSERT_TRUE(write_file(directory.path() + "/base.apk", zip_with_stored_entries(entries)));
+
+  const std::optional<std::vector<std::uint8_t>> digest =
+      apk::read_dex_digest(directory.path() + "/base.apk");
+
+  ASSERT_TRUE(digest.has_value());
+  std::vector<std::uint8_t> expected_input;
+  for (const auto& [name, content] : std::vector<std::pair<std::string_view, std::string_view>>{
+           {"classes.dex", "dex zero"},
+           {"classes2.dex", "dex one"},
+       }) {
+    const std::optional<std::array<std::uint8_t, checks::kDigestSize>> content_digest =
+        checks::sha256(std::span<const std::uint8_t>(
+            reinterpret_cast<const std::uint8_t*>(content.data()), content.size()));
+    ASSERT_TRUE(content_digest.has_value());
+    expected_input.insert(expected_input.end(), name.begin(), name.end());
+    expected_input.push_back('\0');
+    expected_input.insert(expected_input.end(), content_digest->begin(), content_digest->end());
+  }
+  const std::optional<std::array<std::uint8_t, checks::kDigestSize>> expected =
+      checks::sha256(expected_input);
+  ASSERT_TRUE(expected.has_value());
+  EXPECT_EQ(*digest, (std::vector<std::uint8_t>(expected->begin(), expected->end())));
+}
+
+TEST(Apk, dexDigest_whenAClassDexIsCompressed_returnsNothing) {
+  const TemporaryDirectory directory;
+  const std::vector<StoredEntry> entries{{.name = "classes.dex", .content = std::string("dex")}};
+  ASSERT_TRUE(write_file(directory.path() + "/base.apk", zip_with_stored_entries(entries)));
+  // A store install ships dexes uncompressed; a compressed one is not a shape the packer predicted.
+  // Patch the central record's method field to deflated: the digest reads the method, not the data.
+  std::ifstream file(directory.path() + "/base.apk", std::ios::binary);
+  std::vector<char> zip((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  file.close();
+  const std::array<char, 4> central{0x50, 0x4b, 0x01, 0x02};
+  const auto it = std::search(zip.begin(), zip.end(), central.begin(), central.end());
+  ASSERT_NE(it, zip.end());
+  zip[static_cast<std::size_t>(it - zip.begin()) + 10] = 0x08;
+  ASSERT_TRUE(write_file(directory.path() + "/base.apk", std::string(zip.begin(), zip.end())));
+
+  EXPECT_FALSE(apk::read_dex_digest(directory.path() + "/base.apk").has_value());
+}
+
+TEST(Apk, dexlessSplits_whenNoSplitSitsBesideTheBase_isClean) {
+  const TemporaryDirectory directory;
+  const std::vector<StoredEntry> entries{{.name = "classes.dex", .content = std::string("dex")}};
+  ASSERT_TRUE(write_file(directory.path() + "/base.apk", zip_with_stored_entries(entries)));
+
+  const std::optional<std::vector<std::uint8_t>> block =
+      apk::read_split_dex_flag(directory.path() + "/base.apk");
+
+  ASSERT_TRUE(block.has_value());
+  EXPECT_EQ((*block)[0], 1U);
+}
+
+TEST(Apk, dexlessSplits_whenDexlessSplitsSitBesideTheBase_staysClean) {
+  // The store's own config splits never hold a class dex; reading them cleanly must keep the fact
+  // set — a walk that treats a read split as a carrying one breaks every store split install.
+  const TemporaryDirectory directory;
+  const std::vector<StoredEntry> base{{.name = "classes.dex", .content = std::string("dex")}};
+  ASSERT_TRUE(write_file(directory.path() + "/base.apk", zip_with_stored_entries(base)));
+  const std::vector<StoredEntry> libs{
+      {.name = "lib/arm64-v8a/libapp.so", .content = std::string("library")}};
+  ASSERT_TRUE(write_file(directory.path() + "/split_config.arm64_v8a.apk", zip_with_stored_entries(libs)));
+  const std::vector<StoredEntry> resources{{.name = "res/x.png", .content = std::string("png")}};
+  ASSERT_TRUE(write_file(directory.path() + "/split_config.en.apk", zip_with_stored_entries(resources)));
+
+  const std::optional<std::vector<std::uint8_t>> block =
+      apk::read_split_dex_flag(directory.path() + "/base.apk");
+
+  ASSERT_TRUE(block.has_value());
+  EXPECT_EQ((*block)[0], 1U);
+}
+
+TEST(Apk, dexlessSplits_whenASplitHoldsAClassDex_flips) {
+  const TemporaryDirectory directory;
+  const std::vector<StoredEntry> base{{.name = "classes.dex", .content = std::string("dex")}};
+  ASSERT_TRUE(write_file(directory.path() + "/base.apk", zip_with_stored_entries(base)));
+  const std::vector<StoredEntry> resources{{.name = "res/x.png", .content = std::string("png")}};
+  ASSERT_TRUE(write_file(directory.path() + "/split_config.xxhdpi.apk", zip_with_stored_entries(resources)));
+  const std::vector<StoredEntry> injected{{.name = "classes.dex", .content = std::string("code")}};
+  ASSERT_TRUE(write_file(directory.path() + "/split_inj.apk", zip_with_stored_entries(injected)));
+
+  const std::optional<std::vector<std::uint8_t>> block =
+      apk::read_split_dex_flag(directory.path() + "/base.apk");
+
+  ASSERT_TRUE(block.has_value());
+  EXPECT_EQ((*block)[0], 0U);
 }
 
 TEST(Fold, chains_whenReordered_changeTheirStates) {
