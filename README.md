@@ -17,6 +17,8 @@ checks the device it runs on and itself while it is in use. No change to the app
 - **Detects:** root and jailbreak, debuggers, Frida and other hooking, emulators, app virtualizers, network
   interception (VPN tunnels and proxies), tampering with the runtime's code, and repackaged copies.
 - **Runs all the time:** the checks run when the app starts, then every 60 seconds.
+- **Events on the Ostorlab platform:** protect apps and see their events in
+  [Mobile ADR](#use-rasp-on-the-ostorlab-platform).
 
 ## How it works
 
@@ -119,6 +121,20 @@ Each check and the signals it reports are described in [`runtime/README.md`](run
 - [`packer/README.md`](packer/README.md): the packer, its options, build ids and checks.
 - [`runtime/README.md`](runtime/README.md): the runtime, each check, building and logs.
 - [`TODO.md`](TODO.md): known work that isn't done yet.
+
+## Use rasp on the Ostorlab platform
+
+Don't want to build the runtime yourself, or want to see what your protected apps find on real devices? Mobile ADR
+on the [Ostorlab platform](https://report.ostorlab.co) protects your apps with rasp and shows their events:
+
+1. Create an account on the [Ostorlab platform](https://report.ostorlab.co) and open **Mobile ADR**.
+2. Upload your APK, AAB or IPA, choose the checks, and download the protected app
+   ([Protect an app](https://docs.ostorlab.co/mobile_adr/protect_an_app.html)).
+3. Sign it and ship it as usual.
+4. See the events in the **Events** tab: each check run on a device, what it found (root files, Frida, a VPN
+   tunnel…), and whether the check could run ([Events](https://docs.ostorlab.co/mobile_adr/events.html)).
+5. Find every protected version of your app, with its checks and RASP release
+   ([Applications and builds](https://docs.ostorlab.co/mobile_adr/applications_and_builds.html)).
 
 ## Contributing
 
