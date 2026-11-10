@@ -24,22 +24,31 @@ class RuntimeConfig:
         checks: The ids of the check groups the protected app runs, sorted.
         checks_mask: The same groups as a mask, one bit per group in the platform's run order, which
             is the form the config carries: the shipped library names no check group.
+        stub_class: The name of the app's component factory class, with ``.`` separators: the stub the
+            packer points the manifest at, whose native entry points the runtime binds. Empty when the
+            platform has no stub (iOS), which leaves the field out of the JSON.
     """
 
     build_id: str
     checks: tuple[str, ...]
     checks_mask: int
+    stub_class: str = ""
 
     def to_json(self) -> bytes:
         """Writes the config as the runtime reads it.
 
-        The build id stays readable, for support; the check groups go as their mask.
+        The build id stays readable, for support; the check groups go as their mask; the stub's class
+        name goes along, so the runtime binds its native entry points on the class the manifest names
+        without carrying the class name in its own bytes.
 
         Returns:
-            A JSON object with the build id and the check mask, in UTF-8.
+            A JSON object with the build id, the check mask and the stub class, in UTF-8.
         """
+        fields: dict[str, object] = {"build_id": self.build_id, "m": self.checks_mask}
+        if self.stub_class:
+            fields["s"] = self.stub_class
         return json.dumps(
-            {"build_id": self.build_id, "m": self.checks_mask},
+            fields,
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")

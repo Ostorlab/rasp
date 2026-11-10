@@ -148,7 +148,8 @@ add_executable(rasp_android_dex_store_test android/payload/dex_store_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/apk/location.cpp)
 target_include_directories(rasp_android_dex_store_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_dex_store_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
@@ -171,7 +172,8 @@ add_executable(rasp_android_key_schedule_test android/payload/key_schedule_test.
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/apk/location.cpp)
 target_include_directories(rasp_android_key_schedule_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_key_schedule_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language

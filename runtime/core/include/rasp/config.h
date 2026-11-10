@@ -26,6 +26,10 @@ struct Config {
   /// creates on the first launch and keeps in the app's own storage (`install_id.h`). `std::nullopt` when the runtime
   /// can't read or keep it. The packer does not write it.
   std::optional<std::string> install_id = std::nullopt;
+  /// The name of the app's component factory class, with `.` separators: the stub the packer points the manifest at,
+  /// whose native entry points the runtime binds. The packer renames the class per app, so it arrives with the config.
+  /// `std::nullopt` when the config carries none.
+  std::optional<std::string> stub_class = std::nullopt;
 };
 
 /// Whether the protected app runs a check group.

@@ -56,12 +56,19 @@ has no inflater to read compressed entries.
 **Remaining**: fold a digest of the app's clear dexes and manifest. Needs a stored-entry (uncompressed) path or an
 inflater in the runtime; larger than a quick win.
 
-### W7 — Fixed vendor markers in the shipped APK **open**
+### W7 — Fixed vendor markers in the shipped APK **done (surface), open (assets)**
 
 `appComponentFactory="co.ostorlab.rasp.RaspStub"` in the manifest, `assets/rasp/*` entry names, `assets/business/`
-prefix, `co/ostorlab/rasp/*` classes in the stub dex. Any packed app is fingerprinted as Ostorlab-protected in
-seconds. **Fix**: randomize the entry names per app (record them in the root-sealed map), rename the stub's classes
-per app, or strip the vendor string from the component-factory class name (the packer already renames the soname).
+prefix, `co/ostorlab/rasp/*` classes in the stub dex. Any packed app was fingerprinted as Ostorlab-protected in
+seconds with `aapt` and `strings` alone — and the vendor's source is public, so the fingerprint also hands over the
+full design. **Fixed** (per-app random names, drawn per pack and kept in the table's sorted order): the manifest's
+factory class, the stub dex's classes, its `loadLibrary` argument, the library entry's filename, and the stub dex's
+source filename (stripped at the stub build). The runtime binds the natives on the class the config carries
+(`"s"` in the runtime config), so nothing in the library names the class; the APK digest's own-library exclusion
+follows the library's per-app name on both sides. A seeded generator makes a pack's names reproducible.
+**Still open**: the `assets/rasp/` and `assets/business/` entry names stay fixed (renaming them means plumbing the
+names through the fold's entry-key derivation), and the stub's `install/program/arm` method names are a heuristic
+tell.
 
 ### W8 — The same root key on every ABI **open (design)**
 
@@ -71,11 +78,12 @@ roots would need per-ABI dex assets, which multiplies the APK's encrypted entrie
 
 ## The stub and the Java arm
 
-### W9 — The stub dex is a plain, unobfuscated 4 KB dex **open**
+### W9 — The stub dex is a plain, unobfuscated 4 KB dex **open (reduced)**
 
-`JArm.hkdf`, `observe`, `run`, `info`, and the `install/program/arm` natives decompile in minutes and name the
-vendor. **Fix**: per-app renamed classes, split the info-string assembly, scramble the native method names, or
-move the HKDF chain's shape per app.
+`JArm.hkdf`, `observe`, `run`, `info`, and the `install/program/arm` natives decompile in minutes — but since the
+per-app rename (W7) they no longer name the vendor: the classes, the source file and the library name are random per
+pack, and the debug info is stripped at the stub build. **Remaining**: the method names and the HKDF-chain shape.
+**Fix**: split the info-string assembly, scramble the native method names, or move the HKDF chain's shape per app.
 
 ### W10 — The arm's prediction table is small and public **open (TODO has the deeper fix)**
 
@@ -122,5 +130,8 @@ product. Keep raw artifacts private.
 
 ---
 
-*Audit of the `feature/android-fold-program` branch, 2026-11-09. Quick wins W2/W3/W5/W6 delivered in PR #190; the
-rest ordered by leverage: W11 (sensor guard widening), W1 (IKM), W9 (stub), W13 (enrollment).*
+*Audit of the `feature/android-fold-program` branch, 2026-11-09. Quick wins W2/W3/W5/W6 delivered in PR #190;
+W7's surface (per-app names for the manifest, the classes, the library and the stub's origin) delivered on
+`feature/lifecycle-checks`; the rest ordered by leverage: W7's asset names, W11 (sensor guard widening, delivered),
+W1 (IKM), W9 (stub methods), W13 (enrollment). Renaming the classes also binds them: the armed master folds the
+class name the runtime resolves, so a renamed-by-analyst stub class derives a wrong key and nothing decrypts.*

@@ -56,6 +56,15 @@ def _recover(
     """Recovers the root key, raising on any input that cannot be gathered."""
     program = key_schedule.decode_program(runtime_library.program(library))
     keystore = runtime_library.keystore(library)
+    # The APK digest skips the runtime's own libraries, the way the runtime skips them: it derives
+    # their filename from its own load path. The library this recovery reads is one of them, so the
+    # entries that hold its content give the filename, which covers every ABI the pack shipped under
+    # the same per-app name.
+    library_filenames = frozenset(
+        name.rpartition("/")[2]
+        for name, (data, _method, _size) in (apk_entries or {}).items()
+        if data == library
+    )
 
     def resolve(record: key_schedule.FoldRecord) -> bytes:
         if record.kind == key_schedule.KIND_TEXT:
@@ -87,7 +96,7 @@ def _recover(
         if record.kind == key_schedule.KIND_STUB:
             return hashlib.sha256(stub_dex).digest()
         if record.kind == key_schedule.KIND_APK:
-            return key_schedule.apk_digest(apk_entries or {})
+            return key_schedule.apk_digest(apk_entries or {}, library_filenames)
         return hashlib.sha256(
             entries[key_schedule.decoy_entry_name(record.param)]
         ).digest()

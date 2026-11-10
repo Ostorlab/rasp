@@ -13,7 +13,7 @@ runtime's ``payload/dex_store.*``, ``payload/assets.h``, ``payload/key_schedule.
 - ``assets/rasp/map.bin`` — the class map (see loader_map), encrypted, stored.
 - ``assets/business/<i>.dex`` — one encrypted business dex per file, stored.
 - the framework dexes and the stub, in the clear, as ``classes.dex`` … ``classesN.dex``.
-- ``lib/<abi>/librasp.so`` — the runtime library, one per ABI, with the runtime's config and a
+- ``lib/<abi>/lib<random>.so`` — the runtime library, one per ABI, with the runtime's config and a
   per-ABI keystore share written into its ``.rasp_config`` section (see runtime_library). The
   loader's own dex is already embedded in it at the runtime's build.
 
@@ -22,16 +22,21 @@ No key ships in the app: every frame's key is derived, on the device, from the s
 and environment gates that only a real Android runtime passes (key_schedule for the scheme).
 
 For AAB files, all paths live under ``base/`` (e.g. ``base/assets/rasp/s.bin``,
-``base/dex/classes.dex``, ``base/lib/<abi>/librasp.so``).  The manifest is in protobuf format
+``base/dex/classes.dex``, ``base/lib/<abi>/lib<random>.so``).  The manifest is in protobuf format
 instead of binary AXML, and no zipalign or v1 signature stripping is needed.
 
-It sets the manifest's appComponentFactory to the stub, raises minSdk to the runtime's floor (API 31,
+Every pack draws fresh names for the pieces an attacker could read and recognize (defingerprint): the
+stub dex's classes, the library it loads, and the component factory the manifest names. The manifest's
+``appComponentFactory`` points at the per-app stub class, the APK carries the library under its per-app
+name, and the runtime's config carries the class name, which the runtime reads to bind its native entry
+points on the class the manifest names. The packer raises minSdk to the runtime's floor (API 31,
 which the in-memory loader and ``JNI_GetCreatedJavaVMs`` need), drops the app's original dexes and v1
 signatures (APK only), and returns the protected app unsigned, so the customer signs it. The stub and
 the native runtime are prebuilt artifacts from the runtime build; see resources.
 """
 
 import collections.abc
+import dataclasses
 import hashlib
 import pathlib
 import random
@@ -41,6 +46,7 @@ from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
+from rasp_packer.android import defingerprint
 from rasp_packer.android import injection
 from rasp_packer.android import java_program
 from rasp_packer.android import key_schedule
@@ -65,6 +71,7 @@ ASSET_PREFIX = "assets/"
 
 _AAB_BASE = "base/"
 _AAB_DEX_PREFIX = "base/dex/"
+_AAB_LIB_PREFIX = "base/lib/"
 AAB_SHARE_ENTRY = f"{_AAB_BASE}{SHARE_ENTRY}"
 AAB_MAP_ENTRY = f"{_AAB_BASE}{MAP_ENTRY}"
 AAB_JAVA_PROGRAM_ENTRY = f"{_AAB_BASE}{JAVA_PROGRAM_ENTRY}"
@@ -82,6 +89,7 @@ def pack(
     artifacts: resources_module.Artifacts | None = None,
     splitter: Splitter = split_module.split,
     aab_splitter: AabSplitter = split_module.split_from_dex_entries,
+    generator: random.Random | None = None,
 ) -> identity.AppIdentity:
     """Packs an Android app (APK or AAB), writing the protected output.
 
@@ -92,6 +100,8 @@ def pack(
         artifacts: The prebuilt stub and libraries. Loaded from the package resources when not given.
         splitter: Splits an APK's classes. The default runs the bundled splitter.
         aab_splitter: Splits an AAB's classes from pre-extracted DEX entries.
+        generator: The source of the pack's per-app random names. None draws fresh entropy; a seeded
+            generator makes a pack's names reproducible.
 
     Returns:
         The app's package name and version, read from its manifest.
@@ -104,7 +114,8 @@ def pack(
         InvalidRuntimeError: A runtime library is not an ELF file or has no ``.rasp_config`` section.
         ConfigTooLargeError: The runtime's config does not fit in a runtime library.
         UnsupportedAbiError: The app ships native libraries for an ABI the runtime is not built for.
-        AlreadyProtectedError: The app already holds the map, or its manifest already names the stub.
+        AlreadyProtectedError: The app was already protected: it holds the pack's map entry, or its
+            manifest still names the older vendor-named stub.
         SplitError: The app's classes cannot be read or split.
     """
     if artifacts is None:
@@ -116,6 +127,7 @@ def pack(
             config=config,
             artifacts=artifacts,
             splitter=aab_splitter,
+            generator=generator,
         )
     return _pack_apk(
         app=app,
@@ -123,6 +135,7 @@ def pack(
         config=config,
         artifacts=artifacts,
         splitter=splitter,
+        generator=generator,
     )
 
 
@@ -142,6 +155,7 @@ def _pack_apk(
     config: runtime_config.RuntimeConfig,
     artifacts: resources_module.Artifacts,
     splitter: Splitter,
+    generator: random.Random | None,
 ) -> identity.AppIdentity:
     """Packs an APK."""
     apk = apk_archive.Apk.read(app)
@@ -150,12 +164,21 @@ def _pack_apk(
         raise errors.InvalidApkError(f"APK has no {PRIMARY_DEX} to protect")
     manifest = apk.manifest()
     app_identity = apk_manifest_module.app_identity(manifest)
+    declared_factory = apk_manifest_module.app_component_factory(manifest)
     if (
         MAP_ENTRY in apk.names()
-        or apk_manifest_module.app_component_factory(manifest)
-        == resources_module.STUB_FACTORY_CLASS
+        # An older pack's manifest still names the vendor's stub class; a fresh pack's names are
+        # per-app random, so its protection shows in the map entry above.
+        or declared_factory == resources_module.STUB_FACTORY_CLASS
     ):
         raise errors.AlreadyProtectedError("the app is already protected")
+
+    artifacts, names = defingerprint.fingerprint_free_artifacts(
+        artifacts,
+        generator or random.Random(),
+        _taken_library_filenames(apk.names(), "lib/"),
+    )
+    config = dataclasses.replace(config, stub_class=names.stub_class_dotted)
 
     result = splitter(app, app_identity.package_name)
 
@@ -163,11 +186,13 @@ def _pack_apk(
         apk_manifest_module.clear_debuggable(
             apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL)
         ),
-        resources_module.STUB_FACTORY_CLASS,
+        names.stub_class_dotted,
     )
     libraries: dict[str, bytes] = {}
     digests: dict[str, bytes] = {}
-    for name, library in injection.library_entries(apk, artifacts).items():
+    for name, library in injection.library_entries(
+        apk, artifacts, names.library_filename
+    ).items():
         configured = runtime_library.write_config(library, config)
         libraries[name] = self_encrypt.encrypt_library(configured)
         digests[name] = hashlib.sha256(runtime_library.text_region(configured)).digest()
@@ -185,7 +210,7 @@ def _pack_apk(
         apk_stored_entries,
     )
     map_frame, program_frame, dex_entries = _encrypt_payload(
-        result.business, root, random.SystemRandom()
+        result.business, root, random.SystemRandom(), names.stub_class_dotted
     )
     apk.write(
         output,
@@ -212,6 +237,7 @@ def _pack_aab(
     config: runtime_config.RuntimeConfig,
     artifacts: resources_module.Artifacts,
     splitter: AabSplitter,
+    generator: random.Random | None,
 ) -> identity.AppIdentity:
     """Packs an AAB."""
     aab = aab_archive.Aab.read(app)
@@ -221,12 +247,21 @@ def _pack_aab(
         raise errors.InvalidAabError(f"AAB has no {aab_primary_dex} to protect")
     manifest = aab.manifest()
     app_identity = aab_manifest_module.app_identity(manifest)
+    declared_factory = aab_manifest_module.app_component_factory(manifest)
     if (
         AAB_MAP_ENTRY in aab.names()
-        or aab_manifest_module.app_component_factory(manifest)
-        == resources_module.STUB_FACTORY_CLASS
+        # An older pack's manifest still names the vendor's stub class; a fresh pack's names are
+        # per-app random, so its protection shows in the map entry above.
+        or declared_factory == resources_module.STUB_FACTORY_CLASS
     ):
         raise errors.AlreadyProtectedError("the app is already protected")
+
+    artifacts, names = defingerprint.fingerprint_free_artifacts(
+        artifacts,
+        generator or random.Random(),
+        _taken_library_filenames(aab.names(), _AAB_LIB_PREFIX),
+    )
+    config = dataclasses.replace(config, stub_class=names.stub_class_dotted)
 
     dex_entries: dict[str, bytes] = {}
     for name in dex_names:
@@ -239,14 +274,14 @@ def _pack_aab(
         aab_manifest_module.clear_debuggable(
             aab_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL)
         ),
-        resources_module.STUB_FACTORY_CLASS,
+        names.stub_class_dotted,
     )
     abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
     libraries: dict[str, bytes] = {}
     digests: dict[str, bytes] = {}
     for abi in sorted(abis):
         configured = runtime_library.write_config(artifacts.libraries[abi], config)
-        entry = f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}"
+        entry = f"{_AAB_LIB_PREFIX}{abi}/{names.library_filename}"
         libraries[entry] = self_encrypt.encrypt_library(configured)
         digests[entry] = hashlib.sha256(
             runtime_library.text_region(configured)
@@ -260,7 +295,7 @@ def _pack_aab(
         None,
     )
     map_frame, program_frame, dex_data_entries = _encrypt_payload(
-        result.business, root, random.SystemRandom()
+        result.business, root, random.SystemRandom(), names.stub_class_dotted
     )
     base_dexes = {
         f"{_AAB_DEX_PREFIX}{name}": data
@@ -384,7 +419,14 @@ def _schedule_libraries(
             digests[name],
         )
         gather = _resolver(
-            with_digest, program, share_asset, decoys, package, stub_dex, apk_entries
+            with_digest,
+            program,
+            share_asset,
+            decoys,
+            package,
+            stub_dex,
+            apk_entries,
+            frozenset(name.rpartition("/")[2] for name in libraries),
         )
         a_state = key_schedule.run_chain(
             bytes(key_schedule.KEY_SIZE), program.chain_a, gather, "a"
@@ -406,6 +448,7 @@ def _resolver(
     package: bytes,
     stub_dex: bytes,
     apk_entries: dict[str, tuple[bytes, int, int]] | None,
+    library_filenames: frozenset[str],
 ) -> collections.abc.Callable[[key_schedule.FoldRecord], bytes]:
     """Returns the gatherer of one library's fold inputs, the packer's side of the interpreter.
 
@@ -417,6 +460,7 @@ def _resolver(
         package: The app's package name, which the runtime reads from its APK's install path.
         stub_dex: The stub dex's bytes, which the runtime reads as the highest-numbered classesN.dex entry.
         apk_entries: The APK's stored entries by name, the ones the runtime will see in its central-directory walk.
+        library_filenames: The runtime library's filename, which the APK digest skips.
 
     Returns:
         A function that returns the 32 bytes each fold record's source holds, the same values the
@@ -449,7 +493,7 @@ def _resolver(
         if record.kind == key_schedule.KIND_STUB:
             return hashlib.sha256(stub_dex).digest()
         if record.kind == key_schedule.KIND_APK:
-            return key_schedule.apk_digest(apk_entries or {})
+            return key_schedule.apk_digest(apk_entries or {}, library_filenames)
         return hashlib.sha256(
             decoys[key_schedule.decoy_entry_name(record.param)]
         ).digest()
@@ -461,6 +505,7 @@ def _encrypt_payload(
     business: tuple[split_module.BusinessDex, ...],
     root: bytes,
     generator: random.Random,
+    stub_class: str,
 ) -> tuple[bytes, bytes, dict[str, bytes]]:
     """Encrypts the class map, the Java program, and the business dexes under the schedule.
 
@@ -473,6 +518,8 @@ def _encrypt_payload(
         business: The business dexes the splitter produced.
         root: The schedule's root key.
         generator: The source of randomness for this app's Java program.
+        stub_class: The name of the app's stub class, which the program may resolve through the base
+            class loader the way the runtime resolves it.
 
     Returns:
         The map frame, the Java program frame, and the encrypted business dexes by APK entry name.
@@ -483,7 +530,7 @@ def _encrypt_payload(
         map_key, map_nonce, loader_map.build(business).encode("utf-8")
     )
 
-    program = java_program.build_program(generator)
+    program = java_program.build_program(generator, stub_class)
     program_nonce = cipher.new_nonce()
     program_key = key_schedule.frame_key(root, program_nonce, JAVA_PROGRAM_ENTRY)
     program_frame = cipher.encrypt(
@@ -517,3 +564,23 @@ def _aab_native_abis(aab: aab_archive.Aab) -> set[str]:
         ):
             abis.add(parts[2])
     return abis
+
+
+def _taken_library_filenames(
+    names: collections.abc.Iterable[str], prefix: str
+) -> frozenset[str]:
+    """Returns the filenames already in use under the app's library directory.
+
+    The per-app library name the packer draws must not collide with one of the app's own libraries,
+    or the pack would overwrite it.
+
+    Args:
+        names: The app's entry names.
+        prefix: The library directory's prefix, ``lib/`` for an APK and ``base/lib/`` for an AAB.
+
+    Returns:
+        The filenames of the entries under the directory.
+    """
+    return frozenset(
+        name.rpartition("/")[2] for name in names if name.startswith(prefix)
+    )

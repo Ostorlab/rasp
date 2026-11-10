@@ -8,6 +8,7 @@
 /// `GeneratingClassLoader.findClass` on the class it just loaded. So neither native method is a `Java_...` symbol, and
 /// the library's symbols can be stripped or renamed.
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -36,6 +37,8 @@
 #include "payload/cipher.h"
 #include "payload/dex_store.h"
 #include "payload/key_schedule.h"
+#include "rasp/config.h"
+#include "rasp/embedded_config.h"
 #include "rasp/heartbeat.h"
 #include "rasp/observation.h"
 #include "rasp/panic.h"
@@ -605,8 +608,13 @@ void arm(JNIEnv* env, jclass /*stub*/, jbyteArray share) {
 
 }  // namespace rasp::android::loader
 
-/// Binds RaspStub.install with RegisterNatives when the library loads, so the loader's native entry point is not an
-/// exported `Java_...` symbol. JNI_OnLoad is the only symbol the VM resolves by name.
+/// Binds the stub's native entry points with RegisterNatives when the library loads, so the loader's native entry
+/// point is not an exported `Java_...` symbol. JNI_OnLoad is the only symbol the VM resolves by name.
+///
+/// The stub class the packer points the app's manifest at is named per app, so its name arrives with the runtime's
+/// config: the class is looked up under the name the config carries, and the library holds none. A config without a
+/// class name, or one that fails to resolve, leaves the entry points unbound, the library reports JNI_ERR, and the
+/// load fails the way a load of a runtime whose app was never packed for fails.
 ///
 /// @param vm The Java virtual machine loading the library.
 /// @return The JNI version the library needs, or JNI_ERR when the method can't be bound.
@@ -616,7 +624,13 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     return JNI_ERR;
   }
   auto* env = static_cast<JNIEnv*>(raw_env);
-  jclass stub = env->FindClass("co/ostorlab/rasp/RaspStub");
+  const rasp::Config config = rasp::read_embedded_config();
+  if (!config.stub_class.has_value() || config.stub_class->empty()) {
+    return JNI_ERR;
+  }
+  std::string class_name = *config.stub_class;
+  std::ranges::replace(class_name, '.', '/');
+  jclass stub = env->FindClass(class_name.c_str());
   if (stub == nullptr) {
     env->ExceptionClear();
     return JNI_ERR;

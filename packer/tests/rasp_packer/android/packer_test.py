@@ -1,8 +1,10 @@
 """End-to-end tests of the Android packer, with a recorded split."""
 
 import collections.abc
+import dataclasses
 import io
 import pathlib
+import random
 import zipfile
 
 import lief
@@ -11,6 +13,7 @@ import pytest
 from rasp_packer import errors
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
+from rasp_packer.android import defingerprint
 from rasp_packer.android import java_program
 from rasp_packer.android import key_schedule
 from rasp_packer.android import packer
@@ -27,7 +30,20 @@ _PACKAGE = "com.example.withapp"
 _CONFIG = runtime_config.RuntimeConfig(
     build_id="rasp-build/v1:" + "ab" * 32, checks=("identity",), checks_mask=32
 )
-_STUB_DEX = b"stub dex bytes"
+# The real prebuilt stub dex: the packer patches it with per-app names, so the tests predict the
+# patch with the same seeded generator the packs below draw.
+_STUB_DEX = resources.load().stub_dex
+_NAMES = defingerprint.generate_names(random.Random(0), frozenset(), _STUB_DEX)
+_PATCHED_STUB_DEX = defingerprint.patch_stub_dex(
+    _STUB_DEX,
+    library_name=_NAMES.library_name,
+    stub_class=_NAMES.stub_class,
+    arm_class=_NAMES.arm_class,
+    source_file=_NAMES.source_file,
+)
+# The config the packer writes: the same as _CONFIG with the pack's stub class name.
+_PACKED_CONFIG = dataclasses.replace(_CONFIG, stub_class=_NAMES.stub_class_dotted)
+_LIBRARY_ENTRY = f"lib/arm64-v8a/{_NAMES.library_filename}"
 _ARM64_SO = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _ARSC = b"resources table"
 
@@ -106,13 +122,15 @@ def _pack(
         config=_CONFIG,
         artifacts=artifacts or _artifacts(),
         splitter=_recorded_split(),
+        # The seeded generator makes the pack's per-app names the predicted _NAMES.
+        generator=random.Random(0),
     )
     return output
 
 
 def _recover_root(
     archive: zipfile.ZipFile,
-    library_entry: str = "lib/arm64-v8a/librasp.so",
+    library_entry: str = _LIBRARY_ENTRY,
     gates: bytes = key_schedule.CLEAN_GATES,
 ) -> bytes | None:
     """Recovers the root key from a packed APK the way the runtime does on the device."""
@@ -133,7 +151,7 @@ def _recover_root(
         for name in archive.namelist()
     }
     return schedule_recovery.recover_root(
-        library, entries, gates, _PACKAGE.encode(), _STUB_DEX, apk_entries
+        library, entries, gates, _PACKAGE.encode(), _PATCHED_STUB_DEX, apk_entries
     )
 
 
@@ -191,6 +209,7 @@ def testPack_whenValidApk_splitsOnTheManifestPackage(tmp_path: pathlib.Path) -> 
         config=_CONFIG,
         artifacts=_artifacts(),
         splitter=_recorded_split(captured),
+        generator=random.Random(0),
     )
     assert captured == [(app, _PACKAGE)]
 
@@ -310,11 +329,7 @@ def testPack_whenTheLibraryCodeIsPatched_theMapNoLongerDecrypts(
         zipfile.ZipFile(repacked, "w") as repacked_archive,
     ):
         for name in archive.namelist():
-            data = (
-                patched_library
-                if name == "lib/arm64-v8a/librasp.so"
-                else archive.read(name)
-            )
+            data = patched_library if name == _LIBRARY_ENTRY else archive.read(name)
             info = archive.getinfo(name)
             repacked_archive.writestr(info, bytes(data))
     with zipfile.ZipFile(repacked) as archive:
@@ -329,7 +344,7 @@ def testPack_whenTheFoldProgramIsPatched_theMapNoLongerDecrypts(
 ) -> None:
     output = _pack(tmp_path)
     with zipfile.ZipFile(output) as archive:
-        library = archive.read("lib/arm64-v8a/librasp.so")
+        library = archive.read(_LIBRARY_ENTRY)
         root = _recover_root(archive)
         assert root is not None
         _decrypt_map(archive, root)
@@ -351,11 +366,7 @@ def testPack_whenTheFoldProgramIsPatched_theMapNoLongerDecrypts(
         zipfile.ZipFile(repacked, "w") as repacked_archive,
     ):
         for name in archive.namelist():
-            data = (
-                patched_library
-                if name == "lib/arm64-v8a/librasp.so"
-                else archive.read(name)
-            )
+            data = patched_library if name == _LIBRARY_ENTRY else archive.read(name)
             info = archive.getinfo(name)
             repacked_archive.writestr(info, bytes(data))
     with zipfile.ZipFile(repacked) as archive:
@@ -448,8 +459,10 @@ def testPack_whenTheAppShipsTwoAbis_bothRecoverTheSameRoot(
         artifacts=artifacts,
     )
     with zipfile.ZipFile(output) as archive:
-        root_arm64 = _recover_root(archive, library_entry="lib/arm64-v8a/librasp.so")
-        root_x86 = _recover_root(archive, library_entry="lib/x86_64/librasp.so")
+        root_arm64 = _recover_root(archive, library_entry=_LIBRARY_ENTRY)
+        root_x86 = _recover_root(
+            archive, library_entry=f"lib/x86_64/{_NAMES.library_filename}"
+        )
 
     assert root_arm64 is not None
     assert root_x86 == root_arm64
@@ -463,8 +476,32 @@ def testPack_whenValidApk_shipsFrameworkAndStubInTheClearAsBaseDexes(
         names = set(archive.namelist())
         assert archive.read("classes.dex") == _FRAMEWORK[0]
         assert archive.read("classes2.dex") == _FRAMEWORK[1]
-        assert archive.read("classes3.dex") == _STUB_DEX
+        assert archive.read("classes3.dex") == _PATCHED_STUB_DEX
     assert "classes4.dex" not in names
+
+
+def testPack_whenValidApk_shipsTheStubUnderThePacksPerAppNames(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The pack draws fresh names per app, and every piece agrees with every other: the manifest's
+    factory class, the stub dex's classes, its loadLibrary argument, the library entry's filename
+    and the runtime's config — and no vendor or product string ships anywhere in the clear."""
+    output = _pack(tmp_path)
+    with zipfile.ZipFile(output) as archive:
+        manifest = archive.read("AndroidManifest.xml")
+        stub = archive.read("classes3.dex")
+        config = runtime_library.read_config(archive.read(_LIBRARY_ENTRY))
+    assert axml.read_app_component_factory(manifest) == _NAMES.stub_class_dotted
+    assert f"L{_NAMES.stub_class};".encode() in stub
+    assert f"L{_NAMES.arm_class};".encode() in stub
+    assert b"\x04" + _NAMES.library_name.encode("utf-8") + b"\x00" in stub
+    assert f'"s":"{_NAMES.stub_class_dotted}"'.encode() in config
+    for banned in (b"ostorlab", b"rasp", b"Rasp"):
+        assert banned not in stub
+        assert banned not in manifest
+        assert banned not in _LIBRARY_ENTRY.encode()
+    # The config holds the caller's build id, so only the vendor's name must be absent from it.
+    assert b"ostorlab" not in config
 
 
 def testPack_whenValidApk_addsTheRuntimeLibraryWithTheConfigProgramAndKeystore(
@@ -472,13 +509,13 @@ def testPack_whenValidApk_addsTheRuntimeLibraryWithTheConfigProgramAndKeystore(
 ) -> None:
     output = _pack(tmp_path)
     with zipfile.ZipFile(output) as archive:
-        library = archive.read("lib/arm64-v8a/librasp.so")
+        library = archive.read(_LIBRARY_ENTRY)
         names = archive.namelist()
 
     # The placed library is self-encrypted — not the plain config-written library — but the fold's
     # config, program and keystore still read back from its untouched `.rasp_config` section.
-    assert library != runtime_library.write_config(_ARM64_SO, _CONFIG)
-    assert runtime_library.read_config(library) == _CONFIG.to_json()
+    assert library != runtime_library.write_config(_ARM64_SO, _PACKED_CONFIG)
+    assert runtime_library.read_config(library) == _PACKED_CONFIG.to_json()
     assert len(runtime_library.keystore(library)) == key_schedule.KEY_SIZE
     assert key_schedule.decode_program(runtime_library.program(library)) is not None
     assert "assets/rasp/config.json" not in names
@@ -497,7 +534,7 @@ def testPack_whenValidApk_setsTheComponentFactoryAndRaisesMinSdk(
     output = _pack(tmp_path)
     with zipfile.ZipFile(output) as archive:
         manifest = archive.read("AndroidManifest.xml")
-    assert axml.read_app_component_factory(manifest) == resources.STUB_FACTORY_CLASS
+    assert axml.read_app_component_factory(manifest) == _NAMES.stub_class_dotted
     assert axml.read_min_sdk_version(manifest) == packer.MINIMUM_API_LEVEL
 
 
@@ -526,7 +563,39 @@ def testPack_whenAppAlreadyHasTheMap_raisesAlreadyProtectedError(
             config=_CONFIG,
             artifacts=_artifacts(),
             splitter=_recorded_split(),
+            generator=random.Random(0),
         )
+
+
+def testPack_whenAppDeclaresItsOwnComponentFactory_packsAndReplacesIt(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An app's own component factory is a normal AndroidX pattern, not a sign of a pack: the pack
+    must accept it and point it at the stub the pack draws."""
+    manifest = axml.set_app_component_factory(
+        (_FIXTURES / _MANIFEST).read_bytes(), "androidx.core.app.CoreComponentFactory"
+    )
+    app = tmp_path / "app.apk"
+    with zipfile.ZipFile(app, "w") as archive:
+        archive.writestr(
+            "AndroidManifest.xml", manifest, compress_type=zipfile.ZIP_STORED
+        )
+        archive.writestr(
+            "classes.dex", b"app primary", compress_type=zipfile.ZIP_DEFLATED
+        )
+        archive.writestr("resources.arsc", _ARSC, compress_type=zipfile.ZIP_STORED)
+    output = tmp_path / "protected.apk"
+    packer.pack(
+        app=app,
+        output=output,
+        config=_CONFIG,
+        artifacts=_artifacts(),
+        splitter=_recorded_split(),
+        generator=random.Random(0),
+    )
+    with zipfile.ZipFile(output) as archive:
+        packed_manifest = archive.read("AndroidManifest.xml")
+    assert axml.read_app_component_factory(packed_manifest) == _NAMES.stub_class_dotted
 
 
 def testPack_whenAppAbiHasNoRuntime_raisesUnsupportedAbiError(
@@ -553,6 +622,7 @@ def testPack_whenNoPrimaryDex_raisesInvalidApkError(tmp_path: pathlib.Path) -> N
             config=_CONFIG,
             artifacts=_artifacts(),
             splitter=_recorded_split(),
+            generator=random.Random(0),
         )
 
 
@@ -565,6 +635,7 @@ def testPack_whenValidApk_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
         config=_CONFIG,
         artifacts=_artifacts(),
         splitter=_recorded_split(),
+        generator=random.Random(0),
     )
     assert app_identity.package_name == _PACKAGE
     assert app_identity.version == "2.4.1"

@@ -19,6 +19,8 @@
 #include <utility>
 #include <vector>
 
+#include "apk/location.h"
+
 namespace rasp::android::apk {
 
 namespace {
@@ -174,11 +176,38 @@ struct LocalEntry {
 }
 
 /// Whether the entry name `name` is one the APK digest covers: not under `META-INF/` (the signing step adds those),
-/// not under `assets/rasp/` or `assets/business/` (the fold's own outputs), and not the runtime library itself
-/// (chain A already covers its bytes).
-[[nodiscard]] bool is_digest_entry(std::string_view name) {
+/// not under `assets/rasp/` or `assets/business/` (the fold's own outputs), and not the runtime's own libraries, named
+/// by their filename — one name covers every ABI the pack ships (chain A already covers their bytes, and the packer
+/// gathers its digest before it writes the fold's outputs into them). The runtime derives its own library's filename
+/// from its load path; the legacy `librasp.so` name of older packs covers a runtime that cannot read its path.
+///
+/// @param name The entry name.
+/// @param own_library The runtime library's filename, with its directory separator, or the legacy name.
+/// @return Whether the digest covers the entry.
+[[nodiscard]] bool is_digest_entry(std::string_view name, std::string_view own_library) {
   return !name.starts_with("META-INF/") && !name.starts_with("assets/rasp/") && !name.starts_with("assets/business/") &&
-         !name.ends_with("librasp.so");
+         !name.ends_with(own_library);
+}
+
+/// The entry-name suffix of this runtime's own library, as the digest's exclusion matches it.
+///
+/// The pack names the library per app, so the exclusion cannot name it: the runtime derives its own filename from
+/// its load path, the way it derives its APK path, and excludes every ABI's copy of it — the pack ships one name for
+/// every ABI. A load path that names no shared object (the host tests run the recovery from the test binary) or
+/// cannot be read falls back to the legacy filename of older packs.
+///
+/// @return The suffix, a slash and the library's filename.
+[[nodiscard]] std::string own_library_suffix() {
+  constexpr std::string_view kLegacyLibrary = "/librasp.so";
+  const std::optional<std::string> path = self_library_path();
+  if (!path.has_value() || !path->ends_with(".so")) {
+    return std::string(kLegacyLibrary);
+  }
+  const std::size_t separator = path->find_last_of('/');
+  if (separator == std::string::npos) {
+    return std::string(kLegacyLibrary);
+  }
+  return path->substr(separator);
 }
 
 /// Computes the digest over the APK's qualifying entries — every entry, stored or deflated — the core of
@@ -188,8 +217,10 @@ struct LocalEntry {
 /// recompressed or whose content changed produces a different CRC-32 or size, and the digest changes.
 ///
 /// @param file The APK's whole file bytes, memory-mapped.
+/// @param own_library The runtime library's filename, with its directory separator, or the legacy name.
 /// @return The 32-byte digest. Nothing when the archive is malformed or the hash fails.
-[[nodiscard]] std::optional<std::vector<std::uint8_t>> find_apk_digest(std::span<const std::uint8_t> file) {
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> find_apk_digest(std::span<const std::uint8_t> file,
+                                                                       std::string_view own_library) {
   const std::optional<std::span<const std::uint8_t>> record = find_end_record(file);
   if (!record.has_value()) {
     return std::nullopt;
@@ -220,7 +251,7 @@ struct LocalEntry {
       return std::nullopt;
     }
     const std::string_view name(reinterpret_cast<const char*>(rest.data()) + kCentralEntrySize, name_length);
-    if (is_digest_entry(name)) {
+    if (is_digest_entry(name, own_library)) {
       // The entry's metadata contribution: method, CRC-32, compressed size, uncompressed size — little-endian.
       std::vector<std::uint8_t> blob;
       blob.reserve(name.size() + 16 + (method == kStored ? stored_size : 0));
@@ -400,7 +431,7 @@ std::optional<std::vector<std::uint8_t>> read_apk_digest(const std::string& apk_
     return std::nullopt;
   }
   const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
-  const std::optional<std::vector<std::uint8_t>> result = find_apk_digest(file);
+  const std::optional<std::vector<std::uint8_t>> result = find_apk_digest(file, own_library_suffix());
   munmap(mapping, size);
   return result;
 }

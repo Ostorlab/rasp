@@ -26,6 +26,18 @@ namespace {
   return {yyjson_get_str(value), yyjson_get_len(value)};
 }
 
+/// Reads a JSON string an optional field carries.
+///
+/// @param value The value, or null.
+/// @return The string. Nothing when `value` is null or is not a string, which leaves the field at
+/// its default, the way a config the packer wrote without the field reads.
+[[nodiscard]] std::optional<std::string> read_optional_text(const yyjson_val* value) {
+  if (!yyjson_is_str(value)) {
+    return std::nullopt;
+  }
+  return read_text(value);
+}
+
 /// Reads a JSON array of strings.
 ///
 /// @param value The value, or null.
@@ -68,6 +80,7 @@ Config parse_config(std::string_view json) {
       .build_id = read_text(yyjson_obj_get(root, "build_id")),
       .checks = read_texts(yyjson_obj_get(root, "checks")),
       .checks_mask = read_mask(yyjson_obj_get(root, "m")),
+      .stub_class = read_optional_text(yyjson_obj_get(root, "s")),
   };
   yyjson_doc_free(document);
   return config;

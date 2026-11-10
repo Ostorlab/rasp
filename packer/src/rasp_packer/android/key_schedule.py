@@ -73,9 +73,10 @@ KIND_PACKAGE = 8
 KIND_STUB = 9
 KIND_APK = 10
 
-# The prefixes of APK entries the fold's APK digest excludes: the signing step's own entries, the fold's own
-# outputs, and the runtime library itself (chain A already covers its bytes).
+# The prefixes of APK entries the fold's APK digest excludes: the signing step's own entries and the fold's own
+# outputs.
 _APK_DIGEST_EXCLUDED_PREFIXES = ("META-INF/", "assets/rasp/", "assets/business/")
+# The filename of the runtime library of older packs; newer packs name theirs per app and pass the name.
 _APK_DIGEST_EXCLUDED_SUFFIX = "librasp.so"
 
 # The gate block of a clean device at recovery: a JNI environment, no tracer, the library under
@@ -119,7 +120,10 @@ def _digest(data: bytes) -> bytes:
     return hashlib.sha256(data).digest()
 
 
-def apk_digest(entries: dict[str, tuple[bytes, int, int]]) -> bytes:
+def apk_digest(
+    entries: dict[str, tuple[bytes, int, int]],
+    library_filenames: frozenset[str] = frozenset(),
+) -> bytes:
     """Computes the digest over the APK's entries, the way the runtime does at recovery.
 
     The runtime walks the APK's central directory and feeds each qualifying entry's name, compression
@@ -127,20 +131,26 @@ def apk_digest(entries: dict[str, tuple[bytes, int, int]]) -> bytes:
     SHA-256, sorted by name. Deflated entries contribute their metadata: an entry added, removed,
     recompressed or whose content changed produces a different CRC-32 or size, and the digest changes.
     Both sides skip `META-INF/` (the signing step adds those), `assets/rasp/` and `assets/business/`
-    (the fold's own outputs), and `lib/*/librasp.so` (chain A already covers its bytes).
+    (the fold's own outputs), and the runtime's own libraries (chain A already covers their bytes, and
+    the packer gathers its digest before it writes the fold's outputs into them). The libraries are
+    named by filename: one per-app name covers every ABI, the way the runtime derives its own name from
+    its load path, and the legacy `librasp.so` name of older packs stays excluded.
 
     Args:
         entries: The APK's entries by name, each a (data, method, compressed_size) triple: the
             uncompressed bytes, the ZIP compression method (0 for stored, 8 for deflated), and the
             size of the compressed bytes in the APK.
+        library_filenames: The runtime library's filename under `lib/<abi>/`, which the digest skips.
 
     Returns:
         The 32-byte digest.
     """
     digest = hashlib.sha256()
     for name in sorted(entries):
-        if name.startswith(_APK_DIGEST_EXCLUDED_PREFIXES) or name.endswith(
-            _APK_DIGEST_EXCLUDED_SUFFIX
+        if (
+            name.startswith(_APK_DIGEST_EXCLUDED_PREFIXES)
+            or name.endswith(_APK_DIGEST_EXCLUDED_SUFFIX)
+            or name.rpartition("/")[2] in library_filenames
         ):
             continue
         data, method, _compressed_size = entries[name]
@@ -198,7 +208,7 @@ def gate_block(
         no_tracer: ``TracerPid`` in ``/proc/self/status`` is 0.
         installed_under_data: The library is loaded from a path under ``/data``.
         counter_frequency_plausible: The system counter frequency is in the range a real mobile SoC
-            reports, 1–100 MHz. QEMU and unicorn default to 1 GHz or 0.
+            reports, 1-100 MHz. QEMU and unicorn default to 1 GHz or 0.
         cpu_identity_plausible: The CPU identity register is non-zero, as a real CPU always reports.
 
     Returns:

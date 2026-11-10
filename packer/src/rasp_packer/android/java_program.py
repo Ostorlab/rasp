@@ -109,16 +109,19 @@ class Program:
         return f"Program(steps={self.steps!r})"
 
 
-def build_program(generator: random.Random) -> Program:
+def build_program(generator: random.Random, stub_class: str = STUB_CLASS) -> Program:
     """Invents a fresh program: which classes to resolve, and how deep to walk, in which order.
 
     Args:
         generator: The source of randomness, seeded by the caller.
+        stub_class: The name of the app's stub class, which the program may resolve the way the runtime
+            resolves it through the base class loader. The packer predicts every step's observation from
+            the name it passes here, so a pack that renamed the stub must pass the renamed name.
 
     Returns:
         The program.
     """
-    names = [*sorted(CORE_STEPS), STUB_CLASS]
+    names = [*sorted(CORE_STEPS), stub_class]
     steps = [
         Step(
             kind=KIND_SUPERS if generator.randrange(2) == 0 else KIND_RESOLVE,
