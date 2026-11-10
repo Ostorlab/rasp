@@ -301,8 +301,8 @@ constexpr std::string_view kLibraryHex =
     "08090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f0001020304050607"
     "08090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f0001020304050607"
     "08090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f503612269138deae"
-    "576e0d2324914130f6b6cababc654b9a23c3620729ced3aeb5ad7c397454e67c"
-    "011d66e42c227600e9f0790ae0d43d3b9049023215d18ca60000000000000000"
+    "576e0d2324914130f6b6cababc654b9a23c3620729ced3ae6d056b14e85324d9"
+    "558cc5a617fa7637d85a824f564072c7d02cc540caeb40190000000000000000"
     "0000000000000000000000000000000000000000000000000000000000000000"
     "0000000000000000000000000000000000000000000000000000000000000000"
     "0000000000000000000000000000000000000000000000000000000000000000"
@@ -432,6 +432,7 @@ constexpr std::string_view kLibraryHex =
     "920000000300000000000000000000000000000000000000401f000000000000"
     "a400000000000000000000000000000001000000000000000000000000000000"
     "9c0000000300000000000000000000000000000000000000e41f000000000000"
+    "5800000000000000000000000000000001000000000000000000000000000000"
     "5800000000000000000000000000000001000000000000000000000000000000";
 
 /// The vectors' plaintexts, as text.
@@ -703,6 +704,57 @@ TEST(Apk, dexlessSplits_whenDexlessSplitsSitBesideTheBase_staysClean) {
   EXPECT_EQ((*block)[0], 1U);
 }
 
+TEST(Apk, dexlessSplits_whenASplitHoldsALaunchWrapper_flips) {
+  // The launch wrapper is a code-loading hook the platform honours for a debuggable app; a split
+  // carrying one flips the fact even though it holds no class dex.
+  const TemporaryDirectory directory;
+  const std::vector<StoredEntry> base{{.name = "classes.dex", .content = std::string("dex")}};
+  ASSERT_TRUE(write_file(directory.path() + "/base.apk", zip_with_stored_entries(base)));
+  const std::vector<StoredEntry> wrapper{
+      {.name = "lib/arm64-v8a/wrap.sh", .content = std::string("#!/system/bin/sh\n")}};
+  ASSERT_TRUE(write_file(directory.path() + "/split_config.arm64_v8a.apk", zip_with_stored_entries(wrapper)));
+
+  const std::optional<std::vector<std::uint8_t>> block =
+      apk::read_split_dex_flag(directory.path() + "/base.apk");
+
+  ASSERT_TRUE(block.has_value());
+  EXPECT_EQ((*block)[0], 0U);
+}
+
+TEST(Apk, dexlessSplits_whenTheBaseHoldsALaunchWrapper_flips) {
+  // The base's own wrapper flips the fact too; its class dexes are content the packer binds and do
+  // not count.
+  const TemporaryDirectory directory;
+  const std::vector<StoredEntry> base{
+      {.name = "classes.dex", .content = std::string("dex")},
+      {.name = "lib/arm64-v8a/wrap.sh", .content = std::string("#!/system/bin/sh\n")},
+  };
+  ASSERT_TRUE(write_file(directory.path() + "/base.apk", zip_with_stored_entries(base)));
+
+  const std::optional<std::vector<std::uint8_t>> block =
+      apk::read_split_dex_flag(directory.path() + "/base.apk");
+
+  ASSERT_TRUE(block.has_value());
+  EXPECT_EQ((*block)[0], 0U);
+}
+
+TEST(Apk, dexlessSplits_whenTheBaseOnlyHoldsClassDexes_staysClean) {
+  // The base holds the packer's own class dexes; they are bound by the dex record, so only a
+  // wrapper counts against it here.
+  const TemporaryDirectory directory;
+  const std::vector<StoredEntry> base{
+      {.name = "classes.dex", .content = std::string("dex")},
+      {.name = "classes2.dex", .content = std::string("stub")},
+  };
+  ASSERT_TRUE(write_file(directory.path() + "/base.apk", zip_with_stored_entries(base)));
+
+  const std::optional<std::vector<std::uint8_t>> block =
+      apk::read_split_dex_flag(directory.path() + "/base.apk");
+
+  ASSERT_TRUE(block.has_value());
+  EXPECT_EQ((*block)[0], 1U);
+}
+
 TEST(Apk, dexlessSplits_whenASplitHoldsAClassDex_flips) {
   const TemporaryDirectory directory;
   const std::vector<StoredEntry> base{{.name = "classes.dex", .content = std::string("dex")}};
@@ -777,6 +829,7 @@ TEST(KeySchedule, gateBlock_whenTheDeviceIsClean_isOneBytePerFactThenZeros) {
   EXPECT_EQ(block[4], 0U);
   EXPECT_EQ(block[5], 0U);
   EXPECT_EQ(block[6], 0U);
+  EXPECT_EQ(block[7], 0U);
 }
 
 TEST(KeySchedule, sensorBlock_whenTheProcessIsClean_isTheCleanSensors) {

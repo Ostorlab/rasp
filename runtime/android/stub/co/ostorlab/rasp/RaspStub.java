@@ -21,6 +21,10 @@ public final class RaspStub extends AppComponentFactory {
      * Has the runtime install the on-demand loader, arms it with the Java share, and returns the app's base
      * loader.
      *
+     * <p>The install receives the platform's own view of the app, in {@code info.flags}: the schedule refuses to
+     * decrypt when the platform sees the app as debuggable, whatever the manifest bytes say, because the platform
+     * opens its own in-process channels (JDWP, heap dumps, a launch wrapper) on exactly that view.
+     *
      * <p>The install recovers the schedule's root natively and opens the dex store, but the store stays unarmed:
      * the business dexes are sealed under the armed master, which needs the share the app's Java program yields on
      * a real runtime. This method runs that program — resolving its classes through ART — before Android loads any
@@ -34,7 +38,7 @@ public final class RaspStub extends AppComponentFactory {
      */
     @Override
     public ClassLoader instantiateClassLoader(ClassLoader base, ApplicationInfo info) {
-        install(base, info.nativeLibraryDir);
+        install(base, info.nativeLibraryDir, info.flags);
         byte[] steps = program();
         if (steps != null) {
             try {
@@ -53,7 +57,7 @@ public final class RaspStub extends AppComponentFactory {
      * @param base the app's base class loader.
      * @param librarySearchPath where a class the on-demand loader defines looks for the app's native libraries.
      */
-    private static native void install(ClassLoader base, String librarySearchPath);
+    private static native void install(ClassLoader base, String librarySearchPath, int applicationFlags);
 
     /**
      * Returns the app's decrypted Java program, or null when the store never opened or the app shipped none.

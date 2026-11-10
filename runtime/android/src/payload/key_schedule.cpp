@@ -443,6 +443,7 @@ Key gate_block(const Environment& environment) {
   block[4] = environment.cpu_identity_plausible ? 1U : 0U;
   block[5] = environment.owns_package_data ? 1U : 0U;
   block[6] = environment.release_build ? 1U : 0U;
+  block[7] = environment.not_debuggable ? 1U : 0U;
   return block;
 }
 

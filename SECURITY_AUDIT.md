@@ -76,6 +76,34 @@ The keystore share compensates per ABI so every ABI recovers the same root: emul
 as emulating the arm64 one. An app that ships both slices hands the analyst the cheaper architecture. Per-ABI
 roots would need per-ABI dex assets, which multiplies the APK's encrypted entries; not proposed.
 
+### W19 — The AAB base manifest and config-split content are unbound → debuggable + wrap.sh **done**
+
+After W18 bound the AAB base dexes and code-carrying splits, two surfaces stayed unbound on the AAB
+path: the base manifest (the store regenerates its bytes, so the packer cannot bind them) and the
+non-dex files inside a config split. Together they gave the platform's own in-process channel: patch
+the manifest to `android:debuggable="true"` + `android:extractNativeLibs="true"`, plant `wrap.sh` and
+a dumper library in the ABI config split, `install-multiple`, and the launch wrapper preloads the
+dumper into the app's own process while every bound input still matches
+(`2026-11-10-rasp-path2-fix5-aab-manifest-wrapsh-bypass.md`). **Fixed** with two bindings:
+- the **not_debuggable** environment gate: the stub passes the platform's own `ApplicationInfo.flags`
+  into the recovery, and the schedule refuses to decrypt when the platform sees the app as
+  debuggable — the platform opens its channels (JDWP, heap dumps, the launch wrapper) for exactly that
+  view, so the gate binds the decision the platform itself acts on, not the manifest bytes.
+- the **launch-wrapper extension** of the splits record: no APK in the installed set — the base
+  included — may carry a `wrap.sh`; the store never ships one, so a plant flips the fact wherever it
+  sits, debuggable or not.
+
+Verified on the device, end to end: the full reported attack (sorted-position debuggable patch so the
+platform honours it, `run-as` works, wrap.sh runs and preloads a marker library into the app process)
+leaves the app refusing to decrypt; the plant alone (no debuggable) dies on the record; the platform
+ignores wrap.sh without debuggable; and a clean AAB split install of the same pack runs. The APK path
+closes itself: with the packer's manifest untouched, `extractNativeLibs=false` makes the platform
+refuse a planted wrapper outright (observed: `INSTALL_FAILED_INVALID_APK` on the 16 KB-page device),
+and any manifest edit breaks the whole-APK entry digest. Adjacent surfaces mapped and closed by the
+same bindings: `profileable` (no code-loading mechanism), `uses-native-library` (no autoload),
+shadowing the runtime library from a split (chain A binds its bytes), repointing
+`appComponentFactory` at an existing class (no code injection without a new dex).
+
 ### W18 — The AAB pack skipped the APK-set bindings **done**
 
 The entry digest and the installed-APK-set record were drawn only for APK packs: the packer cannot

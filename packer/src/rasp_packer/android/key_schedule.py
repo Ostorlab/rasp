@@ -83,9 +83,10 @@ _APK_DIGEST_EXCLUDED_PREFIXES = ("META-INF/", "assets/rasp/", "assets/business/"
 _APK_DIGEST_EXCLUDED_SUFFIX = "librasp.so"
 
 # The gate block of a clean device at recovery: a JNI environment, no tracer, the library under
-# /data, the process owning its package's data directory, a release build, plausible hardware
-# registers. The packer folds this in; the runtime folds in what it observes.
-CLEAN_GATES = bytes((1, 1, 1, 1, 1, 1, 1)) + bytes(KEY_SIZE - 7)
+# /data, the process owning its package's data directory, a release build, an app the platform does
+# not see as debuggable, plausible hardware registers. The packer folds this in; the runtime folds in
+# what it observes.
+CLEAN_GATES = bytes((1, 1, 1, 1, 1, 1, 1, 1)) + bytes(KEY_SIZE - 8)
 
 # The sensor block of a clean process at decryption: no tracer, and the library's code in memory
 # matching its file. The packer folds this in; the runtime re-observes it on every decryption.
@@ -263,6 +264,7 @@ def gate_block(
     cpu_identity_plausible: bool,
     owns_package_data: bool,
     release_build: bool,
+    not_debuggable: bool,
 ) -> bytes:
     """Returns the gate block of an environment, one input of chain S.
 
@@ -278,6 +280,9 @@ def gate_block(
             process carries the host's uid, which does not own the package's directory.
         release_build: The build is a release build: ``ro.debuggable`` is absent or 0, so the
             platform opens no debugging channel to any app.
+        not_debuggable: The platform does not see the app as debuggable, as the app's own
+            ApplicationInfo reports. The platform opens its in-process channels — JDWP, heap
+            dumps, the native launch wrapper — for exactly that flag.
 
     Returns:
         The block, 32 bytes: one fact per byte at the start, then zeros.
@@ -290,6 +295,7 @@ def gate_block(
     block[4] = 1 if cpu_identity_plausible else 0
     block[5] = 1 if owns_package_data else 0
     block[6] = 1 if release_build else 0
+    block[7] = 1 if not_debuggable else 0
     return bytes(block)
 
 

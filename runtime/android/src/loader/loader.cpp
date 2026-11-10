@@ -141,7 +141,8 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
 /// @param env The JNI environment of the calling thread.
 /// @param library The library's own path, as the dynamic loader reports it, or nothing when it can't be read.
 /// @return The environment the schedule folds into the root key.
-[[nodiscard]] payload::Environment observe_environment(JNIEnv* env, const std::optional<std::string>& library) {
+[[nodiscard]] payload::Environment observe_environment(JNIEnv* env, const std::optional<std::string>& library,
+                                                       bool debuggable) {
   const Observation tracer = checks::observe_tracer_pid("/proc/self/status");
   const std::int64_t* const tracer_pid = std::get_if<std::int64_t>(&tracer.value);
 
@@ -155,8 +156,12 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
   environment.owns_package_data = apk.has_value() && apk::owns_package_data(*apk);
   // A userdebug or eng build runs every app debuggable; a release build is the only one the packer
   // folds as clean.
-  const std::optional<std::string> debuggable = util::read_system_property("ro.debuggable");
-  environment.release_build = !debuggable.has_value() || *debuggable != "1";
+  const std::optional<std::string> debuggable_property = util::read_system_property("ro.debuggable");
+  environment.release_build = !debuggable_property.has_value() || *debuggable_property != "1";
+  // The platform's own view of the app: it opens its in-process channels (JDWP, heap dumps, the
+  // launch wrapper) for exactly this flag, so the schedule refuses to decrypt when it is set,
+  // whatever the manifest bytes say.
+  environment.not_debuggable = !debuggable;
 #if defined(__aarch64__)
   {
     std::uint64_t frequency = 0;
@@ -186,6 +191,7 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
               " cpu=" + std::to_string(environment.cpu_identity_plausible ? 1 : 0) +
               " owns_data=" + std::to_string(environment.owns_package_data ? 1 : 0) +
               " release=" + std::to_string(environment.release_build ? 1 : 0) +
+              " not_debuggable=" + std::to_string(environment.not_debuggable ? 1 : 0) +
               " apk=" + (apk.has_value() ? *apk : std::string("(none)")));
   }
   return environment;
@@ -449,16 +455,17 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
 /// @param env The JNI environment of the calling thread.
 /// @param base The app's base class loader, which holds the framework classes.
 /// @param library_search_path Where a class defined from a business dex looks for the app's native libraries.
+/// @param debuggable Whether the platform sees the app as debuggable, as its own ApplicationInfo reports.
 /// @return A local reference to a new GeneratingClassLoader, whose parent is the boot loader. Null on any failure, with
 /// no Java exception pending.
-[[nodiscard]] jobject make_loader(JNIEnv* env, jobject base, jstring library_search_path) {
+[[nodiscard]] jobject make_loader(JNIEnv* env, jobject base, jstring library_search_path, bool debuggable) {
   State& current = state();
   current.library_search_path = to_string(env, library_search_path);
 
   const std::optional<std::string> apk = rasp::android::apk::self_apk_path();
   const std::optional<std::string> library = rasp::android::apk::self_library_path();
   if (apk.has_value() && library.has_value()) {
-    const payload::Environment environment = observe_environment(env, library);
+    const payload::Environment environment = observe_environment(env, library, debuggable);
     const std::optional<payload::Key> root = payload::recover_root_key(environment, *library, *apk);
     if constexpr (kLoggingEnabled) {
       rasp::log(root.has_value() ? "the root key recovered" : "the root key did not recover");
@@ -569,8 +576,12 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
 /// @param env The JNI environment of the calling thread.
 /// @param base The app's base class loader, which holds the framework classes.
 /// @param library_search_path Where a class defined from a business dex looks for the app's native libraries.
-void install(JNIEnv* env, jclass /*stub*/, jobject base, jstring library_search_path) {
-  jobject generating = make_loader(env, base, library_search_path);
+/// @param application_flags The app's ApplicationInfo flags, carrying the platform's view of the app.
+void install(JNIEnv* env, jclass /*stub*/, jobject base, jstring library_search_path, jint application_flags) {
+  // ApplicationInfo.FLAG_DEBUGGABLE: the platform's own view of the app, the one it acts on when it
+  // opens its in-process channels, so the schedule binds it as an environment fact.
+  const bool debuggable = (static_cast<std::uint32_t>(application_flags) & 0x2U) != 0U;
+  jobject generating = make_loader(env, base, library_search_path, debuggable);
   jclass class_loader = env->FindClass("java/lang/ClassLoader");
   jfieldID parent =
       class_loader != nullptr ? env->GetFieldID(class_loader, "parent", "Ljava/lang/ClassLoader;") : nullptr;
@@ -595,9 +606,8 @@ void install(JNIEnv* env, jclass /*stub*/, jobject base, jstring library_search_
 jbyteArray program(JNIEnv* env, jclass /*stub*/) {
   State& current = state();
   if constexpr (kLoggingEnabled) {
-    rasp::log(current.store.has_value()
-                  ? "the program is " + std::to_string(current.store->j_program.size()) + " bytes"
-                  : "the program is not served: no store");
+    rasp::log(current.store.has_value() ? "the program is " + std::to_string(current.store->j_program.size()) + " bytes"
+                                        : "the program is not served: no store");
   }
   if (!current.store.has_value() || current.store->j_program.empty()) {
     return nullptr;
@@ -626,8 +636,8 @@ void arm(JNIEnv* env, jclass /*stub*/, jbyteArray share) {
   if constexpr (kLoggingEnabled) {
     rasp::log(share == nullptr ? "the store was offered no share"
                                : "the store was offered a share of " +
-                                     std::to_string(static_cast<std::size_t>(env->GetArrayLength(share))) +
-                                     " bytes" + (current.store.has_value() ? "" : " without a store"));
+                                     std::to_string(static_cast<std::size_t>(env->GetArrayLength(share))) + " bytes" +
+                                     (current.store.has_value() ? "" : " without a store"));
   }
   if (!current.store.has_value() || share == nullptr) {
     return;
@@ -677,7 +687,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
       {
           {
               .name = "install",
-              .signature = "(Ljava/lang/ClassLoader;Ljava/lang/String;)V",
+              .signature = "(Ljava/lang/ClassLoader;Ljava/lang/String;I)V",
               // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
               .fnPtr = reinterpret_cast<void*>(&rasp::android::loader::install),
           },

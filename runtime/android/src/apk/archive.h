@@ -71,9 +71,10 @@ namespace rasp::android::apk {
 /// compressed — a store install ships dexes uncompressed, so a compressed one is not a shape the packer predicted.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_dex_digest(const std::string& apk_path);
 
-/// Reads the observation that no APK installed beside the base holds a class dex: the store's config splits —
-/// ABI, density, language — never hold code, so an AAB pack folds the clean fact. A split that carries a dex
-/// flips the first byte, the fold comes out wrong, and nothing decrypts.
+/// Reads the observation that the installed APK set holds no unbound code or code-loading hook: no APK beside the
+/// base holds a class dex (the store's config splits never do), and neither the base nor any split holds the native
+/// launch wrapper the platform honours for a debuggable app. An AAB pack folds the clean fact; a split that carries
+/// code, or any launch wrapper, flips the first byte, the fold comes out wrong, and nothing decrypts.
 ///
 /// @param apk_path The base APK's path, as the runtime resolved it; its directory is the one the store installs
 /// splits into.

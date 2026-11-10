@@ -293,12 +293,15 @@ struct LocalEntry {
   return std::vector<std::uint8_t>(digest->begin(), digest->end());
 }
 
-/// Whether the APK at `path` holds a class dex entry, by a walk of its central directory. The store's config
-/// splits never hold one; a split that does carries code.
+/// Whether the APK at `path` holds an entry the launch of an installed app would execute or load, by a walk of its
+/// central directory: a class dex (the store's config splits never hold one), or the native launch wrapper the
+/// platform honours for a debuggable app (no installed app needs one). `count_dexes` turns the class-dex check off
+/// for the base APK, whose class dexes are content the packer binds.
 ///
 /// @param path The APK to inspect.
-/// @return Whether the APK holds a class dex. Nothing when the file can't be mapped or the archive is malformed.
-[[nodiscard]] std::optional<bool> split_holds_dex(const std::string& path) {
+/// @param count_dexes Whether a class dex counts as a hit; a launch wrapper always does.
+/// @return Whether the APK holds such an entry. Nothing when the file can't be mapped or the archive is malformed.
+[[nodiscard]] std::optional<bool> split_holds_code(const std::string& path, bool count_dexes) {
   // open is a libc variadic function, and its flags come from the included <fcntl.h>.
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
   const int descriptor = open(path.c_str(), O_RDONLY | O_CLOEXEC);
@@ -326,10 +329,10 @@ struct LocalEntry {
   const std::uint16_t count = read_u16(record->subspan(10));
   const std::uint32_t directory_size = read_u32(record->subspan(12));
   const std::uint32_t directory_offset = read_u32(record->subspan(16));
-  bool holds_dex = false;
+  bool holds_code = false;
   if (directory_offset <= file.size() && directory_size <= file.size() - directory_offset) {
     std::span<const std::uint8_t> rest = file.subspan(directory_offset, directory_size);
-    for (std::uint16_t index = 0; index < count && !holds_dex; ++index) {
+    for (std::uint16_t index = 0; index < count && !holds_code; ++index) {
       if (rest.size() < kCentralEntrySize || read_u32(rest) != kCentralSignature) {
         break;
       }
@@ -340,7 +343,7 @@ struct LocalEntry {
         break;
       }
       const std::string_view name(reinterpret_cast<const char*>(rest.data()) + kCentralEntrySize, name_length);
-      holds_dex = is_classes_entry(name);
+      holds_code = (count_dexes && is_classes_entry(name)) || name.ends_with("wrap.sh");
       const std::size_t entry_size = kCentralEntrySize + name_length + extra_length + comment_length;
       if (rest.size() < entry_size) {
         break;
@@ -349,7 +352,7 @@ struct LocalEntry {
     }
   }
   munmap(mapping, size);
-  return holds_dex;
+  return holds_code;
 }
 
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> find_apk_digest(std::span<const std::uint8_t> file,
@@ -647,9 +650,17 @@ std::optional<std::vector<std::uint8_t>> read_split_dex_flag(const std::string& 
     return std::nullopt;
   }
   const std::string directory = apk_path.substr(0, separator + 1);
+  // The base's own wrapper would flip the fact too, the way a split's does: a launch wrapper is a
+  // code-loading hook wherever it sits. The base's class dexes are content the packer binds, so only
+  // the wrapper counts here.
+  const std::optional<bool> base_wrapper = split_holds_code(apk_path, false);
+  if (!base_wrapper.has_value() || *base_wrapper) {
+    block[0] = 0U;
+    return block;
+  }
   for (const std::string& split : *splits) {
     // A split that cannot be read counts as one that carries code: the observation fails closed.
-    if (split_holds_dex(directory + split).value_or(true)) {
+    if (split_holds_code(directory + split, true).value_or(true)) {
       block[0] = 0U;
       break;
     }

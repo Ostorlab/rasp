@@ -43,6 +43,10 @@ struct Environment {
   /// The build is a release build: ro.debuggable is absent or 0, so the platform opens no debugging channel to any
   /// app. A userdebug or eng build runs every app debuggable, so the fact flips and nothing decrypts.
   bool release_build = false;
+  /// The platform does not see the app as debuggable, as the app's own ApplicationInfo reports. The platform opens
+  /// its in-process channels — JDWP, heap dumps, the native launch wrapper — for exactly that flag, so a manifest
+  /// edited to debuggable flips the fact, the fold comes out wrong, and nothing decrypts.
+  bool not_debuggable = false;
 };
 
 /// The environment every clean device has, the one the packer folds into the fold program's gates input.
@@ -54,6 +58,7 @@ inline constexpr Environment kCleanEnvironment{
     .cpu_identity_plausible = true,
     .owns_package_data = true,
     .release_build = true,
+    .not_debuggable = true,
 };
 
 /// The state of the process the sensor guard measures, re-observed on every decryption and folded into the dex keys.
@@ -126,9 +131,11 @@ enum class RecordKind : std::uint8_t {
   /// module's dex names and content, so the packer predicts this digest from what it wrote: an edit, addition or
   /// removal of any class dex changes the fold and nothing decrypts.
   kDexes = 12,
-  /// The observation that no APK installed beside the base holds a class dex, chain S, drawn for an AAB pack.
-  /// The store's config splits — ABI, density, language — never hold code, so the packer folds the clean fact; a
-  /// split that carries a dex flips it, the fold comes out wrong, and nothing decrypts.
+  /// The observation that the installed APK set holds no unbound code or code-loading hook, chain S, drawn for an
+  /// AAB pack: no APK beside the base holds a class dex (the store's config splits — ABI, density, language — never
+  /// do), and neither the base nor a split holds the native launch wrapper the platform honours for a debuggable
+  /// app. The packer folds the clean fact; a split that carries code, or any launch wrapper, flips it, the fold
+  /// comes out wrong, and nothing decrypts.
   kDexlessSplits = 13,
 };
 
