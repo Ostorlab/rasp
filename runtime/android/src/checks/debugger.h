@@ -1,4 +1,4 @@
-/// The Android debugger checks: whether a native debugger is attached to the app's process.
+/// The Android debugger checks: whether a native or a Java debugger is attached to the app's process.
 
 #pragma once
 
@@ -14,7 +14,8 @@ namespace rasp::android::checks {
 /// On Android, the emulator included, it runs every probe. Anywhere else, such as on a Linux host, every observation
 /// is unsupported instead, so the server still sees that the check ran.
 ///
-/// @return One observation per signal and source, in this order: dbg.tracer_pid through proc_status.
+/// @return One observation per signal and source, in this order: dbg.tracer_pid through proc_status, then
+/// dbg.java_debugger through jdwp_threads.
 [[nodiscard]] std::vector<Observation> debugger();
 
 /// Reports the process id of the debugger attached to the app, from the status file at `status_path`.
@@ -28,5 +29,20 @@ namespace rasp::android::checks {
 /// attached. It has an error status when the file can't be read, is larger than 64 KiB, has no `TracerPid:` line,
 /// or the line doesn't hold a process id.
 [[nodiscard]] Observation observe_tracer_pid(std::string_view status_path);
+
+/// Reports the names of the app's threads that belong to JDWP, the connection of a Java debugger, from the thread
+/// folder at `task_path`.
+///
+/// A Java debugger, such as Android Studio's default one or jdb, attaches through JDWP, without ptrace. ART names the
+/// threads of that connection, and the kernel keeps the first 15 bytes of each name. `ADB-JDWP Connec` runs while the
+/// app can be debugged. `JDWP Transport ` and `JDWP Event Help` start when a debugger attaches and stay after it
+/// detaches, and `JDWP Command Re` runs only while it is attached. Each thread's name is read from
+/// `<task_path>/<thread id>/comm`, up to 64 bytes. A thread that ends before its name is read is skipped.
+///
+/// @param task_path The folder of the app's threads, `/proc/self/task` on a device.
+/// @return One dbg.java_debugger observation through jdwp_threads: the thread names that start with `JDWP` or
+/// `ADB-JDWP`, sorted and without duplicates, the 16 smallest when there are more. It is empty when the app can't be
+/// debugged. It has an error status when the folder can't be read, or holds more than 4096 threads.
+[[nodiscard]] Observation observe_jdwp_threads(std::string_view task_path);
 
 }  // namespace rasp::android::checks
