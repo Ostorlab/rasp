@@ -19,7 +19,7 @@ def recover_root(
     gates: bytes,
     package: bytes,
     stub_dex: bytes,
-    apk_entries: dict[str, bytes] | None = None,
+    apk_entries: dict[str, tuple[bytes, int, int]] | None = None,
 ) -> bytes | None:
     """Recovers the root key of a packed library from the library and its APK's stored entries.
 
@@ -51,7 +51,7 @@ def _recover(
     gates: bytes,
     package: bytes,
     stub_dex: bytes,
-    apk_entries: dict[str, bytes] | None = None,
+    apk_entries: dict[str, tuple[bytes, int, int]] | None = None,
 ) -> bytes:
     """Recovers the root key, raising on any input that cannot be gathered."""
     program = key_schedule.decode_program(runtime_library.program(library))

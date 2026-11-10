@@ -17,6 +17,7 @@ import hashlib
 import os
 import random
 import struct
+import zlib
 from dataclasses import dataclass
 from dataclasses import field
 
@@ -118,29 +119,39 @@ def _digest(data: bytes) -> bytes:
     return hashlib.sha256(data).digest()
 
 
-def apk_digest(stored_entries: collections.abc.Mapping[str, bytes]) -> bytes:
-    """Computes the digest over the APK's stored entries, the way the runtime does at recovery.
+def apk_digest(entries: dict[str, tuple[bytes, int, int]]) -> bytes:
+    """Computes the digest over the APK's entries, the way the runtime does at recovery.
 
-    The runtime walks the APK's central directory and feeds each qualifying stored entry's name and content into one
-    SHA-256, in central-directory order. The packer does the same over the entries it writes, skipping the same set:
-    `META-INF/` (the signing step adds those), `assets/rasp/` and `assets/business/` (the fold's own outputs), and
-    `lib/*/librasp.so` (chain A already covers its bytes). A repackaged APK that edits any dex, the manifest, a
-    resource, or adds any library changes the digest and the fold comes out differently.
+    The runtime walks the APK's central directory and feeds each qualifying entry's name, compression
+    method, CRC-32, compressed size, uncompressed size, and — for a stored entry — its content into one
+    SHA-256, sorted by name. Deflated entries contribute their metadata: an entry added, removed,
+    recompressed or whose content changed produces a different CRC-32 or size, and the digest changes.
+    Both sides skip `META-INF/` (the signing step adds those), `assets/rasp/` and `assets/business/`
+    (the fold's own outputs), and `lib/*/librasp.so` (chain A already covers its bytes).
 
     Args:
-        stored_entries: The APK's stored entries by name. The function itself filters the excluded set.
+        entries: The APK's entries by name, each a (data, method, compressed_size) triple: the
+            uncompressed bytes, the ZIP compression method (0 for stored, 8 for deflated), and the
+            size of the compressed bytes in the APK.
 
     Returns:
         The 32-byte digest.
     """
     digest = hashlib.sha256()
-    for name in sorted(stored_entries):
+    for name in sorted(entries):
         if name.startswith(_APK_DIGEST_EXCLUDED_PREFIXES) or name.endswith(
             _APK_DIGEST_EXCLUDED_SUFFIX
         ):
             continue
-        digest.update(name.encode("utf-8"))
-        digest.update(stored_entries[name])
+        data, method, _compressed_size = entries[name]
+        crc32 = zlib.crc32(data)
+        # The compressed size varies by zlib version and build tool, so the digest does not
+        # bind it. The CRC-32 catches content changes and the uncompressed size catches
+        # truncation; the compression detail adds no security.
+        blob = name.encode("utf-8") + struct.pack("<III", method, crc32, len(data))
+        if method == 0:
+            blob += data
+        digest.update(blob)
     return digest.digest()
 
 

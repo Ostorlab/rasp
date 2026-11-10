@@ -164,7 +164,7 @@ _PACKAGE = b"com.example.fold"
 _STUB_DEX = b"stub dex bytes"
 
 # The APK's stored entries, which the fold program folds in as the APK digest.
-_APK_ENTRIES: dict[str, bytes] = {}
+_APK_ENTRIES: dict[str, tuple[bytes, int, int]] = {}
 
 _FIXED_ENTRIES = {
     key_schedule.SHARE_ENTRY: _SHARE,

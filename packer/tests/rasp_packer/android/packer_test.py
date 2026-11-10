@@ -122,11 +122,15 @@ def _recover_root(
         for name in archive.namelist()
         if name.startswith("assets/")
     }
-    # The APK digest covers every stored entry the runtime sees in the central directory.
+    # The APK digest covers every entry the runtime sees in the central directory,
+    # with its compression method and compressed size.
     apk_entries = {
-        name: archive.read(name)
+        name: (
+            archive.read(name),
+            archive.getinfo(name).compress_type,
+            archive.getinfo(name).compress_size,
+        )
         for name in archive.namelist()
-        if archive.getinfo(name).compress_type == zipfile.ZIP_STORED
     }
     return schedule_recovery.recover_root(
         library, entries, gates, _PACKAGE.encode(), _STUB_DEX, apk_entries

@@ -189,8 +189,9 @@ def _pack_apk(
     )
     apk.write(
         output,
-        replace={apk_archive.MANIFEST_ENTRY: patched_manifest},
+        replace={},
         add={
+            apk_archive.MANIFEST_ENTRY: patched_manifest,
             SHARE_ENTRY: share_asset,
             MAP_ENTRY: map_frame,
             JAVA_PROGRAM_ENTRY: program_frame,
@@ -290,9 +291,9 @@ def _stored_apk_entries(
     base_dexes: dict[str, bytes],
     libraries: dict[str, bytes],
     remove: set[str],
-) -> dict[str, bytes]:
-    """Returns the stored entries the APK digest will cover: the original APK's stored entries that survive the
-    pack, with the replaced manifest, plus the dexes and libraries the packer adds.
+) -> dict[str, tuple[bytes, int, int]]:
+    """Returns the entries the APK digest will cover: every entry that survives the pack, stored or
+    deflated, with the replaced manifest, plus the dexes and libraries the packer adds.
 
     Args:
         apk: The original APK.
@@ -302,17 +303,21 @@ def _stored_apk_entries(
         remove: The names of the entries the pack removes from the original APK.
 
     Returns:
-        The stored entries by name.
+        The entries by name, each a (data, method, compressed_size) triple.
     """
-    entries = {
-        name: data for name, data in apk.stored_entries().items() if name not in remove
-    }
-    # The manifest is only in the digest when the APK stores it uncompressed: the runtime reads only
-    # stored entries. A deflated manifest is not bound by this record.
-    if apk_archive.MANIFEST_ENTRY in entries:
-        entries[apk_archive.MANIFEST_ENTRY] = manifest
-    entries.update(base_dexes)
-    entries.update(libraries)
+    entries: dict[str, tuple[bytes, int, int]] = {}
+    for entry in apk._entries:
+        if entry.name in remove:
+            continue
+        method = 8 if entry.compressed else 0
+        entries[entry.name] = (entry.data, method, entry.compressed_size)
+    # The manifest: the packer writes it as a stored entry, so its content is directly bound.
+    entries[apk_archive.MANIFEST_ENTRY] = (manifest, 0, len(manifest))
+    # The packer adds these as stored entries.
+    for name, data in base_dexes.items():
+        entries[name] = (data, 0, len(data))
+    for name, data in libraries.items():
+        entries[name] = (data, 0, len(data))
     return entries
 
 
@@ -322,7 +327,7 @@ def _schedule_libraries(
     config: runtime_config.RuntimeConfig,
     package: bytes,
     stub_dex: bytes,
-    apk_entries: dict[str, bytes] | None,
+    apk_entries: dict[str, tuple[bytes, int, int]] | None,
 ) -> tuple[bytes, bytes, dict[str, bytes], dict[str, bytes]]:
     """Builds the schedule's fold over the app's runtime libraries.
 
@@ -400,7 +405,7 @@ def _resolver(
     decoys: dict[str, bytes],
     package: bytes,
     stub_dex: bytes,
-    apk_entries: dict[str, bytes] | None,
+    apk_entries: dict[str, tuple[bytes, int, int]] | None,
 ) -> collections.abc.Callable[[key_schedule.FoldRecord], bytes]:
     """Returns the gatherer of one library's fold inputs, the packer's side of the interpreter.
 

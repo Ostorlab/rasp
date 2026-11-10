@@ -181,8 +181,11 @@ struct LocalEntry {
          !name.ends_with("librasp.so");
 }
 
-/// Computes the digest over the APK's qualifying stored entries, the core of read_apk_digest. Walks the central
-/// directory and feeds each qualifying stored entry's name and content into one SHA-256, in central-directory order.
+/// Computes the digest over the APK's qualifying entries — every entry, stored or deflated — the core of
+/// read_apk_digest. Walks the central directory and feeds each qualifying entry's name, compression method,
+/// CRC-32, compressed size, uncompressed size, and — for a stored entry — its content into one SHA-256, sorted
+/// by name, the way the packer does. A deflated entry contributes its metadata: an entry added, removed,
+/// recompressed or whose content changed produces a different CRC-32 or size, and the digest changes.
 ///
 /// @param file The APK's whole file bytes, memory-mapped.
 /// @return The 32-byte digest. Nothing when the archive is malformed or the hash fails.
@@ -198,15 +201,17 @@ struct LocalEntry {
     return std::nullopt;
   }
 
-  // Collect the qualifying stored entries, then hash them sorted by name, the way the packer does.
-  std::map<std::string, std::vector<std::uint8_t>> entries;
+  // Collect each qualifying entry's hash contribution: name, metadata, and — for stored — the content.
+  std::map<std::string, std::vector<std::uint8_t>> contributions;
   std::span<const std::uint8_t> rest = file.subspan(directory_offset, directory_size);
   for (std::uint16_t index = 0; index < count; ++index) {
     if (rest.size() < kCentralEntrySize || read_u32(rest) != kCentralSignature) {
       return std::nullopt;
     }
     const std::uint16_t method = read_u16(rest.subspan(10));
+    const std::uint32_t crc32 = read_u32(rest.subspan(16));
     const std::uint32_t stored_size = read_u32(rest.subspan(20));
+    const std::uint32_t uncompressed_size = read_u32(rest.subspan(24));
     const std::size_t name_length = read_u16(rest.subspan(28));
     const std::size_t extra_length = read_u16(rest.subspan(30));
     const std::size_t comment_length = read_u16(rest.subspan(32));
@@ -215,13 +220,32 @@ struct LocalEntry {
       return std::nullopt;
     }
     const std::string_view name(reinterpret_cast<const char*>(rest.data()) + kCentralEntrySize, name_length);
-    if (method == kStored && is_digest_entry(name)) {
-      const std::optional<std::vector<std::uint8_t>> data =
-          read_local_data(file, LocalEntry{.local_offset = local_offset, .data_size = stored_size});
-      if (!data.has_value()) {
-        return std::nullopt;
+    if (is_digest_entry(name)) {
+      // The entry's metadata contribution: method, CRC-32, compressed size, uncompressed size — little-endian.
+      std::vector<std::uint8_t> blob;
+      blob.reserve(name.size() + 16 + (method == kStored ? stored_size : 0));
+      blob.insert(blob.end(), name.begin(), name.end());
+      const auto push32 = [&blob](std::uint32_t value) {
+        blob.push_back(static_cast<std::uint8_t>(value & 0xFFU));
+        blob.push_back(static_cast<std::uint8_t>((value >> 8U) & 0xFFU));
+        blob.push_back(static_cast<std::uint8_t>((value >> 16U) & 0xFFU));
+        blob.push_back(static_cast<std::uint8_t>((value >> 24U) & 0xFFU));
+      };
+      // The compressed size varies by zlib version and build tool, so the digest does not
+      // bind it. The CRC-32 catches content changes and the uncompressed size catches
+      // truncation; the compression detail adds no security.
+      push32(method);
+      push32(crc32);
+      push32(uncompressed_size);
+      if (method == kStored) {
+        const std::optional<std::vector<std::uint8_t>> data =
+            read_local_data(file, LocalEntry{.local_offset = local_offset, .data_size = stored_size});
+        if (!data.has_value()) {
+          return std::nullopt;
+        }
+        blob.insert(blob.end(), data->begin(), data->end());
       }
-      entries.emplace(std::string(name), std::move(*data));
+      contributions.emplace(std::string(name), std::move(blob));
     }
     const std::size_t entry_size = kCentralEntrySize + name_length + extra_length + comment_length;
     if (rest.size() < entry_size) {
@@ -230,17 +254,15 @@ struct LocalEntry {
     rest = rest.subspan(entry_size);
   }
 
-  // Hash the sorted entries' names and content, the way the packer's apk_digest does.
+  // Hash the sorted contributions, the way the packer's apk_digest does.
   psa_crypto_init();
   psa_hash_operation_t operation = psa_hash_operation_init();
   if (psa_hash_setup(&operation, PSA_ALG_SHA_256) != PSA_SUCCESS) {
     return std::nullopt;
   }
-  for (const auto& [name, data] : entries) {
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-    const std::span<const std::uint8_t> name_bytes(reinterpret_cast<const std::uint8_t*>(name.data()), name.size());
-    if (psa_hash_update(&operation, name_bytes.data(), name_bytes.size()) != PSA_SUCCESS ||
-        psa_hash_update(&operation, data.data(), data.size()) != PSA_SUCCESS) {
+  for (const auto& [name, blob] : contributions) {
+    static_cast<void>(name);  // The name is already inside the blob.
+    if (psa_hash_update(&operation, blob.data(), blob.size()) != PSA_SUCCESS) {
       psa_hash_abort(&operation);
       return std::nullopt;
     }
