@@ -140,11 +140,31 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
 [[nodiscard]] payload::Environment observe_environment(JNIEnv* env, const std::optional<std::string>& library) {
   const Observation tracer = checks::observe_tracer_pid("/proc/self/status");
   const std::int64_t* const tracer_pid = std::get_if<std::int64_t>(&tracer.value);
-  return payload::Environment{
-      .java_environment = (static_cast<unsigned>(env->GetVersion()) & 0xFFFF0000U) == 0x00010000U,
-      .no_tracer = tracer.status == Status::kOk && tracer_pid != nullptr && *tracer_pid == 0,
-      .installed_under_data = library.has_value() && library->starts_with("/data/"),
-  };
+
+  payload::Environment environment;
+  environment.java_environment = (static_cast<unsigned>(env->GetVersion()) & 0xFFFF0000U) == 0x00010000U;
+  environment.no_tracer = tracer.status == Status::kOk && tracer_pid != nullptr && *tracer_pid == 0;
+  environment.installed_under_data = library.has_value() && library->starts_with("/data/");
+#if defined(__aarch64__)
+  {
+    std::uint64_t frequency = 0;
+    // NOLINTNEXTLINE(portability-no-assembler): the observation is the mrs read itself.
+    asm volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
+    environment.counter_frequency_plausible = frequency >= 1000000U && frequency <= 100000000U;
+    std::uint64_t midr = 0;
+    // NOLINTNEXTLINE(portability-no-assembler): the observation is the mrs read itself.
+    asm volatile("mrs %0, midr_el1" : "=r"(midr));
+    environment.cpu_identity_plausible = midr != 0;
+  }
+#elif defined(__x86_64__)
+  {
+    std::uint32_t eax = 0, ebx = 0, ecx = 0, edx = 0;
+    // NOLINTNEXTLINE(portability-no-assembler): the observation is the cpuid read itself.
+    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
+    environment.cpu_identity_plausible = !(ebx == 0 && edx == 0 && ecx == 0);
+  }
+#endif
+  return environment;
 }
 
 /// The loader state, shared by every function in this file.

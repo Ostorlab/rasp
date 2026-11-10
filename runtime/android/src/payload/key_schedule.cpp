@@ -406,6 +406,8 @@ Key gate_block(const Environment& environment) {
   block[0] = environment.java_environment ? 1U : 0U;
   block[1] = environment.no_tracer ? 1U : 0U;
   block[2] = environment.installed_under_data ? 1U : 0U;
+  block[3] = environment.counter_frequency_plausible ? 1U : 0U;
+  block[4] = environment.cpu_identity_plausible ? 1U : 0U;
   return block;
 }
 

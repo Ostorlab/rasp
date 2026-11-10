@@ -61,7 +61,7 @@ _A_STATE = bytes.fromhex(
     "80f696036977bec443168ac195612f3bbef55acceddbccc100170f56d18053b4"
 )
 _S_STATE = bytes.fromhex(
-    "8a0dfd2c5e3186293ccbe6b4a197a57544b1831cb5950bf0a9e3784ddc31ef0b"
+    "5f6e5fd1da465bfe922ee0a6fba6b1eae4cef96b3ddd0bd0e6a3a84c966cf2a8"
 )
 _MAP_KEY = bytes.fromhex(
     "5148f4c03d5c379482f5e656dfe3ede4a139f570175a397308ae1213c43b014e"
@@ -388,7 +388,11 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
 
     # The gates: a traced or emulated environment.
     traced = key_schedule.gate_block(
-        java_environment=True, no_tracer=False, installed_under_data=True
+        java_environment=True,
+        no_tracer=False,
+        installed_under_data=True,
+        counter_frequency_plausible=True,
+        cpu_identity_plausible=True,
     )
     assert (
         schedule_recovery.recover_root(
@@ -457,12 +461,16 @@ def testRecovery_whenBuiltWithRandomPrograms_recoversOnEveryLibrary() -> None:
 
 def testGateBlock_whenCleanDevice_isTheCleanGates() -> None:
     clean = key_schedule.gate_block(
-        java_environment=True, no_tracer=True, installed_under_data=True
+        java_environment=True,
+        no_tracer=True,
+        installed_under_data=True,
+        counter_frequency_plausible=True,
+        cpu_identity_plausible=True,
     )
 
     assert clean == key_schedule.CLEAN_GATES
-    assert clean[0:3] == b"\x01\x01\x01"
-    assert clean[3:] == bytes(29)
+    assert clean[0:5] == b"\x01\x01\x01\x01\x01"
+    assert clean[5:] == bytes(27)
 
 
 def testSensorBlock_whenCleanProcess_isTheCleanSensors() -> None:

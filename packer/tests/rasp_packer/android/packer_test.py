@@ -395,7 +395,11 @@ def testPack_whenADecoyEntryIsRemoved_theRootNoLongerRecovers(
 def testPack_whenAGateFails_theMapNoLongerDecrypts(tmp_path: pathlib.Path) -> None:
     output = _pack(tmp_path)
     dirty_gates = key_schedule.gate_block(
-        java_environment=True, no_tracer=True, installed_under_data=False
+        java_environment=True,
+        no_tracer=True,
+        installed_under_data=False,
+        counter_frequency_plausible=True,
+        cpu_identity_plausible=True,
     )
     with zipfile.ZipFile(output) as archive:
         root = _recover_root(archive, gates=dirty_gates)

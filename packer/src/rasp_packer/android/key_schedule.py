@@ -80,7 +80,7 @@ _APK_DIGEST_EXCLUDED_SUFFIX = "librasp.so"
 
 # The gate block of a clean device at recovery: a JNI environment, no tracer, the library under
 # /data. The packer folds this in; the runtime folds in what it observes.
-CLEAN_GATES = bytes((1, 1, 1)) + bytes(KEY_SIZE - 3)
+CLEAN_GATES = bytes((1, 1, 1, 1, 1)) + bytes(KEY_SIZE - 5)
 
 # The sensor block of a clean process at decryption: no tracer, and the library's code in memory
 # matching its file. The packer folds this in; the runtime re-observes it on every decryption.
@@ -184,7 +184,12 @@ def fold(*parts: bytes) -> bytes:
 
 
 def gate_block(
-    *, java_environment: bool, no_tracer: bool, installed_under_data: bool
+    *,
+    java_environment: bool,
+    no_tracer: bool,
+    installed_under_data: bool,
+    counter_frequency_plausible: bool,
+    cpu_identity_plausible: bool,
 ) -> bytes:
     """Returns the gate block of an environment, one input of chain S.
 
@@ -192,6 +197,9 @@ def gate_block(
         java_environment: A JNI environment exists and reports a JNI 1.x version.
         no_tracer: ``TracerPid`` in ``/proc/self/status`` is 0.
         installed_under_data: The library is loaded from a path under ``/data``.
+        counter_frequency_plausible: The system counter frequency is in the range a real mobile SoC
+            reports, 1–100 MHz. QEMU and unicorn default to 1 GHz or 0.
+        cpu_identity_plausible: The CPU identity register is non-zero, as a real CPU always reports.
 
     Returns:
         The block, 32 bytes: one fact per byte at the start, then zeros.
@@ -200,6 +208,8 @@ def gate_block(
     block[0] = 1 if java_environment else 0
     block[1] = 1 if no_tracer else 0
     block[2] = 1 if installed_under_data else 0
+    block[3] = 1 if counter_frequency_plausible else 0
+    block[4] = 1 if cpu_identity_plausible else 0
     return bytes(block)
 
 

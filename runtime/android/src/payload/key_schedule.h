@@ -30,6 +30,11 @@ struct Environment {
   bool no_tracer = false;
   /// The library is loaded from a path under /data, as an installed app's is.
   bool installed_under_data = false;
+  /// The system counter frequency (CNTFRQ_EL0) is in the range a real mobile SoC reports, 1–100 MHz.
+  /// QEMU and unicorn default to 1 GHz or 0, which a real device never produces.
+  bool counter_frequency_plausible = false;
+  /// The CPU identity register (MIDR_EL1) is non-zero, as a real CPU always reports. Some emulators report 0.
+  bool cpu_identity_plausible = false;
 };
 
 /// The environment every clean device has, the one the packer folds into the fold program's gates input.
@@ -37,6 +42,8 @@ inline constexpr Environment kCleanEnvironment{
     .java_environment = true,
     .no_tracer = true,
     .installed_under_data = true,
+    .counter_frequency_plausible = true,
+    .cpu_identity_plausible = true,
 };
 
 /// The state of the process the sensor guard measures, re-observed on every decryption and folded into the dex keys.
