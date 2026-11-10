@@ -1,0 +1,7 @@
+description: "Sends the observations of each pass to the ADR server as a GraphQL submitObservations request over HTTPS."
+active: true
+platforms: ["android", "ios"]
+settings:
+  RASP_REPORTING_ENDPOINT:
+    description: "The URL the plugin posts the observations to, such as https://<adr-host>/apis/graphql."
+    value: "https://adr.ostorlab.app/apis/graphql"

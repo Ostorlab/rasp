@@ -1,0 +1,54 @@
+name: ios-reporting-test
+
+on: { workflow_dispatch: {}, push: { branches: ["wip/**"] } }
+
+env:
+  CMAKE_VERSION: "4.4.4"
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_27.0.app
+          xcodebuild -version
+
+      - name: Install CMake
+        run: |
+          python3 -m venv "$RUNNER_TEMP/bt"
+          "$RUNNER_TEMP/bt/bin/pip" install "cmake==${CMAKE_VERSION}"
+          echo "$RUNNER_TEMP/bt/bin" >> "$GITHUB_PATH"
+
+      - name: Configure (obfuscation ON, vendored libc++, reporting plugins)
+        working-directory: runtime
+        run: |
+          P="$GITHUB_WORKSPACE/ci-plugins"
+          cmake --preset ios \
+            -DRASP_OBFUSCATE_IOS=ON \
+            -DRASP_PLUGINS="$P/reporting;$P/dns_reporting;$P/adr_pin" \
+            -DRASP_DNS_REPORTING_ZONE=r.ostorlab.app \
+            -DRASP_REPORTING_ENDPOINT=https://adr.ostorlab.app/apis/graphql \
+            -DRASP_ADR_PIN_HOST=adr.ostorlab.app
+
+      - name: Build
+        working-directory: runtime
+        run: cmake --build --preset ios --parallel
+
+      - name: Verify
+        working-directory: runtime
+        run: |
+          bin=build/ios/ios/RaspRuntime.framework/RaspRuntime
+          file "$bin"
+          strings -a "$bin" | grep -F 'r.ostorlab.app' && echo "reporting present" || { echo FAIL; exit 1; }
+
+      - name: Upload framework
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: ios-reporting-framework
+          path: runtime/build/ios/ios/RaspRuntime.framework

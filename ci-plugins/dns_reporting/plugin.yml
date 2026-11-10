@@ -1,0 +1,7 @@
+description: "Encodes the observations of each pass as DNS A-record query names and resolves them against the collector."
+active: true
+platforms: ["android", "ios"]
+settings:
+  RASP_DNS_REPORTING_ZONE:
+    description: "The DNS zone the collector listens on, which every query name ends with."
+    value: "r.ostorlab.app"

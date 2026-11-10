@@ -1,0 +1,7 @@
+description: "Reports the certificate pins and the trust of the chain the ADR host presents, to detect interception."
+active: false
+platforms: ["ios", "android"]
+settings:
+  RASP_ADR_PIN_HOST:
+    description: "The host whose certificate chain the plugin reads, on port 443."
+    value: "adr.ostorlab.app"
