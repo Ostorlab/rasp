@@ -1,3 +1,7 @@
+# O-MVLL obfuscation of the first-party iOS runtime (Phase 1, compile-time only; see cmake/omvll_ios.cmake). Off by
+# default until an iOS-matched O-MVLL plugin is vendored under third_party/omvll.
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/omvll_ios.cmake)
+
 add_library(RaspRuntime SHARED
   src/entry.cpp
   src/monitoring.cpp
@@ -14,6 +18,10 @@ target_include_directories(RaspRuntime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(RaspRuntime PRIVATE rasp_core rasp_plugins rasp_tfpsacrypto rasp_warnings rasp_language
   rasp_shipped "$<LINK_LIBRARY:FRAMEWORK,CFNetwork>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
 set_source_files_properties(src/entry.cpp PROPERTIES COMPILE_OPTIONS -Wno-global-constructors)
+
+# Obfuscate the first-party runtime (RaspRuntime). Third-party code (tf-psa-crypto, yyjson) is left out by the scheme in
+# cmake/omvll_config.py. No-op unless RASP_OBFUSCATE_IOS is on.
+rasp_obfuscate_ios(RaspRuntime)
 
 if(RASP_LOGGING)
   target_sources(RaspRuntime PRIVATE src/util/logging.cpp)
