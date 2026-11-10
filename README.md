@@ -124,10 +124,9 @@ Each check and the signals it reports are described in [`runtime/README.md`](run
 
 ## Use ADR on the Ostorlab platform
 
-rasp protects the app on the device. To also get detection and response, and see what your protected apps detect
-on real devices, use Mobile ADR (Mobile Application Detection & Response) on the
-[Ostorlab platform](https://report.ostorlab.co). It protects your apps with rasp, with no runtime to build, and
-shows their events:
+Don't want to build the runtime yourself, or want to see what your protected apps find on real devices? Mobile ADR
+(Mobile Application Detection & Response) on the [Ostorlab platform](https://report.ostorlab.co) protects your
+apps with rasp and shows their events:
 
 1. Create an account on the [Ostorlab platform](https://report.ostorlab.co) and open **Mobile ADR**.
 2. Upload your APK, AAB or IPA, choose the checks, and download the protected app
