@@ -1,11 +1,13 @@
 /// Tests for the Android app-identity self-check: the package-name probe that reads the process's command line, the
-/// user-id probe over the process's own uid, and the code-path probe over the runtime's own library load path.
+/// user-id probe over the process's own uid, the code-path probe over the runtime's own library load path, and the
+/// signer probe over the APK's certificate.
 
 #include "checks/identity.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -169,13 +171,32 @@ TEST(Identity, observeCodePath_whenGivenNoPath_reportsAnError) {
   EXPECT_EQ(observe_code_path(""), unreadable_code_path());
 }
 
+TEST(Identity, observeSigner_whenGivenACertificate_reportsItsSha256) {
+  const std::string_view der = "certificate-der";
+  const std::vector<std::uint8_t> certificate(der.begin(), der.end());
+
+  EXPECT_EQ(observe_signer(certificate),
+            (Observation{.signal = "sig.cert_sha256",
+                         .source = "apk_signing_block",
+                         .status = Status::kOk,
+                         .value = std::string("03f48c90a8e6886eab083a748a07cdbbae80c034c57ae76a11635ad852d913e3")}));
+}
+
+TEST(Identity, observeSigner_whenTheCertificateCouldntBeRead_reportsAnError) {
+  EXPECT_EQ(
+      observe_signer(std::nullopt),
+      (Observation{.signal = "sig.cert_sha256", .source = "apk_signing_block", .status = Status::kError, .value = {}}));
+}
+
 TEST(Identity, identity_whenOffAndroid_reportsEveryCheckAsUnsupported) {
-  EXPECT_EQ(identity(),
-            (std::vector<Observation>{
-                {.signal = "id.package", .source = "proc_cmdline", .status = Status::kUnsupported, .value = {}},
-                {.signal = "id.uid", .source = "getuid", .status = Status::kUnsupported, .value = {}},
-                {.signal = "id.code_path", .source = "dladdr", .status = Status::kUnsupported, .value = {}},
-            }));
+  EXPECT_EQ(
+      identity(),
+      (std::vector<Observation>{
+          {.signal = "id.package", .source = "proc_cmdline", .status = Status::kUnsupported, .value = {}},
+          {.signal = "id.uid", .source = "getuid", .status = Status::kUnsupported, .value = {}},
+          {.signal = "id.code_path", .source = "dladdr", .status = Status::kUnsupported, .value = {}},
+          {.signal = "sig.cert_sha256", .source = "apk_signing_block", .status = Status::kUnsupported, .value = {}},
+      }));
 }
 
 }  // namespace
