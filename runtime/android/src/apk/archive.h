@@ -29,11 +29,12 @@ namespace rasp::android::apk {
 /// `api_level`.
 ///
 /// An APK signed with the v2 or v3 scheme carries an APK Signing Block right before its central directory. Its entries
-/// are read as Android verifies them, newest first: the v3.1 entry, which holds the signers of a rotated key for newer
-/// Android versions, then the v3 entry, then the v2 entry. A v3 or v3.1 signer applies to a range of API levels, and
-/// the first one whose range holds `api_level` is used; v2's first signer applies to every level. This returns that
-/// signer's first certificate, the X.509 certificate in DER whose digest `apksigner verify --print-certs` prints. It
-/// doesn't check the signature: Android checked it when the app was installed.
+/// are read as Android verifies them, newest first: the v3.1 entry, which holds the signers of a rotated key and is
+/// read only on Android 13 and up, where the platform honors it, then the v3 entry, then the v2 entry. A v3 or v3.1
+/// signer applies to a range of API levels, and the first one whose range holds `api_level` is used; v2's first signer
+/// applies to every level. This returns that signer's first certificate, the X.509 certificate in DER whose digest
+/// `apksigner verify --print-certs` prints. It doesn't check the signature: Android checked it when the app was
+/// installed.
 ///
 /// @param apk The bytes of the APK.
 /// @param api_level The API level of the device.

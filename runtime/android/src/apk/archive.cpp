@@ -50,6 +50,9 @@ constexpr std::size_t kSigningBlockFooterSize = 24;
 constexpr std::size_t kSigningBlockHeaderSize = 8;
 /// The id of the APK Signature Scheme v3.1 block, which holds the signers of a rotated key for newer Android versions.
 constexpr std::uint32_t kV31SchemeId = 0x1b93ad61U;
+/// The lowest API level whose platform honors the v3.1 block, Android 13. Below it, Android's verifier skips the v3.1
+/// pair as an unknown id and uses the v3 block, so the certificate the device trusts there comes from v3.
+constexpr std::uint32_t kMinApiLevelForV31 = 33;
 /// The id of the APK Signature Scheme v3 block.
 constexpr std::uint32_t kV3SchemeId = 0xf05368c0U;
 /// The id of the APK Signature Scheme v2 block.
@@ -331,6 +334,9 @@ std::optional<std::vector<std::uint8_t>> find_signing_certificate(std::span<cons
     return std::nullopt;
   }
   for (const std::uint32_t id : kSchemeIds) {
+    if (id == kV31SchemeId && api_level < kMinApiLevelForV31) {
+      continue;
+    }
     const std::optional<std::span<const std::uint8_t>> scheme = scheme_value(*pairs, id);
     if (!scheme) {
       continue;

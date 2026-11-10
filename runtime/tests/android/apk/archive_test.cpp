@@ -157,6 +157,15 @@ TEST(Archive, findSigningCertificate_whenTheKeyWasRotated_returnsTheOldKeyBelowW
   EXPECT_EQ(certificate_of(apk, kAndroid12), bytes_of("old key"));
 }
 
+TEST(Archive, findSigningCertificate_whenV31CoversADeviceBelowAndroid13_usesTheV3Certificate) {
+  // The v3.1 signer's range reaches below Android 13 (API 33), but the platform honors the v3.1 block only from there.
+  const std::string apk = signed_apk(signing_block(pair(kV3, v3_scheme({{.certificate = "v3 key"}})) +
+                                                   pair(kV31, v3_scheme({{.certificate = "v31 key"}}))));
+
+  EXPECT_EQ(certificate_of(apk, kAndroid12), bytes_of("v3 key"));
+  EXPECT_EQ(certificate_of(apk, 33), bytes_of("v31 key"));
+}
+
 TEST(Archive, findSigningCertificate_whenV3HasSignersForSeveralRanges_returnsTheOneForTheDevice) {
   const std::string apk =
       signed_apk(signing_block(pair(kV3, v3_scheme({
