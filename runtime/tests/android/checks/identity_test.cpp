@@ -188,6 +188,23 @@ TEST(Identity, observeSigner_whenTheCertificateCouldntBeRead_reportsAnError) {
       (Observation{.signal = "sig.cert_sha256", .source = "apk_signing_block", .status = Status::kError, .value = {}}));
 }
 
+TEST(Identity, observePackageManagerSigner_whenGivenACertificate_reportsItsSha256) {
+  const std::string_view der = "certificate-der";
+  const std::vector<std::uint8_t> certificate(der.begin(), der.end());
+
+  EXPECT_EQ(observe_package_manager_signer(certificate),
+            (Observation{.signal = "sig.cert_sha256",
+                         .source = "package_manager",
+                         .status = Status::kOk,
+                         .value = std::string("03f48c90a8e6886eab083a748a07cdbbae80c034c57ae76a11635ad852d913e3")}));
+}
+
+TEST(Identity, observePackageManagerSigner_whenTheCertificateCouldntBeRead_reportsAnError) {
+  EXPECT_EQ(
+      observe_package_manager_signer(std::nullopt),
+      (Observation{.signal = "sig.cert_sha256", .source = "package_manager", .status = Status::kError, .value = {}}));
+}
+
 TEST(Identity, identity_whenOffAndroid_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(
       identity(),
@@ -196,6 +213,7 @@ TEST(Identity, identity_whenOffAndroid_reportsEveryCheckAsUnsupported) {
           {.signal = "id.uid", .source = "getuid", .status = Status::kUnsupported, .value = {}},
           {.signal = "id.code_path", .source = "dladdr", .status = Status::kUnsupported, .value = {}},
           {.signal = "sig.cert_sha256", .source = "apk_signing_block", .status = Status::kUnsupported, .value = {}},
+          {.signal = "sig.cert_sha256", .source = "package_manager", .status = Status::kUnsupported, .value = {}},
       }));
 }
 

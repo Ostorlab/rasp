@@ -12,11 +12,15 @@
 #include <vector>
 
 #ifdef __ANDROID__
+#include <algorithm>
 #include <android/api-level.h>
+#include <array>
+#include <jni.h>
 #include <unistd.h>
 
 #include "apk/archive.h"
 #include "apk/location.h"
+#include "util/jni.h"
 #endif
 
 #include "checks/integrity.h"
@@ -43,15 +47,117 @@ constexpr std::string_view kCodePathSignal = "id.code_path";
 /// The source of the code-path probe, the load path of the runtime's own library.
 constexpr std::string_view kCodePathSource = "dladdr";
 
-/// The signal of the signer probe.
+/// The signal of the signer probes.
 constexpr std::string_view kSignerSignal = "sig.cert_sha256";
-/// The source of the signer probe, the APK Signing Block of the APK the app runs from.
-constexpr std::string_view kSignerSource = "apk_signing_block";
+/// The source that reads the signer from the APK Signing Block of the APK the app runs from.
+constexpr std::string_view kApkSigningBlockSource = "apk_signing_block";
+/// The source that reads the signer from the package manager, through the app's own Context.
+constexpr std::string_view kPackageManagerSource = "package_manager";
 
 #ifdef __ANDROID__
 /// The process's command line, whose first NUL-separated argument is the package name. Only identity() reads it, on a
 /// device, so it is guarded; observe_package takes the path from its caller.
 constexpr std::string_view kCmdlinePath = "/proc/self/cmdline";
+
+/// The local references a pass of package_manager_certificate makes.
+constexpr jint kLocalFrameCapacity = 16;
+/// PackageManager.GET_SIGNING_CERTIFICATES, which fills PackageInfo.signingInfo.
+constexpr jint kGetSigningCertificates = 0x08000000;
+
+/// Reads the signer's certificate from the package manager, inside a local frame that the caller pops.
+///
+/// It walks the app's own Context (ActivityThread.currentApplication) to PackageManager.getPackageInfo with
+/// GET_SIGNING_CERTIFICATES, then SigningInfo.getApkContentsSigners and the first Signature's bytes.
+///
+/// @param env The thread's JNI environment.
+/// @return The certificate's DER bytes, or nothing when a call fails or throws, or there is no signer.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_package_manager_certificate(JNIEnv* env) {
+  jclass activity_thread = env->FindClass("android/app/ActivityThread");
+  jclass context = env->FindClass("android/content/Context");
+  jclass package_manager = env->FindClass("android/content/pm/PackageManager");
+  jclass package_info = env->FindClass("android/content/pm/PackageInfo");
+  jclass signing_info = env->FindClass("android/content/pm/SigningInfo");
+  jclass signature = env->FindClass("android/content/pm/Signature");
+  if (util::threw(env) || activity_thread == nullptr || context == nullptr || package_manager == nullptr ||
+      package_info == nullptr || signing_info == nullptr || signature == nullptr) {
+    return std::nullopt;
+  }
+  jmethodID current_application =
+      env->GetStaticMethodID(activity_thread, "currentApplication", "()Landroid/app/Application;");
+  jmethodID get_package_manager =
+      env->GetMethodID(context, "getPackageManager", "()Landroid/content/pm/PackageManager;");
+  jmethodID get_package_name = env->GetMethodID(context, "getPackageName", "()Ljava/lang/String;");
+  jmethodID get_package_info =
+      env->GetMethodID(package_manager, "getPackageInfo", "(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;");
+  jfieldID signing_info_field = env->GetFieldID(package_info, "signingInfo", "Landroid/content/pm/SigningInfo;");
+  jmethodID get_signers = env->GetMethodID(signing_info, "getApkContentsSigners", "()[Landroid/content/pm/Signature;");
+  jmethodID to_byte_array = env->GetMethodID(signature, "toByteArray", "()[B");
+  if (util::threw(env) || current_application == nullptr || get_package_manager == nullptr ||
+      get_package_name == nullptr || get_package_info == nullptr || signing_info_field == nullptr ||
+      get_signers == nullptr || to_byte_array == nullptr) {
+    return std::nullopt;
+  }
+  jobject application = env->CallStaticObjectMethodA(activity_thread, current_application, nullptr);
+  if (util::threw(env) || application == nullptr) {
+    return std::nullopt;
+  }
+  jobject manager = env->CallObjectMethodA(application, get_package_manager, nullptr);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): getPackageName returns a String.
+  auto* name = static_cast<jstring>(env->CallObjectMethodA(application, get_package_name, nullptr));
+  if (util::threw(env) || manager == nullptr || name == nullptr) {
+    return std::nullopt;
+  }
+  const std::array<jvalue, 2> arguments{jvalue{.l = name}, jvalue{.i = kGetSigningCertificates}};
+  jobject info = env->CallObjectMethodA(manager, get_package_info, arguments.data());
+  if (util::threw(env) || info == nullptr) {
+    return std::nullopt;
+  }
+  jobject signers_info = env->GetObjectField(info, signing_info_field);
+  if (util::threw(env) || signers_info == nullptr) {
+    return std::nullopt;
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): getApkContentsSigners returns a Signature[].
+  auto* signers = static_cast<jobjectArray>(env->CallObjectMethodA(signers_info, get_signers, nullptr));
+  if (util::threw(env) || signers == nullptr || env->GetArrayLength(signers) < 1) {
+    return std::nullopt;
+  }
+  jobject first = env->GetObjectArrayElement(signers, 0);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): toByteArray returns a byte[].
+  auto* bytes = static_cast<jbyteArray>(env->CallObjectMethodA(first, to_byte_array, nullptr));
+  if (util::threw(env) || bytes == nullptr) {
+    return std::nullopt;
+  }
+  const jsize length = env->GetArrayLength(bytes);
+  if (length < 1) {
+    return std::nullopt;
+  }
+  std::vector<jbyte> raw(static_cast<std::size_t>(length));
+  env->GetByteArrayRegion(bytes, 0, length, raw.data());
+  if (util::threw(env)) {
+    return std::nullopt;
+  }
+  std::vector<std::uint8_t> certificate(raw.size());
+  std::ranges::transform(raw, certificate.begin(), [](jbyte value) { return static_cast<std::uint8_t>(value); });
+  return certificate;
+}
+
+/// The signer's certificate from the package manager, read through JNI on the calling thread, which is attached to the
+/// app's Java VM for it. Every local reference is freed.
+///
+/// @return The certificate's DER bytes, or nothing when the thread can't reach the VM, or a call fails or throws.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> package_manager_certificate() {
+  JNIEnv* env = util::attached_env();
+  if (env == nullptr) {
+    return std::nullopt;
+  }
+  if (env->PushLocalFrame(kLocalFrameCapacity) != JNI_OK) {
+    static_cast<void>(util::threw(env));
+    return std::nullopt;
+  }
+  const std::optional<std::vector<std::uint8_t>> certificate = read_package_manager_certificate(env);
+  env->PopLocalFrame(nullptr);
+  return certificate;
+}
 #endif
 
 /// The largest command line read. A real one is well under this.
@@ -80,15 +186,30 @@ Observation observe_code_path(std::string_view code_path) {
   return observed(kCodePathSignal, kCodePathSource, std::string(code_path));
 }
 
-Observation observe_signer(const std::optional<std::vector<std::uint8_t>>& certificate) {
+namespace {
+
+/// The sig.cert_sha256 observation for `source`: the SHA-256 of `certificate`, or an error when it is nothing or can't
+/// be hashed.
+[[nodiscard]] Observation signer_digest(std::string_view source,
+                                        const std::optional<std::vector<std::uint8_t>>& certificate) {
   if (!certificate) {
-    return failed(kSignerSignal, kSignerSource);
+    return failed(kSignerSignal, source);
   }
   const std::optional<std::string> digest = sha256_hex(*certificate);
   if (!digest) {
-    return failed(kSignerSignal, kSignerSource);
+    return failed(kSignerSignal, source);
   }
-  return observed(kSignerSignal, kSignerSource, *digest);
+  return observed(kSignerSignal, source, *digest);
+}
+
+}  // namespace
+
+Observation observe_signer(const std::optional<std::vector<std::uint8_t>>& certificate) {
+  return signer_digest(kApkSigningBlockSource, certificate);
+}
+
+Observation observe_package_manager_signer(const std::optional<std::vector<std::uint8_t>>& certificate) {
+  return signer_digest(kPackageManagerSource, certificate);
 }
 
 std::vector<Observation> identity() {
@@ -103,13 +224,13 @@ std::vector<Observation> identity() {
       observe_signer(apk_path && api_level > 0
                          ? apk::read_signing_certificate(*apk_path, static_cast<std::uint32_t>(api_level))
                          : std::nullopt),
+      observe_package_manager_signer(package_manager_certificate()),
   };
 #else
   return {
-      unsupported(kPackageSignal, kPackageSource),
-      unsupported(kUidSignal, kUidSource),
-      unsupported(kCodePathSignal, kCodePathSource),
-      unsupported(kSignerSignal, kSignerSource),
+      unsupported(kPackageSignal, kPackageSource),       unsupported(kUidSignal, kUidSource),
+      unsupported(kCodePathSignal, kCodePathSource),     unsupported(kSignerSignal, kApkSigningBlockSource),
+      unsupported(kSignerSignal, kPackageManagerSource),
   };
 #endif
 }

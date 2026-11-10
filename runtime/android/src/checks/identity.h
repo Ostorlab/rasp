@@ -1,7 +1,7 @@
 /// The Android app-identity self-check: whether the app still has the identity it shipped with, which a repackaged or
 /// cloned build changes. It reports the running package name, the process's own user id, the path the runtime's code
-/// loads from, and the certificate of the key that signed the APK; the server compares them against the values the
-/// packer recorded and the customer registered, and decides.
+/// loads from, and the certificate of the key that signed the APK read two ways; the server compares them against the
+/// values the packer recorded and the customer registered, and decides.
 
 #pragma once
 
@@ -21,8 +21,8 @@ namespace rasp::android::checks {
 /// the app runs from, read from its APK Signing Block. Anywhere else every observation is unsupported instead, so the
 /// server still sees that the check ran.
 ///
-/// @return Four observations: id.package through proc_cmdline, id.uid through getuid, id.code_path through dladdr,
-/// then sig.cert_sha256 through apk_signing_block.
+/// @return Five observations: id.package through proc_cmdline, id.uid through getuid, id.code_path through dladdr,
+/// then sig.cert_sha256 through apk_signing_block and through package_manager.
 [[nodiscard]] std::vector<Observation> identity();
 
 /// Reports the running package name, read from the command line at `cmdline_path`.
@@ -79,12 +79,24 @@ namespace rasp::android::checks {
 /// carries another certificate even when nothing in it is hooked. The digest is the one `apksigner verify
 /// --print-certs` prints as the signer's certificate SHA-256, the one Play Console shows for the app signing key, and
 /// the one Play Integrity returns as `certificateSha256Digest`, so the server can compare it with the value the
-/// customer registers. `identity` reads the certificate from the APK's own APK Signing Block, without the package
-/// manager.
+/// customer registers. `identity` reads it two ways: `observe_signer` from the APK's own APK Signing Block, in native
+/// code a Java hook can't reach, and `observe_package_manager_signer` from the package manager, so a hook on one shows
+/// as two values that disagree.
 ///
 /// @param certificate The certificate's DER bytes, or nothing when it couldn't be read.
 /// @return One sig.cert_sha256 observation through apk_signing_block: the lowercase hex SHA-256 of the certificate. It
 /// has an error status when `certificate` is nothing or the digest can't be computed.
 [[nodiscard]] Observation observe_signer(const std::optional<std::vector<std::uint8_t>>& certificate);
+
+/// Reports the SHA-256 of `certificate`, the signer's certificate as the package manager gives it.
+///
+/// This is the second source of sig.cert_sha256, read through `PackageManager.getPackageInfo` with
+/// GET_SIGNING_CERTIFICATES rather than from the APK file. A hook on the package manager that returns the original
+/// certificate makes this source disagree with the APK Signing Block source, which `identity` reads natively.
+///
+/// @param certificate The certificate's DER bytes, or nothing when it couldn't be read.
+/// @return One sig.cert_sha256 observation through package_manager: the lowercase hex SHA-256 of the certificate. It
+/// has an error status when `certificate` is nothing or the digest can't be computed.
+[[nodiscard]] Observation observe_package_manager_signer(const std::optional<std::vector<std::uint8_t>>& certificate);
 
 }  // namespace rasp::android::checks
