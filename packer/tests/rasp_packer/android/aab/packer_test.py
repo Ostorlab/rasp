@@ -117,7 +117,7 @@ def _recover_root(archive: zipfile.ZipFile) -> bytes | None:
         if name.startswith("base/assets/")
     }
     return schedule_recovery.recover_root(
-        library, entries, key_schedule.CLEAN_GATES, _PACKAGE.encode()
+        library, entries, key_schedule.CLEAN_GATES, _PACKAGE.encode(), _STUB_DEX
     )
 
 

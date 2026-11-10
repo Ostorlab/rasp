@@ -92,13 +92,13 @@ constexpr std::string_view kMalformedMapFrameHex =
 
 /// The dex at business/0.dex: its frame and its plaintext bytes.
 constexpr std::string_view kDex0FrameHex =
-    "101112131415161718191a1bea1a50e3fe673ae325558ab438137f77a8f9285544ca65168de25015a99dd52bcb7aa235366"
-    "ea56c7379f0c85e16cf52d375de6e6f7acac63ba99196fe9942d1df4e19dea4b3fd791163f3e6098af1";
+    "101112131415161718191a1ba9c7420e1659ad1489903bc83dc62c7078e47eee15fb6b1c2050b7ececdf8b32cbd75824883b7"
+    "098698563d5c6e8e55e4254fecd0557bbe69acfe8419d8bf714f3953433d3e11094062769b5c0e328";
 constexpr std::string_view kDex0Plaintext = "business dex zero: bytes that decrypt_dex must return verbatim\n";
 
 /// The dex at business/1.dex: its frame and its plaintext bytes.
 constexpr std::string_view kDex1FrameHex =
-    "202122232425262728292a2b7b65a3dd87fd90dc1e49fe499555c32bb56c607f15be1b46d9d0cc45e62e950930";
+    "202122232425262728292a2b08f788d56388474256841b85c393ef0a18f0708b07c0db658083e9557b87f71087";
 constexpr std::string_view kDex1Plaintext = "business dex one\n";
 
 /// The vectors' Java program: the frame it ships as (sealed under the root, at assets/rasp/j.bin), the share its

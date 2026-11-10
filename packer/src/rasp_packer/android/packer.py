@@ -172,7 +172,11 @@ def _pack_apk(
         libraries[name] = self_encrypt.encrypt_library(configured)
         digests[name] = hashlib.sha256(runtime_library.text_region(configured)).digest()
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
-        libraries, digests, config, app_identity.package_name.encode()
+        libraries,
+        digests,
+        config,
+        app_identity.package_name.encode(),
+        artifacts.stub_dex,
     )
     map_frame, program_frame, dex_entries = _encrypt_payload(
         result.business, root, random.SystemRandom()
@@ -242,7 +246,11 @@ def _pack_aab(
             runtime_library.text_region(configured)
         ).digest()
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
-        libraries, digests, config, app_identity.package_name.encode()
+        libraries,
+        digests,
+        config,
+        app_identity.package_name.encode(),
+        artifacts.stub_dex,
     )
     map_frame, program_frame, dex_data_entries = _encrypt_payload(
         result.business, root, random.SystemRandom()
@@ -275,6 +283,7 @@ def _schedule_libraries(
     digests: dict[str, bytes],
     config: runtime_config.RuntimeConfig,
     package: bytes,
+    stub_dex: bytes,
 ) -> tuple[bytes, bytes, dict[str, bytes], dict[str, bytes]]:
     """Builds the schedule's fold over the app's runtime libraries.
 
@@ -286,6 +295,8 @@ def _schedule_libraries(
         config: The runtime's config.
         package: The app's package name, which the fold program folds in, the way the runtime reads
             it from its APK's install path.
+        stub_dex: The stub dex's bytes, which the fold program folds in, the way the runtime reads
+            the highest-numbered classesN.dex entry.
 
     Returns:
         The root key, the asset share to ship as the s.bin entry, the finished libraries, by APK
@@ -322,7 +333,7 @@ def _schedule_libraries(
             ),
             digests[name],
         )
-        gather = _resolver(with_digest, program, share_asset, decoys, package)
+        gather = _resolver(with_digest, program, share_asset, decoys, package, stub_dex)
         a_state = key_schedule.run_chain(
             bytes(key_schedule.KEY_SIZE), program.chain_a, gather, "a"
         )
@@ -341,6 +352,7 @@ def _resolver(
     share_asset: bytes,
     decoys: dict[str, bytes],
     package: bytes,
+    stub_dex: bytes,
 ) -> collections.abc.Callable[[key_schedule.FoldRecord], bytes]:
     """Returns the gatherer of one library's fold inputs, the packer's side of the interpreter.
 
@@ -350,6 +362,7 @@ def _resolver(
         share_asset: The asset share to ship as the s.bin entry.
         decoys: The decoy entries the program names, by APK entry name.
         package: The app's package name, which the runtime reads from its APK's install path.
+        stub_dex: The stub dex's bytes, which the runtime reads as the highest-numbered classesN.dex entry.
 
     Returns:
         A function that returns the 32 bytes each fold record's source holds, the same values the
@@ -379,6 +392,8 @@ def _resolver(
             return program.constants[record.param]
         if record.kind == key_schedule.KIND_PACKAGE:
             return hashlib.sha256(package).digest()
+        if record.kind == key_schedule.KIND_STUB:
+            return hashlib.sha256(stub_dex).digest()
         return hashlib.sha256(
             decoys[key_schedule.decoy_entry_name(record.param)]
         ).digest()

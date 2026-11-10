@@ -41,6 +41,10 @@ constexpr std::string_view kThreadsSignal = "hook.threads";
 constexpr std::string_view kMapsSource = "proc_maps";
 /// The source of the thread-name probe.
 constexpr std::string_view kThreadsSource = "proc_task";
+/// The signal of the foreign-library probe.
+constexpr std::string_view kForeignLibsSignal = "hook.foreign_libs";
+/// The source of the foreign-library probe.
+constexpr std::string_view kForeignLibsSource = "proc_maps";
 /// The thread names a hooking framework gives its own threads. Frida's GUM runtime names its JavaScript loop
 /// `gum-js-loop`, and its GLib integration names the main loop `gmain`, the D-Bus thread `gdbus` and the worker
 /// pool `pool-frida`. A framework that renames its threads is caught by its memory mapping instead.
@@ -107,6 +111,25 @@ constexpr auto kFrameworkMarkers = std::to_array<std::string_view>({
   return perms.size() >= 3 && perms[1] == 'w' && perms[2] == 'x';
 }
 
+/// Whether the mapping's pathname is one the process is expected to hold: a system directory, the app's own install
+/// directory, or a vendor directory. A library added by repackaging the APK loads from the app's install directory,
+/// so this check catches libraries loaded from outside the app — the stub-dex record catches the ones the
+/// repackage added inside it.
+[[nodiscard]] bool is_expected_library_path(std::string_view path) {
+  return path.starts_with("/system/") || path.starts_with("/apex/") || path.starts_with("/vendor/") ||
+         path.starts_with("/product/") || path.starts_with("/data/app/");
+}
+
+/// Whether the memory-map line maps a shared library from outside the expected directories.
+[[nodiscard]] bool is_foreign_library(std::string_view line) {
+  const std::size_t path_start = line.find(" /");
+  if (path_start == std::string_view::npos) {
+    return false;
+  }
+  const std::string_view path = line.substr(path_start + 1);
+  return path.ends_with(".so") && !is_expected_library_path(path);
+}
+
 /// The first kMaxLines lines of `maps` that `matches`, without their line breaks.
 [[nodiscard]] std::vector<std::string> matching_lines(std::string_view maps, bool (*matches)(std::string_view line)) {
   std::vector<std::string> lines;
@@ -128,11 +151,13 @@ constexpr auto kFrameworkMarkers = std::to_array<std::string_view>({
 std::vector<Observation> observe_maps(std::string_view maps_path) {
   const std::optional<std::string> maps = read_file(maps_path, kMaxMapsSize);
   if (!maps) {
-    return {failed(kMapsHitsSignal, kMapsSource), failed(kRwxRegionsSignal, kMapsSource)};
+    return {failed(kMapsHitsSignal, kMapsSource), failed(kRwxRegionsSignal, kMapsSource),
+            failed(kForeignLibsSignal, kForeignLibsSource)};
   }
   return {
       observed(kMapsHitsSignal, kMapsSource, matching_lines(*maps, names_framework)),
       observed(kRwxRegionsSignal, kMapsSource, matching_lines(*maps, writable_executable)),
+      observed(kForeignLibsSignal, kForeignLibsSource, matching_lines(*maps, is_foreign_library)),
   };
 }
 

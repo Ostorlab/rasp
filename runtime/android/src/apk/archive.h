@@ -23,4 +23,13 @@ namespace rasp::android::apk {
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& apk_path,
                                                                          std::string_view name);
 
+/// Reads the stub dex: the highest-numbered `classesN.dex` entry of the APK, which the packer always adds last, after
+/// the app's clear framework dexes. The key schedule folds the stub's digest into the root key, so a repackaged APK
+/// whose stub was edited to load extra code derives a different key and nothing decrypts.
+///
+/// @param apk_path The APK file to read.
+/// @return The stub dex's bytes. Nothing when the file can't be mapped, the APK holds no `classesN.dex` entry, or
+/// the entry is compressed.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_stub_entry(const std::string& apk_path);
+
 }  // namespace rasp::android::apk

@@ -18,6 +18,7 @@ def recover_root(
     entries: collections.abc.Mapping[str, bytes],
     gates: bytes,
     package: bytes,
+    stub_dex: bytes,
 ) -> bytes | None:
     """Recovers the root key of a packed library from the library and its APK's stored entries.
 
@@ -30,13 +31,15 @@ def recover_root(
             key_schedule.CLEAN_GATES to mirror a clean run.
         package: The app's package name, which the fold program folds in as the package record's
             input, the way the runtime reads it from its APK's install path.
+        stub_dex: The stub dex's bytes, which the fold program folds in as the stub record's input,
+            the way the runtime reads the highest-numbered `classesN.dex` entry.
 
     Returns:
         The root key. Nothing when the library's fold program or any input it names cannot be read,
         which the runtime serves as no business class, exactly as for a corrupt APK.
     """
     try:
-        return _recover(library, entries, gates, package)
+        return _recover(library, entries, gates, package, stub_dex)
     except KeyError, IndexError, ValueError:
         return None
 
@@ -46,6 +49,7 @@ def _recover(
     entries: collections.abc.Mapping[str, bytes],
     gates: bytes,
     package: bytes,
+    stub_dex: bytes,
 ) -> bytes:
     """Recovers the root key, raising on any input that cannot be gathered."""
     program = key_schedule.decode_program(runtime_library.program(library))
@@ -78,6 +82,8 @@ def _recover(
             return program.constants[record.param]
         if record.kind == key_schedule.KIND_PACKAGE:
             return hashlib.sha256(package).digest()
+        if record.kind == key_schedule.KIND_STUB:
+            return hashlib.sha256(stub_dex).digest()
         return hashlib.sha256(
             entries[key_schedule.decoy_entry_name(record.param)]
         ).digest()

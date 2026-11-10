@@ -55,11 +55,14 @@ struct Sensors {
   bool no_rwx_regions = false;
   /// No thread of the process carries the name a hooking framework gives its own threads.
   bool no_framework_threads = false;
+  /// No shared library is loaded from outside the system's own and the app's own directories. A library injected
+  /// by repackaging the APK — even one with an ordinary name — loads from a path this check sees.
+  bool no_foreign_libraries = false;
 };
 
 /// The sensor block of a clean process: no tracer, the library's code intact, no framework mapping, no
-/// writable-executable memory, no framework-named thread.
-inline constexpr Key kCleanSensors{{1U, 1U, 1U, 1U, 1U}};
+/// writable-executable memory, no framework-named thread, no library from outside the expected directories.
+inline constexpr Key kCleanSensors{{1U, 1U, 1U, 1U, 1U, 1U}};
 
 /// The size of the fold program, in bytes: the masked recipe the packer writes into the library's `.rasp_config`
 /// section, between the config's zero padding and the keystore share.
@@ -88,6 +91,9 @@ enum class RecordKind : std::uint8_t {
   kEntry = 7,
   /// The digest of the app's package name, as its APK's install path names it, chain S.
   kPackage = 8,
+  /// The digest of the stub dex, the highest-numbered `classesN.dex` entry, chain S. A repackaged APK whose stub was
+  /// edited to load extra code derives a different key.
+  kStub = 9,
 };
 
 /// One step of a fold chain: a source to gather and fold in as the step's salt.

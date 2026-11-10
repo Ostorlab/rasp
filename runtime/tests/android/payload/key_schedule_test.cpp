@@ -112,7 +112,7 @@ constexpr std::string_view kMapFrameHex =
 
 /// The dex seed and the guarded master of a clean process.
 constexpr std::string_view kSeedHex = "8bc6daaea6969e5ad8b4dbab11d077a62c08b90d094aed686908845c1de0fbf7";
-constexpr std::string_view kGuardHex = "ad622a681bb4d19cbcce23d03e4c647e928097d6ae79a830fb1e5e06b9d0eaec";
+constexpr std::string_view kGuardHex = "196ae89c970ab84648efc8630c95216615a5404a9e7c638b9b574331a59daac4";
 
 /// The vectors' Java program: the frame it ships as (sealed under the root, at assets/rasp/j.bin) and the share its
 /// steps yield on a runtime that resolves them as the packer predicted. The armed master is the seed under that
@@ -643,6 +643,7 @@ TEST(KeySchedule, sensorBlock_whenTheProcessIsClean_isTheCleanSensors) {
       .no_framework_maps = true,
       .no_rwx_regions = true,
       .no_framework_threads = true,
+      .no_foreign_libraries = true,
   };
 
   const Key block = sensor_block(clean);
@@ -652,6 +653,7 @@ TEST(KeySchedule, sensorBlock_whenTheProcessIsClean_isTheCleanSensors) {
   EXPECT_EQ(block[2], 1U);
   EXPECT_EQ(block[3], 1U);
   EXPECT_EQ(block[4], 1U);
+  EXPECT_EQ(block[5], 1U);
   EXPECT_EQ(block, kCleanSensors);
 }
 

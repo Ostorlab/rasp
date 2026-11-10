@@ -122,7 +122,9 @@ def _recover_root(
         for name in archive.namelist()
         if name.startswith("assets/")
     }
-    return schedule_recovery.recover_root(library, entries, gates, _PACKAGE.encode())
+    return schedule_recovery.recover_root(
+        library, entries, gates, _PACKAGE.encode(), _STUB_DEX
+    )
 
 
 def _decrypt_map(archive: zipfile.ZipFile, root: bytes) -> bytes:
@@ -402,6 +404,7 @@ def testPack_whenASensorWouldFail_theDexesNoLongerDecrypt(
         no_framework_maps=True,
         no_rwx_regions=True,
         no_framework_threads=True,
+        no_foreign_libraries=True,
     )
     with zipfile.ZipFile(output) as archive:
         root = _recover_root(archive)

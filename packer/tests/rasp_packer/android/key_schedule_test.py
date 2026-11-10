@@ -77,16 +77,16 @@ _SEED = bytes.fromhex(
     "8bc6daaea6969e5ad8b4dbab11d077a62c08b90d094aed686908845c1de0fbf7"
 )
 _GUARD = bytes.fromhex(
-    "ad622a681bb4d19cbcce23d03e4c647e928097d6ae79a830fb1e5e06b9d0eaec"
+    "196ae89c970ab84648efc8630c95216615a5404a9e7c638b9b574331a59daac4"
 )
 _DIRTY_GUARD = bytes.fromhex(
-    "389b890ab5d402528541e126f0adba6428c270cc76c8d847e0055d085104cd9a"
+    "9ff998abcda62f7f473405529d58187c579c8210cd64455ffa869744f71607a1"
 )
 _DEX0_FRAME = bytes.fromhex(
-    "101112131415161718191a1bea1a50e3fe673ae325558ab438137f77a8f9285544ca65168de25015a99dd52bcb7aa235366ea56c7379f0c85e16cf52d375de6e6f7acac63ba99196fe9942d1df4e19dea4b3fd791163f3e6098af1"
+    "101112131415161718191a1ba9c7420e1659ad1489903bc83dc62c7078e47eee15fb6b1c2050b7ececdf8b32cbd75824883b7098698563d5c6e8e55e4254fecd0557bbe69acfe8419d8bf714f3953433d3e11094062769b5c0e328"
 )
 _DEX1_FRAME = bytes.fromhex(
-    "202122232425262728292a2b7b65a3dd87fd90dc1e49fe499555c32bb56c607f15be1b46d9d0cc45e62e950930"
+    "202122232425262728292a2b08f788d56388474256841b85c393ef0a18f0708b07c0db658083e9557b87f71087"
 )
 
 # The fixed Java program the vectors' app ships: two hierarchy walks and two resolutions, in a fixed order. Its
@@ -160,6 +160,9 @@ _FIXED_PROGRAM = key_schedule.FoldProgram(
 # The app's package name, which the fold program folds in as its package record's input.
 _PACKAGE = b"com.example.fold"
 
+# The stub dex's bytes, which the fold program folds in as its stub record's input.
+_STUB_DEX = b"stub dex bytes"
+
 _FIXED_ENTRIES = {
     key_schedule.SHARE_ENTRY: _SHARE,
     key_schedule.decoy_entry_name(0): _DECOY0,
@@ -214,6 +217,8 @@ def _gather(
             return constants[record.param]
         if record.kind == key_schedule.KIND_PACKAGE:
             return hashlib.sha256(_PACKAGE).digest()
+        if record.kind == key_schedule.KIND_STUB:
+            return hashlib.sha256(_STUB_DEX).digest()
         return hashlib.sha256(
             entries[key_schedule.decoy_entry_name(record.param)]
         ).digest()
@@ -293,7 +298,7 @@ def testRecovery_whenGivenTheFixedLibraryAndEntries_givesTheVectorRoot() -> None
     library = _fixed_library()
 
     root = schedule_recovery.recover_root(
-        library, _FIXED_ENTRIES, key_schedule.CLEAN_GATES, _PACKAGE
+        library, _FIXED_ENTRIES, key_schedule.CLEAN_GATES, _PACKAGE, _STUB_DEX
     )
 
     assert root == _ROOT
@@ -308,7 +313,11 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     tampered_program[program_offset + 100] ^= 1
     assert (
         schedule_recovery.recover_root(
-            bytes(tampered_program), _FIXED_ENTRIES, key_schedule.CLEAN_GATES, _PACKAGE
+            bytes(tampered_program),
+            _FIXED_ENTRIES,
+            key_schedule.CLEAN_GATES,
+            _PACKAGE,
+            _STUB_DEX,
         )
         != _ROOT
     )
@@ -322,7 +331,11 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     tampered_text[text.offset] ^= 1
     assert (
         schedule_recovery.recover_root(
-            bytes(tampered_text), _FIXED_ENTRIES, key_schedule.CLEAN_GATES, _PACKAGE
+            bytes(tampered_text),
+            _FIXED_ENTRIES,
+            key_schedule.CLEAN_GATES,
+            _PACKAGE,
+            _STUB_DEX,
         )
         != _ROOT
     )
@@ -335,7 +348,7 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     }
     assert (
         schedule_recovery.recover_root(
-            library, without_decoy1, key_schedule.CLEAN_GATES, _PACKAGE
+            library, without_decoy1, key_schedule.CLEAN_GATES, _PACKAGE, _STUB_DEX
         )
         is None
     )
@@ -345,7 +358,7 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     wrong_share[key_schedule.SHARE_ENTRY] = bytes(key_schedule.KEY_SIZE)
     assert (
         schedule_recovery.recover_root(
-            library, wrong_share, key_schedule.CLEAN_GATES, _PACKAGE
+            library, wrong_share, key_schedule.CLEAN_GATES, _PACKAGE, _STUB_DEX
         )
         != _ROOT
     )
@@ -363,6 +376,7 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
             _FIXED_ENTRIES,
             key_schedule.CLEAN_GATES,
             _PACKAGE,
+            _STUB_DEX,
         )
         != _ROOT
     )
@@ -372,7 +386,9 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
         java_environment=True, no_tracer=False, installed_under_data=True
     )
     assert (
-        schedule_recovery.recover_root(library, _FIXED_ENTRIES, traced, _PACKAGE)
+        schedule_recovery.recover_root(
+            library, _FIXED_ENTRIES, traced, _PACKAGE, _STUB_DEX
+        )
         != _ROOT
     )
 
@@ -417,13 +433,17 @@ def testRecovery_whenBuiltWithRandomPrograms_recoversOnEveryLibrary() -> None:
         for library in libraries:
             assert (
                 schedule_recovery.recover_root(
-                    library, entries, key_schedule.CLEAN_GATES, _PACKAGE
+                    library, entries, key_schedule.CLEAN_GATES, _PACKAGE, _STUB_DEX
                 )
                 == root
             )
             assert (
                 schedule_recovery.recover_root(
-                    library, entries, key_schedule.CLEAN_GATES, b"com.example.other"
+                    library,
+                    entries,
+                    key_schedule.CLEAN_GATES,
+                    b"com.example.other",
+                    _STUB_DEX,
                 )
                 != root
             )
@@ -446,11 +466,12 @@ def testSensorBlock_whenCleanProcess_isTheCleanSensors() -> None:
         no_framework_maps=True,
         no_rwx_regions=True,
         no_framework_threads=True,
+        no_foreign_libraries=True,
     )
 
     assert clean == key_schedule.CLEAN_SENSORS
-    assert clean[0:5] == b"\x01\x01\x01\x01\x01"
-    assert clean[5:] == bytes(27)
+    assert clean[0:6] == b"\x01\x01\x01\x01\x01\x01"
+    assert clean[6:] == bytes(26)
 
 
 def testSensorBlock_whenAFactFails_flipsItsByte() -> None:
@@ -460,6 +481,7 @@ def testSensorBlock_whenAFactFails_flipsItsByte() -> None:
         no_framework_maps=True,
         no_rwx_regions=True,
         no_framework_threads=True,
+        no_foreign_libraries=True,
     )
 
     assert dirty[0] == 0
@@ -496,6 +518,7 @@ def testGuardedMaster_whenASensorFails_derivesADifferentMaster() -> None:
         no_framework_maps=True,
         no_rwx_regions=True,
         no_framework_threads=True,
+        no_foreign_libraries=True,
     )
 
     assert key_schedule.guarded_master(_SEED, dirty) == _DIRTY_GUARD
@@ -585,6 +608,7 @@ def testDexFrame_whenTheGuardIsDirty_doesNotDecryptUnderTheCleanKey() -> None:
         no_framework_maps=True,
         no_rwx_regions=True,
         no_framework_threads=True,
+        no_foreign_libraries=True,
     )
     guard = key_schedule.guarded_master(
         key_schedule.armed_master(_SEED, _JAVA_SHARE), dirty

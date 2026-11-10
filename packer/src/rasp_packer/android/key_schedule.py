@@ -69,6 +69,7 @@ KIND_GATES = 5
 KIND_CONSTANT = 6
 KIND_ENTRY = 7
 KIND_PACKAGE = 8
+KIND_STUB = 9
 
 # The gate block of a clean device at recovery: a JNI environment, no tracer, the library under
 # /data. The packer folds this in; the runtime folds in what it observes.
@@ -76,7 +77,7 @@ CLEAN_GATES = bytes((1, 1, 1)) + bytes(KEY_SIZE - 3)
 
 # The sensor block of a clean process at decryption: no tracer, and the library's code in memory
 # matching its file. The packer folds this in; the runtime re-observes it on every decryption.
-CLEAN_SENSORS = bytes((1, 1, 1, 1, 1)) + bytes(KEY_SIZE - 5)
+CLEAN_SENSORS = bytes((1, 1, 1, 1, 1, 1)) + bytes(KEY_SIZE - 6)
 
 
 def new_root() -> bytes:
@@ -166,6 +167,7 @@ def sensor_block(
     no_framework_maps: bool,
     no_rwx_regions: bool,
     no_framework_threads: bool,
+    no_foreign_libraries: bool,
 ) -> bytes:
     """Returns the sensor block of a process, folded into every decryption's key.
 
@@ -175,6 +177,7 @@ def sensor_block(
         no_framework_maps: No mapping in the process's memory map names a known instrumentation framework.
         no_rwx_regions: No mapping is both writable and executable.
         no_framework_threads: No thread carries the name a hooking framework gives its own threads.
+        no_foreign_libraries: No shared library is loaded from outside the expected directories.
 
     Returns:
         The block, 32 bytes: one fact per byte at the start, then zeros.
@@ -185,6 +188,7 @@ def sensor_block(
     block[2] = 1 if no_framework_maps else 0
     block[3] = 1 if no_rwx_regions else 0
     block[4] = 1 if no_framework_threads else 0
+    block[5] = 1 if no_foreign_libraries else 0
     return bytes(block)
 
 
@@ -349,6 +353,7 @@ def build_program(
         FoldRecord(kind=KIND_REGION),
         FoldRecord(kind=KIND_GATES),
         FoldRecord(kind=KIND_PACKAGE),
+        FoldRecord(kind=KIND_STUB),
     ]
     constants: list[bytes] = []
     entry_indices: list[int] = []

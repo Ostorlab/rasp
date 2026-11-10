@@ -281,6 +281,13 @@ struct FoldInputs {
       return entry_digest(apk, record.param);
     case RecordKind::kPackage:
       return package_digest(apk);
+    case RecordKind::kStub: {
+      const std::optional<std::vector<std::uint8_t>> stub = apk::read_stub_entry(apk);
+      if (!stub.has_value()) {
+        return std::nullopt;
+      }
+      return checks::sha256(*stub);
+    }
   }
   return std::nullopt;
 }
@@ -400,7 +407,27 @@ Key sensor_block(const Sensors& sensors) {
   block[2] = sensors.no_framework_maps ? 1U : 0U;
   block[3] = sensors.no_rwx_regions ? 1U : 0U;
   block[4] = sensors.no_framework_threads ? 1U : 0U;
+  block[5] = sensors.no_foreign_libraries ? 1U : 0U;
   return block;
+}
+
+/// Whether the mapping's pathname is one the process is expected to hold: a system directory, the app's own install
+/// directory, or the vendor's runtime. A library added by repackaging the APK loads from the app's install directory
+/// too, so this check catches only libraries from outside the app — the stub-dex record catches the ones the
+/// repackage added inside it.
+[[nodiscard]] bool is_expected_library_path(std::string_view path) {
+  return path.starts_with("/system/") || path.starts_with("/apex/") || path.starts_with("/vendor/") ||
+         path.starts_with("/product/") || path.starts_with("/data/app/");
+}
+
+/// Whether the memory-map line maps a shared library from outside the expected directories.
+[[nodiscard]] bool is_foreign_library(std::string_view line) {
+  const std::size_t path_start = line.find(" /");
+  if (path_start == std::string_view::npos) {
+    return false;
+  }
+  const std::string_view path = line.substr(path_start + 1);
+  return path.ends_with(".so") && !is_expected_library_path(path);
 }
 
 Sensors observe_sensors() {
@@ -410,6 +437,7 @@ Sensors observe_sensors() {
   bool no_framework_maps = true;
   bool no_rwx_regions = true;
   bool no_framework_threads = true;
+  bool no_foreign_libraries = true;
   for (const Observation& observation : hook_observations) {
     if (observation.status != Status::kOk) {
       // An unreadable source is not the same as a clean one: the fold leaves the bit unset, so
@@ -429,6 +457,9 @@ Sensors observe_sensors() {
     if (observation.signal == "hook.threads") {
       no_framework_threads = false;
     }
+    if (observation.signal == "hook.foreign_libs") {
+      no_foreign_libraries = false;
+    }
   }
   return Sensors{
       .no_tracer = tracer.status == Status::kOk && tracer_pid != nullptr && *tracer_pid == 0,
@@ -436,6 +467,7 @@ Sensors observe_sensors() {
       .no_framework_maps = no_framework_maps,
       .no_rwx_regions = no_rwx_regions,
       .no_framework_threads = no_framework_threads,
+      .no_foreign_libraries = no_foreign_libraries,
   };
 }
 

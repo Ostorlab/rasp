@@ -53,7 +53,16 @@ TEST(Hooks, observeMaps_whenMapIsClean_reportsEmptyLists) {
   const std::string path = write_maps(directory, kCleanMaps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path), (std::vector<Observation>{maps_hits({}), rwx_regions({})}));
+  const std::vector<Observation> result = observe_maps(path);
+  ASSERT_EQ(result.size(), 3U);
+  EXPECT_EQ(result[0], maps_hits({}));
+  EXPECT_EQ(result[1], rwx_regions({}));
+  EXPECT_EQ(result[2].signal, "hook.foreign_libs");
+  EXPECT_EQ(result[2].source, "proc_maps");
+  EXPECT_EQ(result[2].status, Status::kOk);
+  const std::vector<std::string>* const lines = std::get_if<std::vector<std::string>>(&result[2].value);
+  ASSERT_NE(lines, nullptr);
+  EXPECT_TRUE(lines->empty());
 }
 
 TEST(Hooks, observeMaps_whenFridaAgentIsMapped_reportsItUnderMapsHits) {
@@ -106,7 +115,8 @@ TEST(Hooks, observeMaps_whenTheFileIsMissing_reportsAnErrorForBoth) {
   ASSERT_FALSE(directory.path().empty());
 
   EXPECT_EQ(observe_maps(directory.path() + "/missing"),
-            (std::vector<Observation>{unreadable("hook.maps_hits"), unreadable("hook.rwx_regions")}));
+            (std::vector<Observation>{unreadable("hook.maps_hits"), unreadable("hook.rwx_regions"),
+                                      unreadable("hook.foreign_libs")}));
 }
 
 TEST(Hooks, hooks_whenOffAndroid_reportsEveryCheckAsUnsupported) {

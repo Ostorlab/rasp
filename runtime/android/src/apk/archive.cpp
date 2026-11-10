@@ -144,6 +144,32 @@ struct LocalEntry {
   return std::nullopt;
 }
 
+/// Whether `name` matches `classes.dex` or `classesN.dex` (N ≥ 2), the APK's multidex entry names.
+[[nodiscard]] bool is_classes_entry(std::string_view name) {
+  if (!name.starts_with("classes") || !name.ends_with(".dex")) {
+    return false;
+  }
+  const std::string_view digits = name.substr(7, name.size() - 11);
+  if (digits.empty()) {
+    return name == "classes.dex";
+  }
+  return std::ranges::all_of(digits, [](char character) { return character >= '0' && character <= '9'; });
+}
+
+/// The number in a `classesN.dex` name: 1 for `classes.dex`, N for `classesN.dex`. The packer names the stub
+/// with the highest number, since it always adds it last.
+[[nodiscard]] std::uint32_t classes_number(std::string_view name) {
+  if (name == "classes.dex") {
+    return 1;
+  }
+  const std::string_view digits = name.substr(7, name.size() - 11);
+  std::uint32_t number = 0;
+  for (const char digit : digits) {
+    number = number * 10U + static_cast<std::uint32_t>(digit - '0');
+  }
+  return number;
+}
+
 }  // namespace
 
 std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& apk_path, std::string_view name) {
@@ -167,6 +193,82 @@ std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& ap
   }
   const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
   const std::optional<std::vector<std::uint8_t>> data = find_stored_entry(file, name);
+  munmap(mapping, size);
+  return data;
+}
+
+std::optional<std::vector<std::uint8_t>> read_stub_entry(const std::string& apk_path) {
+  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
+  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (descriptor < 0) {
+    return std::nullopt;
+  }
+  struct stat status = {};
+  if (fstat(descriptor, &status) != 0 || status.st_size <= 0 || !std::in_range<std::size_t>(status.st_size)) {
+    close(descriptor);
+    return std::nullopt;
+  }
+  const auto size = static_cast<std::size_t>(status.st_size);
+  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
+  void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
+  close(descriptor);
+  if (mapping == MAP_FAILED) {
+    return std::nullopt;
+  }
+  const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
+
+  // Walk the central directory for the highest-numbered classesN.dex entry.
+  const std::optional<std::span<const std::uint8_t>> record = find_end_record(file);
+  if (!record.has_value()) {
+    munmap(mapping, size);
+    return std::nullopt;
+  }
+  const std::uint16_t count = read_u16(record->subspan(10));
+  const std::uint32_t directory_size = read_u32(record->subspan(12));
+  const std::uint32_t directory_offset = read_u32(record->subspan(16));
+  if (directory_offset > file.size() || directory_size > file.size() - directory_offset) {
+    munmap(mapping, size);
+    return std::nullopt;
+  }
+  std::span<const std::uint8_t> rest = file.subspan(directory_offset, directory_size);
+  std::uint32_t best_number = 0;
+  std::optional<LocalEntry> best_entry;
+  for (std::uint16_t index = 0; index < count; ++index) {
+    if (rest.size() < kCentralEntrySize || read_u32(rest) != kCentralSignature) {
+      munmap(mapping, size);
+      return std::nullopt;
+    }
+    const std::uint16_t method = read_u16(rest.subspan(10));
+    const std::uint32_t stored_size = read_u32(rest.subspan(20));
+    const std::size_t name_length = read_u16(rest.subspan(28));
+    const std::size_t extra_length = read_u16(rest.subspan(30));
+    const std::size_t comment_length = read_u16(rest.subspan(32));
+    const std::uint32_t local_offset = read_u32(rest.subspan(42));
+    if (rest.size() < kCentralEntrySize + name_length) {
+      munmap(mapping, size);
+      return std::nullopt;
+    }
+    const std::string_view name(reinterpret_cast<const char*>(rest.data()) + kCentralEntrySize, name_length);
+    if (method == kStored && is_classes_entry(name)) {
+      const std::uint32_t number = classes_number(name);
+      if (number > best_number) {
+        best_number = number;
+        best_entry = LocalEntry{.local_offset = local_offset, .data_size = stored_size};
+      }
+    }
+    const std::size_t entry_size = kCentralEntrySize + name_length + extra_length + comment_length;
+    if (rest.size() < entry_size) {
+      munmap(mapping, size);
+      return std::nullopt;
+    }
+    rest = rest.subspan(entry_size);
+  }
+  if (!best_entry.has_value()) {
+    munmap(mapping, size);
+    return std::nullopt;
+  }
+  const std::optional<std::vector<std::uint8_t>> data = read_local_data(file, *best_entry);
   munmap(mapping, size);
   return data;
 }
