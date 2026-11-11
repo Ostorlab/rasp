@@ -1,18 +1,18 @@
 # Vendored O-MVLL plugin for the iOS runtime
 
-O-MVLL (https://obfuscator.re/o-mvll/) is the obfuscator the runtime uses. It is
-a clang pass plugin: clang loads it with `-fpass-plugin` and it transforms the
-code while it compiles. A Release build of `RaspRuntime.framework` obfuscates
-itself with this plugin; see `runtime/cmake/omvll_ios.cmake` and the scheme in
-`runtime/cmake/omvll_config.py` (shared with Android).
+**O-MVLL** (https://obfuscator.re/o-mvll/) is a clang pass plugin: clang loads it
+with `-fpass-plugin` and it transforms the code while it compiles. A Release build
+of `RaspRuntime.framework` obfuscates itself with this plugin; see
+`runtime/cmake/omvll_ios.cmake` and the scheme in `runtime/cmake/omvll_config.py`
+(shared with Android).
 
 This is Phase 1: compile-time obfuscation only (Layer A). There is no at-rest
 encryption or self-decrypt bootstrap yet (Layer B / Phase 2), so the whole
-framework is obfuscated in place, but the string literals the `DATA_READ_LITERALS`
+framework is obfuscated in place. The string literals the `DATA_READ_LITERALS`
 pass protects remain recoverable with `strings` in the shipped framework until
 Phase 2 adds an at-rest layer.
 
-## What is here
+## What is in the vendored archive?
 
 - `omvll-1.11.0-xcode27-macos-arm64.tar.xz` — the plugin, built, as a committed
   archive, so the build does not depend on anything outside the repository. It
@@ -52,12 +52,19 @@ https://github.com/open-obfuscator/o-mvll/releases/tag/1.11.0), keeping only
 `omvll-xcode.dylib` and the Python `Lib/`, recompressed as `.tar.xz` — the same
 shape as the vendored Android archive.
 
-- SHA-256: `16fe9a48a4840aebd4969a8a255c66ad7283344799b5ff079cc9a6c266f5a445`
+- SHA-256: `16fe9a48a4840aebd4969a8a255c66ad7283344799b5ff079cc9a6c266f5a445`. The
+  build verifies it; check it by hand with
+  `shasum -a 256 omvll-1.11.0-xcode27-macos-arm64.tar.xz` (expected: `16fe9a48...f5a445`).
 
-## Still to do (not in this change)
+## What is validated, and what is still to do
+
+Validated: a Release build with the full pass set installs and runs on a physical
+iPhone (xcode-27 runner); a `strings` scan shows the signal names are absent, and
+the packed app reports its checks.
+
+Still to do (not in this change):
 
 - Phase 2: at-rest encryption + a Mach-O self-decrypt bootstrap.
-- An iOS CI canary mirroring the Android one: build Release with a random
-  `RASP_OMVLL_SEED` and assert the protected literals remain `strings`-visible.
-- A device build on a real iPhone to confirm the obfuscated framework runs (the
-  Android effort only caught its worst bug on device).
+- A CI obfuscation canary runs in `runtime.yml`'s ios job (an encrypted signal is
+  absent, a skip-listed literal is present); extend it with a random
+  `RASP_OMVLL_SEED` as the Android one does.

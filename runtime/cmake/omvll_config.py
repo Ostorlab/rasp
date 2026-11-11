@@ -57,6 +57,9 @@ DATA_READ_LITERALS = re.compile(
     rb"(?:"
     rb"(?:root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+"
     rb"|rasp\.v2\.[a-z_.]*"
+    # iOS probe source names, stored in constexpr arrays and reported as the observation's source through
+    # data pointers: debugger.cpp's kProbes and jailbreak.cpp's kPathSources.
+    rb"|(?:access|stat|sysctl|getppid|task_get_exception_ports)"
     rb"|assets/rasp/(?:[a-z]+\.bin|r)"
     rb"|/(?:proc|sys)/.*"
     rb"|TracerPid:"

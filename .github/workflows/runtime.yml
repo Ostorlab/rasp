@@ -174,6 +174,21 @@ jobs:
         run: cmake --preset ios
       - name: Build
         run: cmake --build --preset ios --parallel
+      - name: Check the framework is obfuscated
+        run: |
+          binary=build/ios/ios/RaspRuntime.framework/RaspRuntime
+          # The Release build defaults RASP_OBFUSCATE_IOS=ON. This catches a regression that disables the
+          # string pass or breaks the data-read skip list, against real signal names from omvll_config.py:
+          #  - 'jb.sandbox_escape' is encrypted (not in DATA_READ_LITERALS), so it must be absent.
+          #  - 'dbg.traced' and 'sysctl' are skip-listed, so they must remain readable.
+          if strings -a "$binary" | grep -qF 'jb.sandbox_escape'; then
+            echo "FAIL: 'jb.sandbox_escape' is readable; string encryption did not run (O-MVLL disabled?)"; exit 1
+          fi
+          for literal in dbg.traced sysctl; do
+            if ! strings -a "$binary" | grep -qF "$literal"; then
+              echo "FAIL: '$literal' is missing; a data-read literal was encrypted (skip list broken?)"; exit 1
+            fi
+          done
       - name: Check the framework
         run: |
           binary=build/ios/ios/RaspRuntime.framework/RaspRuntime
