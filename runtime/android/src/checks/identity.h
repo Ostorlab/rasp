@@ -18,8 +18,8 @@ namespace rasp::android::checks {
 ///
 /// On Android it reports the running package name, read from the process's own command line; the process's own user id,
 /// read from getuid; the path the runtime's library loads from, read from the dynamic loader; and the signer of the APK
-/// the app runs from, read from its APK Signing Block. Anywhere else every observation is unsupported instead, so the
-/// server still sees that the check ran.
+/// the app runs from, read two ways, from its APK Signing Block natively and from the package manager through JNI.
+/// Anywhere else every observation is unsupported instead, so the server still sees that the check ran.
 ///
 /// @return Five observations: id.package through proc_cmdline, id.uid through getuid, id.code_path through dladdr,
 /// then sig.cert_sha256 through apk_signing_block and through package_manager.

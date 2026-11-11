@@ -102,9 +102,12 @@ constexpr jint kGetSigningCertificates = 0x08000000;
     return std::nullopt;
   }
   jobject manager = env->CallObjectMethodA(application, get_package_manager, nullptr);
+  if (util::threw(env) || manager == nullptr) {
+    return std::nullopt;
+  }
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): getPackageName returns a String.
   auto* name = static_cast<jstring>(env->CallObjectMethodA(application, get_package_name, nullptr));
-  if (util::threw(env) || manager == nullptr || name == nullptr) {
+  if (util::threw(env) || name == nullptr) {
     return std::nullopt;
   }
   const std::array<jvalue, 2> arguments{jvalue{.l = name}, jvalue{.i = kGetSigningCertificates}};
@@ -122,6 +125,9 @@ constexpr jint kGetSigningCertificates = 0x08000000;
     return std::nullopt;
   }
   jobject first = env->GetObjectArrayElement(signers, 0);
+  if (util::threw(env) || first == nullptr) {
+    return std::nullopt;
+  }
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): toByteArray returns a byte[].
   auto* bytes = static_cast<jbyteArray>(env->CallObjectMethodA(first, to_byte_array, nullptr));
   if (util::threw(env) || bytes == nullptr) {
