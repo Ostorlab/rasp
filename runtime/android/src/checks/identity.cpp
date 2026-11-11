@@ -71,13 +71,29 @@ constexpr std::chrono::milliseconds kApplicationWaitStep{50};
 /// thread waiting.
 constexpr int kApplicationWaitAttempts = 100;
 
+/// Waits for the app's Application, at most kApplicationWaitAttempts looks kApplicationWaitStep apart.
+///
+/// The runtime's thread can start before Android creates the Application. The returned local reference belongs to
+/// the caller's local frame; a JNI exception or a timeout returns nullptr.
+[[nodiscard]] jobject wait_for_application(JNIEnv* env, jclass activity_thread, jmethodID current_application) {
+  jobject application = nullptr;
+  for (int attempt = 0; attempt < kApplicationWaitAttempts && application == nullptr; ++attempt) {
+    if (attempt > 0) {
+      std::this_thread::sleep_for(kApplicationWaitStep);
+    }
+    application = env->CallStaticObjectMethodA(activity_thread, current_application, nullptr);
+    if (util::threw(env)) {
+      return nullptr;
+    }
+  }
+  return application;
+}
+
 /// Reads the signer's certificate from the package manager, inside a local frame that the caller pops.
 ///
 /// It walks the app's own Context (ActivityThread.currentApplication) to PackageManager.getPackageInfo with
-/// GET_SIGNING_CERTIFICATES, then SigningInfo.getApkContentsSigners and the first Signature's bytes. The runtime's
-/// thread starts before Android creates the Application, so the first pass can get here while there is none yet: it
-/// waits for it, at most kApplicationWaitAttempts looks kApplicationWaitStep apart, so that a failure of this read
-/// isn't a state every cold start can produce.
+/// GET_SIGNING_CERTIFICATES, then SigningInfo.getApkContentsSigners and the first Signature's bytes. It calls
+/// wait_for_application so that a failure of this read isn't a state every cold start can produce.
 ///
 /// @param env The thread's JNI environment.
 /// @return The certificate's DER bytes, or nothing when a call fails or throws, there is no signer, or the Application
@@ -108,16 +124,7 @@ constexpr int kApplicationWaitAttempts = 100;
       get_signers == nullptr || to_byte_array == nullptr) {
     return std::nullopt;
   }
-  jobject application = nullptr;
-  for (int attempt = 0; attempt < kApplicationWaitAttempts && application == nullptr; ++attempt) {
-    if (attempt > 0) {
-      std::this_thread::sleep_for(kApplicationWaitStep);
-    }
-    application = env->CallStaticObjectMethodA(activity_thread, current_application, nullptr);
-    if (util::threw(env)) {
-      return std::nullopt;
-    }
-  }
+  jobject application = wait_for_application(env, activity_thread, current_application);
   if (application == nullptr) {
     return std::nullopt;
   }
