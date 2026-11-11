@@ -102,6 +102,13 @@ is sealed by chain A over the library and any edit of it breaks the fold. What t
 constrained by the store's regeneration on the AAB path — a total byte hash of every file would refuse
 legitimate store processing; the record list is the maximal stable set.
 
+Verified on the device: a clean AAB split install of the packed app runs; the sharedUserId patch alone kills
+decryption (the manifest seal); a pack pinned to the debug certificate runs signed with it, and the same pack
+re-signed with a different key refuses on both the AAB and the APK path (the signer record). The `am instrument`
+bypass closes by the same pinning: a target re-signed with an attacker key never decrypts (the pinned pack
+refuses), and a target left under the developer's key admits no attacker instrumentation package (the platform
+requires the same certificate, which the attacker cannot produce).
+
 ### W19 — The AAB base manifest and config-split content are unbound → debuggable + wrap.sh **done**
 
 After W18 bound the AAB base dexes and code-carrying splits, two surfaces stayed unbound on the AAB
