@@ -15,7 +15,9 @@
 #include <algorithm>
 #include <android/api-level.h>
 #include <array>
+#include <chrono>
 #include <jni.h>
+#include <thread>
 #include <unistd.h>
 
 #include "apk/archive.h"
@@ -63,14 +65,23 @@ constexpr std::string_view kCmdlinePath = "/proc/self/cmdline";
 constexpr jint kLocalFrameCapacity = 16;
 /// PackageManager.GET_SIGNING_CERTIFICATES, which fills PackageInfo.signingInfo.
 constexpr jint kGetSigningCertificates = 0x08000000;
+/// How long the thread waits between two looks for the app's Application.
+constexpr std::chrono::milliseconds kApplicationWaitStep{50};
+/// The most looks for the app's Application, five seconds in all, so an app that never creates one can't keep the
+/// thread waiting.
+constexpr int kApplicationWaitAttempts = 100;
 
 /// Reads the signer's certificate from the package manager, inside a local frame that the caller pops.
 ///
 /// It walks the app's own Context (ActivityThread.currentApplication) to PackageManager.getPackageInfo with
-/// GET_SIGNING_CERTIFICATES, then SigningInfo.getApkContentsSigners and the first Signature's bytes.
+/// GET_SIGNING_CERTIFICATES, then SigningInfo.getApkContentsSigners and the first Signature's bytes. The runtime's
+/// thread starts before Android creates the Application, so the first pass can get here while there is none yet: it
+/// waits for it, at most kApplicationWaitAttempts looks kApplicationWaitStep apart, so that a failure of this read
+/// isn't a state every cold start can produce.
 ///
 /// @param env The thread's JNI environment.
-/// @return The certificate's DER bytes, or nothing when a call fails or throws, or there is no signer.
+/// @return The certificate's DER bytes, or nothing when a call fails or throws, there is no signer, or the Application
+/// still doesn't exist after the wait.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_package_manager_certificate(JNIEnv* env) {
   jclass activity_thread = env->FindClass("android/app/ActivityThread");
   jclass context = env->FindClass("android/content/Context");
@@ -97,8 +108,17 @@ constexpr jint kGetSigningCertificates = 0x08000000;
       get_signers == nullptr || to_byte_array == nullptr) {
     return std::nullopt;
   }
-  jobject application = env->CallStaticObjectMethodA(activity_thread, current_application, nullptr);
-  if (util::threw(env) || application == nullptr) {
+  jobject application = nullptr;
+  for (int attempt = 0; attempt < kApplicationWaitAttempts && application == nullptr; ++attempt) {
+    if (attempt > 0) {
+      std::this_thread::sleep_for(kApplicationWaitStep);
+    }
+    application = env->CallStaticObjectMethodA(activity_thread, current_application, nullptr);
+    if (util::threw(env)) {
+      return std::nullopt;
+    }
+  }
+  if (application == nullptr) {
     return std::nullopt;
   }
   jobject manager = env->CallObjectMethodA(application, get_package_manager, nullptr);
