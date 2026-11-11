@@ -82,4 +82,24 @@ namespace rasp::android::apk {
 /// or a sibling APK can't be read, which fails the recovery the way every unread input does.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_split_dex_flag(const std::string& apk_path);
 
+/// Reads the semantic digest of the installed base APK's manifest: every attribute of the `<manifest>` and
+/// `<application>` elements except the volatile build-stamped names, canonicalised and sorted — the same digest the
+/// packer computes over the protobuf manifest it wrote into the AAB. A repack that adds, removes or changes any
+/// sealed attribute — a shared user id, a debuggable flag, a process name — changes the digest.
+///
+/// @param apk_path The base APK's path, as the runtime resolved it.
+/// @return The 32-byte digest. Nothing when the manifest is absent, compressed, malformed, or holds an attribute
+/// that does not canonicalise, which fails the recovery the way every unread input does.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_manifest_semantics(const std::string& apk_path);
+
+/// Reads the digest over the installed base APK's signing certificate: the concatenated DER certificates of the
+/// first v3 or v2 scheme signer, hashed once. The packer folds the digest of the developer's pinned certificate;
+/// a re-signed install — or one whose companion packages are admitted under a different certificate — derives a
+/// different digest and nothing decrypts.
+///
+/// @param apk_path The base APK's path, as the runtime resolved it.
+/// @return The 32-byte digest. Nothing when the APK holds no APK signing block with a v3 or v2 scheme pair, which
+/// fails the recovery the way every unread input does.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_signer_digest(const std::string& apk_path);
+
 }  // namespace rasp::android::apk

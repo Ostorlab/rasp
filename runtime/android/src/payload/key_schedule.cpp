@@ -325,6 +325,24 @@ struct FoldInputs {
       std::ranges::copy(*block, key.begin());
       return key;
     }
+    case RecordKind::kManifest: {
+      const std::optional<std::vector<std::uint8_t>> digest = apk::read_manifest_semantics(apk);
+      if (!digest.has_value() || digest->size() != kKeySize) {
+        return std::nullopt;
+      }
+      Key key{};
+      std::ranges::copy(*digest, key.begin());
+      return key;
+    }
+    case RecordKind::kSigner: {
+      const std::optional<std::vector<std::uint8_t>> digest = apk::read_signer_digest(apk);
+      if (!digest.has_value() || digest->size() != kKeySize) {
+        return std::nullopt;
+      }
+      Key key{};
+      std::ranges::copy(*digest, key.begin());
+      return key;
+    }
   }
   return std::nullopt;
 }

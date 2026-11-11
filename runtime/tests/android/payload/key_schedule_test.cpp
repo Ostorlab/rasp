@@ -813,6 +813,143 @@ TEST(KeySchedule, seedFrom_whenTheMapFrameIsTampered_changes) {
   EXPECT_NE(*seed, from_key(kSeedHex));
 }
 
+
+TEST(Apk, manifestSemantics_whenGivenTheManifest_hashesItsAttributes) {
+  // A synthetic binary manifest: a <manifest> element carrying package, sharedUserId and the volatile
+  // compileSdkVersion, and an <application> element carrying debuggable. The expected digest is the
+  // canonical form of the sealed attributes only, computed independently of the reader.
+  const std::string hex =
+      "03000800ec01000001001c001c0100000800000000000000000000003c000000"
+      "00000000000000001400000028000000440000006000000084000000a0000000"
+      "b800000008006d0061006e006900660065007300740000000700700061006300"
+      "6b00610067006500000000000b006100700070002e006500780061006d007000"
+      "6c006500000000000c0073006800610072006500640055007300650072004900"
+      "64000000100075002e006500780061006d0070006c0065002e00730068006100"
+      "72006500640000000b006100700070006c00690063006100740069006f006e00"
+      "000000000a00640065006200750067006700610062006c006500000011006300"
+      "6f006d00700069006c006500530064006b00560065007200730069006f006e00"
+      "00000000020110006000000000000000ffffffffffffffff0000000014001400"
+      "0300000000000000ffffffff01000000ffffffff0800000302000000ffffffff"
+      "03000000ffffffff0800000304000000ffffffff07000000ffffffff08000010"
+      "23000000030110001800000000000000ffffffffffffffff0000000002011000"
+      "3800000000000000ffffffffffffffff05000000140014000100000000000000"
+      "ffffffff06000000ffffffff08000012ffffffff030110001800000000000000"
+      "ffffffffffffffff05000000";
+  const TemporaryDirectory directory;
+  const std::vector<std::uint8_t> manifest = from_hex(hex);
+  const std::string content(manifest.begin(), manifest.end());
+  const std::vector<StoredEntry> entries{{.name = "AndroidManifest.xml", .content = content}};
+  ASSERT_TRUE(write_file(directory.path() + "/base.apk", zip_with_stored_entries(entries)));
+
+  const std::optional<std::vector<std::uint8_t>> digest =
+      apk::read_manifest_semantics(directory.path() + "/base.apk");
+
+  ASSERT_TRUE(digest.has_value());
+  EXPECT_EQ(*digest, from_hex("34ff8c9104b384c536af13fe7ed5c3b7bc39365303d12eab2f9fe113420e4af0"));
+}
+
+TEST(Apk, manifestSemantics_whenASharedUserIdChanges_changes) {
+  // The same manifest with the shared user id repointed — the one attribute the shared-process bypass
+  // needs — must change the digest; the volatile compileSdkVersion may not.
+  const std::string clean =
+      "03000800ec01000001001c001c0100000800000000000000000000003c000000"
+      "00000000000000001400000028000000440000006000000084000000a0000000"
+      "b800000008006d0061006e006900660065007300740000000700700061006300"
+      "6b00610067006500000000000b006100700070002e006500780061006d007000"
+      "6c006500000000000c0073006800610072006500640055007300650072004900"
+      "64000000100075002e006500780061006d0070006c0065002e00730068006100"
+      "72006500640000000b006100700070006c00690063006100740069006f006e00"
+      "000000000a00640065006200750067006700610062006c006500000011006300"
+      "6f006d00700069006c006500530064006b00560065007200730069006f006e00"
+      "00000000020110006000000000000000ffffffffffffffff0000000014001400"
+      "0300000000000000ffffffff01000000ffffffff0800000302000000ffffffff"
+      "03000000ffffffff0800000304000000ffffffff07000000ffffffff08000010"
+      "23000000030110001800000000000000ffffffffffffffff0000000002011000"
+      "3800000000000000ffffffffffffffff05000000140014000100000000000000"
+      "ffffffff06000000ffffffff08000012ffffffff030110001800000000000000"
+      "ffffffffffffffff05000000";
+  const std::string repacked =
+      "03000800ec01000001001c001c0100000800000000000000000000003c000000"
+      "00000000000000001400000028000000440000006000000084000000a0000000"
+      "b800000008006d0061006e006900660065007300740000000700700061006300"
+      "6b00610067006500000000000b006100700070002e006500780061006d007000"
+      "6c006500000000000c0073006800610072006500640055007300650072004900"
+      "64000000100075002e006500780061006d0070006c0065002e00730068006100"
+      "72006500640000000b006100700070006c00690063006100740069006f006e00"
+      "000000000a00640065006200750067006700610062006c006500000011006300"
+      "6f006d00700069006c006500530064006b00560065007200730069006f006e00"
+      "00000000020110006000000000000000ffffffffffffffff0000000014001400"
+      "0300000000000000ffffffff01000000ffffffff0800000302000000ffffffff"
+      "03000000ffffffff0800000301000000ffffffff07000000ffffffff08000010"
+      "23000000030110001800000000000000ffffffffffffffff0000000002011000"
+      "3800000000000000ffffffffffffffff05000000140014000100000000000000"
+      "ffffffff06000000ffffffff08000012ffffffff030110001800000000000000"
+      "ffffffffffffffff05000000";
+  const std::string no_volatile =
+      "03000800d801000001001c001c0100000800000000000000000000003c000000"
+      "00000000000000001400000028000000440000006000000084000000a0000000"
+      "b800000008006d0061006e006900660065007300740000000700700061006300"
+      "6b00610067006500000000000b006100700070002e006500780061006d007000"
+      "6c006500000000000c0073006800610072006500640055007300650072004900"
+      "64000000100075002e006500780061006d0070006c0065002e00730068006100"
+      "72006500640000000b006100700070006c00690063006100740069006f006e00"
+      "000000000a00640065006200750067006700610062006c006500000011006300"
+      "6f006d00700069006c006500530064006b00560065007200730069006f006e00"
+      "00000000020110004c00000000000000ffffffffffffffff0000000014001400"
+      "0200000000000000ffffffff01000000ffffffff0800000302000000ffffffff"
+      "03000000ffffffff0800000304000000030110001800000000000000ffffffff"
+      "ffffffff00000000020110003800000000000000ffffffffffffffff05000000"
+      "140014000100000000000000ffffffff06000000ffffffff08000012ffffffff"
+      "030110001800000000000000ffffffffffffffff05000000";
+  const TemporaryDirectory directory;
+  const std::vector<std::uint8_t> clean_manifest = from_hex(clean);
+  const std::vector<std::uint8_t> repacked_manifest = from_hex(repacked);
+  const std::vector<std::uint8_t> volatile_manifest = from_hex(no_volatile);
+  const std::string clean_content(clean_manifest.begin(), clean_manifest.end());
+  const std::string repacked_content(repacked_manifest.begin(), repacked_manifest.end());
+  const std::string volatile_content(volatile_manifest.begin(), volatile_manifest.end());
+  const std::vector<StoredEntry> clean_entries{{.name = "AndroidManifest.xml", .content = clean_content}};
+  ASSERT_TRUE(write_file(directory.path() + "/base.apk", zip_with_stored_entries(clean_entries)));
+  const std::vector<StoredEntry> repacked_entries{{.name = "AndroidManifest.xml", .content = repacked_content}};
+  ASSERT_TRUE(write_file(directory.path() + "/repacked.apk", zip_with_stored_entries(repacked_entries)));
+  const std::vector<StoredEntry> volatile_entries{{.name = "AndroidManifest.xml", .content = volatile_content}};
+  ASSERT_TRUE(write_file(directory.path() + "/volatile.apk", zip_with_stored_entries(volatile_entries)));
+
+  const std::optional<std::vector<std::uint8_t>> clean_digest =
+      apk::read_manifest_semantics(directory.path() + "/base.apk");
+  const std::optional<std::vector<std::uint8_t>> repacked_digest =
+      apk::read_manifest_semantics(directory.path() + "/repacked.apk");
+  const std::optional<std::vector<std::uint8_t>> volatile_digest =
+      apk::read_manifest_semantics(directory.path() + "/volatile.apk");
+
+  ASSERT_TRUE(clean_digest.has_value());
+  ASSERT_TRUE(repacked_digest.has_value());
+  ASSERT_TRUE(volatile_digest.has_value());
+  EXPECT_NE(*repacked_digest, *clean_digest);
+  EXPECT_EQ(*volatile_digest, *clean_digest);
+}
+
+TEST(Apk, signerDigest_whenTheApkHoldsASigningBlock_hashesTheCertificates) {
+  // A hand-built APK signing block: one v2 signer whose signed data carries two certificates, and the
+  // end record names the central directory at the block's end. The digest is the SHA-256 of the
+  // certificates, concatenated in order.
+  const std::string hex =
+      "580000000000000038000000000000001a870971300000002c00000028000000"
+      "10000000040000003002aabb040000003002ccdd10000000040000003002aabb"
+      "040000003002ccdd580000000000000041504b2053696720426c6f636b203432"
+      "504b0506000000000000000000000000600000000000";
+  const TemporaryDirectory directory;
+  const std::vector<std::uint8_t> file_bytes = from_hex(hex);
+  ASSERT_TRUE(write_file(directory.path() + "/signed.apk",
+                        std::string(file_bytes.begin(), file_bytes.end())));
+
+  const std::optional<std::vector<std::uint8_t>> digest =
+      apk::read_signer_digest(directory.path() + "/signed.apk");
+
+  ASSERT_TRUE(digest.has_value());
+  EXPECT_EQ(*digest, from_hex("45f89b4af9e83b8215b18768abe16a6269a04775a1c31604e8674b3b9d499e2a"));
+}
+
 TEST(KeySchedule, gateBlock_whenTheDeviceIsClean_isOneBytePerFactThenZeros) {
   const Environment clean{
       .java_environment = true,

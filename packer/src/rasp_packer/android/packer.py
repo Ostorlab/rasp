@@ -57,6 +57,7 @@ from rasp_packer.android import self_encrypt
 from rasp_packer.android import split as split_module
 from rasp_packer.android.aab import archive as aab_archive
 from rasp_packer.android.aab import manifest as aab_manifest_module
+from rasp_packer.android.aab import proto_manifest as aab_proto_manifest
 from rasp_packer.android.apk import archive as apk_archive
 from rasp_packer.android.apk import manifest as apk_manifest_module
 
@@ -90,6 +91,7 @@ def pack(
     splitter: Splitter = split_module.split,
     aab_splitter: AabSplitter = split_module.split_from_dex_entries,
     generator: random.Random | None = None,
+    pin_certificate: pathlib.Path | None = None,
 ) -> identity.AppIdentity:
     """Packs an Android app (APK or AAB), writing the protected output.
 
@@ -120,6 +122,7 @@ def pack(
     """
     if artifacts is None:
         artifacts = resources_module.load()
+    pinned_signer = _read_pinned_certificate(pin_certificate)
     if _is_aab(app):
         return _pack_aab(
             app=app,
@@ -128,6 +131,7 @@ def pack(
             artifacts=artifacts,
             splitter=aab_splitter,
             generator=generator,
+            pinned_signer=pinned_signer,
         )
     return _pack_apk(
         app=app,
@@ -136,7 +140,51 @@ def pack(
         artifacts=artifacts,
         splitter=splitter,
         generator=generator,
+        pinned_signer=pinned_signer,
     )
+
+
+def _read_pinned_certificate(pin_certificate: pathlib.Path | None) -> bytes | None:
+    """Reads the certificate the developer pinned, as DER bytes.
+
+    The file is the certificate in PEM or DER form. A pinned pack folds the certificate's digest into the
+    schedule, and the runtime reads the installed APK's own signing certificate the same way: a re-signed
+    install — or one whose companion packages are admitted under a different certificate — derives a different
+    key and nothing decrypts.
+
+    Args:
+        pin_certificate: The certificate file's path, or None to leave the pack unpinned.
+
+    Returns:
+        The certificate's DER encoding, or None when no certificate was given.
+
+    Raises:
+        InvalidCertificateError: The file holds no readable certificate.
+    """
+    if pin_certificate is None:
+        return None
+    content = pin_certificate.read_bytes()
+    marker = b"-----BEGIN CERTIFICATE-----"
+    if marker in content:
+        end = content.find(b"-----END CERTIFICATE-----")
+        if end < 0:
+            raise errors.InvalidCertificateError(
+                "the pinned certificate's PEM has no end marker"
+            )
+        body = content[content.find(marker) + len(marker) : end]
+        try:
+            import base64
+
+            return base64.b64decode(b"".join(body.split()))
+        except (ValueError, TypeError) as error:
+            raise errors.InvalidCertificateError(
+                f"the pinned certificate's PEM does not decode: {error}"
+            ) from error
+    if not content.startswith(b"\x30"):
+        raise errors.InvalidCertificateError(
+            "the pinned certificate is neither PEM nor DER"
+        )
+    return content
 
 
 def _is_aab(app: pathlib.Path) -> bool:
@@ -156,6 +204,7 @@ def _pack_apk(
     artifacts: resources_module.Artifacts,
     splitter: Splitter,
     generator: random.Random | None,
+    pinned_signer: bytes | None,
 ) -> identity.AppIdentity:
     """Packs an APK."""
     apk = apk_archive.Apk.read(app)
@@ -209,6 +258,10 @@ def _pack_apk(
         artifacts.stub_dex,
         apk_stored_entries,
         None,
+        None,
+        key_schedule.signer_digest(pinned_signer)
+        if pinned_signer is not None
+        else None,
     )
     map_frame, program_frame, dex_entries = _encrypt_payload(
         result.business, root, random.SystemRandom(), names.stub_class_dotted
@@ -239,6 +292,7 @@ def _pack_aab(
     artifacts: resources_module.Artifacts,
     splitter: AabSplitter,
     generator: random.Random | None,
+    pinned_signer: bytes | None,
 ) -> identity.AppIdentity:
     """Packs an AAB."""
     aab = aab_archive.Aab.read(app)
@@ -290,6 +344,13 @@ def _pack_aab(
     # The dex record binds the base module's class dexes as the store installs them: the names the
     # base APK holds, with the content the packer wrote.
     module_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
+    # The manifest record binds the manifest's semantics: every attribute of the two identity
+    # elements, as the packer wrote them and the store re-serializes them.
+    semantics = aab_proto_manifest.semantics(patched_manifest)
+    if semantics is None:
+        raise errors.InvalidAabError(
+            "the manifest holds a value the seal cannot canonicalise"
+        )
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
         libraries,
         digests,
@@ -298,6 +359,10 @@ def _pack_aab(
         artifacts.stub_dex,
         None,
         module_dexes,
+        semantics,
+        key_schedule.signer_digest(pinned_signer)
+        if pinned_signer is not None
+        else None,
     )
     map_frame, program_frame, dex_data_entries = _encrypt_payload(
         result.business, root, random.SystemRandom(), names.stub_class_dotted
@@ -369,6 +434,8 @@ def _schedule_libraries(
     stub_dex: bytes,
     apk_entries: dict[str, tuple[bytes, int, int]] | None,
     module_dexes: dict[str, bytes] | None,
+    manifest_semantics: bytes | None,
+    pinned_signer: bytes | None,
 ) -> tuple[bytes, bytes, dict[str, bytes], dict[str, bytes]]:
     """Builds the schedule's fold over the app's runtime libraries.
 
@@ -387,6 +454,10 @@ def _schedule_libraries(
         module_dexes: The base module's class dexes by entry name, which the fold program folds in as
             the dex digest when the pack is an AAB; None for an APK pack, whose entry digest already
             covers them.
+        manifest_semantics: The semantic digest of the manifest the packer wrote, for an AAB pack's
+            manifest record; None for an APK pack, whose entry digest binds the manifest's bytes.
+        pinned_signer: The digest of the certificate the developer pinned, or None to leave the pack
+            unpinned.
 
     Returns:
         The root key, the asset share to ship as the s.bin entry, the finished libraries, by APK
@@ -410,6 +481,7 @@ def _schedule_libraries(
         library_size=smallest,
         keystore_spans=spans,
         include_apk_digest=apk_entries is not None,
+        pinned_signer=pinned_signer,
     )
     encoded = key_schedule.encode_program(program)
     decoys = {
@@ -437,6 +509,8 @@ def _schedule_libraries(
             apk_entries,
             frozenset(name.rpartition("/")[2] for name in libraries),
             module_dexes,
+            manifest_semantics,
+            pinned_signer,
         )
         a_state = key_schedule.run_chain(
             bytes(key_schedule.KEY_SIZE), program.chain_a, gather, "a"
@@ -460,6 +534,8 @@ def _resolver(
     apk_entries: dict[str, tuple[bytes, int, int]] | None,
     library_filenames: frozenset[str],
     module_dexes: dict[str, bytes] | None,
+    manifest_semantics: bytes | None,
+    pinned_signer: bytes | None,
 ) -> collections.abc.Callable[[key_schedule.FoldRecord], bytes]:
     """Returns the gatherer of one library's fold inputs, the packer's side of the interpreter.
 
@@ -474,6 +550,10 @@ def _resolver(
         library_filenames: The runtime library's filename, which the APK digest skips.
         module_dexes: The base module's class dexes by entry name, for an AAB pack's dex record; None
             for an APK pack, which never draws the record.
+        manifest_semantics: The semantic digest of the manifest the packer wrote, for an AAB pack's
+            manifest record; None for an APK pack, which never draws the record.
+        pinned_signer: The digest of the certificate the developer pinned, or None when the pack draws
+            no signer record.
 
     Returns:
         A function that returns the 32 bytes each fold record's source holds, the same values the
@@ -517,6 +597,20 @@ def _resolver(
         if record.kind == key_schedule.KIND_DEXLESS_SPLITS:
             # The store's config splits never hold a class dex; a split that does changes the fold.
             return key_schedule.dexless_splits()
+        if record.kind == key_schedule.KIND_MANIFEST:
+            # The manifest's semantics as the packer wrote them; a repack's edit changes the fold.
+            if manifest_semantics is None:
+                raise ValueError(
+                    "the manifest record is drawn without the packer's semantics"
+                )
+            return manifest_semantics
+        if record.kind == key_schedule.KIND_SIGNER:
+            # The pinned certificate's digest; a re-signed install changes the fold.
+            if pinned_signer is None:
+                raise ValueError(
+                    "the signer record is drawn without a pinned certificate"
+                )
+            return pinned_signer
         return hashlib.sha256(
             decoys[key_schedule.decoy_entry_name(record.param)]
         ).digest()

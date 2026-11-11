@@ -132,11 +132,23 @@ enum class RecordKind : std::uint8_t {
   /// removal of any class dex changes the fold and nothing decrypts.
   kDexes = 12,
   /// The observation that the installed APK set holds no unbound code or code-loading hook, chain S, drawn for an
-  /// AAB pack: no APK beside the base holds a class dex (the store's config splits — ABI, density, language — never
-  /// do), and neither the base nor a split holds the native launch wrapper the platform honours for a debuggable
-  /// app. The packer folds the clean fact; a split that carries code, or any launch wrapper, flips it, the fold
-  /// comes out wrong, and nothing decrypts.
+  /// AAB pack: no APK beside the base holds a class dex (the store's config splits — ABI, density, language —
+  /// never do), and neither the base nor a split holds the native launch wrapper the platform honours for a
+  /// debuggable app. The packer folds the clean fact; a split that carries code, or any launch wrapper, flips it,
+  /// the fold comes out wrong, and nothing decrypts.
   kDexlessSplits = 13,
+  /// The semantic digest of the installed manifest — every attribute of the `<manifest>` and `<application>`
+  /// elements except the volatile build-stamped names, canonicalised and sorted — chain S, drawn for an AAB pack
+  /// whose store-regenerated manifest bytes the packer cannot bind. An attribute added, removed or changed by a
+  /// repack — a shared user id, a debuggable flag, a process name — changes the digest, the fold comes out wrong,
+  /// and nothing decrypts.
+  kManifest = 14,
+  /// The digest over the installed base APK's signing certificate, chain S, drawn when the packer pinned the
+  /// developer's certificate. The platform admits companion packages — an instrumentation runner, a shared-uid
+  /// helper — only under the same certificate, and re-signing is free to every other binding, so the pinned
+  /// certificate is the one anchor a repack cannot forge: a re-signed install derives a different digest and
+  /// nothing decrypts.
+  kSigner = 15,
 };
 
 /// One step of a fold chain: a source to gather and fold in as the step's salt.

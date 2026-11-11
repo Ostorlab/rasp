@@ -57,6 +57,12 @@ def _parser() -> argparse.ArgumentParser:
         help="the check groups the app runs, comma-separated, such as debugger,hooks; "
         f"{_required_checks()} always runs (default: only {_required_checks()})",
     )
+    pack.add_argument(
+        "--pin-certificate",
+        type=pathlib.Path,
+        help="the certificate the app will be signed with, PEM or DER; the pack refuses to decrypt "
+        "under any other signer (Android only)",
+    )
     return parser
 
 
@@ -104,6 +110,7 @@ def _pack(arguments: argparse.Namespace) -> int:
             output=arguments.output,
             build_id=arguments.build_id,
             checks=checks,
+            pin_certificate=getattr(arguments, "pin_certificate", None),
         )
     except errors.Error as error:
         print(f"rasp pack: {error}", file=sys.stderr)

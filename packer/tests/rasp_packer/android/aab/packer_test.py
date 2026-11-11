@@ -145,6 +145,7 @@ def _recover_root(archive: zipfile.ZipFile) -> bytes | None:
         _PACKAGE.encode(),
         _PATCHED_STUB_DEX,
         module_dexes=module_dexes,
+        manifest_semantics=_pack_manifest_semantics(archive),
     )
 
 
@@ -227,7 +228,9 @@ def testPackAab_whenAClassDexIsEdited_theRootNoLongerRecovers(
             "classes2.dex": _FRAMEWORK[1],
             "classes3.dex": _PATCHED_STUB_DEX,
         }
-        root = _recover_root_with(zf, library, module_dexes)
+        root = _recover_root_with(
+            zf, library, module_dexes, _pack_manifest_semantics(zf)
+        )
         assert root is not None
     # A repack that edits a framework dex: the dex record sees different content.
     with zipfile.ZipFile(output) as zf:
@@ -241,7 +244,10 @@ def testPackAab_whenAClassDexIsEdited_theRootNoLongerRecovers(
 
 
 def _recover_root_with(
-    archive: zipfile.ZipFile, library: bytes, module_dexes: dict[str, bytes]
+    archive: zipfile.ZipFile,
+    library: bytes,
+    module_dexes: dict[str, bytes],
+    manifest_semantics: bytes | None = None,
 ) -> bytes | None:
     entries = {
         name.removeprefix("base/"): archive.read(name)
@@ -255,7 +261,19 @@ def _recover_root_with(
         _PACKAGE.encode(),
         _PATCHED_STUB_DEX,
         module_dexes=module_dexes,
+        manifest_semantics=manifest_semantics,
     )
+
+
+def _pack_manifest_semantics(archive: zipfile.ZipFile) -> bytes:
+    """The packer's own manifest semantics, read from the packed AAB's proto manifest."""
+    from rasp_packer.android.aab import proto_manifest
+
+    semantics = proto_manifest.semantics(
+        archive.read("base/manifest/AndroidManifest.xml")
+    )
+    assert semantics is not None
+    return semantics
 
 
 def testPackAab_writesEncryptedMapThatNamesEveryBusinessClass(

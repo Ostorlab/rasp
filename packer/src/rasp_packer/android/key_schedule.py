@@ -75,6 +75,8 @@ KIND_APK = 10
 KIND_SPLITS = 11
 KIND_DEXES = 12
 KIND_DEXLESS_SPLITS = 13
+KIND_MANIFEST = 14
+KIND_SIGNER = 15
 
 # The prefixes of APK entries the fold's APK digest excludes: the signing step's own entries and the fold's own
 # outputs.
@@ -211,6 +213,24 @@ def dex_digest(entries: collections.abc.Mapping[str, bytes]) -> bytes:
         digest.update(name.encode("utf-8") + b"\x00")
         digest.update(hashlib.sha256(entries[name]).digest())
     return digest.digest()
+
+
+def signer_digest(certificate: bytes) -> bytes:
+    """Computes the digest over the pinned signing certificate, the way the runtime reads the installed one.
+
+    The runtime reads the installed base APK's signing block, concatenates the first v3 or v2 scheme signer's DER
+    certificates, and hashes them once. The packer folds the same hash over the certificate the developer pinned:
+    the platform admits companion packages — an instrumentation runner, a shared-uid helper — only under the same
+    certificate, and re-signing is free to every other binding, so the pinned certificate is the one anchor a
+    repack cannot forge.
+
+    Args:
+        certificate: The pinned certificate's DER encoding.
+
+    Returns:
+        The 32-byte digest.
+    """
+    return hashlib.sha256(certificate).digest()
 
 
 def dexless_splits() -> bytes:
@@ -459,6 +479,7 @@ def build_program(
     library_size: int = 0,
     keystore_spans: tuple[tuple[int, int], ...] = (),
     include_apk_digest: bool = False,
+    pinned_signer: bytes | None = None,
 ) -> FoldProgram:
     """Builds a random fold program: the real inputs, in a random order, among random decoys.
 
@@ -503,9 +524,14 @@ def build_program(
         chain_s.append(FoldRecord(kind=KIND_SPLITS))
     else:
         # An AAB the store splits: the entry digest and the installed set are unknowable at pack time, so
-        # the module's dex content and the splits' emptiness stand in for them.
+        # the module's dex content, the splits' emptiness and the manifest's semantics stand in for them.
         chain_s.append(FoldRecord(kind=KIND_DEXES))
         chain_s.append(FoldRecord(kind=KIND_DEXLESS_SPLITS))
+        chain_s.append(FoldRecord(kind=KIND_MANIFEST))
+    if pinned_signer is not None:
+        # The pinned certificate is the one anchor a repack cannot forge: the platform admits companion
+        # packages only under the same certificate.
+        chain_s.append(FoldRecord(kind=KIND_SIGNER))
     constants: list[bytes] = []
     entry_indices: list[int] = []
     for _ in range(generator.randint(3, 6)):

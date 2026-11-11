@@ -510,13 +510,39 @@ def testBuildProgram_whenThePackKnowsTheInstalledSet_foldsTheSplitSet() -> None:
         assert key_schedule.KIND_SPLITS in kinds
         assert key_schedule.KIND_DEXES not in kinds
         assert key_schedule.KIND_DEXLESS_SPLITS not in kinds
+        assert key_schedule.KIND_MANIFEST not in kinds
     for seed in range(8):
         program = key_schedule.build_program(random.Random(seed))
         assert key_schedule.KIND_APK not in [r.kind for r in program.chain_s]
         assert key_schedule.KIND_SPLITS not in [r.kind for r in program.chain_s]
-        # An AAB the store splits: the module's dex content and the splits' emptiness stand in.
+        # An AAB the store splits: the module's dex content, the splits' emptiness and the
+        # manifest's semantics stand in for the entry digest and the installed set.
         assert key_schedule.KIND_DEXES in [r.kind for r in program.chain_s]
         assert key_schedule.KIND_DEXLESS_SPLITS in [r.kind for r in program.chain_s]
+        assert key_schedule.KIND_MANIFEST in [r.kind for r in program.chain_s]
+
+
+def testBuildProgram_whenTheCertificateIsPinned_foldsTheSigner() -> None:
+    for seed in range(8):
+        program = key_schedule.build_program(
+            random.Random(seed), include_apk_digest=True, pinned_signer=b"\x01" * 32
+        )
+        assert key_schedule.KIND_SIGNER in [r.kind for r in program.chain_s]
+    for seed in range(8):
+        program = key_schedule.build_program(
+            random.Random(seed), pinned_signer=b"\x01" * 32
+        )
+        assert key_schedule.KIND_SIGNER in [r.kind for r in program.chain_s]
+    for seed in range(4):
+        program = key_schedule.build_program(random.Random(seed))
+        assert key_schedule.KIND_SIGNER not in [r.kind for r in program.chain_s]
+
+
+def testSignerDigest_whenGivenTheCertificate_hashesTheDerBytes() -> None:
+    assert (
+        key_schedule.signer_digest(b"\x30\x02\xaa\xbb")
+        == hashlib.sha256(b"\x30\x02\xaa\xbb").digest()
+    )
 
 
 def testDexDigest_whenGivenTheModuleDexes_hashesNameAndContent() -> None:

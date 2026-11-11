@@ -76,6 +76,32 @@ The keystore share compensates per ABI so every ABI recovers the same root: emul
 as emulating the arm64 one. An app that ships both slices hands the analyst the cheaper architecture. Per-ABI
 roots would need per-ABI dex assets, which multiplies the APK's encrypted entries; not proposed.
 
+### W20 — A same-signed sharedUserId companion runs in the genuine process **done (pinned), done unpinned (manifest seal)**
+
+Two same-class bypasses from the same root: the runtime never pinned the signing certificate, so an attacker
+re-signs the target with a throwaway key and presents same-cert companion packages. `am instrument` runs an
+attacker `Instrumentation` in the target's process (fix7); a helper app sharing `android:sharedUserId` — added
+to the unbound AAB manifest — declares a component in the target's process and runs there (fix8). **Fixed**:
+- **The manifest seal** (unpinned): a new record folds a digest over every attribute of the installed
+  manifest's `<manifest>` and `<application>` elements — canonicalised, sorted, volatile build-stamped names
+  excluded — which the packer predicts from the AAB proto and the runtime reads from the installed binary AXML.
+  Adding `sharedUserId` — or any identity-changing manifest edit — changes the digest and nothing decrypts.
+- **Certificate pinning** (the class closure): `rasp pack --pin-certificate <PEM/DER>` folds the developer's
+  certificate digest in as a signer record; the runtime parses the installed base APK's signing block (v3, then
+  v2) and hashes the signer's certificates. A re-signed install — or a same-cert companion admitted under a
+  different key — derives a different key and nothing decrypts. This is the anchor every prior round lacked:
+  it removes the free re-signing the whole path-2 series relied on, and it closes both fix7 and fix8 at once.
+  It is optional because a pinned pack must be signed with the pinned key (the customer's key for sideloads,
+  Play's app-signing key for store distribution).
+
+The seal now enumerates every tamperable part of the installed app in one encrypted list — the fold program:
+the library's own bytes (text, sections, ranges), the config region, the share, the decoys, the package, the
+stub dex, the base dexes, the manifest's semantics, the installed APK set (or its emptiness), the launch-wrapper
+absence, and the signer. There is no literal "hash file" beside it because the program itself is that file: it
+is sealed by chain A over the library and any edit of it breaks the fold. What the enumeration binds per part is
+constrained by the store's regeneration on the AAB path — a total byte hash of every file would refuse
+legitimate store processing; the record list is the maximal stable set.
+
 ### W19 — The AAB base manifest and config-split content are unbound → debuggable + wrap.sh **done**
 
 After W18 bound the AAB base dexes and code-carrying splits, two surfaces stayed unbound on the AAB

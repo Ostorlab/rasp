@@ -55,6 +55,14 @@ constexpr std::size_t kMaxComment = 65535;
          (static_cast<std::uint32_t>(data[2]) << 16U) | (static_cast<std::uint32_t>(data[3]) << 24U);
 }
 
+/// Reads a little-endian 64-bit value, when at least eight bytes remain.
+///
+/// @param data The bytes to read from.
+/// @return The value.
+[[nodiscard]] std::uint64_t read_u64(std::span<const std::uint8_t> data) {
+  return static_cast<std::uint64_t>(read_u32(data)) | (static_cast<std::uint64_t>(read_u32(data.subspan(4))) << 32U);
+}
+
 /// Whether `bytes` holds the same characters as `text`.
 [[nodiscard]] bool equals(std::span<const std::uint8_t> bytes, std::string_view text) {
   return bytes.size() == text.size() &&
@@ -221,6 +229,298 @@ struct LocalEntry {
 /// @param file The APK's whole file bytes, memory-mapped.
 /// @param own_library The runtime library's filename, with its directory separator, or the legacy name.
 /// @return The 32-byte digest. Nothing when the archive is malformed or the hash fails.
+
+/// The binary-XML chunk types the manifest reader walks: the string pool, the resource map, and start elements.
+constexpr std::uint16_t kAxmlStringPoolType = 0x0001;
+constexpr std::uint16_t kAxmlStartElementType = 0x0102;
+/// The string-pool chunk's own header: counts, flags, and the string data's offset from the chunk's start.
+constexpr std::size_t kAxmlPoolHeaderSize = 28;
+/// The UTF-8 string-pool flag; without it the strings are UTF-16.
+constexpr std::uint32_t kAxmlPoolUtf8 = 0x100;
+/// The end of a ZIP file's last entry, where an appended signing block or central directory begins.
+constexpr std::uint32_t kZipEndRecordSignature = 0x06054b50;
+/// The APK signing block's trailing magic, 16 bytes before the central directory.
+constexpr std::string_view kApkSigningBlockMagic = "APK Sig Block 42";
+/// The APK signature scheme v3 and v2 pair ids, in the order the runtime prefers them.
+constexpr std::uint32_t kApkSignatureSchemeV3 = 0xF05368C0;
+constexpr std::uint32_t kApkSignatureSchemeV2 = 0x7109871A;
+/// The attribute value types the manifest reader canonicalises: a string, a reference, and a boolean.
+constexpr std::uint8_t kAxmlTypeString = 0x03;
+constexpr std::uint8_t kAxmlTypeBoolean = 0x12;
+
+/// Reads one length-prefixed field from a sequence of them: the prefix is a 32-bit little-endian length.
+///
+/// @param span The bytes holding the sequence, at the position of the next prefix.
+/// @return The field's bytes, or nothing when the prefix or the field does not fit.
+[[nodiscard]] std::optional<std::span<const std::uint8_t>> take_length_prefixed(std::span<const std::uint8_t>& span) {
+  if (span.size() < 4) {
+    return std::nullopt;
+  }
+  const std::uint32_t length = read_u32(span);
+  if (span.size() < 4 + static_cast<std::size_t>(length)) {
+    return std::nullopt;
+  }
+  const std::span<const std::uint8_t> field = span.subspan(4, length);
+  span = span.subspan(4 + length);
+  return field;
+}
+
+/// The string pool of one binary XML document, held with the offsets the reader needs.
+struct StringPool {
+  /// The pool chunk's whole bytes, from its chunk header on.
+  std::span<const std::uint8_t> chunk;
+  /// The pool chunk's own size, header included.
+  std::uint32_t chunk_size = 0;
+  /// The count of strings the pool holds.
+  std::uint32_t count = 0;
+  /// The flags word, carrying the encoding.
+  std::uint32_t flags = 0;
+  /// The string data's offset from the chunk's start.
+  std::uint32_t data_start = 0;
+};
+
+/// Reads the string pool chunk at the start of a binary XML document.
+///
+/// @param document The document's bytes.
+/// @return The pool, or nothing when the document is too short or its first chunk is not the pool.
+[[nodiscard]] std::optional<StringPool> read_string_pool(std::span<const std::uint8_t> document) {
+  if (document.size() < 8 + kAxmlPoolHeaderSize) {
+    return std::nullopt;
+  }
+  const std::uint16_t chunk_type = read_u16(document.subspan(8));
+  if (chunk_type != kAxmlStringPoolType) {
+    return std::nullopt;
+  }
+  // The document's first chunk is the XML file header, eight bytes; the string pool follows it.
+  const std::span<const std::uint8_t> pool_chunk = document.subspan(8);
+  StringPool pool;
+  pool.chunk = pool_chunk;
+  pool.chunk_size = read_u32(pool_chunk.subspan(4));
+  pool.count = read_u32(pool_chunk.subspan(8));
+  pool.flags = read_u32(pool_chunk.subspan(16));
+  pool.data_start = read_u32(pool_chunk.subspan(20));
+  if (pool.chunk_size < kAxmlPoolHeaderSize || pool.chunk_size > document.size() - 8) {
+    return std::nullopt;
+  }
+  if (pool.data_start < kAxmlPoolHeaderSize || pool.data_start > document.size()) {
+    return std::nullopt;
+  }
+  if (kAxmlPoolHeaderSize + 4ULL * pool.count > pool.data_start) {
+    return std::nullopt;
+  }
+  return pool;
+}
+
+/// Reads one string of the pool by its index.
+///
+/// @param pool The pool.
+/// @param index The string's index.
+/// @return The string's bytes without its terminator. Nothing when the index is out of bounds or the string does not
+/// fit the pool's data.
+[[nodiscard]] std::optional<std::string> pool_string(const StringPool& pool, std::uint32_t index) {
+  if (index >= pool.count) {
+    return std::nullopt;
+  }
+  const std::uint32_t offset = read_u32(pool.chunk.subspan(kAxmlPoolHeaderSize + 4ULL * index));
+  if (pool.data_start + offset + 2 > pool.chunk.size()) {
+    return std::nullopt;
+  }
+  const std::uint8_t* at = pool.chunk.data() + pool.data_start + offset;
+  const std::size_t left = pool.chunk.size() - pool.data_start - offset;
+  if ((pool.flags & kAxmlPoolUtf8) != 0) {
+    // Two lengths: the character count and the byte count, each one or two bytes, then the bytes.
+    std::size_t used = 0;
+    std::uint32_t length = at[used++];
+    if ((length & 0x80) != 0) {
+      length = ((length & 0x7F) << 8) | at[used++];
+    }
+    length = at[used++];
+    if ((length & 0x80) != 0) {
+      length = ((length & 0x7F) << 8) | at[used++];
+    }
+    if (used + length + 1 > left) {
+      return std::nullopt;
+    }
+    return std::string(reinterpret_cast<const char*>(at) + used, length);
+  }
+  std::uint32_t length = read_u16({at, 2});
+  std::size_t used = 2;
+  if ((length & 0x8000) != 0) {
+    if (left < 4) {
+      return std::nullopt;
+    }
+    length = ((length & 0x7FFF) << 16) | read_u16({at + 2, 2});
+    used = 4;
+  }
+  if (used + 2ULL * length + 2 > left) {
+    return std::nullopt;
+  }
+  std::string out;
+  out.resize(length);
+  for (std::uint32_t i = 0; i < length; i++) {
+    out[i] = static_cast<char>(read_u16({at + used + 2ULL * i, 2}));
+  }
+  return out;
+}
+
+/// The names of the attributes the build and store toolchains stamp on their own: aapt2 records the compile SDK
+/// the build ran with, and bundletool marks the base module's split requirement. Their values are neither the
+/// packer's to predict nor the runtime's to verify; every other attribute of the two sealed elements is bound.
+[[nodiscard]] bool is_volatile_manifest_attribute(std::string_view name) {
+  return name == "compileSdkVersion" || name == "compileSdkVersionCodename" || name == "platformBuildVersionCode" ||
+         name == "platformBuildVersionName" || name == "isSplitRequired";
+}
+
+/// Canonicalises one binary attribute's value the way the packer canonicalises the proto's.
+///
+/// @param pool The document's string pool.
+/// @param raw_value The attribute's raw value, a string index or absent.
+/// @param type The attribute value's type.
+/// @param data The attribute value's data.
+/// @return The canonical bytes, or nothing when a string does not resolve.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> canonical_attribute_value(const StringPool& pool,
+                                                                                 std::uint32_t raw_value,
+                                                                                 std::uint8_t type,
+                                                                                 std::uint32_t data) {
+  std::vector<std::uint8_t> out;
+  if (type == kAxmlTypeString) {
+    const std::uint32_t index = raw_value != 0xFFFFFFFFU ? raw_value : data;
+    const std::optional<std::string> text = pool_string(pool, index);
+    if (!text.has_value()) {
+      return std::nullopt;
+    }
+    out.insert(out.end(), {'s', 't', 'r'});
+    out.insert(out.end(), text->begin(), text->end());
+    out.push_back('\0');
+    return out;
+  }
+  if (type == kAxmlTypeBoolean) {
+    out.insert(out.end(), {'b', 'o', 'o', 'l'});
+    out.push_back(data != 0 ? 1 : 0);
+    return out;
+  }
+  // References and integers both fold to the raw 32-bit data, which the packer reads from the proto's compiled item.
+  out.insert(out.end(), {'u', '3', '2'});
+  out.push_back(static_cast<std::uint8_t>(data & 0xFF));
+  out.push_back(static_cast<std::uint8_t>((data >> 8) & 0xFF));
+  out.push_back(static_cast<std::uint8_t>((data >> 16) & 0xFF));
+  out.push_back(static_cast<std::uint8_t>((data >> 24) & 0xFF));
+  return out;
+}
+
+/// Computes the semantic digest of a binary AndroidManifest.xml — the core of read_manifest_semantics. Walks the
+/// document's start elements, and for the `<manifest>` and `<application>` elements canonicalises every attribute
+/// except the volatile build-stamped names, sorted by element and attribute name: the same digest the packer
+/// computes over the protobuf manifest it wrote.
+///
+/// @param document The manifest's bytes.
+/// @return The 32-byte digest. Nothing when the document is malformed or a bound attribute does not resolve.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> find_manifest_semantics(std::span<const std::uint8_t> document) {
+  const std::optional<StringPool> pool = read_string_pool(document);
+  if (!pool.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<std::vector<std::uint8_t>> entries;
+  std::size_t position = 8 + pool->chunk_size;
+  while (position + 8 <= document.size()) {
+    const std::uint16_t chunk_type = read_u16(document.subspan(position));
+    const std::uint32_t chunk_size = read_u32(document.subspan(position + 4));
+    if (chunk_size < 8 || position + chunk_size > document.size()) {
+      return std::nullopt;
+    }
+    if (chunk_type == kAxmlStartElementType && chunk_size >= 36) {
+      const std::uint32_t element_name_index = read_u32(document.subspan(position + 16 + 4));
+      const std::uint16_t attribute_start = read_u16(document.subspan(position + 16 + 8));
+      const std::uint16_t attribute_count = read_u16(document.subspan(position + 16 + 12));
+      const std::optional<std::string> element_name = pool_string(*pool, element_name_index);
+      const bool sealed = element_name.has_value() && (*element_name == "manifest" || *element_name == "application");
+      if (!sealed || attribute_count > 64) {
+        position += chunk_size;
+        continue;
+      }
+      if (16 + attribute_start + 20ULL * attribute_count > chunk_size) {
+        return std::nullopt;
+      }
+      const std::size_t attributes = position + 16 + attribute_start;
+      for (std::uint16_t attribute = 0; attribute < attribute_count; attribute++) {
+        const std::size_t at = attributes + 20ULL * attribute;
+        const std::uint32_t name_index = read_u32(document.subspan(at + 4));
+        const std::uint32_t raw_value = read_u32(document.subspan(at + 8));
+        const std::uint8_t type = document[at + 15];
+        const std::uint32_t data = read_u32(document.subspan(at + 16));
+        const std::optional<std::string> name = pool_string(*pool, name_index);
+        if (!name.has_value() || is_volatile_manifest_attribute(*name)) {
+          continue;
+        }
+        const std::optional<std::vector<std::uint8_t>> value = canonical_attribute_value(*pool, raw_value, type, data);
+        if (!value.has_value()) {
+          return std::nullopt;
+        }
+        std::vector<std::uint8_t> entry;
+        entry.insert(entry.end(), element_name->begin(), element_name->end());
+        entry.push_back('\0');
+        entry.insert(entry.end(), name->begin(), name->end());
+        entry.push_back('\0');
+        entry.insert(entry.end(), value->begin(), value->end());
+        entries.push_back(std::move(entry));
+      }
+    }
+    position += chunk_size;
+  }
+  std::ranges::sort(entries);
+  std::vector<std::uint8_t> all;
+  for (const std::vector<std::uint8_t>& entry : entries) {
+    all.insert(all.end(), entry.begin(), entry.end());
+  }
+  const std::optional<std::array<std::uint8_t, checks::kDigestSize>> digest = checks::sha256(all);
+  if (!digest.has_value()) {
+    return std::nullopt;
+  }
+  return std::vector<std::uint8_t>(digest->begin(), digest->end());
+}
+
+/// Extracts the DER certificates of the APK's first v3 or v2 signer and concatenates them in order — the core of
+/// read_signer_digest.
+///
+/// @param scheme_value The signing block pair's value for the scheme.
+/// @return The concatenated certificates. Nothing when the scheme's structure does not parse.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> signer_certificates(std::span<const std::uint8_t> scheme_value) {
+  std::span<const std::uint8_t> signers = scheme_value;
+  const std::optional<std::span<const std::uint8_t>> signer_sequence = take_length_prefixed(signers);
+  if (!signer_sequence.has_value()) {
+    return std::nullopt;
+  }
+  std::span<const std::uint8_t> sequence = *signer_sequence;
+  const std::optional<std::span<const std::uint8_t>> signer = take_length_prefixed(sequence);
+  if (!signer.has_value()) {
+    return std::nullopt;
+  }
+  std::span<const std::uint8_t> fields = *signer;
+  const std::optional<std::span<const std::uint8_t>> signed_data = take_length_prefixed(fields);
+  if (!signed_data.has_value()) {
+    return std::nullopt;
+  }
+  std::span<const std::uint8_t> data = *signed_data;
+  const std::optional<std::span<const std::uint8_t>> digests = take_length_prefixed(data);
+  if (!digests.has_value()) {
+    return std::nullopt;
+  }
+  const std::optional<std::span<const std::uint8_t>> certificates = take_length_prefixed(data);
+  if (!certificates.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<std::uint8_t> out;
+  std::span<const std::uint8_t> rest = *certificates;
+  while (!rest.empty()) {
+    const std::optional<std::span<const std::uint8_t>> certificate = take_length_prefixed(rest);
+    if (!certificate.has_value()) {
+      return std::nullopt;
+    }
+    out.insert(out.end(), certificate->begin(), certificate->end());
+  }
+  return out;
+}
+
 /// Computes the digest over the APK's class dexes — the core of read_dex_digest. Walks the central
 /// directory and feeds every `classes.dex` / `classesN.dex` entry's name and uncompressed content into one
 /// SHA-256, sorted by name, the way the packer does over the base module's dexes.
@@ -666,6 +966,84 @@ std::optional<std::vector<std::uint8_t>> read_split_dex_flag(const std::string& 
     }
   }
   return block;
+}
+
+std::optional<std::vector<std::uint8_t>> read_manifest_semantics(const std::string& apk_path) {
+  const std::optional<std::vector<std::uint8_t>> manifest = read_stored_entry(apk_path, "AndroidManifest.xml");
+  if (!manifest.has_value()) {
+    return std::nullopt;
+  }
+  return find_manifest_semantics(std::span<const std::uint8_t>(*manifest));
+}
+
+std::optional<std::vector<std::uint8_t>> read_signer_digest(const std::string& apk_path) {
+  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
+  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (descriptor < 0) {
+    return std::nullopt;
+  }
+  struct stat status = {};
+  if (fstat(descriptor, &status) != 0 || status.st_size <= 0 || !std::in_range<std::size_t>(status.st_size)) {
+    close(descriptor);
+    return std::nullopt;
+  }
+  const auto size = static_cast<std::size_t>(status.st_size);
+  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
+  void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
+  close(descriptor);
+  if (mapping == MAP_FAILED) {
+    return std::nullopt;
+  }
+  const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
+
+  // The end record's central-directory offset: the APK signing block, when present, ends there, with
+  // its trailing size and magic filling the 24 bytes before it.
+  std::optional<std::vector<std::uint8_t>> result;
+  std::size_t end_scan = file.size() >= 0xFFFF + 22 ? file.size() - 22 - 0xFFFF : 0;
+  for (std::size_t position = file.size() >= 22 ? file.size() - 22 : 0; position >= end_scan && position > 0;
+       position--) {
+    if (read_u32(file.subspan(position)) != kZipEndRecordSignature) {
+      continue;
+    }
+    const std::uint32_t directory_offset = read_u32(file.subspan(position + 16));
+    if (directory_offset >= 24 && directory_offset <= file.size() &&
+        std::string_view(reinterpret_cast<const char*>(file.data()) + directory_offset - 16, 16) ==
+            kApkSigningBlockMagic) {
+      // The block's size field counts the pairs and the trailing size and magic, so the pairs start
+      // at the offset the size field names before the central directory's end.
+      const std::uint64_t block_size = read_u64(file.subspan(directory_offset - 24));
+      // The block spans its leading size field, the pairs, and the trailing size and magic, so its
+      // named size can reach the central directory's offset less the leading field.
+      if (block_size > directory_offset - 8 || block_size < 24) {
+        break;
+      }
+      const std::size_t pairs_start = directory_offset - static_cast<std::size_t>(block_size);
+      std::size_t pair = pairs_start;
+      while (pair + 12 <= directory_offset - 24) {
+        const std::uint64_t pair_size = read_u64(file.subspan(pair));
+        if (pair_size < 4 || pair + 8 + pair_size > directory_offset - 24) {
+          break;
+        }
+        const std::uint32_t scheme = read_u32(file.subspan(pair + 8));
+        if (scheme == kApkSignatureSchemeV3 || scheme == kApkSignatureSchemeV2) {
+          const std::span<const std::uint8_t> value = file.subspan(pair + 12, static_cast<std::size_t>(pair_size) - 4);
+          const std::optional<std::vector<std::uint8_t>> certificates = signer_certificates(value);
+          if (certificates.has_value()) {
+            const std::optional<std::array<std::uint8_t, checks::kDigestSize>> digest = checks::sha256(*certificates);
+            if (digest.has_value()) {
+              result = std::vector<std::uint8_t>(digest->begin(), digest->end());
+              break;
+            }
+          }
+        }
+        pair += 8 + static_cast<std::size_t>(pair_size);
+      }
+    }
+    break;
+  }
+  munmap(mapping, size);
+  return result;
 }
 
 }  // namespace rasp::android::apk

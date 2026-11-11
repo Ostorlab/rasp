@@ -21,6 +21,8 @@ def recover_root(
     stub_dex: bytes,
     apk_entries: dict[str, tuple[bytes, int, int]] | None = None,
     module_dexes: dict[str, bytes] | None = None,
+    manifest_semantics: bytes | None = None,
+    pinned_signer: bytes | None = None,
 ) -> bytes | None:
     """Recovers the root key of a packed library from the library and its APK's stored entries.
 
@@ -43,7 +45,15 @@ def recover_root(
     """
     try:
         return _recover(
-            library, entries, gates, package, stub_dex, apk_entries, module_dexes
+            library,
+            entries,
+            gates,
+            package,
+            stub_dex,
+            apk_entries,
+            module_dexes,
+            manifest_semantics,
+            pinned_signer,
         )
     except KeyError, IndexError, ValueError:
         return None
@@ -57,6 +67,8 @@ def _recover(
     stub_dex: bytes,
     apk_entries: dict[str, tuple[bytes, int, int]] | None = None,
     module_dexes: dict[str, bytes] | None = None,
+    manifest_semantics: bytes | None = None,
+    pinned_signer: bytes | None = None,
 ) -> bytes:
     """Recovers the root key, raising on any input that cannot be gathered."""
     program = key_schedule.decode_program(runtime_library.program(library))
@@ -111,6 +123,20 @@ def _recover(
         if record.kind == key_schedule.KIND_DEXLESS_SPLITS:
             # The fixtures model a clean store install: no APK beside the base holds a class dex.
             return key_schedule.dexless_splits()
+        if record.kind == key_schedule.KIND_MANIFEST:
+            # The fixtures model the packer's own manifest semantics.
+            if manifest_semantics is None:
+                raise ValueError(
+                    "the manifest record is drawn without the packer's semantics"
+                )
+            return manifest_semantics
+        if record.kind == key_schedule.KIND_SIGNER:
+            # The fixtures model the pinned certificate's digest.
+            if pinned_signer is None:
+                raise ValueError(
+                    "the signer record is drawn without a pinned certificate"
+                )
+            return pinned_signer
         return hashlib.sha256(
             entries[key_schedule.decoy_entry_name(record.param)]
         ).digest()

@@ -41,6 +41,11 @@ _FIELD_ATTR_COMPILED_ITEM = 6
 
 _FIELD_ITEM_PRIMITIVE = 7
 _FIELD_PRIMITIVE_INT = 6
+# AAPT2's compiled-item reference: Item field 1 is the Reference, whose own field 2 carries the id.
+_FIELD_ITEM_REFERENCE = 1
+_FIELD_REFERENCE_ID = 2
+# The compiled primitive's boolean field.
+_FIELD_PRIMITIVE_BOOLEAN = 8
 
 _WIRE_VARINT = 0
 _WIRE_LENGTH_DELIMITED = 2
@@ -700,3 +705,114 @@ def remove_debuggable(manifest: bytes) -> bytes:
         position = end
     new_element += old_element[position:]
     return _replace_element_in_manifest(manifest, old_element, bytes(new_element))
+
+
+# Attributes the build and store toolchains rewrite on their own (aapt2 stamps the compile SDK the
+# build ran with; bundletool marks the split requirement of the base module), so their values are
+# neither the packer's to predict nor the runtime's to verify. Everything else on the two elements
+# the platform reads for the app's identity is sealed by the semantics digest.
+_VOLATILE_ATTRIBUTE_NAMES = frozenset(
+    {
+        "compileSdkVersion",
+        "compileSdkVersionCodename",
+        "platformBuildVersionCode",
+        "platformBuildVersionName",
+        "isSplitRequired",
+    }
+)
+
+# The two elements whose attributes the semantics digest seals: the app's identity and process shape.
+_SEMANTIC_ELEMENT_NAMES = ("manifest", "application")
+
+
+def _attribute_value_bytes(attr_fields: list[_Field]) -> bytes | None:
+    """Canonicalises one attribute's value the way the runtime reads the installed binary manifest.
+
+    AAPT2's compiled item carries the value the binary manifest will hold: a primitive int, a
+    boolean, or a reference to a resource id. Attributes without a compiled item keep their literal
+    string. The canonical form is what both sides hash: a kind tag and the value's bytes.
+
+    Args:
+        attr_fields: The parsed fields of one ``XmlAttribute``.
+
+    Returns:
+        The canonical value bytes, or None when the value carries a form the digest does not know
+        (the caller then refuses to seal the manifest).
+    """
+    compiled: bytes | None = None
+    literal: str | None = None
+    for field in attr_fields:
+        if field.number == _FIELD_ATTR_VALUE and isinstance(field.value, bytes):
+            literal = _decode_utf8(field.value)
+        if field.number == _FIELD_ATTR_COMPILED_ITEM and isinstance(field.value, bytes):
+            compiled = field.value
+    if compiled is not None:
+        for item in _parse_fields(compiled):
+            if item.number != _FIELD_ITEM_REFERENCE or not isinstance(item.value, bytes):
+                continue
+            for reference in _parse_fields(item.value):
+                if reference.number == _FIELD_REFERENCE_ID:
+                    return b"u32" + int(reference.value).to_bytes(4, "little")
+        for field in _parse_fields(compiled):
+            if field.number != _FIELD_ITEM_PRIMITIVE or not isinstance(field.value, bytes):
+                continue
+            for primitive in _parse_fields(field.value):
+                if primitive.number == _FIELD_PRIMITIVE_INT:
+                    return b"u32" + int(primitive.value).to_bytes(4, "little")
+                if primitive.number == _FIELD_PRIMITIVE_BOOLEAN:
+                    return b"bool" + (b"\x01" if primitive.value else b"\x00")
+    if literal is None:
+        return None
+    return b"str" + literal.encode("utf-8") + b"\x00"
+
+
+def semantics(manifest: bytes) -> bytes | None:
+    """Computes the semantic digest of the manifest the way the runtime reads the installed one.
+
+    Every attribute of the ``<manifest>`` and ``<application>`` elements, except the volatile
+    build-stamped names, is canonicalised and hashed, sorted by element and name: an attribute added,
+    removed or changed by a repack — a shared user id, a debuggable flag, a process name — changes
+    the digest, and the fold that seals it comes out wrong.
+
+    Args:
+        manifest: The protobuf-encoded AndroidManifest.xml, as the packer writes it.
+
+    Returns:
+        The 32-byte digest. None when an attribute carries a value the digest cannot canonicalise,
+        which refuses to seal a manifest the runtime could not reconcile.
+    """
+    entries: list[bytes] = []
+    for element_name in _SEMANTIC_ELEMENT_NAMES:
+        element = _find_element(manifest, element_name)
+        if element is None:
+            continue
+        _element_bytes, element_fields = element
+        for field in element_fields:
+            if field.number != _FIELD_ELEMENT_ATTR:
+                continue
+            if not isinstance(field.value, bytes):
+                continue
+            attr_fields = _parse_fields(field.value)
+            name: str | None = None
+            for attribute in attr_fields:
+                if attribute.number == _FIELD_ATTR_NAME and isinstance(attribute.value, bytes):
+                    name = _decode_utf8(attribute.value)
+            if name is None or name in _VOLATILE_ATTRIBUTE_NAMES:
+                continue
+            value = _attribute_value_bytes(attr_fields)
+            if value is None:
+                return None
+            entries.append(
+                element_name.encode("utf-8")
+                + b"\x00"
+                + name.encode("utf-8")
+                + b"\x00"
+                + value
+            )
+    import hashlib
+
+    entries.sort()
+    digest = hashlib.sha256()
+    for entry in entries:
+        digest.update(entry)
+    return digest.digest()
