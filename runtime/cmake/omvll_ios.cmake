@@ -1,8 +1,11 @@
 # Obfuscates the iOS runtime with the O-MVLL clang plugin (https://obfuscator.re/o-mvll/) vendored in
 # third_party/omvll/, by the scheme in omvll_config.py. This is Phase 1 of iOS obfuscation: compile-time obfuscation
 # only (Layer A). There is no at-rest encryption or self-decrypt bootstrap yet (Layer B / Phase 2), so unlike Android
-# the whole framework is obfuscated in place and the data-read literals in omvll_config.py (__rasp_config, the Mach-O
-# lookup strings) stay readable in the shipped framework until Phase 2 adds an at-rest layer. On by default for Release.
+# nothing is encrypted at rest: the obfuscated code ships in place and the data-read literals in omvll_config.py
+# (__rasp_config, the Mach-O lookup strings, the iOS checks' path and marker literals) stay readable in the shipped
+# framework until Phase 2 adds an at-rest layer. The plugin is applied to the RaspRuntime target alone, so it
+# obfuscates the runtime's own source files (ios/src/*.cpp); the first-party static libraries it links (rasp_core,
+# rasp_plugins) are compiled without the plugin. On by default for Release.
 #
 # This mirrors cmake/omvll.cmake (Android) with the host/target gate flipped to macOS/arm64. O-MVLL is ABI-locked to one
 # clang: the plugin and the clang that loads it must come from the same LLVM. The iOS framework builds with Xcode 27's

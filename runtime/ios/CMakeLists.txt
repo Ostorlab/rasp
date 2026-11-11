@@ -19,8 +19,10 @@ target_link_libraries(RaspRuntime PRIVATE rasp_core rasp_plugins rasp_tfpsacrypt
   rasp_shipped "$<LINK_LIBRARY:FRAMEWORK,CFNetwork>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
 set_source_files_properties(src/entry.cpp PROPERTIES COMPILE_OPTIONS -Wno-global-constructors)
 
-# Obfuscate the first-party runtime (RaspRuntime). Third-party code (tf-psa-crypto, yyjson) is left out by the scheme in
-# cmake/omvll_config.py. No-op unless RASP_OBFUSCATE_IOS is on.
+# Obfuscate the RaspRuntime target's own sources (ios/src/*.cpp). target_compile_options is PRIVATE, so the plugin
+# applies only to this target's translation units: the first-party static libraries it links (rasp_core, rasp_plugins)
+# are already compiled and ship un-obfuscated, and third-party code (tf-psa-crypto, yyjson) is left out by the scheme in
+# cmake/omvll_config.py in any case. No-op unless RASP_OBFUSCATE_IOS is on.
 rasp_obfuscate_ios(RaspRuntime)
 
 if(RASP_LOGGING)

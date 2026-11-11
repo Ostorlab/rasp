@@ -1,6 +1,10 @@
 # The O-MVLL obfuscation scheme of the mobile runtime (https://obfuscator.re/o-mvll/): which passes run on which
-# functions. Cheap passes run on all first-party code; heavy passes run on the sensitive functions and, by probability,
-# elsewhere. On Android the self-decrypt bootstrap (selfdecrypt.cpp/chacha20.cpp/kdf_shovel.cpp) is the only code the
+# functions. Cheap passes run on all first-party code the plugin sees; heavy passes run on the sensitive functions
+# and, by probability, elsewhere. The plugin only sees a target's own translation units: on Android the shared
+# library is built with the plugin so this covers rasp_core and the plugins, but on iOS the plugin is on the
+# RaspRuntime target alone, so only ios/src/*.cpp is obfuscated -- the first-party static libraries it links
+# (rasp_core, rasp_plugins) are compiled without the plugin and ship un-obfuscated (see runtime/ios/CMakeLists.txt).
+# On Android the self-decrypt bootstrap (selfdecrypt.cpp/chacha20.cpp/kdf_shovel.cpp) is the only code the
 # packer leaves in the clear while it encrypts the rest of the library at rest, so it gets every pass at probability 100
 # -- a static reverse-engineer who can read it must not be able to trace it to the decryptor or recover the key, and the
 # opaque-constants pass on kdf_shovel.cpp buries the shovelled derivation bytes. iOS has no at-rest layer yet (Phase 2),
@@ -52,7 +56,10 @@ SENSITIVE_FUNCTIONS = [
 # and encrypts. The runtime still reads the same bytes through data pointers, so they must never be
 # encrypted at all; on Android the packer's encryption at rest hides them in the shipped library. On iOS
 # there is no at-rest layer yet, so these stay readable in the shipped framework until Phase 2 adds one --
-# __rasp_config and the Mach-O lookup strings in util/macho.cpp are the iOS entries here.
+# __rasp_config, the Mach-O lookup strings in util/macho.cpp, and the probe-source names and the artifact,
+# marker, folder and root literals the iOS checks iterate over (jailbreak.cpp's kArtifactPaths, hooks.cpp's
+# kFrameworkMarkers/kTweakFolders/kJailbreakRoots, mitm.cpp's kTunnelPrefixes and virtualizer.cpp's
+# kSystemRoots) are the iOS entries here.
 DATA_READ_LITERALS = re.compile(
     rb"(?:"
     rb"(?:root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+"
@@ -60,6 +67,26 @@ DATA_READ_LITERALS = re.compile(
     # iOS probe source names, stored in constexpr arrays and reported as the observation's source through
     # data pointers: debugger.cpp's kProbes and jailbreak.cpp's kPathSources.
     rb"|(?:access|stat|sysctl|getppid|task_get_exception_ports)"
+    # iOS jailbreak artifact paths and the sandbox probe (jailbreak.cpp kArtifactPaths/kSandboxProbe), iterated
+    # by observe_paths, plus hooks.cpp's tweak folders and rootless-jailbreak roots and virtualizer.cpp's system
+    # roots -- all read as constant data through span/array iteration, so the string pass must never encrypt them.
+    rb"|/Applications/(?:Cydia|Sileo|Zebra)\.app"
+    rb"|/Library/MobileSubstrate/MobileSubstrate\.dylib"
+    rb"|/usr/lib/(?:libhooker\.dylib|libsubstitute\.dylib|substrate|TweakInject)"
+    rb"|/usr/sbin/sshd|/usr/bin/ssh|/bin/bash|/bin/sh|/etc/apt"
+    rb"|/private/var/lib/(?:apt|cydia)|/private/var/stash"
+    rb"|/var/jb(?:/usr/bin/sshd|/Library/MobileSubstrate/MobileSubstrate\.dylib)?"
+    rb"|/var/checkra1n\.dmg|/jb"
+    rb"|/private/\.rasp_sandbox_probe"
+    rb"|/library/mobilesubstrate/dynamiclibraries/|/library/substitute/(?:dynamiclibraries|helpers)/"
+    rb"|/usr/lib/(?:tweakinject|ellekit)/"
+    rb"|/var/jb/|/private/var/jb/|/private/preboot/|/procursus/"
+    rb"|/usr/lib/|/System/|/private/var/containers/Bundle/Application/|/Cryptexes/OS/System/"
+    rb"|frida-agent|frida-gadget|fridagadget|libcycript|cydiasubstrate|mobilesubstrate|libsubstrate"
+    rb"|substrateloader|substrateinserter|substratebootstrap|libsubstitute|libhooker|libblackjack"
+    rb"|libellekit|tweakinject|tweakloader|sslkillswitch"
+    rb"|getifaddrs|CFNetworkCopySystemProxySettings|trust_store|dyld"
+    rb"|utun|ipsec|ppp|tun|tap"
     rb"|assets/rasp/(?:[a-z]+\.bin|r)"
     rb"|/(?:proc|sys)/.*"
     rb"|TracerPid:"

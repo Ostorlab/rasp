@@ -14,8 +14,8 @@ Phase 2 adds an at-rest layer.
 
 ## What is in the vendored archive?
 
-- `omvll-1.11.0-xcode27-macos-arm64.tar.xz` — the plugin, built, as a committed
-  archive, so the build does not depend on anything outside the repository. It
+- `omvll-1.11.0-xcode27-macos-arm64.tar.xz` — the built plugin, committed as an
+  archive so the build does not depend on anything outside the repository. It
   holds the plugin (`omvll-xcode.dylib`) and the Python standard library
   (`Lib/`) the plugin's embedded interpreter needs to read the scheme. The iOS
   build checks its SHA-256, extracts it into the build tree and loads the plugin

@@ -180,8 +180,9 @@ jobs:
           # The Release build defaults RASP_OBFUSCATE_IOS=ON. This catches a regression that disables O-MVLL
           # or breaks the data-read skip list:
           #  - configure must report that the obfuscation pass engaged, so the framework is obfuscated.
-          #  - 'dbg.traced' and 'sysctl' are skip-listed in omvll_config.py (read through data pointers), so
-          #    they must stay readable; if the skip list breaks, the string pass encrypts them and they vanish.
+          #  - 'dbg.traced', 'sysctl' and '/var/jb' are skip-listed in omvll_config.py (read through data
+          #    pointers), so they must stay readable; if the skip list breaks, the string pass encrypts them
+          #    and they vanish. '/var/jb' is a jailbreak artifact path iterated by the on-device checks.
           #    The match is exact-line (grep -qxF): the skip-listed 'sysctl' literal renders as its own
           #    'sysctl' line, distinct from the '_sysctl'/'_sysctlbyname' import lines, so the probe-source
           #    skip list gets real coverage rather than matching the imports a substring grep would.
@@ -191,7 +192,7 @@ jobs:
           if ! grep -qF 'O-MVLL on; RaspRuntime is obfuscated' "$RUNNER_TEMP/ios-configure.log"; then
             echo "FAIL: configure did not report O-MVLL on; the framework is not obfuscated"; exit 1
           fi
-          for literal in dbg.traced sysctl; do
+          for literal in dbg.traced sysctl /var/jb; do
             if ! strings -a "$binary" | grep -qxF "$literal"; then
               echo "FAIL: '$literal' is missing; a data-read literal was encrypted (skip list broken?)"; exit 1
             fi
