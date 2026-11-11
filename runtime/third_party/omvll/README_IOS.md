@@ -39,12 +39,11 @@ this.
 
 ## Which build hosts can run the obfuscator?
 
-The plugin is a macOS arm64 shared object (`omvll-xcode.dylib`). It runs only on
-a macOS arm64 build host, so obfuscation is available only there. A build on any
-other host cannot load it, so `omvll_ios.cmake` rejects an obfuscated build on
-one. This is the mirror of the Android host limit, which is Linux x86_64 only.
+The plugin is a macOS arm64 shared object (`omvll-xcode.dylib`), so it loads only
+on macOS arm64 build hosts; `omvll_ios.cmake` rejects an obfuscated build anywhere
+else. This mirrors the Android host limit, which is Linux x86_64 only.
 
-## Where this archive came from
+## Where does this archive come from?
 
 Repacked from O-MVLL's official 1.11.0 macOS release asset
 (`omvll_v1-11-0_macos_*.tar.gz` at
@@ -59,12 +58,13 @@ shape as the vendored Android archive.
 ## What is validated, and what is still to do
 
 Validated: a Release build with the full pass set installs and runs on a physical
-iPhone (xcode-27 runner); a `strings` scan shows the signal names are absent, and
-the packed app reports its checks.
+iPhone (xcode-27 runner), and a `strings` scan shows the signal names are absent.
+`runtime.yml`'s ios job runs an obfuscation canary asserting configure reports
+O-MVLL engaged and the skip-listed literals stay readable.
 
 Still to do (not in this change):
 
 - Phase 2: at-rest encryption + a Mach-O self-decrypt bootstrap.
-- A CI obfuscation canary runs in `runtime.yml`'s ios job (an encrypted signal is
-  absent, a skip-listed literal is present); extend it with a random
-  `RASP_OMVLL_SEED` as the Android one does.
+- On-device verification that the obfuscated runtime's checks still detect (repack,
+  debugger, emulator signals) once installed.
+- Randomize the canary with a per-build `RASP_OMVLL_SEED`, as the Android job does.
