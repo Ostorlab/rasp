@@ -58,8 +58,8 @@ SENSITIVE_FUNCTIONS = [
 # there is no at-rest layer yet, so these stay readable in the shipped framework until Phase 2 adds one --
 # __rasp_config, the Mach-O lookup strings in util/macho.cpp, and the probe-source names and the artifact,
 # marker, folder and root literals the iOS checks iterate over (jailbreak.cpp's kArtifactPaths, hooks.cpp's
-# kFrameworkMarkers/kTweakFolders/kJailbreakRoots, mitm.cpp's kTunnelPrefixes and virtualizer.cpp's
-# kSystemRoots) are the iOS entries here.
+# kFrameworkMarkers/kTweakFolders/kJailbreakRoots, mitm.cpp's kTunnelPrefixes, virtualizer.cpp's kSystemRoots
+# and emulator.cpp's kSimulatorMachines) are the iOS entries here.
 DATA_READ_LITERALS = re.compile(
     rb"(?:"
     rb"(?:root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+"
@@ -87,6 +87,9 @@ DATA_READ_LITERALS = re.compile(
     rb"|libellekit|tweakinject|tweakloader|sslkillswitch"
     rb"|getifaddrs|CFNetworkCopySystemProxySettings|trust_store|dyld"
     rb"|utun|ipsec|ppp|tun|tap"
+    # emulator.cpp kSimulatorMachines, iterated by observe_machine_tell (std::ranges::any_of) through data
+    # pointers: if encrypted, the emu.simulator probe stops detecting simulators on-device.
+    rb"|x86_64|arm64|i386"
     rb"|assets/rasp/(?:[a-z]+\.bin|r)"
     rb"|/(?:proc|sys)/.*"
     rb"|TracerPid:"
