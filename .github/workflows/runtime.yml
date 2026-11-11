@@ -171,18 +171,22 @@ jobs:
           "$RUNNER_TEMP/build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
           echo "$RUNNER_TEMP/build-tools/bin" >> "$GITHUB_PATH"
       - name: Configure
-        run: cmake --preset ios
+        run: cmake --preset ios 2>&1 | tee "$RUNNER_TEMP/ios-configure.log"
       - name: Build
         run: cmake --build --preset ios --parallel
       - name: Check the framework is obfuscated
         run: |
           binary=build/ios/ios/RaspRuntime.framework/RaspRuntime
-          # The Release build defaults RASP_OBFUSCATE_IOS=ON. This catches a regression that disables the
-          # string pass or breaks the data-read skip list, against real signal names from omvll_config.py:
-          #  - 'jb.sandbox_escape' is encrypted (not in DATA_READ_LITERALS), so it must be absent.
-          #  - 'dbg.traced' and 'sysctl' are skip-listed, so they must remain readable.
-          if strings -a "$binary" | grep -qF 'jb.sandbox_escape'; then
-            echo "FAIL: 'jb.sandbox_escape' is readable; string encryption did not run (O-MVLL disabled?)"; exit 1
+          # The Release build defaults RASP_OBFUSCATE_IOS=ON. This catches a regression that disables O-MVLL
+          # or breaks the data-read skip list:
+          #  - configure must report that the obfuscation pass engaged, so the framework is obfuscated.
+          #  - 'dbg.traced' and 'sysctl' are skip-listed in omvll_config.py (read through data pointers), so
+          #    they must stay readable; if the skip list breaks, the string pass encrypts them and they vanish.
+          # It does not assert any signal is absent: O-MVLL's string encryption is local to the uses it
+          # rewrites, which varies by ABI and optimization, so a signal name can survive readable even with
+          # obfuscation fully on (see the DATA_READ_LITERALS note in omvll_config.py).
+          if ! grep -qF 'O-MVLL on; RaspRuntime is obfuscated' "$RUNNER_TEMP/ios-configure.log"; then
+            echo "FAIL: configure did not report O-MVLL on; the framework is not obfuscated"; exit 1
           fi
           for literal in dbg.traced sysctl; do
             if ! strings -a "$binary" | grep -qF "$literal"; then
