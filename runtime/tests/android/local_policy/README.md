@@ -24,8 +24,8 @@ rasp pack /tmp/rasp-policy-host/host-unsigned.apk --platform android \
 The host compiles that exact policy hash before packing. Rebuild it for a changed
 policy/hash, including a changed policy_version. The actual operation admits only
 a non-null decision whose `allows()` returns true: status OK and final ALLOW.
-REPORT, candidate ALLOW, unknown actions and non-OK results never admit through this
-accessor. It reads a historical owned copy; gate again immediately before execution
+REPORT, unknown actions and non-OK results never admit through this accessor.
+Candidate ALLOW alone is advisory and does not establish admission. It reads a historical owned copy; gate again immediately before execution
 following any queue, resume or retry.
 
 The native fixture tests exercise the shipping C/JNI facade and actual adapted

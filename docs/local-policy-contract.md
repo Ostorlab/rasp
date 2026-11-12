@@ -209,7 +209,8 @@ Android Java/Kotlin callers use RuntimeBridge.localPolicyInfo() and
 RuntimeBridge.gateLocalOperation(operation, expectedPolicySha256). Results and detail
 arrays are immutable owned copies. Null/linkage/JNI failure is unavailable, never
 ALLOW. Use `decision != null && decision.allows()` for status OK plus final ALLOW;
-REPORT and candidate ALLOW never satisfy this accessor. It reads the owned historical
+REPORT never admits, and candidate ALLOW alone does not satisfy this accessor.
+It reads the owned historical
 decision and does not revalidate freshness; call the gate again at actual execution.
 The actual compile-only jar comes from `runtime/android/stub/build.sh`:
 use it as compileOnly, and do not put a duplicate RuntimeBridge class in the host APK.
