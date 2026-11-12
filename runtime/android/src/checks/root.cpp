@@ -1,11 +1,12 @@
-/// The Android root checks: the root-file probe through access, stat and a direct system call, the mount-table probe
-/// through libc and through direct system calls, the SELinux and build-property probes, and their unsupported results
-/// off Android. The lists of su folders and writable system folders draw on RootBeer (Apache 2.0).
+/// The Android root checks: independent access/stat/libc syscall path and mount-table reads, the SELinux and
+/// build-property probes, and their unsupported results off Android. The lists of su folders and writable system
+/// folders draw on RootBeer (Apache 2.0).
 
 #include "checks/root.h"
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <iterator>
 #include <optional>
@@ -21,6 +22,7 @@
 #include "rasp/observation.h"
 #include "rasp/util/read_file.h"
 #include "util/direct_syscall.h"
+#include "util/proc_text.h"
 #include "util/system_property.h"
 
 namespace rasp::android::checks {
@@ -37,7 +39,7 @@ constexpr std::string_view kMountsSignal = "root.mounts";
 constexpr std::string_view kRwMountsSignal = "root.rw_mounts";
 /// The source of the mount-table probe that reads the table through the libc file functions.
 constexpr std::string_view kMountsSource = "proc_mounts";
-/// The source of the mount-table probe that reads the table through direct system calls.
+/// The source of the mount-table probe that reads the table through libc's hookable syscall entry.
 constexpr std::string_view kMountsDirectSource = "proc_mounts_syscall";
 /// The signal of the SELinux probe.
 constexpr std::string_view kSelinuxSignal = "root.selinux_enforcing";
@@ -154,23 +156,45 @@ constexpr bool kOnAndroid = false;
 #endif
 
 /// Whether access finds a file at `path`.
-[[nodiscard]] bool found_by_access(const std::string& path) { return access(path.c_str(), F_OK) == 0; }
-
-/// Whether stat finds a file at `path`.
-[[nodiscard]] bool found_by_stat(const std::string& path) {
-  struct stat info{};
-  return stat(path.c_str(), &info) == 0;
+[[nodiscard]] std::optional<bool> found_by_access(const std::string& path, [[maybe_unused]] util::SystemCall invoke) {
+  if (path.empty() || path.contains('\0')) {
+    return std::nullopt;
+  }
+  if (access(path.c_str(), F_OK) == 0) {
+    return true;
+  }
+  if (errno == ENOENT || errno == ENOTDIR) {
+    return false;
+  }
+  return std::nullopt;
 }
 
-/// Whether the faccessat system call, made directly, finds a file at `path`.
-[[nodiscard]] bool found_by_faccessat(const std::string& path) { return util::exists_direct(path); }
+/// Whether stat finds a file at `path`.
+[[nodiscard]] std::optional<bool> found_by_stat(const std::string& path, [[maybe_unused]] util::SystemCall invoke) {
+  if (path.empty() || path.contains('\0')) {
+    return std::nullopt;
+  }
+  struct stat info{};
+  if (stat(path.c_str(), &info) == 0) {
+    return true;
+  }
+  if (errno == ENOENT || errno == ENOTDIR) {
+    return false;
+  }
+  return std::nullopt;
+}
+
+/// Whether libc's hookable faccessat syscall entry finds a file at `path`, or cannot determine existence.
+[[nodiscard]] std::optional<bool> found_by_faccessat(const std::string& path, util::SystemCall invoke) {
+  return util::exists_direct(path, invoke);
+}
 
 /// One way of asking whether a file exists at a path.
 struct PathSource {
   /// The observation's source, such as access or stat.
   std::string_view name;
   /// Whether this source finds a file at the path.
-  bool (*exists)(const std::string& path);
+  std::optional<bool> (*exists)(const std::string& path, util::SystemCall invoke);
 };
 
 /// The sources root.fs_paths reads each path through, in the order their observations are reported.
@@ -190,21 +214,26 @@ struct MountLine {
   std::string_view options;
 };
 
-/// Removes the first field of `rest`, up to the next space, and the space after it, and returns the field.
-[[nodiscard]] std::string_view take_field(std::string_view& rest) {
-  const std::size_t end = std::min(rest.find(' '), rest.size());
-  const std::string_view field = rest.substr(0, end);
-  rest.remove_prefix(std::min(end + 1, rest.size()));
-  return field;
+/// Whether a mount record holds all six kernel fields, with numeric dump and fsck values.
+[[nodiscard]] bool valid_mount_line(std::string_view line) {
+  std::string_view rest = line;
+  for (int field = 0; field < 4; ++field) {
+    if (util::take_proc_field(rest).empty()) {
+      return false;
+    }
+  }
+  const auto dump = util::proc_number(util::take_proc_field(rest), 10);
+  const auto pass = util::proc_number(util::take_proc_field(rest), 10);
+  return dump.has_value() && pass.has_value() && rest.empty();
 }
 
 /// The source, mount point and options of `line`. A field the line doesn't have is empty.
 [[nodiscard]] MountLine parse_mount_line(std::string_view line) {
   std::string_view rest = line;
-  const std::string_view source = take_field(rest);
-  const std::string_view point = take_field(rest);
-  static_cast<void>(take_field(rest));
-  const std::string_view options = take_field(rest);
+  const std::string_view source = util::take_proc_field(rest);
+  const std::string_view point = util::take_proc_field(rest);
+  static_cast<void>(util::take_proc_field(rest));
+  const std::string_view options = util::take_proc_field(rest);
   return MountLine{.source = source, .point = point, .options = options};
 }
 
@@ -246,7 +275,7 @@ struct MountLine {
 /// The root.mounts and root.rw_mounts observations through `source` of `table`, the mount table as that source read
 /// it, or nothing when it couldn't read it.
 [[nodiscard]] std::vector<Observation> mounts_from(const std::optional<std::string>& table, std::string_view source) {
-  if (!table) {
+  if (!table.has_value() || !util::valid_proc_table(*table, valid_mount_line)) {
     return {failed(kMountsSignal, source), failed(kRwMountsSignal, source)};
   }
   return {
@@ -257,21 +286,32 @@ struct MountLine {
 
 }  // namespace
 
-std::vector<Observation> observe_paths(std::span<const std::string_view> paths) {
+std::vector<Observation> observe_paths(std::span<const std::string_view> paths, util::SystemCall invoke) {
   const std::vector<std::string> candidates(paths.begin(), paths.end());
   std::vector<Observation> observations;
   observations.reserve(kPathSources.size());
   for (const PathSource& source : kPathSources) {
     std::vector<std::string> found;
-    std::ranges::copy_if(candidates, std::back_inserter(found), source.exists);
-    observations.push_back(observed(kPathsSignal, source.name, std::move(found)));
+    bool complete = true;
+    for (const std::string& path : candidates) {
+      const std::optional<bool> exists = source.exists(path, invoke);
+      if (!exists.has_value()) {
+        complete = false;
+        break;
+      }
+      if (*exists) {
+        found.push_back(path);
+      }
+    }
+    observations.push_back(complete ? observed(kPathsSignal, source.name, std::move(found))
+                                    : failed(kPathsSignal, source.name));
   }
   return observations;
 }
 
-std::vector<Observation> observe_mounts(std::string_view mounts_path) {
+std::vector<Observation> observe_mounts(std::string_view mounts_path, util::SystemCall invoke) {
   std::vector<Observation> observations = mounts_from(read_file(mounts_path, kMaxMountsSize), kMountsSource);
-  std::ranges::move(mounts_from(util::read_file_direct(mounts_path, kMaxMountsSize), kMountsDirectSource),
+  std::ranges::move(mounts_from(util::read_file_direct(mounts_path, kMaxMountsSize, invoke), kMountsDirectSource),
                     std::back_inserter(observations));
   return observations;
 }

@@ -10,6 +10,7 @@
 #include "rasp/observation.h"
 
 #ifdef __APPLE__
+#include <TargetConditionals.h>
 #include <mach/exception_types.h>
 #include <mach/kern_return.h>
 #include <mach/mach_init.h>
@@ -35,7 +36,7 @@ TEST(Debugger, observeTraced_whenTheSystemHasNoProcessFlags_reportsUnsupported) 
 }
 #endif
 
-#if defined(__APPLE__) && defined(__aarch64__)
+#if defined(__APPLE__) && defined(__aarch64__) && !TARGET_OS_SIMULATOR
 TEST(Debugger, observeTracedSyscall_whenNoDebuggerIsAttached_reportsFalse) {
   EXPECT_EQ(observe_traced_syscall(),
             (Observation{.signal = "dbg.traced", .source = "sysctl_syscall", .status = Status::kOk, .value = false}));

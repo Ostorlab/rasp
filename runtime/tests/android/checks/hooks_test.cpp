@@ -4,6 +4,7 @@
 #include "checks/hooks.h"
 
 #include <array>
+#include <cerrno>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <span>
@@ -21,6 +22,7 @@
 #include <pthread.h>
 #endif
 #include "support/files.h"
+#include "support/syscall_files.h"
 
 namespace rasp::android::checks {
 namespace {
@@ -333,16 +335,56 @@ TEST(Hooks, hooks_whenAndroidBranchRuns_readsOwnThreadsAndPreservesPluginContrac
 }
 #else
 TEST(Hooks, hooks_whenOffAndroid_reportsEveryCheckAsUnsupported) {
-  EXPECT_EQ(hooks(),
-            (std::vector<Observation>{
-                {.signal = "hook.maps_hits", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
-                {.signal = "hook.rwx_regions", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
-                {.signal = "hook.maps_hits", .source = "proc_maps_syscall", .status = Status::kUnsupported, .value = {}},
-                {.signal = "hook.threads", .source = "proc_task", .status = Status::kUnsupported, .value = {}},
-            }));
+  EXPECT_EQ(
+      hooks(),
+      (std::vector<Observation>{
+          {.signal = "hook.maps_hits", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
+          {.signal = "hook.rwx_regions", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
+          {.signal = "hook.maps_hits", .source = "proc_maps_syscall", .status = Status::kUnsupported, .value = {}},
+          {.signal = "hook.threads", .source = "proc_task", .status = Status::kUnsupported, .value = {}},
+      }));
 }
 
 #endif
+
+TEST(Hooks, observeMaps_whenSourcesDiverge_preservesBothThroughPluginCallback) {
+  const TemporaryDirectory directory;
+  const std::string path = write_maps(directory, kCleanMaps);
+  const std::string line = "1000-2000 r-xp 00000000 00:00 0 /frida.so";
+  const std::string syscall_maps = line + "\n";
+  test_support::SyscallFile fixture{.content = syscall_maps};
+  test_support::SyscallFile::active = &fixture;
+  const std::vector<Observation> observations = observe_maps(path, test_support::SyscallFile::invoke);
+  EXPECT_EQ(observations,
+            (std::vector<Observation>{maps_hits({}), rwx_regions({}), maps_hits({line}, "proc_maps_syscall")}));
+  EXPECT_EQ(fixture.close_count, 1);
+  plugins::Context context;
+  const plugins::Plugin plugin{.init = nullptr, .checks = {}, .on_observations = capture_observations};
+  const std::array plugins{&plugin};
+  EXPECT_EQ(plugins::run_plugins(plugins, observations, context), observations);
+  EXPECT_EQ(context.get(kCapturedObservations), observations);
+}
+
+TEST(Hooks, observeMaps_whenSyscallReadIsDenied_keepsPrimaryAndReportsError) {
+  const TemporaryDirectory directory;
+  const std::string path = write_maps(directory, kCleanMaps);
+  test_support::SyscallFile fixture{.content = {}, .error = EACCES};
+  test_support::SyscallFile::active = &fixture;
+  EXPECT_EQ(
+      observe_maps(path, test_support::SyscallFile::invoke),
+      (std::vector<Observation>{maps_hits({}), rwx_regions({}), unreadable("hook.maps_hits", "proc_maps_syscall")}));
+}
+
+TEST(Hooks, observeMaps_whenInputIsMalformedOrTruncated_neverReportsClean) {
+  const TemporaryDirectory directory;
+  for (const std::string_view content :
+       {"", "\n", "garbage\n", "1000-2000 rw", "1000-2000 rwxp 0 00:00 0\ninvalid\n"}) {
+    const std::string path = write_maps(directory, content);
+    EXPECT_EQ(observe_maps(path),
+              (std::vector<Observation>{unreadable("hook.maps_hits"), unreadable("hook.rwx_regions"),
+                                        unreadable("hook.maps_hits", "proc_maps_syscall")}));
+  }
+}
 
 }  // namespace
 }  // namespace rasp::android::checks

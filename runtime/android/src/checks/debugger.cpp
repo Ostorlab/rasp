@@ -82,24 +82,33 @@ constexpr std::string_view kDebugApiSource = "debug_api";
   }
   const std::string_view digits = text.substr(start);
   const char* const end = std::to_address(digits.end());
-  std::uint32_t pid = 0;
+  std::int32_t pid = 0;
   const std::from_chars_result result = std::from_chars(std::to_address(digits.begin()), end, pid);
-  if (result.ec != std::errc{} || result.ptr != end) {
+  if (result.ec != std::errc{} || result.ptr != end || pid < 0) {
     return std::nullopt;
   }
   return static_cast<std::int64_t>(pid);
 }
 
-/// The process id on the first `TracerPid:` line of `status`, or nothing when there is no such line or it doesn't
-/// hold a process id.
+/// The process id on the unique complete `TracerPid:` line, or nothing for incomplete, duplicate or invalid data.
 [[nodiscard]] std::optional<std::int64_t> parse_tracer_pid(std::string_view status) {
+  if (status.empty() || !status.ends_with('\n') || status.contains('\0')) {
+    return std::nullopt;
+  }
+  std::optional<std::int64_t> pid;
   for (const auto piece : std::views::split(status, '\n')) {
     const std::string_view line(piece.begin(), piece.end());
     if (line.starts_with(kTracerPidField)) {
-      return parse_pid(line.substr(kTracerPidField.size()));
+      if (pid.has_value()) {
+        return std::nullopt;
+      }
+      pid = parse_pid(line.substr(kTracerPidField.size()));
+      if (!pid.has_value()) {
+        return std::nullopt;
+      }
     }
   }
-  return std::nullopt;
+  return pid;
 }
 
 /// Whether `name`, a folder entry under the thread folder, is a thread id: only digits.
@@ -210,9 +219,11 @@ constexpr jint kLocalFrameCapacity = 4;
 
 }  // namespace
 
-std::vector<Observation> observe_tracer_pid(std::string_view status_path) {
-  return {tracer_pid_from(rasp::util::read_file(status_path, kMaxStatusSize), kTracerPidSource),
-          tracer_pid_from(util::read_file_direct(status_path, kMaxStatusSize), kTracerPidDirectSource)};
+std::vector<Observation> observe_tracer_pid(std::string_view status_path, util::SystemCall invoke) {
+  return {
+      tracer_pid_from(rasp::util::read_file(status_path, kMaxStatusSize), kTracerPidSource),
+      tracer_pid_from(util::read_file_direct(status_path, kMaxStatusSize, invoke), kTracerPidDirectSource),
+  };
 }
 
 Observation observe_jdwp_threads(std::string_view task_path) {

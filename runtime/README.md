@@ -247,3 +247,10 @@ On the release binaries, it checks that:
 - the framework exports no symbols, and the Android library exports only the JVM's `JNI_OnLoad` hook;
 - neither imports any of `exit`, `_Exit`, `quick_exit`, `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `setenv`, `putenv`, `unsetenv`, `setlocale` and `setrlimit`. `.clang-tidy` forbids these functions in the source, and also `abort` and `std::terminate`, which the binary check leaves out;
 - neither writes logs: the framework imports no symbol with `_os_log` in its name and contains no `{public}` text, and the Android library imports no symbol with `__android_log` in its name and contains no `RaspRuntime` text.
+
+## Independent second-source observations
+
+See [second-source contracts](second_sources.md) for stable source names, error/unsupported semantics, bounds,
+platform gates, test boundaries, and expected-source/assessment integration followups. Android `*_syscall` sources
+use **libc's hookable syscall entry**, not direct inline assembly. Sources are retained independently, including
+contradictory values and errors; agreement is not cryptographic attestation or proof of a clean device.

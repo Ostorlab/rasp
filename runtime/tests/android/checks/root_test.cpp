@@ -3,17 +3,20 @@
 #include "checks/root.h"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 #include "rasp/observation.h"
 #include "support/files.h"
+#include "support/syscall_files.h"
 
 namespace rasp::android::checks {
 namespace {
@@ -189,22 +192,22 @@ TEST(Root, observeMounts_whenNoLineMentionsARootTool_reportsAnEmptyList) {
   EXPECT_EQ(observe_mounts(table), mounts({}));
 }
 
-TEST(Root, observeMounts_whenTheTableIsEmpty_reportsAnEmptyList) {
+TEST(Root, observeMounts_whenTheTableIsEmpty_reportsError) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, ""));
 
-  EXPECT_EQ(observe_mounts(table), mounts({}));
+  EXPECT_EQ(observe_mounts(table), unreadable_mounts());
 }
 
-TEST(Root, observeMounts_whenTheLastLineHasNoLineBreak_stillReportsIt) {
+TEST(Root, observeMounts_whenTheLastLineHasNoLineBreak_reportsError) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, std::string(kStockMounts) + "KSU /vendor overlay ro 0 0"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({"KSU /vendor overlay ro 0 0"}));
+  EXPECT_EQ(observe_mounts(table), unreadable_mounts());
 }
 
 TEST(Root, observeMounts_whenMoreThan32LinesMatch_reportsTheFirst32) {
@@ -230,7 +233,13 @@ TEST(Root, observeMounts_whenTheTableIsExactly1MiB_readsItWhole) {
   ASSERT_FALSE(directory.path().empty());
   const std::string table = directory.path() + "/mounts";
   const std::string last = "magisk /debug_ramdisk tmpfs rw 0 0";
-  const std::string content = std::string(kMountsLimit - last.size() - 1, 'a') + "\n" + last;
+  std::string content;
+  const std::string ordinary = "tmpfs /data tmpfs rw 0 0\n";
+  while (content.size() + ordinary.size() + last.size() + 64 < kMountsLimit) {
+    content += ordinary;
+  }
+  const std::string tail = " /data tmpfs rw 0 0\n";
+  content += std::string(kMountsLimit - content.size() - last.size() - tail.size() - 1, 'a') + tail + last + "\n";
   ASSERT_EQ(content.size(), kMountsLimit);
   ASSERT_TRUE(write_file(table, content));
 
@@ -314,13 +323,13 @@ TEST(Root, observeMounts_whenAnOptionOnlyStartsWithRw_ignoresIt) {
   EXPECT_EQ(observe_mounts(table), mounts({}));
 }
 
-TEST(Root, observeMounts_whenALineHasFewerThanFourFields_ignoresItForWritableMounts) {
+TEST(Root, observeMounts_whenALineHasFewerThanFourFields_reportsError) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, std::string(kStockMounts) + "/dev/block/dm-0 /system ext4\nrw\n\n"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({}));
+  EXPECT_EQ(observe_mounts(table), unreadable_mounts());
 }
 
 TEST(Root, observeMounts_whenARootToolMountsASystemFolderWritable_reportsTheLineInBothLists) {
@@ -447,6 +456,58 @@ TEST(Root, root_whenOffAndroid_reportsEveryCheckAsUnsupported) {
           {.signal = "root.selinux_enforcing", .source = "selinuxfs", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.build_props", .source = "system_property", .status = Status::kUnsupported, .value = {}},
       }));
+}
+
+TEST(Root, observePaths_whenLookupFails_reportsErrorForEverySource) {
+  const TemporaryDirectory directory;
+  const std::string path = directory.path() + "/loop";
+  std::error_code error;
+  std::filesystem::create_symlink(path, path, error);
+  ASSERT_FALSE(error);
+  const std::string present = directory.path() + "/present";
+  ASSERT_TRUE(write_file(present, ""));
+  const std::array<std::string_view, 2> paths{present, path};
+  EXPECT_EQ(observe_paths(paths),
+            (std::vector<Observation>{failed("root.fs_paths", "access"), failed("root.fs_paths", "stat"),
+                                      failed("root.fs_paths", "faccessat_syscall")}));
+}
+
+TEST(Root, observePaths_whenSyscallIsDenied_preservesOtherSources) {
+  const TemporaryDirectory directory;
+  const std::string path = directory.path() + "/file";
+  ASSERT_TRUE(write_file(path, ""));
+  const std::array<std::string_view, 1> paths{path};
+  test_support::SyscallFile fixture{.content = {}, .error = EACCES};
+  test_support::SyscallFile::active = &fixture;
+  EXPECT_EQ(observe_paths(paths, test_support::SyscallFile::invoke),
+            (std::vector<Observation>{observed("root.fs_paths", "access", std::vector<std::string>{path}),
+                                      observed("root.fs_paths", "stat", std::vector<std::string>{path}),
+                                      failed("root.fs_paths", "faccessat_syscall")}));
+}
+
+TEST(Root, observeMounts_whenSourcesDiverge_preservesIndependentLists) {
+  const TemporaryDirectory directory;
+  const std::string path = directory.path() + "/mounts";
+  ASSERT_TRUE(write_file(path, kStockMounts));
+  const std::string line = "magisk /data/local tmpfs rw 0 0";
+  const std::string syscall_mounts = line + "\n";
+  test_support::SyscallFile fixture{.content = syscall_mounts};
+  test_support::SyscallFile::active = &fixture;
+  EXPECT_EQ(observe_mounts(path, test_support::SyscallFile::invoke),
+            (std::vector<Observation>{observed("root.mounts", "proc_mounts", std::vector<std::string>{}),
+                                      observed("root.rw_mounts", "proc_mounts", std::vector<std::string>{}),
+                                      observed("root.mounts", "proc_mounts_syscall", std::vector<std::string>{line}),
+                                      observed("root.rw_mounts", "proc_mounts_syscall", std::vector<std::string>{})}));
+}
+
+TEST(Root, observeMounts_whenInputIsMalformedOrTruncated_reportsError) {
+  const TemporaryDirectory directory;
+  const std::string path = directory.path() + "/mounts";
+  for (const std::string_view content :
+       {"\n", "garbage\n", "magisk /system tmpfs", "magisk /system tmpfs rw 0 0\ninvalid\n"}) {
+    ASSERT_TRUE(write_file(path, content));
+    EXPECT_EQ(observe_mounts(path), unreadable_mounts());
+  }
 }
 
 }  // namespace

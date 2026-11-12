@@ -35,12 +35,12 @@ namespace rasp::ios::checks {
 ///
 /// It reads the same `P_TRACED` flag as observe_traced, from the same `kinfo_proc` entry, but makes the getpid and
 /// sysctl system calls itself, with the `svc` instruction, instead of calling the libc functions. A hook on libc's
-/// sysctl or getpid, a common debugger bypass, then changes what observe_traced reports but not what this probe
-/// reports, and the two values disagree. Only arm64 builds for Apple systems make these calls; elsewhere there is
-/// nothing to read.
+/// sysctl or getpid can make these sources disagree. Sequential reads can also differ naturally, and kernel
+/// compromise or modification of the native instructions can forge agreement. Only nonsimulator arm64 builds for Apple
+/// systems make these calls; elsewhere there is nothing to read.
 ///
 /// @return One dbg.traced observation read through sysctl_syscall: true when the flag is set, false when it is not. It
-/// has an error status when a system call fails or sysctl doesn't return a whole `kinfo_proc` entry, and the
+/// has an error status for a native carry error, invalid PID, nonzero sysctl result or incomplete entry, and the
 /// unsupported status on a system other than an Apple one on arm64.
 [[nodiscard]] Observation observe_traced_syscall();
 
@@ -64,7 +64,7 @@ namespace rasp::ios::checks {
 ///
 /// @return One dbg.parent observation read through sysctl_syscall, with the parent's process id as an integer. It has
 /// an error status when a system call fails or sysctl doesn't return a whole `kinfo_proc` entry, and the unsupported
-/// status on a system other than an Apple one on arm64.
+/// status off nonsimulator Apple arm64.
 [[nodiscard]] Observation observe_parent_syscall();
 
 /// Reports the exceptions for which the app's task has an exception port set.

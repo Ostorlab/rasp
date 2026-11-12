@@ -1,36 +1,46 @@
-/// Reading a file and looking up a path through direct system calls, for the checks that read a signal a second way.
-///
-/// The checks' first source reads through libc functions such as `fopen`, `read` and `access`, which a hooking tool
-/// can replace to hide what the check looks for. These helpers make the same requests through libc's `syscall`
-/// function instead, which goes straight to the kernel, so a hook on the usual libc functions doesn't change what
-/// they return.
+/// Bounded second reads through libc's syscall entry, which can itself be hooked.
 
 #pragma once
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 
 namespace rasp::android::util {
 
-/// Reads the file at `path` to its end, through the openat, read and close system calls.
-///
-/// The file is read in chunks, so files under /proc, whose size stat reports as 0, are read whole too. It is opened
-/// with close-on-exec, so it never leaks into a process the app starts. A read that a signal interrupts is retried.
-///
-/// @param path The file to read.
-/// @param limit The largest content accepted, in bytes.
-/// @return The content of the file, or nothing when it can't be opened, read or closed, or is longer than `limit`
-/// bytes.
-[[nodiscard]] std::optional<std::string> read_file_direct(std::string_view path, std::size_t limit);
+/// The result and captured errno of a libc syscall entry invocation.
+struct SyscallResult {
+  /// The return value; -1 indicates a libc failure.
+  long value;
+  /// The errno captured immediately after the call; meaningful only on failure.
+  int error;
+};
 
-/// Whether a file exists at `path`, through the faccessat system call.
-///
-/// It asks the same question as `access(path, F_OK)`, which bionic answers with this same system call.
-///
-/// @param path The path to look up.
-/// @return `true` when the kernel finds a file at `path`, and `false` when it doesn't or can't look the path up.
-[[nodiscard]] bool exists_direct(const std::string& path);
+/// A replaceable native boundary taking up to four machine-word arguments.
+using SystemCall = SyscallResult (*)(long number, const std::array<std::uintptr_t, 4>& arguments);
+
+/// Invokes the hookable libc syscall entry and captures its errno.
+/// @param number The platform's syscall number.
+/// @param arguments Four machine-word arguments, zero for unused slots.
+/// @return The syscall return value and errno, without interpreting either.
+[[nodiscard]] SyscallResult libc_syscall(long number, const std::array<std::uintptr_t, 4>& arguments);
+
+/// Reads a file using openat/read/close through libc's syscall entry, with nonblocking and close-on-exec flags.
+/// @param path A nonempty path without embedded null bytes.
+/// @param limit The largest accepted content, up to 4 MiB.
+/// @param invoke The native syscall boundary.
+/// @return Complete content, or nothing on open/read/close failure, oversized content, invalid counts or after
+/// eight interrupted reads. Short reads continue to EOF. The descriptor is closed exactly once, even on failure.
+[[nodiscard]] std::optional<std::string> read_file_direct(std::string_view path, std::size_t limit,
+                                                          SystemCall invoke = libc_syscall);
+
+/// Looks up a path through libc's faccessat syscall entry, which can itself be hooked.
+/// @param path A nonempty path without embedded null bytes.
+/// @param invoke The native syscall boundary.
+/// @return True for existence, false only for ENOENT/ENOTDIR, or nothing on denial or any other error.
+[[nodiscard]] std::optional<bool> exists_direct(const std::string& path, SystemCall invoke = libc_syscall);
 
 }  // namespace rasp::android::util

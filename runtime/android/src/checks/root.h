@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "util/direct_syscall.h"
 #include "util/system_property.h"
 
 namespace rasp::android::checks {
@@ -25,17 +26,19 @@ namespace rasp::android::checks {
 [[nodiscard]] std::vector<Observation> root();
 
 /// Reports which of `paths` exist, read through three sources: access, stat, and the faccessat system call made
-/// directly.
+/// through libc's hookable syscall entry.
 ///
 /// Each path is looked up three times. A hook that hides a root file from one source but not another makes the lists
-/// disagree, which is itself a sign of tampering. The direct system call goes around the libc functions, so a hook on
-/// both access and stat still leaves it to disagree. Every observation is produced even when no path exists: an empty
-/// list is a real answer, not a failure.
+/// disagree. Reads are sequential, so ordinary changes can also cause disagreement. The syscall entry can itself be
+/// hooked; agreement does not attest absence of root. A complete negative lookup reports an empty list; any denial
+/// or error other than ENOENT/ENOTDIR invalidates that source's whole observation, even after a positive lookup.
 ///
 /// @param paths The paths to look for, such as the known root artifact paths.
+/// @param invoke The hookable libc syscall boundary for the faccessat source.
 /// @return Three root.fs_paths observations: the paths found through access, then through stat, then through
 /// faccessat_syscall.
-[[nodiscard]] std::vector<Observation> observe_paths(std::span<const std::string_view> paths);
+[[nodiscard]] std::vector<Observation> observe_paths(std::span<const std::string_view> paths,
+                                                     util::SystemCall invoke = util::libc_syscall);
 
 /// Reports the lines of the mount table at `mounts_path` that a root tool made, and those that mount a system folder
 /// writable.
@@ -46,15 +49,17 @@ namespace rasp::android::checks {
 /// `/system` and `/vendor`) is read-only on a stock device, so one mounted with the `rw` option was remounted, which
 /// takes root. The line holds the filesystem type too, so the server can tell the read-write rootfs that devices
 /// without system-as-root mount at `/`. Each read takes the table whole, up to 1 MiB, and each list holds at most its
-/// first 32 lines. The table is read twice, once through the libc file functions and once through direct system
-/// calls, so a hook on libc that hides a line makes the two sources disagree.
+/// first 32 lines. The table is read twice, once through the libc file functions and once through libc's hookable
+/// syscall entry. Both values are retained independently; shared kernel compromise can forge agreement.
 ///
 /// @param mounts_path The mount table to read, `/proc/self/mounts` on a device.
+/// @param invoke The hookable libc syscall boundary for the independent second read.
 /// @return Four observations: root.mounts, the lines a root tool made, then root.rw_mounts, the lines that mount a
 /// system folder writable, both without their line breaks, read through proc_mounts; then the same two read through
 /// proc_mounts_syscall. Both observations of a source have an error status when that source can't read the table or
-/// it is larger than 1 MiB.
-[[nodiscard]] std::vector<Observation> observe_mounts(std::string_view mounts_path);
+/// it is empty, malformed, truncated, larger than 1 MiB or holds a line longer than 8192 bytes.
+[[nodiscard]] std::vector<Observation> observe_mounts(std::string_view mounts_path,
+                                                      util::SystemCall invoke = util::libc_syscall);
 
 /// Reports whether SELinux enforces its policy, from the file at `enforce_path`.
 ///

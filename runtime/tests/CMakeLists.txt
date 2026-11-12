@@ -165,3 +165,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_libraries(rasp_android_hooks_dispatch_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
   gtest_discover_tests(rasp_android_hooks_dispatch_test TEST_PREFIX "AndroidDispatch.")
 endif()
+
+add_executable(rasp_android_direct_syscall_test android/util/direct_syscall_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/direct_syscall.cpp)
+target_include_directories(rasp_android_direct_syscall_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_android_direct_syscall_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_direct_syscall_test)
+
+target_sources(rasp_ios_debugger_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
+add_executable(rasp_ios_process_query_test ios/util/process_query_test.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
+target_include_directories(rasp_ios_process_query_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_process_query_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_ios_process_query_test)

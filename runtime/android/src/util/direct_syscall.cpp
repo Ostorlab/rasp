@@ -1,62 +1,112 @@
-/// Reading a file and looking up a path through direct system calls, for the checks that read a signal a second way.
+/// Bounded file and path probes through the hookable libc syscall entry, not inline assembly.
 
 #include "util/direct_syscall.h"
 
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cerrno>
 #include <cstddef>
-// NOLINTNEXTLINE(misc-include-cleaner): bionic defines the AT_ and O_ flags in a header that <fcntl.h> includes.
-#include <fcntl.h>
+#include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
-// NOLINTNEXTLINE(misc-include-cleaner): bionic defines the SYS_ numbers in a header that <sys/syscall.h> includes.
-#include <sys/syscall.h>
 #include <unistd.h>
+#include <utility>
+
+#ifdef __BIONIC__
+// NOLINTNEXTLINE(misc-include-cleaner): bionic's canonical syscall header populates the architecture's __NR_ names.
+#include <sys/syscall.h>
+#else
+#include <sys/syscall.h>
+#endif
+
+#ifdef __BIONIC__
+#include <asm-generic/fcntl.h>
+#include <bits/glibc-syscalls.h>
+#include <linux/fcntl.h>
+#else
+#include <fcntl.h>
+#endif
 
 namespace rasp::android::util {
-
 namespace {
 
-/// The size of each chunk read.
-constexpr std::size_t kChunkSize = 1024;
+/// The maximum content accepted by any caller.
+constexpr std::size_t kMaxFileSize = std::size_t{4} << 20U;
+/// The maximum interrupted reads before the observation becomes unavailable.
+constexpr std::size_t kMaxInterrupts = 8;
+
+/// Whether a path can be passed to a C native interface without changing its meaning.
+[[nodiscard]] bool valid_path(std::string_view path) { return !path.empty() && !path.contains('\0'); }
+
+/// Reads until EOF, rejecting partial data on error and bounding both memory and interruptions.
+[[nodiscard]] std::optional<std::string> read_all(long descriptor, SystemCall invoke, std::size_t limit) {
+  std::string content;
+  std::array<char, 1024> chunk{};
+  std::size_t interrupts = 0;
+  while (true) {
+    const std::size_t requested = std::min(chunk.size(), limit - content.size() + 1);
+    const SyscallResult result = invoke(
+        SYS_read, {static_cast<std::uintptr_t>(descriptor), std::bit_cast<std::uintptr_t>(chunk.data()), requested, 0});
+    if (result.value == -1 && result.error == EINTR && interrupts < kMaxInterrupts) {
+      ++interrupts;
+      continue;
+    }
+    if (result.value < 0 || std::cmp_greater(result.value, requested) ||
+        static_cast<std::size_t>(result.value) > limit - content.size()) {
+      return std::nullopt;
+    }
+    if (result.value == 0) {
+      return content;
+    }
+    content.append(chunk.data(), static_cast<std::size_t>(result.value));
+  }
+}
 
 }  // namespace
 
-std::optional<std::string> read_file_direct(std::string_view path, std::size_t limit) {
-  const std::string name(path);
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner): syscall is variadic, and its SYS_ and flag macros come from the included <sys/syscall.h> and <fcntl.h>.
-  const long descriptor = syscall(SYS_openat, AT_FDCWD, name.c_str(), O_RDONLY | O_CLOEXEC);
-  if (descriptor < 0) {
+SyscallResult libc_syscall(long number, const std::array<std::uintptr_t, 4>& arguments) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): the libc syscall entry is variadic.
+  const long value = syscall(number, arguments[0], arguments[1], arguments[2], arguments[3]);
+  return {.value = value, .error = errno};
+}
+
+std::optional<std::string> read_file_direct(std::string_view path, std::size_t limit, SystemCall invoke) {
+  if (!valid_path(path) || limit > kMaxFileSize) {
     return std::nullopt;
   }
-  std::optional<std::string> content = std::string();
-  std::array<char, kChunkSize> chunk{};
-  while (true) {
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner): syscall is variadic, and its SYS_ and flag macros come from the included <sys/syscall.h> and <fcntl.h>.
-    const long count = syscall(SYS_read, descriptor, chunk.data(), chunk.size());
-    if (count < 0 && errno == EINTR) {
-      continue;
-    }
-    if (count == 0) {
-      break;
-    }
-    if (count < 0 || static_cast<std::size_t>(count) > limit - content->size()) {
-      content.reset();
-      break;
-    }
-    content->append(chunk.data(), static_cast<std::size_t>(count));
+  const std::string name(path);
+  const SyscallResult descriptor = invoke(SYS_openat, {
+                                                          static_cast<std::uintptr_t>(AT_FDCWD),
+                                                          std::bit_cast<std::uintptr_t>(name.c_str()),
+                                                          O_RDONLY | O_CLOEXEC | O_NONBLOCK,
+                                                          0,
+                                                      });
+  if (descriptor.value < 0 || descriptor.value > std::numeric_limits<int>::max()) {
+    return std::nullopt;
   }
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner): syscall is variadic, and its SYS_ and flag macros come from the included <sys/syscall.h> and <fcntl.h>.
-  if (syscall(SYS_close, descriptor) != 0) {
+  std::optional<std::string> content = read_all(descriptor.value, invoke, limit);
+  if (invoke(SYS_close, {static_cast<std::uintptr_t>(descriptor.value), 0, 0, 0}).value != 0) {
     return std::nullopt;
   }
   return content;
 }
 
-bool exists_direct(const std::string& path) {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner): syscall is variadic, and its SYS_ and flag macros come from the included <sys/syscall.h> and <fcntl.h>.
-  return syscall(SYS_faccessat, AT_FDCWD, path.c_str(), F_OK) == 0;
+std::optional<bool> exists_direct(const std::string& path, SystemCall invoke) {
+  if (!valid_path(path)) {
+    return std::nullopt;
+  }
+  const SyscallResult result = invoke(
+      SYS_faccessat, {static_cast<std::uintptr_t>(AT_FDCWD), std::bit_cast<std::uintptr_t>(path.c_str()), F_OK, 0});
+  if (result.value == 0) {
+    return true;
+  }
+  if (result.value == -1 && (result.error == ENOENT || result.error == ENOTDIR)) {
+    return false;
+  }
+  return std::nullopt;
 }
 
 }  // namespace rasp::android::util
