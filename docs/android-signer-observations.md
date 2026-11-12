@@ -1,0 +1,57 @@
+# Android signer and Application package observations (RT09 draft)
+
+The `identity` group adds four versioned outputs without changing group selection or its five legacy outputs. These are bounded, untrusted observations. Benign rotation and parallel signing are controls, not repackaging or malware verdicts.
+
+This independent scope starts at approved RT05 `bb5dc352aaa2583a4fe87b55369618047931a922`. The portable [v1 fixture](fixtures/android-signer-observations-v1.json) is a draft contract for root integration. It is deliberately **not a final release catalogue revision**. Root must supply the exact approved integrated parent, merge this ordinary commit, register these rows in the shared manifest, regenerate final fixtures/sidecars and run exact-head CI before publishing. Independent artifact gates exercise existing revision-2 binding and config compatibility only; they do not advertise the draft outputs as a registered release.
+
+| Signal | Source | Successful value |
+|---|---|---|
+| `id.package.v1` | `application_context` | Actual retained Application's `getPackageName()` string |
+| `sig.current_sha256.v1` | `apk_signing_block` | Sorted unique lowercase SHA256 hex list of applicable current signer leaves |
+| `sig.current_sha256.v1` | `package_manager` | Sorted unique lowercase SHA256 hex list from `getApkContentsSigners()` |
+| `sig.history_sha256.v1` | `package_manager` | Digests in public `getSigningCertificateHistory()` order: oldest first, current last |
+
+Each row appears once in every selected identity pass. Off Android and below API31 it is unsupported with no value. Collection/parse/JNI/permission failures, null or empty arrays, malformed/truncated buffers and limits produce error without a value. Missing supported Context is error, with no private `ActivityThread` fallback or wait on the new path. Unknown device API is error. For valid parallel signing, history is unsupported and the history API is not called. A single signer without rotation has singleton history; history errors leave independently successful current/package fields intact. History must end in the observed single current certificate; it is never sorted or merged into current signers.
+
+`sig.cert_sha256/apk_signing_block` and `/package_manager` retain **legacy first-signer scalar** behavior and source names. The legacy native reader retains its older selection policy, including fallback; consumers must use the versioned complete set for set comparison. The legacy PM path still has its bounded best-effort Application fallback, and now also caps its first certificate at 64KiB. `id.package/proc_cmdline` remains its legacy process-name-derived string: global `android:process` aliases need not name the package. Use `id.package.v1/application_context` for actual package identity; a global process alias is not another installed package.
+
+## Supported public PackageManager contract
+
+The new collector uses only the process-lifetime Application retained by `RuntimeBridge.initialize(Context)`; it neither changes the bridge's ownership/lifecycle nor retains a JNIEnv or component Context. It calls `getPackageInfo(Application.getPackageName(), GET_SIGNING_CERTIFICATES)` and reads `PackageInfo.signingInfo`. The public int-flags overload remains available on API31 and API34 (the newer flags class is unnecessary). SigningInfo methods used here were added at API28. It reads `hasMultipleSigners()` and all `getApkContentsSigners()` entries to distinguish current signers from authorized historical certificates, then reads history only for a single current signer. Although Android recommends history for checking whether a package is authorized to use any key, that is a different question from this current-set observation.
+
+Own-package queries need no dangerous/runtime permission or `QUERY_ALL_PACKAGES`; the app is automatically visible to itself. No inventory of other installed packages is queried. Missing/denied package data still reports error rather than assuming a clean set. Injected/hooked framework data is untrusted.
+
+Bounds before copying: 32 certificates per public array, 65536 bytes per certificate, 262144 summed raw certificate bytes per array, at most 524288 certificate bytes across current plus history, and a 255-character ASCII package name. Limits apply before deduplication. Each signature uses a separate three-reference local frame inside a fixed outer frame. Every JNI exception is checked/cleared before dependent calls; no partial failed array is returned. Only digests and public package metadata reach observations, never raw certificates or private key material.
+
+## Native scheme selection and limits
+
+The new path extends `apk/archive.cpp` and keeps the original singular APIs intact. It validates the whole bounded signing block's pair framing, rejecting duplicate scheme IDs and malformed trailing pairs. It selects one scheme, never concatenating schemes:
+
+- API31/32 ignore v3.1 and select v3 when present, otherwise v2.
+- API33+ try v3.1; when no v3.1 signer targets the device, they select v3. An applicable v3/v3.1 scheme must have exactly one signer. A present v3 with no applicable signer is an error, **not a fallback to v2**.
+- v2 accepts every current signer up to AOSP Android14's ten-signer limit. A signer's first certificate is its signing leaf; subsequent chain certificates are validated/bounded but never counted as independent signers.
+- All signer records, signed/unsigned SDK-range equality, chain framing, digest/signature record framing, attributes and trailing bytes are checked. Proof-of-rotation payloads remain opaque. Range-specific nonselected records are checked conservatively too; malformed/over-limit data can therefore make this source unavailable even if a platform would skip it.
+- v3 rotation-minimum stripping metadata is checked against a nonapplicable v3.1 block on API33+. Developer-release rotation (`0xc2a6b3ba`) requires codename-based selection; the new source reports unsupported for such a v3.1 block rather than guessing from SDK_INT alone. v2 stripping-protection attributes are also explicitly unsupported in the fallback parser. PackageManager remains an independent public source in these cases.
+
+The archive must be regular ZIP32, single disk, at most 2GiB minus one byte. The descriptor is opened read-only with `O_NONBLOCK | O_CLOEXEC`, then checked with fstat before any region read, so a FIFO with no writer cannot block at open. The same descriptor is used throughout; device/inode, mode, size, mtime and ctime (including nanoseconds) must match before and after reads. Detected concurrent changes are errors. Metadata equality cannot establish an atomic snapshot: same-size mutations, filesystem timestamp behavior and adversarial hooks can evade it; neither pathname freshness nor signature validity follows. The new reader copies only a ZIP tail of at most 65557 bytes, its 24-byte signing footer, and at most 1MiB of signing block. It never memory-maps the untrusted archive. It bounds pair count (256), signer records (32), algorithm/attribute records (64 per list), chain length (32), individual certificates (64KiB), and all certificate bytes across parsed scheme records (256KiB). It checks exact terminal ZIP comment length and directory adjacency. ZIP64, absent signing blocks, mismatched lengths, duplicates, truncation and empty certificates are unavailable/errors. The legacy archive/asset APIs are unchanged.
+
+DER checks validate canonical definite-length encoding and the three-field X.509 envelope only. They are not full ASN.1/X.509 semantic validation, certificate-chain verification, APK signature verification, APK content-integrity verification or lineage proof. Even correctly structured hashes from an untrusted file can be forged. Android's prior installation verification is not a substitute for fresh verification of these bytes on an attacker-controlled device. Scheme agreement, disagreement and a known certificate digest are observations, not attestation.
+
+## Final customer signing identity integration
+
+The packer returns an unsigned protected app, then the customer or Play App Signing signs the final build. PK01 structural pack verification remains intact; it cannot register the final signer from unsigned packer output. A separate trusted backend workflow must bind final signed-artifact/package/version/platform information to an authenticated customer signing registry, including legitimate rotation and complete multi-signer policy. No such registry or cryptographic lineage verification is implemented or claimed by RT09. Backends must distinguish current sets, historical authorization, unknown/unavailable status and independent-source disagreement, and must not compare every historical key as concurrently active.
+
+## Validation and primary references
+
+Portable fixtures cover single signing, parallel signers with duplicates/order differences, benign rotation with history ordering, independent-source disagreement and unavailability. Native fixtures use public self-signed DER certificates and structural dummy signatures: no cryptographic verification result is implied. The real-JVM suite compiles production JNI, supported Context handling, `identity()` and `run_checks()`; Java Android boundaries and SDK31/32/33/34 are simulated under `-Xcheck:jni`. On Linux the JVM really runs with global argv[0] alias `fixture.global.worker`, while the retained Application still reports `fixture.app`. This is not ART or real-device execution. Root owns exact-head platform CI and final catalogue integration; real signed-APK/device controls remain external validation.
+
+Verified 2026-11-12 against Android public API docs and pinned AOSP Android12/API31 and Android14/API34 sources:
+
+- [SigningInfo](https://developer.android.com/reference/android/content/pm/SigningInfo): current signers versus ordered history, parallel signing restrictions and API28 availability.
+- [Context.getPackageName](https://developer.android.com/reference/android/content/Context#getPackageName()): the application package name, independent of process naming.
+- [PackageManager.GET_SIGNING_CERTIFICATES](https://developer.android.com/reference/android/content/pm/PackageManager#GET_SIGNING_CERTIFICATES): signingInfo population.
+- [Own-app automatic visibility](https://developer.android.com/training/package-visibility/automatic): no package-inventory visibility expansion required.
+- [APK v2 format](https://source.android.com/docs/security/features/apksigning/v2), [v3 format](https://source.android.com/docs/security/features/apksigning/v3), [v3.1 SDK targeting](https://source.android.com/docs/security/features/apksigning/v3-1).
+- [AOSP Android14 V3 verifier](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-14.0.0_r1/core/java/android/util/apk/ApkSignatureSchemeV3Verifier.java): one applicable signer, signed/unsigned SDK equality, fallback and release-codename rotation attributes.
+- [AOSP Android14 V2 verifier](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-14.0.0_r1/core/java/android/util/apk/ApkSignatureSchemeV2Verifier.java): ten-signer bound and certificate chain/leaf distinction.
+- [AOSP Android12 verifier](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-12.0.0_r1/core/java/android/util/apk/ApkSignatureVerifier.java): absent-scheme fallback differs from verification failure.

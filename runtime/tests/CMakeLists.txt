@@ -98,12 +98,16 @@ gtest_discover_tests(rasp_android_integrity_test)
 
 # The identity check hashes the signer's certificate with the integrity check's sha256_hex, so its test links it too.
 add_executable(rasp_android_identity_test android/checks/identity_test.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp ${PROJECT_SOURCE_DIR}/android/src/util/signing_certificates.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
 target_include_directories(rasp_android_identity_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(rasp_android_identity_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
+target_link_libraries(rasp_android_identity_test PRIVATE rasp_core rasp_yyjson rasp_tfpsacrypto rasp_warnings rasp_language
   GTest::gtest_main)
+target_compile_definitions(rasp_android_identity_test PRIVATE
+  RASP_TEST_CERTIFICATE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/android/apk/data"
+  RASP_TEST_IDENTITY_FIXTURE="${PROJECT_SOURCE_DIR}/../docs/fixtures/android-signer-observations-v1.json")
 gtest_discover_tests(rasp_android_identity_test)
 
 add_executable(rasp_android_app_storage_test android/util/app_storage_test.cpp
@@ -112,10 +116,14 @@ target_include_directories(rasp_android_app_storage_test PRIVATE ${PROJECT_SOURC
 target_link_libraries(rasp_android_app_storage_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_app_storage_test)
 
-add_executable(rasp_android_archive_test android/apk/archive_test.cpp ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp)
+add_executable(rasp_android_archive_test android/apk/archive_test.cpp ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/signing_certificates.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
 target_include_directories(rasp_android_archive_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(rasp_android_archive_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+target_link_libraries(rasp_android_archive_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language GTest::gtest_main)
+target_compile_definitions(rasp_android_archive_test PRIVATE
+  RASP_TEST_CERTIFICATE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/android/apk/data")
 gtest_discover_tests(rasp_android_archive_test)
 
 add_executable(rasp_android_apk_file_test android/util/apk_file_test.cpp
@@ -136,6 +144,8 @@ endif()
 
 add_executable(rasp_android_dex_store_test android/payload/dex_store_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/dex_store.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/signing_certificates.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
   ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp)
 target_include_directories(rasp_android_dex_store_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
@@ -184,7 +194,7 @@ foreach(platform android ios)
     COMMAND_ERROR_IS_FATAL ANY)
   if(platform STREQUAL "android")
     set(capability_checks debugger emulator hooks identity integrity mitm root)
-    set(capability_util util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp)
+    set(capability_util util/signing_certificates.cpp util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp)
   else()
     set(capability_checks debugger emulator hooks identity integrity jailbreak mitm virtualizer)
     set(capability_util util/macho.cpp util/sha256.cpp util/process_query.cpp)
@@ -203,6 +213,27 @@ foreach(platform android ios)
   target_link_libraries(rasp_${platform}_capabilities_test PRIVATE rasp_core rasp_tfpsacrypto
     rasp_warnings rasp_language GTest::gtest_main)
   if(platform STREQUAL "android")
+    set(draft_identity_fixture ${PROJECT_SOURCE_DIR}/../docs/fixtures/android-signer-observations-v1.json)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${draft_identity_fixture})
+    file(READ ${draft_identity_fixture} draft_identity_json)
+    string(JSON draft_count LENGTH "${draft_identity_json}" observations)
+    math(EXPR draft_last "${draft_count} - 1")
+    set(draft_rows "/// Generated from the RT09 portable draft contract; final registration is root-owned.\nconstexpr auto kDraftIdentityExpected = std::to_array<Expected>({\n")
+    foreach(draft_index RANGE ${draft_last})
+      string(JSON draft_signal GET "${draft_identity_json}" observations ${draft_index} signal)
+      string(JSON draft_source GET "${draft_identity_json}" observations ${draft_index} source)
+      string(JSON draft_kind GET "${draft_identity_json}" observations ${draft_index} value_kind)
+      if(draft_kind STREQUAL "string")
+        set(draft_kind_index 3)
+      elseif(draft_kind STREQUAL "string_list")
+        set(draft_kind_index 4)
+      else()
+        message(FATAL_ERROR "Unsupported draft identity kind ${draft_kind}")
+      endif()
+      string(APPEND draft_rows "Expected{.group = \"identity\", .signal = \"${draft_signal}\", .source = \"${draft_source}\", .kind = ${draft_kind_index}, .statuses = 7},\n")
+    endforeach()
+    string(APPEND draft_rows "});\n")
+    file(CONFIGURE OUTPUT ${expectations_dir}/draft_identity_expectations.h CONTENT "${draft_rows}" @ONLY)
     target_compile_definitions(rasp_${platform}_capabilities_test PRIVATE RASP_CAPABILITY_ANDROID)
   elseif(APPLE)
     target_link_libraries(rasp_ios_capabilities_test PRIVATE
@@ -227,13 +258,28 @@ if(Java_FOUND AND JNI_FOUND)
   if(CMAKE_CXX_FLAGS MATCHES "fsanitize=")
     message(STATUS "Real-JVM integration runs in the host preset; native Application Context tests run with sanitizers")
   else()
+    add_library(rasp_android_identity_dispatch OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp)
+    target_compile_definitions(rasp_android_identity_dispatch PRIVATE __ANDROID__)
+    target_include_directories(rasp_android_identity_dispatch PRIVATE ${JNI_INCLUDE_DIRS}
+      ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/include ${PROJECT_SOURCE_DIR}/android/src)
+    target_link_libraries(rasp_android_identity_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
     add_library(rasp_android_context_bridge_jni SHARED android/context_bridge/driver.cpp
       ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
       ${PROJECT_SOURCE_DIR}/android/src/util/package_manager.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/package_identity.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/signing_certificates.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp ${PROJECT_SOURCE_DIR}/android/src/apk/location.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/builtin.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/emulator.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/checks/mitm.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/root.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/system_property.cpp ${PROJECT_SOURCE_DIR}/android/src/util/direct_syscall.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
+      $<TARGET_OBJECTS:rasp_android_identity_dispatch>
       ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
     target_include_directories(rasp_android_context_bridge_jni PRIVATE ${JNI_INCLUDE_DIRS}
       ${PROJECT_SOURCE_DIR}/android/src)
-    target_link_libraries(rasp_android_context_bridge_jni PRIVATE rasp_warnings rasp_language JNI::JVM Threads::Threads)
+    target_link_libraries(rasp_android_context_bridge_jni PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language JNI::JVM Threads::Threads ${CMAKE_DL_LIBS})
     file(GLOB_RECURSE bridge_test_java CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/java/*.java)
     set(bridge_java ${PROJECT_SOURCE_DIR}/android/stub/co/ostorlab/rasp/RuntimeBridge.java)
     set(bridge_test_classes ${CMAKE_CURRENT_BINARY_DIR}/context-bridge-classes)
@@ -242,6 +288,17 @@ if(Java_FOUND AND JNI_FOUND)
       DEPENDS ${bridge_java} ${bridge_test_java} VERBATIM)
     add_custom_target(rasp_android_context_bridge_java ALL
       DEPENDS ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class)
+    set(identity_java_command ${Java_JAVA_EXECUTABLE})
+    set(identity_process_alias "")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      set(identity_java_command /bin/bash ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/identity_process.sh
+        ${Java_JAVA_EXECUTABLE})
+      set(identity_process_alias fixture.global.worker)
+    endif()
+    add_test(NAME AndroidIdentity.productionDispatch
+      COMMAND ${identity_java_command} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.IdentityTest
+        $<TARGET_FILE:rasp_android_context_bridge_jni> ${CMAKE_CURRENT_SOURCE_DIR}/android/apk/data ${identity_process_alias})
+    set_tests_properties(AndroidIdentity.productionDispatch PROPERTIES TIMEOUT 60)
     foreach(mode late early concurrent lifetime unavailable)
       add_test(NAME AndroidContextBridge.${mode}
         COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.BridgeTest

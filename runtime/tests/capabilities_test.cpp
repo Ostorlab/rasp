@@ -31,6 +31,18 @@ struct Expected {
 };
 
 #include "capability_expectations.h"
+#ifdef RASP_CAPABILITY_ANDROID
+#include "draft_identity_expectations.h"
+#endif
+
+/// Includes draft additive rows only in this independent task's tests, without inventing a release catalogue revision.
+[[nodiscard]] std::vector<Expected> expected_outputs() {
+  std::vector<Expected> expected(kExpected.begin(), kExpected.end());
+#ifdef RASP_CAPABILITY_ANDROID
+  expected.insert(expected.end(), kDraftIdentityExpected.begin(), kDraftIdentityExpected.end());
+#endif
+  return expected;
+}
 
 /// Calls the production dispatcher selected by this test target.
 [[nodiscard]] std::vector<rasp::Observation> dispatch(const rasp::Config& config) {
@@ -43,10 +55,11 @@ struct Expected {
 
 /// Checks an observed identity and its status-dependent value against the catalogue.
 void check_observation(std::string_view group, const rasp::Observation& observation) {
-  const auto* const expected = std::ranges::find_if(kExpected, [&](const Expected& candidate) {
+  const auto outputs = expected_outputs();
+  const auto expected = std::ranges::find_if(outputs, [&](const Expected& candidate) {
     return candidate.group == group && candidate.signal == observation.signal && candidate.source == observation.source;
   });
-  ASSERT_NE(expected, kExpected.end()) << group << "/" << observation.signal << "/" << observation.source;
+  ASSERT_NE(expected, outputs.end()) << group << "/" << observation.signal << "/" << observation.source;
   EXPECT_NE(expected->statuses & (1U << static_cast<unsigned int>(observation.status)), 0U);
   EXPECT_EQ(observation.value.index(), observation.status == rasp::Status::kOk ? expected->kind : 0U);
 #ifndef __APPLE__
@@ -58,7 +71,7 @@ void check_observation(std::string_view group, const rasp::Observation& observat
 void check_group(const std::string& group) {
   const rasp::Config config{.build_id = "catalogue-test", .checks = std::vector<std::string>{group}};
   const std::vector<rasp::Observation> observations = dispatch(config);
-  const auto expected_count = std::ranges::count(kExpected, group, &Expected::group);
+  const auto expected_count = std::ranges::count(expected_outputs(), group, &Expected::group);
   ASSERT_EQ(observations.size(), static_cast<std::size_t>(expected_count)) << group;
   std::set<std::pair<std::string, std::string>> identities;
   for (const rasp::Observation& observation : observations) {
@@ -69,7 +82,7 @@ void check_group(const std::string& group) {
 
 TEST(Capabilities, dispatch_whenGroupEnabled_matchesCatalogueIdentitiesKindsAndStatuses) {
   std::set<std::string> groups;
-  for (const Expected& expected : kExpected) {
+  for (const Expected& expected : expected_outputs()) {
     groups.emplace(expected.group);
   }
   for (const std::string& group : groups) {

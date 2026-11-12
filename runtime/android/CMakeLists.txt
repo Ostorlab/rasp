@@ -20,6 +20,8 @@ add_library(rasp SHARED
   src/util/app_storage.cpp
   src/util/application_context.cpp
   src/util/package_manager.cpp
+  src/util/package_identity.cpp
+  src/util/signing_certificates.cpp
   src/util/jni.cpp
   src/util/system_property.cpp)
 target_include_directories(rasp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

@@ -13,4 +13,4 @@ cmake --preset host -S "$runtime" -B "$work" "$@"
 cmake --build "$work" --parallel 2 --target \
   rasp_android_context_bridge_jni rasp_android_context_bridge_java rasp_android_application_context_test
 ctest --test-dir "$work" --parallel 2 --output-on-failure --no-tests=error \
-  -R '^(AndroidContextBridge[.]|ApplicationContext[.])'
+  -R '^(AndroidContextBridge[.]|AndroidIdentity[.]|ApplicationContext[.])'

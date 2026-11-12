@@ -2,6 +2,7 @@
 
 #include "apk/archive.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -9,10 +10,15 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include <vector>
 
+#include "rasp/util/read_file.h"
 #include "support/files.h"
 #include "support/zip.h"
+#include "util/signing_certificates.h"
 
 namespace rasp::android::apk {
 namespace {
@@ -278,6 +284,265 @@ TEST(Archive, readStoredEntry_whenTheApkIsSigned_stillReadsTheEntry) {
   ASSERT_TRUE(write_file(path, signed_apk(signing_block(pair(kV2, v2_scheme("v2 certificate"))))));
 
   EXPECT_EQ(read_stored_entry(path, "classes.dex"), bytes_of("dex"));
+}
+
+/// Reads a public DER fixture used only for parser and digest tests; private keys are not shipped in this repository.
+[[nodiscard]] std::string der_fixture(std::string_view filename) {
+  return rasp::util::read_file(std::string(RASP_TEST_CERTIFICATE_DIR) + "/" + std::string(filename), 65536)
+      .value_or("");
+}
+
+/// Structurally complete digest/signature algorithm record; its dummy signature is intentionally never verified.
+[[nodiscard]] std::string algorithm_record() {
+  std::string record;
+  append_le(record, Field{.value = 0x0201, .width = 4});
+  return prefixed(record + prefixed("unverified"));
+}
+
+/// Explicit fixture targeting parameters, separate from certificate-chain contents.
+struct SignerFixture {
+  bool v3 = false;
+  std::uint32_t minimum = 31;
+  std::uint32_t maximum = kAnyLaterLevel;
+  std::string_view attributes;
+};
+
+/// Encodes a certificate chain and optional SDK targeting in a complete signer record.
+[[nodiscard]] std::string complete_signer(std::initializer_list<std::string_view> chain, SignerFixture options = {}) {
+  std::string certificates;
+  for (const auto certificate : chain) {
+    certificates += prefixed(certificate);
+  }
+  std::string range;
+  if (options.v3) {
+    append_le(range, Field{.value = options.minimum, .width = 4});
+    append_le(range, Field{.value = options.maximum, .width = 4});
+  }
+  const std::string data = prefixed(algorithm_record()) + prefixed(certificates) + range + prefixed(options.attributes);
+  return prefixed(prefixed(data) + range + prefixed(algorithm_record()) + prefixed("unverified public key"));
+}
+
+/// Parses the new complete-set API independently of the legacy first-certificate helper.
+[[nodiscard]] SignerCertificates complete_certificates(std::string_view pairs, std::uint32_t api = 34) {
+  return find_signing_certificates(bytes_of(signed_apk(signing_block(pairs))), api);
+}
+
+TEST(Archive, findSigningCertificates_whenV2HasParallelSigners_returnsEveryLeafAndPreservesLegacyFirst) {
+  const auto first = der_fixture("signer_a.der");
+  const auto second = der_fixture("signer_b.der");
+  ASSERT_FALSE(first.empty());
+  ASSERT_FALSE(second.empty());
+  const auto pairs = pair(kV2, prefixed(complete_signer({first}) + complete_signer({second})));
+  const auto found = complete_certificates(pairs);
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(*found, (util::Certificates{bytes_of(first), bytes_of(second)}));
+  EXPECT_EQ(certificate_of(signed_apk(signing_block(pairs))), bytes_of(first));
+}
+
+TEST(Archive, findSigningCertificates_whenSignerHasAChain_returnsOnlyItsLeaf) {
+  const auto leaf = der_fixture("signer_a.der");
+  const auto issuer = der_fixture("signer_b.der");
+  const auto found = complete_certificates(pair(kV2, prefixed(complete_signer({leaf, issuer}))));
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(*found, (util::Certificates{bytes_of(leaf)}));
+}
+
+TEST(Archive, findSigningCertificates_whenSchemesDiffer_usesExactlyThePlatformScheme) {
+  const auto old_key = der_fixture("signer_a.der");
+  const auto new_key = der_fixture("signer_b.der");
+  const auto pairs =
+      pair(kV2, prefixed(complete_signer({new_key}))) +
+      pair(kV3, prefixed(complete_signer({old_key}, {.v3 = true, .minimum = 31, .maximum = 33, .attributes = ""}))) +
+      pair(kV31, prefixed(complete_signer({new_key}, {.v3 = true, .minimum = 34, .attributes = ""})));
+  for (const auto api : {31U, 32U, 33U, 34U}) {
+    const auto found = complete_certificates(pairs, api);
+    ASSERT_TRUE(found.has_value()) << api;
+    EXPECT_EQ(*found, (util::Certificates{bytes_of(api == 34 ? new_key : old_key)}));
+  }
+}
+
+TEST(Archive, findSigningCertificates_whenV3HasDisjointRanges_returnsTheApplicableLeaf) {
+  const auto old_key = der_fixture("signer_a.der");
+  const auto new_key = der_fixture("signer_b.der");
+  const auto pairs =
+      pair(kV3, prefixed(complete_signer({old_key}, {.v3 = true, .minimum = 28, .maximum = 30, .attributes = ""}) +
+                         complete_signer({new_key}, {.v3 = true, .minimum = 31, .attributes = ""})));
+  const auto found = complete_certificates(pairs, 31);
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(*found, (util::Certificates{bytes_of(new_key)}));
+}
+
+TEST(Archive, findSigningCertificates_whenV3HasNoApplicableOrMultipleApplicableSigners_refusesFallback) {
+  const auto certificate = der_fixture("signer_a.der");
+  const auto v2 = pair(kV2, prefixed(complete_signer({certificate})));
+  EXPECT_FALSE(complete_certificates(
+      v2 + pair(kV3,
+                prefixed(complete_signer({certificate}, {.v3 = true, .minimum = 28, .maximum = 30, .attributes = ""}))),
+      31));
+  EXPECT_FALSE(
+      complete_certificates(v2 + pair(kV3, prefixed(complete_signer({certificate}, {.v3 = true, .attributes = ""}) +
+                                                    complete_signer({certificate}, {.v3 = true, .attributes = ""})))));
+}
+
+TEST(Archive, findSigningCertificates_whenV2HasTenOrElevenSigners_enforcesPlatformLimit) {
+  const auto certificate = der_fixture("signer_a.der");
+  std::string signers;
+  for (std::size_t count = 0; count < 10; ++count) {
+    signers += complete_signer({certificate});
+  }
+  const auto ten = complete_certificates(pair(kV2, prefixed(signers)));
+  ASSERT_TRUE(ten.has_value());
+  EXPECT_EQ(ten->size(), 10U);
+  EXPECT_FALSE(complete_certificates(pair(kV2, prefixed(signers + complete_signer({certificate})))));
+}
+
+TEST(Archive, findSigningCertificates_whenLaterSignerOrChainEntryIsMalformed_refusesPartialSet) {
+  const auto certificate = der_fixture("signer_a.der");
+  EXPECT_FALSE(complete_certificates(pair(kV2, prefixed(complete_signer({certificate}) + prefixed("short")))));
+  EXPECT_FALSE(complete_certificates(pair(kV2, prefixed(complete_signer({certificate, "bad DER"})))));
+  EXPECT_FALSE(
+      complete_certificates(pair(kV2, prefixed(complete_signer({certificate.substr(0, certificate.size() - 1)})))));
+  EXPECT_FALSE(complete_certificates(pair(kV2, prefixed(complete_signer({""})))));
+  EXPECT_FALSE(complete_certificates(pair(kV2, prefixed(complete_signer({std::string(65537, 'x')})))));
+}
+
+TEST(Archive, findSigningCertificates_whenChainCountExceedsLimit_refusesTheSigner) {
+  const auto certificate = der_fixture("signer_a.der");
+  std::string chain;
+  for (std::size_t count = 0; count < 33; ++count) {
+    chain += prefixed(certificate);
+  }
+  const auto data = prefixed(algorithm_record()) + prefixed(chain) + prefixed("");
+  EXPECT_FALSE(complete_certificates(
+      pair(kV2, prefixed(prefixed(prefixed(data) + prefixed(algorithm_record()) + prefixed("key"))))));
+}
+
+TEST(Archive, findSigningCertificates_whenDuplicateSchemeOrTrailingPairIsMalformed_refusesAll) {
+  const auto certificate = der_fixture("signer_a.der");
+  const auto scheme = pair(kV2, prefixed(complete_signer({certificate})));
+  EXPECT_FALSE(complete_certificates(scheme + scheme));
+  EXPECT_FALSE(complete_certificates(scheme + "bad"));
+  EXPECT_FALSE(complete_certificates(scheme + pair(kPadding, std::string(1048576, 'x'))));
+}
+
+TEST(Archive, findSigningCertificates_whenDevelopmentRotationIsPresent_reportsUnsupported) {
+  const auto certificate = der_fixture("signer_a.der");
+  std::string attribute;
+  append_le(attribute, Field{.value = 0xc2a6b3baU, .width = 4});
+  const auto pairs =
+      pair(kV3, prefixed(complete_signer({certificate}, {.v3 = true, .attributes = ""}))) +
+      pair(kV31, prefixed(complete_signer(
+                     {certificate},
+                     {.v3 = true, .minimum = 33, .maximum = kAnyLaterLevel, .attributes = prefixed(attribute)})));
+  const auto found = complete_certificates(pairs, 33);
+  ASSERT_FALSE(found.has_value());
+  EXPECT_EQ(found.error(), SignerReadError::kUnsupported);
+  EXPECT_TRUE(complete_certificates(pairs, 31).has_value());
+}
+
+TEST(Archive, findSigningCertificates_whenRotationMinimumIsStrippedOrInconsistent_reportsError) {
+  const auto certificate = der_fixture("signer_a.der");
+  std::string attribute;
+  append_le(attribute, Field{.value = 0x559f8b02U, .width = 4});
+  append_le(attribute, Field{.value = 34, .width = 4});
+  const auto v3 =
+      pair(kV3, prefixed(complete_signer(
+                    {certificate}, {.v3 = true, .minimum = 31, .maximum = 33, .attributes = prefixed(attribute)})));
+  EXPECT_FALSE(complete_certificates(v3, 33));
+  EXPECT_TRUE(complete_certificates(v3, 31));
+  EXPECT_TRUE(complete_certificates(
+      v3 + pair(kV31, prefixed(complete_signer({certificate}, {.v3 = true, .minimum = 34, .attributes = ""}))), 33));
+  EXPECT_FALSE(complete_certificates(
+      v3 + pair(kV31, prefixed(complete_signer({certificate}, {.v3 = true, .minimum = 35, .attributes = ""}))), 33));
+}
+
+TEST(Archive, readSigningCertificates_whenArchiveIsValidOrTruncated_matchesBoundedParser) {
+  const TemporaryDirectory directory;
+  const auto certificate = der_fixture("signer_a.der");
+  const auto apk = signed_apk(signing_block(pair(kV2, prefixed(complete_signer({certificate})))));
+  const auto path = directory.path() + "/base.apk";
+  ASSERT_TRUE(write_file(path, apk));
+  const auto found = read_signing_certificates(path, 34);
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(*found, (util::Certificates{bytes_of(certificate)}));
+  ASSERT_TRUE(write_file(path, apk.substr(0, apk.size() - 1)));
+  EXPECT_FALSE(read_signing_certificates(path, 34));
+}
+
+TEST(Archive, findSigningCertificates_whenEveryArchivePrefixIsTruncated_reportsError) {
+  const auto certificate = der_fixture("signer_a.der");
+  const auto apk = signed_apk(signing_block(pair(kV2, prefixed(complete_signer({certificate})))));
+  for (std::size_t length = 0; length < apk.size(); ++length) {
+    EXPECT_FALSE(find_signing_certificates(bytes_of(apk.substr(0, length)), 34));
+  }
+}
+
+TEST(Archive, readSigningCertificates_whenFifoHasNoWriter_returnsPromptErrorWithoutAReaderThread) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/fifo.apk";
+  ASSERT_EQ(mkfifo(path.c_str(), 0600), 0);
+  const auto start = std::chrono::steady_clock::now();
+  const auto result = read_signing_certificates(path, 34);
+  const auto elapsed = std::chrono::steady_clock::now() - start;
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error(), SignerReadError::kError);
+  EXPECT_LT(elapsed, std::chrono::milliseconds(500));
+}
+
+TEST(Archive, readSigningCertificates_whenMissingDirectoryOrCharacterDevice_reportsError) {
+  const TemporaryDirectory directory;
+  EXPECT_FALSE(read_signing_certificates(directory.path() + "/missing", 34));
+  EXPECT_FALSE(read_signing_certificates(directory.path(), 34));
+  EXPECT_FALSE(read_signing_certificates("/dev/null", 34));
+}
+
+/// Large structurally valid DER envelope for bounds tests, deliberately without X.509 semantic or signature validity.
+[[nodiscard]] std::string large_envelope() {
+  std::string encoded(60018, '\0');
+  const std::vector<std::uint8_t> prefix{
+      0x30, 0x82, 0xea, 0x6e, 0x30, 3, 2, 1, 1, 0x30, 3, 6, 1, 42, 3, 0x82, 0xea, 0x60,
+  };
+  for (std::size_t index = 0; index < prefix.size(); ++index) {
+    encoded[index] = static_cast<char>(prefix[index]);
+  }
+  return encoded;
+}
+
+TEST(Archive, findSigningCertificates_whenAggregateChainBytesExceedLimit_refusesTheCompleteSet) {
+  const auto large = large_envelope();
+  ASSERT_TRUE(util::certificate_envelope(bytes_of(large)));
+  EXPECT_TRUE(complete_certificates(pair(kV2, prefixed(complete_signer({large, large, large, large})))));
+  EXPECT_FALSE(complete_certificates(pair(kV2, prefixed(complete_signer({large, large, large, large, large})))));
+}
+
+TEST(Archive, findSigningCertificates_whenDerLengthIsIndefiniteOrNoncanonical_reportsError) {
+  auto der = der_fixture("signer_a.der");
+  ASSERT_GT(der.size(), 4U);
+  der[1] = static_cast<char>(0x80);
+  EXPECT_FALSE(complete_certificates(pair(kV2, prefixed(complete_signer({der})))));
+  der[1] = static_cast<char>(0x82);
+  der[2] = 0;
+  EXPECT_FALSE(complete_certificates(pair(kV2, prefixed(complete_signer({der})))));
+}
+
+TEST(Archive, readSigningCertificates_whenArchiveIsOverLimit_reportsErrorWithoutReadingItsContents) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/oversized.apk";
+  ASSERT_TRUE(write_file(path, "sparse"));
+  ASSERT_EQ(truncate(path.c_str(), static_cast<off_t>(2147483648ULL)), 0);
+  EXPECT_FALSE(read_signing_certificates(path, 34));
+}
+
+TEST(Archive, findSigningCertificates_whenSdkIsOutsideSignedPlatformRange_neverReturnsAnEmptySuccessfulSet) {
+  const auto certificate = der_fixture("signer_a.der");
+  const auto result = complete_certificates(pair(kV2, prefixed(complete_signer({certificate}))), 0xffffffffU);
+  EXPECT_FALSE(result.has_value());
+}
+
+TEST(Archive, findSigningCertificates_whenApiIsBelowMinimum_reportsUnsupported) {
+  const auto found = find_signing_certificates({}, 30);
+  ASSERT_FALSE(found.has_value());
+  EXPECT_EQ(found.error(), SignerReadError::kUnsupported);
 }
 
 }  // namespace
