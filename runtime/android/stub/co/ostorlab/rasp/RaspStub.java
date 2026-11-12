@@ -7,7 +7,7 @@ import android.content.pm.ApplicationInfo;
  * The component factory the packer points the app's manifest at.
  *
  * <p>The packer sets {@code android:appComponentFactory} to this class, so Android asks it for the class loader before
- * it creates the app's Application or any component. This class is the only Java the packer ships: it loads the native
+ * it creates the app's Application or any component. This class and RuntimeBridge ship in the stub DEX. The factory loads the native
  * runtime, which installs the on-demand loader as the parent of the app's base loader.
  */
 public final class RaspStub extends AppComponentFactory {

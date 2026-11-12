@@ -10,11 +10,13 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 javac -source 8 -target 8 -bootclasspath "$android_jar" -Xlint:-options -d "$work/classes" \
-  "$here/co/ostorlab/rasp/RaspStub.java"
+  "$here/co/ostorlab/rasp/RaspStub.java" \
+  "$here/co/ostorlab/rasp/RuntimeBridge.java"
 
 "$d8" --release --min-api 31 --lib "$android_jar" --output "$work" \
   "$work"/classes/co/ostorlab/rasp/*.class
 
 mkdir -p "$out"
 mv "$work/classes.dex" "$out/stub.dex"
+jar cf "$out/runtime-bridge-compile-only.jar" -C "$work/classes" co/ostorlab/rasp/RuntimeBridge.class
 echo "wrote $out/stub.dex"
