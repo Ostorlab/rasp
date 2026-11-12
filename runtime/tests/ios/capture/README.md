@@ -45,7 +45,8 @@ On modern non-scene hosts only screenshot observation is supported by this integ
 1. Launch with configured groups but without pressing start. Expect never_started, no measured
    negative state. Start screenshot only; it must not select a scene. Start recording only in a
    fresh stopped session; selecting a scene is still required. Changing active options returns
-   OPTIONS_CONFLICT. Repeating identical start returns NO_CHANGE without extra observers.
+   OPTIONS_CONFLICT. Repeating identical start returns NO_CHANGE without extra observers; it does
+   not establish observer health or retry a failed setup.
 2. Select the current scene/window with recording already active; the first current value is an
    initial sample, not a transition. Stop and restart recording using system controls. Expect
    callbacks/state changes for the selected scene on iOS 17+, screen-scoped fallback on older iOS.
@@ -67,6 +68,17 @@ On modern non-scene hosts only screenshot observation is supported by this integ
 7. Pack separate screenshot-only / recording-only / identity-only configs. Disabled groups must
    not emit rows or consume the enabled source. Retain a cycle in a test consumer and verify
    subsequent drains/stop cannot change its observations and metadata.
+8. If a development run produces a registration error, record the failing operation and affected
+   source availability. After failed start, repeat identical options once: NO_CHANGE must not be
+   treated as repair. Complete stop with OK or NO_CHANGE, then start again and check its status.
+   For failed selected-scene registration after successful start, keep the original scene live;
+   repeated selection is not a retry. Clear that exact scene with OK before selecting it again,
+   or successfully stop/start and explicitly select. A clear of a different object may return
+   NO_CHANGE without cleaning the intended selection. On CLEANUP_ERROR, handle the error and
+   finish the matching clear or stop before replacement; verify affected measured state stays
+   unavailable rather than becoming false/zero. Record error-path coverage as not_run if those
+   failures cannot be exercised; these instructions are not a claim of executed recovery or UIKit
+   delivery tests.
 
 Record exact source HEAD, framework/app SHA-256, Xcode/SDK, device model/OS, selected mode/options,
 actions, initial/callback/resample/status/loss observations, expected vs actual result and limits.

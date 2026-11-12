@@ -49,7 +49,7 @@ Optional Android host source integration can observe [screenshot notifications a
 visibility](docs/android-capture-observations.md), with separate permissions, API34/35 availability
 and explicit lifecycle/loss metadata. These observations do not prevent capture or classify malware.
 
-Optional iOS host source integration observes [post-capture screenshot notifications and selected-scene capture traits](docs/ios-capture-observations.md), with explicit opt-in, honest legacy screen scope and independent source availability.
+Optional iOS host source integration observes [post-capture screenshot notifications and capture state](docs/ios-capture-observations.md), with explicit opt-in, display-scoped legacy fallback and independent source availability.
 
 ## Quick start
 

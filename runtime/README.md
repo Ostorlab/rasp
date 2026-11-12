@@ -181,7 +181,7 @@ cmake --preset ios
 cmake --build --preset ios
 ```
 
-The framework is written to `build/ios/ios/RaspRuntime.framework`. Its install name is `@rpath/RaspRuntime.framework/RaspRuntime`, which the packer adds to the app's load commands. The framework exports no symbols: the code runs from a constructor when the app loads it.
+The framework is written to `build/ios/ios/RaspRuntime.framework`. Its install name is `@rpath/RaspRuntime.framework/RaspRuntime`, which the packer adds to the app's load commands. It exports exactly the six C capture integration functions listed in `ios/capture_exports.txt`; every other symbol is hidden. A load-time constructor starts the measurement worker; capture observation requires explicit host opt-in.
 
 The framework supports iOS 12.0 and later. It doesn't use the libc++ that comes with iOS, which only supports iOS 15 and later. Instead it links a static libc++ built from LLVM 23.1.3 for the same minimum iOS version, with all its symbols hidden. That library is built once and committed under `third_party/libcxx/`, and `cmake/libcxx.cmake` checks its hash and links it. The build steps, the one-line source change it needs, and the CI job that proves the committed library matches the source are described in `third_party/libcxx/README.md`.
 
@@ -291,7 +291,7 @@ CI (`.github/workflows/runtime.yml`) runs:
 
 On the release binaries, it checks that:
 
-- the framework exports no symbols, and the Android library exports only the JVM's `JNI_OnLoad` hook;
+- the framework exports exactly the six C functions in `ios/capture_exports.txt`, with no other exports, and the Android library exports only the JVM's `JNI_OnLoad` hook;
 - neither imports any of `exit`, `_Exit`, `quick_exit`, `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `setenv`, `putenv`, `unsetenv`, `setlocale` and `setrlimit`. `.clang-tidy` forbids these functions in the source, and also `abort` and `std::terminate`, which the binary check leaves out;
 - neither writes logs: the framework imports no symbol with `_os_log` in its name and contains no `{public}` text, and the Android library imports no symbol with `__android_log` in its name and contains no `RaspRuntime` text.
 
