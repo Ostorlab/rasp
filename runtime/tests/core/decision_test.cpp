@@ -574,14 +574,16 @@ TEST(LocalDecision, evaluate_whenIOSCaptureEligibilityFails_appliesEligibilityBe
   ASSERT_NE(missing, nullptr);
   EXPECT_EQ(missing->reason, rasp::LocalReason::kMissingObservation);
   const std::vector<rasp::Observation> inputs{
-      rasp::observed("capture.screenshot.callback_events", "uiapplication_screenshot", true)};
+      rasp::observed("capture.screenshot.callback_events", "uiapplication_screenshot", true),
+  };
   const auto disabled = run("ios", {}, inputs);
   const auto* disabled_row = row(disabled->local_decisions, rule_id);
   ASSERT_NE(disabled_row, nullptr);
   EXPECT_EQ(disabled_row->reason, rasp::LocalReason::kConfigDisabled);
   rasp::CycleMonitor monitor;
   rasp::plugins::Context context;
-  const auto unknown = monitor.run({}, rasp::cycle_catalogue("ios"), {}, context, supplied, &inputs);
+  const rasp::Config missing_config;
+  const auto unknown = monitor.run(missing_config, rasp::cycle_catalogue("ios"), {}, context, supplied, &inputs);
   const auto* unknown_row = row(unknown->local_decisions, rule_id);
   ASSERT_NE(unknown_row, nullptr);
   EXPECT_EQ(unknown_row->reason, rasp::LocalReason::kConfigUnknown);
