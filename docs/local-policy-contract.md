@@ -174,6 +174,11 @@ Swift uses the header's typed `kRaspLocal*` constants; C callers retain the
 `RASP_LOCAL_*` macros. The header-only `int32_t` constants have internal linkage
 and preserve the same values without adding framework exports.
 
+An optional [local host-context source adapter](host-context-contract.md) adds
+explicit sensitive-flow lifetime/input declarations at adapted host call sites.
+It uses this same gate, adds no telemetry or runtime exports, and cannot replace
+native evidence or backend authorization.
+
 The full working C/ObjC/C++/ObjC++ probe is
 `runtime/tests/host/local_policy_host.c`; Swift is in
 `runtime/tests/ios/local_policy/host.swift`. A caller must check status and the known

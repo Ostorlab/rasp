@@ -362,6 +362,7 @@ if(Java_FOUND AND JNI_FOUND)
     endif()
     file(GLOB_RECURSE bridge_test_java CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/java/*.java)
     set(bridge_java ${PROJECT_SOURCE_DIR}/android/stub/co/ostorlab/rasp/RuntimeBridge.java)
+    list(APPEND bridge_java ${PROJECT_SOURCE_DIR}/host_context/android/co/ostorlab/rasp/host/HostOperationContext.java)
     set(bridge_test_classes ${CMAKE_CURRENT_BINARY_DIR}/context-bridge-classes)
     add_custom_command(OUTPUT ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class
       COMMAND ${Java_JAVAC_EXECUTABLE} -d ${bridge_test_classes} ${bridge_java} ${bridge_test_java}
@@ -376,6 +377,10 @@ if(Java_FOUND AND JNI_FOUND)
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
         $<TARGET_FILE:rasp_android_context_bridge_jni> 2a7a8bb45ec84bf9d23a6998b2f631505fa32a192fa771aae676df626a004ce4 4294967295)
     set_tests_properties(AndroidLocalPolicy.uint32MaxVersion PROPERTIES TIMEOUT 30)
+    add_test(NAME AndroidHostContext.sharedVectors
+      COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.HostContextTest
+        $<TARGET_FILE:rasp_android_context_bridge_jni> ${CMAKE_CURRENT_SOURCE_DIR}/host_context/vectors.tsv)
+    set_tests_properties(AndroidHostContext.sharedVectors PROPERTIES TIMEOUT 30)
     add_test(NAME AndroidWindowBridge.lifecycle
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.WindowTest
         $<TARGET_FILE:rasp_android_context_bridge_jni>)
@@ -597,3 +602,17 @@ gtest_discover_tests(rasp_ios_capture_events_test)
 
 target_sources(rasp_ios_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/checks/capture.cpp
   ${PROJECT_SOURCE_DIR}/ios/src/capture/capture_events.cpp)
+
+# Optional host source compiles only into consumers/tests, never the injected runtime.
+add_subdirectory(${PROJECT_SOURCE_DIR}/host_context ${CMAKE_CURRENT_BINARY_DIR}/host-context)
+add_executable(rasp_host_context_test host_context/host_context_test.cpp
+  ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp)
+target_include_directories(rasp_host_context_test PRIVATE ${PROJECT_SOURCE_DIR}/core/src ${PROJECT_SOURCE_DIR}/host_context/src)
+target_compile_definitions(rasp_host_context_test PRIVATE RASP_HOST_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/host_context/vectors.tsv")
+target_link_libraries(rasp_host_context_test PRIVATE rasp_host_context rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_host_context_test)
+add_executable(rasp_host_context_c_host host_context/c_host.c host_context/clock_fixture.c
+  ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp)
+target_link_libraries(rasp_host_context_c_host PRIVATE rasp_host_context rasp_core rasp_language)
+target_compile_options(rasp_host_context_c_host PRIVATE -Wall -Wextra -Werror -Wpedantic -Wconversion)
+add_test(NAME HostContextConsumer.actualC COMMAND rasp_host_context_c_host)
