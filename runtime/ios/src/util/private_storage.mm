@@ -43,13 +43,17 @@ constexpr std::size_t kMaxPathBytes = 4096;
   if (url == nil) {
     return false;
   }
-  NSFileManager* manager = [NSFileManager defaultManager];
+  NSString* const path = [url path];
+  if (path == nil) {
+    return false;
+  }
+  NSFileManager* const manager = [NSFileManager defaultManager];
   if ([manager setAttributes:@{NSFileProtectionKey : NSFileProtectionCompleteUntilFirstUserAuthentication}
-                ofItemAtPath:[url path]
+                ofItemAtPath:path
                        error:nullptr] == NO) {
     return false;
   }
-  NSDictionary* attributes = [manager attributesOfItemAtPath:[url path] error:nullptr];
+  NSDictionary* const attributes = [manager attributesOfItemAtPath:path error:nullptr];
   if (attributes == nil ||
       [attributes[NSFileProtectionKey] isEqual:NSFileProtectionCompleteUntilFirstUserAuthentication] == NO) {
     return false;
@@ -84,7 +88,7 @@ constexpr std::size_t kMaxPathBytes = 4096;
                      entry.st_dev == before.st_dev && entry.st_ino == before.st_ino && S_ISREG(entry.st_mode) &&
                      pread(file, bytes.data(), bytes.size(), 0) == 36 &&
                      std::string_view(bytes.data(), 36) == storage.install_id();
-  NSURL* identity_url = [root URLByAppendingPathComponent:@"rasp_install_id" isDirectory:NO];
+  NSURL* const identity_url = [root URLByAppendingPathComponent:@"rasp_install_id" isDirectory:NO];
   struct stat named{};
   const char* path = [identity_url fileSystemRepresentation];
   const bool same_path = valid && path != nullptr && lstat(path, &named) == 0 && S_ISREG(named.st_mode) &&
@@ -104,11 +108,11 @@ constexpr std::size_t kMaxPathBytes = 4096;
 
 /// Resolves platform-owned ancestor aliases, validates the final directory, then verifies the returned queue owner.
 [[nodiscard]] std::expected<PrivateStorage, StorageError> acquire_in_pool() {
-  NSURL* root = [[NSFileManager defaultManager] URLForDirectory:NSApplicationSupportDirectory
-                                                       inDomain:NSUserDomainMask
-                                              appropriateForURL:nil
-                                                         create:YES
-                                                          error:nullptr];
+  NSURL* const root = [[NSFileManager defaultManager] URLForDirectory:NSApplicationSupportDirectory
+                                                             inDomain:NSUserDomainMask
+                                                    appropriateForURL:nil
+                                                               create:YES
+                                                                error:nullptr];
   if (root == nil || [root isFileURL] == NO) {
     return std::unexpected(StorageError::kUnavailable);
   }
@@ -120,7 +124,7 @@ constexpr std::size_t kMaxPathBytes = 4096;
   if (lstat(original_path->c_str(), &original) != 0 || !S_ISDIR(original.st_mode)) {
     return std::unexpected(StorageError::kUnavailable);
   }
-  NSURL* canonical = [root URLByResolvingSymlinksInPath];
+  NSURL* const canonical = [root URLByResolvingSymlinksInPath];
   const auto path = filesystem_path(canonical);
   if (!path.has_value()) {
     return std::unexpected(StorageError::kInvalidDirectory);
