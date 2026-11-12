@@ -5,6 +5,7 @@ import dataclasses
 import pathlib
 import re
 
+from rasp_packer import capabilities
 from rasp_packer import checks as check_groups
 from rasp_packer import errors
 from rasp_packer import identity
@@ -27,6 +28,10 @@ class PackResult:
         version: The app's version, read from the app: the manifest's `android:versionName` on
             Android, the short version string on iOS.
         build_id: The id of the protected build, as written into the app.
+        effective_checks: The actual groups written into the runtime config, not execution evidence.
+        capability_bindings: Catalogue identities and pristine byte digests of exactly the injected
+            native artifacts. None means unknown legacy or mixed capabilities; no current output
+            expectations may be inferred. Invalid manifests raise InvalidRuntimeError.
         skipped_checks: The ids of the chosen check groups that are not groups of the platform,
             each once, in the order the caller gave them. The packer skipped them: the protected
             app does not run them.
@@ -37,6 +42,8 @@ class PackResult:
     version: str
     build_id: str
     skipped_checks: tuple[str, ...]
+    effective_checks: tuple[str, ...] = ()
+    capability_bindings: tuple[capabilities.Binding, ...] | None = None
 
 
 def pack(
@@ -59,7 +66,7 @@ def pack(
     one with control characters.
 
     The caller chooses the check groups the protected app runs, from those of the platform in
-    `checks.CHECKS`. The packer adds the required ones, `checks.REQUIRED_CHECKS`, and writes them
+    `checks.CHECKS`. The packer adds the required ones, `checks.REQUIRED_CHECKS_BY_PLATFORM`, and writes them
     sorted into the runtime's config. An empty choice runs only the required groups. The packer
     skips an id that is not one of the platform's groups and reports it in the result's
     `skipped_checks`, so that a caller still packs when it passes a group that was renamed or
@@ -90,18 +97,20 @@ def pack(
     config = runtime_config.RuntimeConfig(
         build_id=build_id, checks=resolved_checks.checks
     )
-    app_identity: identity.AppIdentity
+    packed: identity.AppIdentity
     match platform:
         case platforms.Platform.ANDROID:
-            app_identity = android_packer.pack(app=app, output=output, config=config)
+            packed = android_packer.pack(app=app, output=output, config=config)
         case platforms.Platform.IOS:
-            app_identity = ios_packer.pack(app=app, output=output, config=config)
+            packed = ios_packer.pack(app=app, output=output, config=config)
     return PackResult(
         output=output,
-        package_name=app_identity.package_name,
-        version=app_identity.version,
+        package_name=packed.package_name,
+        version=packed.version,
         build_id=build_id,
         skipped_checks=resolved_checks.skipped,
+        effective_checks=packed.effective_checks,
+        capability_bindings=packed.bindings,
     )
 
 

@@ -1,6 +1,7 @@
 """Tests of packing an IPA."""
 
 import collections.abc
+import json
 import pathlib
 import stat
 import zipfile
@@ -8,6 +9,7 @@ import zipfile
 import lief
 import pytest
 
+from rasp_packer import capabilities
 from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import runtime_config
@@ -117,6 +119,68 @@ def testPack_whenRuntimeIsNotTheFramework_raisesInvalidRuntimeError(
             runtime=tmp_path,
             config=_CONFIG,
         )
+
+
+def testPack_whenBoundRuntime_returnsActualBindingAndEffectiveGroups(
+    ipa_file: pathlib.Path, runtime: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    binary = runtime / "RaspRuntime"
+    sidecar = capabilities.emit(binary.read_bytes(), "ios", "arm64", "12.0")
+    binary.with_name(binary.name + capabilities.SIDECAR_SUFFIX).write_bytes(sidecar)
+    result = packer.pack(
+        app=ipa_file, output=tmp_path / "bound.ipa", runtime=runtime, config=_CONFIG
+    )
+    assert result.bindings == (
+        capabilities.bind(binary.read_bytes(), sidecar, "ios", "arm64"),
+    )
+    assert result.effective_checks == ("identity",)
+    assert result.package_name == conftest.PACKAGE_NAME
+    assert result.version == conftest.VERSION
+    expected_identity = identity.AppIdentity(
+        package_name=conftest.PACKAGE_NAME, version=conftest.VERSION
+    )
+    assert result == expected_identity
+    assert hash(result) == hash(expected_identity)
+    assert (
+        binary.with_name(binary.name + capabilities.SIDECAR_SUFFIX).read_bytes()
+        == sidecar
+    )
+    with zipfile.ZipFile(tmp_path / "bound.ipa") as archive:
+        assert (
+            f"{_FRAMEWORK}/RaspRuntime{capabilities.SIDECAR_SUFFIX}"
+            not in archive.namelist()
+        )
+
+
+def testPack_whenBoundRuntimeChanged_rejectsBeforeWritingOutput(
+    ipa_file: pathlib.Path, runtime: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    binary = runtime / "RaspRuntime"
+    binary.with_name(binary.name + capabilities.SIDECAR_SUFFIX).write_bytes(
+        capabilities.emit(binary.read_bytes(), "ios", "arm64", "12.0")
+    )
+    binary.write_bytes(binary.read_bytes() + b"changed")
+    output = tmp_path / "bad.ipa"
+    with pytest.raises(errors.InvalidRuntimeError, match="digest"):
+        packer.pack(app=ipa_file, output=output, runtime=runtime, config=_CONFIG)
+    assert output.exists() is False
+
+
+def testPack_whenSidecarClaimsUnsupportedAbi_rejectsBeforeOutput(
+    ipa_file: pathlib.Path, runtime: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    binary = runtime / "RaspRuntime"
+    metadata = json.loads(
+        capabilities.emit(binary.read_bytes(), "ios", "arm64", "12.0")
+    )
+    metadata["abi"] = "x86_64"
+    binary.with_name(binary.name + capabilities.SIDECAR_SUFFIX).write_bytes(
+        capabilities.canonical(metadata)
+    )
+    output = tmp_path / "unsupported.ipa"
+    with pytest.raises(errors.InvalidRuntimeError, match="platform/ABI"):
+        packer.pack(app=ipa_file, output=output, runtime=runtime, config=_CONFIG)
+    assert output.exists() is False
 
 
 @pytest.mark.parametrize("checks", [(), ("identity", "root"), ("identity", "identity")])

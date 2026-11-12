@@ -1,4 +1,5 @@
 add_library(rasp SHARED
+  src/builtin.cpp
   src/entry.cpp
   src/monitoring.cpp
   src/apk/archive.cpp
@@ -32,3 +33,6 @@ if(RASP_LOGGING)
   target_sources(rasp PRIVATE src/util/logging.cpp)
   target_link_libraries(rasp PRIVATE log)
 endif()
+
+include(${PROJECT_SOURCE_DIR}/cmake/capabilities.cmake)
+rasp_capabilities(rasp android ${ANDROID_ABI} ${ANDROID_PLATFORM_LEVEL})

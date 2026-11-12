@@ -169,6 +169,48 @@ if(APPLE)
 endif()
 gtest_discover_tests(rasp_ios_builtin_test)
 
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+# Tidy consumes the compilation database after configure, without building any targets.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  ${PROJECT_SOURCE_DIR}/tools/capability_header.py
+  ${PROJECT_SOURCE_DIR}/../packer/src/rasp_packer/capabilities.py
+  ${PROJECT_SOURCE_DIR}/../packer/src/rasp_packer/checks_manifest.json)
+foreach(platform android ios)
+  set(expectations_dir ${CMAKE_CURRENT_BINARY_DIR}/capabilities/${platform})
+  file(MAKE_DIRECTORY ${expectations_dir})
+  execute_process(
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/capability_header.py
+      ${expectations_dir}/capability_expectations.h ${platform}
+    COMMAND_ERROR_IS_FATAL ANY)
+  if(platform STREQUAL "android")
+    set(capability_checks debugger emulator hooks identity integrity mitm root)
+    set(capability_util util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp)
+  else()
+    set(capability_checks debugger emulator hooks identity integrity jailbreak mitm virtualizer)
+    set(capability_util util/macho.cpp util/sha256.cpp util/process_query.cpp)
+  endif()
+  set(capability_sources ${PROJECT_SOURCE_DIR}/${platform}/src/builtin.cpp)
+  foreach(check IN LISTS capability_checks)
+    list(APPEND capability_sources ${PROJECT_SOURCE_DIR}/${platform}/src/checks/${check}.cpp)
+  endforeach()
+  foreach(source IN LISTS capability_util)
+    list(APPEND capability_sources ${PROJECT_SOURCE_DIR}/${platform}/src/${source})
+  endforeach()
+  add_executable(rasp_${platform}_capabilities_test capabilities_test.cpp ${capability_sources}
+    ${expectations_dir}/capability_expectations.h)
+  target_include_directories(rasp_${platform}_capabilities_test PRIVATE ${PROJECT_SOURCE_DIR}/${platform}/src
+    ${expectations_dir})
+  target_link_libraries(rasp_${platform}_capabilities_test PRIVATE rasp_core rasp_tfpsacrypto
+    rasp_warnings rasp_language GTest::gtest_main)
+  if(platform STREQUAL "android")
+    target_compile_definitions(rasp_${platform}_capabilities_test PRIVATE RASP_CAPABILITY_ANDROID)
+  elseif(APPLE)
+    target_link_libraries(rasp_ios_capabilities_test PRIVATE
+      "$<LINK_LIBRARY:FRAMEWORK,CFNetwork>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
+  endif()
+  gtest_discover_tests(rasp_${platform}_capabilities_test TEST_PREFIX "${platform}.")
+endforeach()
+
 # Run the shipped Java bridge and JNI consumer on a real JVM, with Android services replaced at the Java boundary.
 find_package(Java QUIET COMPONENTS Runtime Development)
 find_package(JNI QUIET COMPONENTS JVM)
@@ -235,6 +277,7 @@ target_link_libraries(rasp_android_direct_syscall_test PRIVATE rasp_core rasp_wa
 gtest_discover_tests(rasp_android_direct_syscall_test)
 
 target_sources(rasp_ios_debugger_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
+target_sources(rasp_ios_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
 add_executable(rasp_ios_process_query_test ios/util/process_query_test.cpp
   ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
 target_include_directories(rasp_ios_process_query_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)

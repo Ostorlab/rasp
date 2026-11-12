@@ -20,6 +20,7 @@ import importlib.resources
 import os
 import pathlib
 
+from rasp_packer import capabilities
 from rasp_packer import errors
 
 STUB_FACTORY_CLASS = "co.ostorlab.rasp.RaspStub"
@@ -61,10 +62,14 @@ class Artifacts:
     Attributes:
         stub_dex: The stub loader dex, used as the app's classes.dex.
         libraries: The native runtime library bytes, keyed by ABI.
+        manifests: Optional pristine build sidecars, keyed by ABI; missing entries are legacy/unknown.
     """
 
     stub_dex: bytes
     libraries: collections.abc.Mapping[str, bytes]
+    manifests: collections.abc.Mapping[str, bytes] = dataclasses.field(
+        default_factory=dict
+    )
 
 
 def load() -> Artifacts:
@@ -109,9 +114,33 @@ def load_from(root: pathlib.Path) -> Artifacts:
             f"no {RUNTIME_LIBRARY} found under {library_root}"
         )
     libraries: dict[str, bytes] = {}
+    manifests: dict[str, bytes] = {}
     for abi in abis:
         library = abi / RUNTIME_LIBRARY
         if library.is_file() is False:
             raise errors.MissingRuntimeArtifactError(f"{library} not found")
         libraries[abi.name] = library.read_bytes()
-    return Artifacts(stub_dex=stub.read_bytes(), libraries=libraries)
+        sidecar = capabilities.read_sidecar(library)
+        if sidecar is not None:
+            manifests[abi.name] = sidecar
+            capabilities.bind(libraries[abi.name], sidecar, "android", abi.name)
+    return Artifacts(
+        stub_dex=stub.read_bytes(), libraries=libraries, manifests=manifests
+    )
+
+
+def bindings(
+    artifacts: Artifacts, abis: collections.abc.Iterable[str]
+) -> tuple[capabilities.Binding, ...] | None:
+    """Validate exact selected bytes; a mixed known/legacy set has unknown capabilities."""
+    result: list[capabilities.Binding] = []
+    unknown = False
+    for abi in sorted(abis):
+        binding = capabilities.bind(
+            artifacts.libraries[abi], artifacts.manifests.get(abi), "android", abi
+        )
+        if binding is None:
+            unknown = True
+        else:
+            result.append(binding)
+    return None if unknown is True or len(result) == 0 else tuple(result)

@@ -29,6 +29,13 @@ rasp pack app.ipa --platform ios --build-id e6a8373149e83d008a5212b34bdd23bf637a
 
 The packer adds a prebuilt runtime, which comes from the runtime build and is not in the repository. The packer looks for it in its package resources: see the README in `src/rasp_packer/android/resources/` and the one in `src/rasp_packer/ios/resources/`.
 
+Ship each native build's `.capabilities.json` sidecar beside its binary in package resources,
+as `cmake --install ... --component runtime` stages it. The packer verifies the pristine byte
+digest before config insertion. Invalid present metadata raises `InvalidRuntimeError`;
+missing sidecars pack as legacy with unknown capabilities (`PackResult.capability_bindings`
+is `None`). `effective_checks` records config selection, not execution evidence. See
+[the capability contract](../docs/check-capabilities.md) and [runtime build guide](../runtime/README.md#build).
+
 ## Android
 
 For Android the packer protects the app's code:
@@ -101,7 +108,7 @@ Every protected build has a build id, which the packer writes into the app. The 
 
 ## Checks
 
-The runtime runs its checks in groups, such as `debugger` or `hooks`. `src/rasp_packer/checks.py` lists the groups of each platform in `CHECKS`, and those every protected app runs in `REQUIRED_CHECKS` (`identity`). The caller chooses the groups a protected app runs and passes their ids to `pack` (or to `rasp pack --checks`, comma-separated). The packer:
+The runtime runs its checks in groups, such as `debugger` or `hooks`. `src/rasp_packer/checks.py` lists the groups of each platform in `CHECKS`, and each platform's required groups in `REQUIRED_CHECKS_BY_PLATFORM` (currently `identity` on both). `REQUIRED_CHECKS` remains the compatibility view of groups required on every platform. The caller chooses the groups a protected app runs and passes their ids to `pack` (or to `rasp pack --checks`, comma-separated). The packer:
 
 - skips an id that is not one of the platform's groups and reports it in `PackResult.skipped_checks`, so that a caller, such as a CI job, still packs when it passes a group that was renamed or removed. The command line warns about each skipped id on stderr, such as `rasp pack: warning: 'oldcheck' is not a check of android, skipped`, and packs the app;
 - adds the required groups, so `checks=["debugger", "hooks", "jailbreak"]` on iOS also runs `identity`;
