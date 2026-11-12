@@ -170,6 +170,8 @@ constexpr std::uint32_t kPfWrite = 0x2;
 constexpr std::uint32_t kShtDynsym = 11;
 /// SHN_UNDEF, the section index of an undefined symbol, one the image imports.
 constexpr std::uint16_t kShnUndefined = 0;
+/// SHN_LORESERVE, the first reserved section index, which never names an ordinary code section.
+constexpr std::uint16_t kShnLoReserve = 0xFF00;
 /// The bits of `st_info` that hold a symbol's type.
 constexpr std::uint8_t kSymbolTypeMask = 0x0F;
 
@@ -480,7 +482,8 @@ std::optional<ElfSymbol> find_dynamic_symbol(std::span<const std::uint8_t> image
   for (std::uint64_t index = 0; index < count; ++index) {
     const std::optional<SymbolEntry> entry = read_symbol(*symbols, index * symbol_section->entry_size, layout);
     if (entry.has_value() && entry->section_index != kShnUndefined && string_at_is(*names, entry->name_offset, name)) {
-      if (found.has_value() || entry->section_index >= headers.sections.count) {
+      if (found.has_value() || entry->section_index >= kShnLoReserve ||
+          entry->section_index >= headers.sections.count) {
         return std::nullopt;
       }
       found = entry->symbol;

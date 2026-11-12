@@ -5,6 +5,7 @@
 #include "util/elf.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <gtest/gtest.h>
@@ -55,6 +56,20 @@ void put_word(std::vector<std::uint8_t>& image, std::uint64_t offset, FixtureFie
   }
 }
 
+/// Extends the real fixture with a fully bounded maximum-count table accepted by the production header reader.
+[[nodiscard]] std::vector<std::uint8_t> large_section_table_image() {
+  auto image = read_bytes(kArm64Library);
+  const auto headers = read_elf_headers(image);
+  if (!headers.has_value()) {
+    return {};
+  }
+  constexpr std::uint16_t kSectionCount = 0xFFFF;
+  image.resize(static_cast<std::size_t>(headers->sections.offset +
+                                        (std::uint64_t{kSectionCount} * headers->sections.entry_size)));
+  put_word(image, 0x3C, {.value = kSectionCount, .width = 2});
+  return image;
+}
+
 TEST(Elf, findDynamicSymbol_whenDuplicateDefinitions_reportsNothing) {
   std::vector<std::uint8_t> image = read_bytes(kArm64Library);
   const auto headers = read_elf_headers(image);
@@ -91,6 +106,31 @@ TEST(Elf, findDynamicSymbol_whenSectionIndexIsReserved_reportsNothing) {
   ASSERT_TRUE(symbols.has_value());
   put_word(image, symbols->file_offset + 48 + 6, {.value = 0xFFF1, .width = 2});
   EXPECT_FALSE(find_dynamic_symbol(image, *headers, "rasp_fixture_first").has_value());
+}
+
+TEST(Elf, findDynamicSymbol_whenReservedIndexFitsLargeSectionTable_reportsNothing) {
+  auto image = large_section_table_image();
+  const auto headers = read_elf_headers(image);
+  ASSERT_TRUE(headers.has_value());
+  const auto symbols = find_section(image, *headers, ".dynsym");
+  ASSERT_TRUE(symbols.has_value());
+  const auto stock = find_dynamic_symbol(image, *headers, "rasp_fixture_first");
+  ASSERT_TRUE(stock.has_value());
+  EXPECT_EQ(stock->value, 0x43ACU);
+  constexpr auto kReservedIndices = std::to_array<std::uint16_t>({0xFF00, 0xFFF1, 0xFFF2, 0xFFFE, 0xFFFF});
+  for (const std::uint16_t section_index : kReservedIndices) {
+    put_word(image, symbols->file_offset + 48 + 6, {.value = section_index, .width = 2});
+    EXPECT_FALSE(find_dynamic_symbol(image, *headers, "rasp_fixture_first").has_value()) << section_index;
+  }
+}
+
+TEST(Elf, readElfHeaders_whenLargeSectionTableIsTruncated_reportsNothing) {
+  auto image = large_section_table_image();
+  const auto headers = read_elf_headers(image);
+  ASSERT_TRUE(headers.has_value());
+  EXPECT_EQ(headers->sections.count, 0xFFFFU);
+  image.pop_back();
+  EXPECT_FALSE(read_elf_headers(image).has_value());
 }
 
 TEST(Elf, findDynamicSymbol_whenMultipleSymbolTablesExist_reportsNothing) {

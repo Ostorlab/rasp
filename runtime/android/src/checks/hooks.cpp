@@ -93,10 +93,10 @@ constexpr std::size_t kPrologueSize = 16;
 constexpr std::size_t kMaxLibrarySize = std::size_t{32} << 20U;
 /// The most functions the inline-hook probe compares in one run.
 constexpr std::size_t kMaxFunctions = 64;
-/// The bits of an address that hold the address itself. arm64 ignores an address's top byte, where a pointer tag may
-/// sit, and on other 64-bit platforms a user-space address never sets it. A 32-bit address keeps all its bits.
+/// Removes AArch64 top-byte tags. Other ELF machines reject addresses changed by this mask; a 32-bit address
+/// retains every bit.
 constexpr auto kAddressMask = static_cast<std::uintptr_t>(~std::uint64_t{0} >> 8U);
-/// The most hexadecimal digits a 64-bit number has.
+/// The largest accepted function-name length in bytes.
 constexpr std::size_t kMaxFunctionName = 128;
 /// The bit a 32-bit Arm function address sets when the function is Thumb code.
 constexpr std::uint64_t kThumbBit = 1;
