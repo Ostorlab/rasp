@@ -27,6 +27,7 @@
 
 #include "rasp/observation.h"
 #include "rasp/util/read_file.h"
+#include "util/direct_syscall.h"
 
 namespace rasp::android::checks {
 
@@ -44,6 +45,8 @@ constexpr bool kOnAndroid = false;
 constexpr std::string_view kTracerPidSignal = "dbg.tracer_pid";
 /// The source of the tracer probe.
 constexpr std::string_view kTracerPidSource = "proc_status";
+/// The source using the hookable libc syscall entry.
+constexpr std::string_view kTracerPidDirectSource = "proc_status_syscall";
 
 /// The app's status file.
 constexpr std::string_view kStatusPath = "/proc/self/status";
@@ -79,24 +82,33 @@ constexpr std::string_view kDebugApiSource = "debug_api";
   }
   const std::string_view digits = text.substr(start);
   const char* const end = std::to_address(digits.end());
-  std::uint32_t pid = 0;
+  std::int32_t pid = 0;
   const std::from_chars_result result = std::from_chars(std::to_address(digits.begin()), end, pid);
-  if (result.ec != std::errc{} || result.ptr != end) {
+  if (result.ec != std::errc{} || result.ptr != end || pid < 0) {
     return std::nullopt;
   }
   return static_cast<std::int64_t>(pid);
 }
 
-/// The process id on the first `TracerPid:` line of `status`, or nothing when there is no such line or it doesn't
-/// hold a process id.
+/// The process id on the unique complete `TracerPid:` line, or nothing for incomplete, duplicate or invalid data.
 [[nodiscard]] std::optional<std::int64_t> parse_tracer_pid(std::string_view status) {
+  if (status.empty() || !status.ends_with('\n') || status.contains('\0')) {
+    return std::nullopt;
+  }
+  std::optional<std::int64_t> pid;
   for (const auto piece : std::views::split(status, '\n')) {
     const std::string_view line(piece.begin(), piece.end());
     if (line.starts_with(kTracerPidField)) {
-      return parse_pid(line.substr(kTracerPidField.size()));
+      if (pid.has_value()) {
+        return std::nullopt;
+      }
+      pid = parse_pid(line.substr(kTracerPidField.size()));
+      if (!pid.has_value()) {
+        return std::nullopt;
+      }
     }
   }
-  return std::nullopt;
+  return pid;
 }
 
 /// Whether `name`, a folder entry under the thread folder, is a thread id: only digits.
@@ -193,18 +205,25 @@ constexpr jint kLocalFrameCapacity = 4;
 }
 #endif
 
-}  // namespace
-
-Observation observe_tracer_pid(std::string_view status_path) {
-  const std::optional<std::string> status = rasp::util::read_file(status_path, kMaxStatusSize);
+/// Converts one independently read status file into its tracer observation.
+[[nodiscard]] Observation tracer_pid_from(const std::optional<std::string>& status, std::string_view source) {
   if (!status) {
-    return failed(kTracerPidSignal, kTracerPidSource);
+    return failed(kTracerPidSignal, source);
   }
   const std::optional<std::int64_t> pid = parse_tracer_pid(*status);
   if (!pid) {
-    return failed(kTracerPidSignal, kTracerPidSource);
+    return failed(kTracerPidSignal, source);
   }
-  return observed(kTracerPidSignal, kTracerPidSource, *pid);
+  return observed(kTracerPidSignal, source, *pid);
+}
+
+}  // namespace
+
+std::vector<Observation> observe_tracer_pid(std::string_view status_path, util::SystemCall invoke) {
+  return {
+      tracer_pid_from(rasp::util::read_file(status_path, kMaxStatusSize), kTracerPidSource),
+      tracer_pid_from(util::read_file_direct(status_path, kMaxStatusSize, invoke), kTracerPidDirectSource),
+  };
 }
 
 Observation observe_jdwp_threads(std::string_view task_path) {
@@ -226,11 +245,13 @@ std::vector<Observation> debugger() {
   if (!kOnAndroid) {
     return {
         unsupported(kTracerPidSignal, kTracerPidSource),
+        unsupported(kTracerPidSignal, kTracerPidDirectSource),
         unsupported(kJavaDebuggerSignal, kJdwpThreadsSource),
         unsupported(kJavaDebuggerSignal, kDebugApiSource),
     };
   }
-  std::vector<Observation> observations{observe_tracer_pid(kStatusPath), observe_jdwp_threads(kTaskPath)};
+  std::vector<Observation> observations = observe_tracer_pid(kStatusPath);
+  observations.push_back(observe_jdwp_threads(kTaskPath));
 #ifdef __ANDROID__
   observations.push_back(observe_debug_api(debugger_connected()));
 #endif

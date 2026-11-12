@@ -121,7 +121,8 @@ def _pack(arguments: argparse.Namespace) -> int:
         )
     print(
         f"packed {arguments.platform} app: {result.output} "
-        f"(package {result.package_name}, version {result.version}, build {result.build_id})"
+        f"(package {result.package_name}, version {result.version}, build {result.build_id}; "
+        "unsigned, structurally verified)"
         f"\ncapabilities {capability_status}; effective checks {','.join(result.effective_checks)}"
     )
     return EXIT_OK

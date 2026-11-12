@@ -131,7 +131,7 @@ def testParseCatalogue_whenWrongNestedType_rejects(field: str, value: object) ->
 
 def testBind_whenForeignCatalogueHasConsistentIdentity_rejects() -> None:
     data = json.loads(capabilities.emit(b"native", "ios", "arm64", "12.0"))
-    data["catalogue"]["revision"] = 2
+    data["catalogue"]["revision"] += 1
     data["catalogue_id"] = hashlib.sha256(
         capabilities.canonical(data["catalogue"])
     ).hexdigest()
@@ -163,7 +163,14 @@ def testContractFixtures_whenSelectionResolved_matchEffectiveGroups() -> None:
         / "fixtures"
         / "check-capabilities-v1.json"
     )
-    for case in json.loads(fixture.read_bytes())["cases"]:
+    document = json.loads(fixture.read_bytes())
+    assert document["catalogue"]["catalogue_id"] == capabilities.catalogue_id()
+    assert document["catalogue"]["revision"] == capabilities.catalogue()["revision"]
+    assert document["catalogue"]["observation_counts"] == {
+        name: sum(len(group["observations"]) for group in platform["groups"])
+        for name, platform in capabilities.catalogue()["platforms"].items()
+    }
+    for case in document["cases"]:
         result = checks.resolve_checks(
             platforms.Platform(case["platform"]), case["requested"]
         )
@@ -191,3 +198,47 @@ def testCatalogue_whenIosUserCasAlwaysUnsupported_declaresNoValueKind() -> None:
     assert row["value_kind"] == "none"
     assert row["value_cardinality"] == "none"
     assert row["statuses"] == ["unsupported"]
+
+
+def testBind_whenPreviousCatalogueRevisionHasMatchingBytes_rejects() -> None:
+    data = json.loads(capabilities.emit(b"native", "ios", "arm64", "12.0"))
+    data["catalogue"]["revision"] -= 1
+    data["catalogue_id"] = hashlib.sha256(
+        capabilities.canonical(data["catalogue"])
+    ).hexdigest()
+    with pytest.raises(
+        errors.InvalidRuntimeError, match="unknown capability catalogue"
+    ):
+        capabilities.bind(b"native", capabilities.canonical(data), "ios", "arm64")
+
+
+@pytest.mark.parametrize(
+    ("platform", "group", "signal", "source", "kind"),
+    [
+        ("android", "debugger", "dbg.tracer_pid", "proc_status_syscall", "integer"),
+        ("android", "hooks", "hook.maps_hits", "proc_maps_syscall", "string_list"),
+        ("android", "hooks", "hook.threads", "proc_task", "string_list"),
+        ("android", "root", "root.fs_paths", "access", "string_list"),
+        ("android", "root", "root.fs_paths", "stat", "string_list"),
+        ("android", "root", "root.fs_paths", "faccessat_syscall", "string_list"),
+        ("android", "root", "root.mounts", "proc_mounts_syscall", "string_list"),
+        ("android", "root", "root.rw_mounts", "proc_mounts_syscall", "string_list"),
+        ("ios", "debugger", "dbg.traced", "sysctl_syscall", "boolean"),
+        ("ios", "debugger", "dbg.parent", "sysctl_syscall", "integer"),
+    ],
+)
+def testCatalogue_whenReviewedSourceRegistered_preservesTypedErrors(
+    platform: str, group: str, signal: str, source: str, kind: str
+) -> None:
+    groups = capabilities.catalogue()["platforms"][platform]["groups"]
+    observations = next(
+        entry["observations"] for entry in groups if entry["name"] == group
+    )
+    row = next(
+        entry
+        for entry in observations
+        if entry["signal"] == signal and entry["source"] == source
+    )
+    assert row["value_kind"] == kind
+    assert set(row["statuses"]) == {"ok", "error", "unsupported"}
+    assert row["cardinality"] == "one"

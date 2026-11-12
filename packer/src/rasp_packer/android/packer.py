@@ -31,9 +31,12 @@ import dataclasses
 import pathlib
 import zipfile
 
+from rasp_packer import archive_validation
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer import platforms
 from rasp_packer import runtime_config
+from rasp_packer import verification
 from rasp_packer.android import cipher
 from rasp_packer.android import injection
 from rasp_packer.android import loader_map
@@ -98,29 +101,33 @@ def pack(
     """
     if artifacts is None:
         artifacts = resources_module.load()
-    if _is_aab(app):
-        return _pack_aab(
-            app=app,
-            output=output,
-            config=config,
-            artifacts=artifacts,
-            splitter=aab_splitter,
-        )
-    return _pack_apk(
-        app=app,
-        output=output,
-        config=config,
-        artifacts=artifacts,
-        splitter=splitter,
-    )
+    with verification.staged_output(output) as staged:
+        if _is_aab(app):
+            app_identity = _pack_aab(
+                app=app,
+                output=staged,
+                config=config,
+                artifacts=artifacts,
+                splitter=aab_splitter,
+            )
+        else:
+            app_identity = _pack_apk(
+                app=app,
+                output=staged,
+                config=config,
+                artifacts=artifacts,
+                splitter=splitter,
+            )
+    return app_identity
 
 
 def _is_aab(app: pathlib.Path) -> bool:
     """An AAB contains ``BundleConfig.pb``; an APK does not."""
     try:
+        archive_validation.check_file(app)
         with zipfile.ZipFile(app) as zf:
             return "BundleConfig.pb" in zf.namelist()
-    except zipfile.BadZipFile, OSError:
+    except errors.InvalidAppError, zipfile.BadZipFile, OSError:
         return False
 
 
@@ -163,20 +170,27 @@ def _pack_apk(
     bindings = resources_module.bindings(
         artifacts, (name.split("/")[1] for name in libraries)
     )
+    added = {
+        KEY_ENTRY: key,
+        MAP_ENTRY: map_frame,
+        **business_entries,
+        **base_dexes,
+        **{
+            name: runtime_library.write_config(library, config)
+            for name, library in libraries.items()
+        },
+    }
     apk.write(
         output,
         replace={apk_archive.MANIFEST_ENTRY: patched_manifest},
-        add={
-            KEY_ENTRY: key,
-            MAP_ENTRY: map_frame,
-            **business_entries,
-            **base_dexes,
-            **{
-                name: runtime_library.write_config(library, config)
-                for name, library in libraries.items()
-            },
-        },
+        add=added,
         remove=set(dex_names) | injection.stale_signature_entries(apk),
+    )
+    verification.verify(
+        app=output,
+        platform=platforms.Platform.ANDROID,
+        config=config,
+        expected_entries={apk_archive.MANIFEST_ENTRY: patched_manifest, **added},
     )
     return dataclasses.replace(
         app_identity, effective_checks=config.checks, bindings=bindings
@@ -237,17 +251,24 @@ def _pack_aab(
         )
         for abi in sorted(abis)
     }
+    added = {
+        AAB_KEY_ENTRY: key,
+        AAB_MAP_ENTRY: map_frame,
+        **business_entries,
+        **base_dexes,
+        **lib_entries,
+    }
     aab.write(
         output,
         replace={aab_archive.MANIFEST_ENTRY: patched_manifest},
-        add={
-            AAB_KEY_ENTRY: key,
-            AAB_MAP_ENTRY: map_frame,
-            **business_entries,
-            **base_dexes,
-            **lib_entries,
-        },
+        add=added,
         remove=set(dex_names),
+    )
+    verification.verify(
+        app=output,
+        platform=platforms.Platform.ANDROID,
+        config=config,
+        expected_entries={aab_archive.MANIFEST_ENTRY: patched_manifest, **added},
     )
     return dataclasses.replace(
         app_identity, effective_checks=config.checks, bindings=bindings

@@ -181,3 +181,37 @@ def testPack_whenSidecarClaimsUnsupportedAbi_rejectsBeforeOutput(
     with pytest.raises(errors.InvalidRuntimeError, match="platform/ABI"):
         packer.pack(app=ipa_file, output=output, runtime=runtime, config=_CONFIG)
     assert output.exists() is False
+
+
+@pytest.mark.parametrize("checks", [(), ("identity", "root"), ("identity", "identity")])
+def testPack_whenDeclaredChecksInvalid_rejectsWithoutOutput(
+    ipa_file: pathlib.Path,
+    runtime: pathlib.Path,
+    tmp_path: pathlib.Path,
+    checks: tuple[str, ...],
+) -> None:
+    output = tmp_path / "out.ipa"
+    with pytest.raises(errors.Error, match="checks"):
+        packer.pack(
+            app=ipa_file,
+            output=output,
+            runtime=runtime,
+            config=runtime_config.RuntimeConfig(build_id="build-1", checks=checks),
+        )
+    assert output.exists() is False
+
+
+def testPack_whenArchiveHasDuplicateMainExecutable_rejectsWithoutOutput(
+    ipa_file: pathlib.Path,
+    runtime: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    with (
+        zipfile.ZipFile(ipa_file, "a") as archive,
+        pytest.warns(UserWarning, match="Duplicate"),
+    ):
+        archive.writestr("Payload/Demo.app/Demo", b"replacement")
+    output = tmp_path / "out.ipa"
+    with pytest.raises(errors.InvalidAppError, match="duplicate"):
+        packer.pack(app=ipa_file, output=output, runtime=runtime, config=_CONFIG)
+    assert output.exists() is False

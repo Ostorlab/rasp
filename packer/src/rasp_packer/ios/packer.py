@@ -13,7 +13,9 @@ import tempfile
 from rasp_packer import capabilities
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer import platforms
 from rasp_packer import runtime_config
+from rasp_packer import verification
 from rasp_packer.ios import ipa
 from rasp_packer.ios import macho
 from rasp_packer.ios import resources
@@ -74,7 +76,23 @@ def pack(
             missing_ok=True
         )
         runtime_file.write_bytes(runtime_binary.write_config(pristine, config))
-        ipa.archive(bundle.payload_dir, output)
+        expected = {
+            path.relative_to(pathlib.Path(workspace)).as_posix(): path.read_bytes()
+            for path in (
+                bundle.executable,
+                bundle.app_dir / "Info.plist",
+                runtime_file,
+                embedded / "Info.plist",
+            )
+        }
+        with verification.staged_output(output) as staged:
+            ipa.archive(bundle.payload_dir, staged)
+            verification.verify(
+                app=staged,
+                platform=platforms.Platform.IOS,
+                config=config,
+                expected_entries=expected,
+            )
     return dataclasses.replace(
         bundle.identity,
         effective_checks=config.checks,

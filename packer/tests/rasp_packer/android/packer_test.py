@@ -14,6 +14,7 @@ from rasp_packer.android import packer
 from rasp_packer.android import resources
 from rasp_packer.android import runtime_library
 from rasp_packer.android import split
+from rasp_packer.android.apk import archive as apk_archive
 from rasp_packer.android.apk import axml
 from tests.rasp_packer import conftest
 
@@ -324,3 +325,85 @@ def testPack_whenRuntimeDigestMismatch_rejectsBeforeOutput(
             splitter=_recorded_split(),
         )
     assert output.exists() is False
+
+
+def testPack_whenArchiveWriterDropsRuntime_rejectsWithoutOutput(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = tmp_path / "input.apk"
+    _make_apk(app)
+    output = tmp_path / "out.apk"
+    write = apk_archive.Apk.write
+
+    def incomplete_write(
+        self: apk_archive.Apk,
+        path: pathlib.Path,
+        *,
+        replace: collections.abc.Mapping[str, bytes],
+        add: collections.abc.Mapping[str, bytes],
+        remove: collections.abc.Set[str],
+    ) -> None:
+        write(
+            self,
+            path,
+            replace=replace,
+            add={
+                name: data
+                for name, data in add.items()
+                if name.endswith("librasp.so") is False
+            },
+            remove=remove,
+        )
+
+    monkeypatch.setattr(apk_archive.Apk, "write", incomplete_write)
+    with pytest.raises(errors.VerificationError, match="missing required"):
+        packer.pack(
+            app=app,
+            output=output,
+            config=_CONFIG,
+            artifacts=_artifacts(),
+            splitter=_recorded_split(),
+        )
+    assert output.exists() is False
+    assert list(tmp_path.glob(".rasp-*")) == []
+
+
+def testPack_whenNoBusinessClasses_verifiesEmptyMapWithoutInventingPayloadRequirement(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "input.apk"
+    _make_apk(app)
+    output = tmp_path / "out.apk"
+    packer.pack(
+        app=app,
+        output=output,
+        config=_CONFIG,
+        artifacts=_artifacts(),
+        splitter=lambda *_: split.Split(framework=_FRAMEWORK, business=()),
+    )
+    with zipfile.ZipFile(output) as archive:
+        assert (
+            cipher.decrypt(
+                archive.read(packer.KEY_ENTRY), archive.read(packer.MAP_ENTRY)
+            )
+            == b""
+        )
+
+
+def testPack_whenInputOversized_rejectsBeforeFormatProbeReadsZip(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = tmp_path / "oversized.apk"
+    with app.open("wb") as stream:
+        stream.truncate(4 * 1024**3 + 1)
+
+    def unexpected_zip_read(*_: object, **__: object) -> None:
+        pytest.fail("oversized input must be refused before ZIP metadata is parsed")
+
+    monkeypatch.setattr(zipfile, "ZipFile", unexpected_zip_read)
+    with pytest.raises(errors.InvalidApkError, match="4 GiB"):
+        packer.pack(
+            app=app, output=tmp_path / "out.apk", config=_CONFIG, artifacts=_artifacts()
+        )

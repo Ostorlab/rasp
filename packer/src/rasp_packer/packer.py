@@ -57,13 +57,16 @@ def pack(
     """Protects a built app: adds the runtime and writes the protected app to `output`.
 
     The protected app is returned unsigned: the customer signs it before shipping it.
+    Platform packers verify the serialized protection artifacts before creating the
+    output path. Verification is structural; it does not prove installability or
+    attack resistance. A failed verification raises VerificationError without output.
 
     The caller computes the build id. The packer writes it into the app as it is, in the
     runtime's config. The packer does not check the id's format: it only refuses an empty id or
     one with control characters.
 
     The caller chooses the check groups the protected app runs, from those of the platform in
-    `checks.CHECKS`. The packer adds the required ones, `checks.REQUIRED_CHECKS`, and writes them
+    `checks.CHECKS`. The packer adds the required ones, `checks.REQUIRED_CHECKS_BY_PLATFORM`, and writes them
     sorted into the runtime's config. An empty choice runs only the required groups. The packer
     skips an id that is not one of the platform's groups and reports it in the result's
     `skipped_checks`, so that a caller still packs when it passes a group that was renamed or

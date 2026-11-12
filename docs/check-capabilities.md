@@ -8,7 +8,8 @@ because different source, compiler or plugin builds can share it.
 `packer/src/rasp_packer/checks_manifest.json` is the versioned source of truth for built-in
 group, signal and source identities. Its entries come from the platform check implementations
 and production `builtin.cpp` dispatchers. The catalogue describes possible outputs, not
-execution evidence or device attestation.
+execution evidence or device attestation. Schema 1, revision 2 declares 27 Android and 26 iOS
+built-in signal/source identities.
 
 ## Group selection and output semantics
 
@@ -100,7 +101,9 @@ values, observation/value cardinality, statuses and ABI/API conditions. Model dy
 identities explicitly or mark them unmodelled. Preserve source divergence and non-OK results.
 Do not treat a generic `gmain` thread as an instrumentation marker or claim that every renamed
 or hidden thread is visible. A libc syscall wrapper is hookable and is not an attestation
-source.
+source. See [the second-source contracts](../runtime/second_sources.md) for the reviewed
+read bounds and native syscall gates, and the [Context bridge guide](../runtime/android/stub/README.md)
+for optional host initialization and availability.
 
 Bump the catalogue revision, update fixtures and compiled dispatch tests, then rebuild and
 ship binary plus sidecar. New catalogue identities require deliberate packer/backend support;

@@ -97,7 +97,7 @@ result = packer.pack(
 | `jailbreak` | | ✓ | Jailbreak files, sandbox escape and process spawning |
 | `debugger` | ✓ | ✓ | A debugger attached to the app |
 | `hooks` | ✓ | ✓ | Frida and other libraries injected into the app |
-| `integrity` | ✓ | ✓ | The runtime's code changed in memory |
+| `integrity` | ✓ | ✓ | File/memory SHA-256 observations of the runtime's own code; no local comparison or tampering verdict |
 | `mitm` | ✓ | ✓ | VPN tunnels, and proxies on iOS |
 | `identity` | ✓ | ✓ | A repackaged copy of the app (always on) |
 | `emulator` | ✓ | ✓ | An emulator or the iOS Simulator |

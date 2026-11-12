@@ -170,6 +170,16 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/build-tools"
           "$RUNNER_TEMP/build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
           echo "$RUNNER_TEMP/build-tools/bin" >> "$GITHUB_PATH"
+      - name: Set up Java for the macOS host runner
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Check Context bridge with macOS system Bash
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          /bin/bash --version
+          /bin/bash ./tests/android/context_bridge/run.sh
       - name: Configure
         # pipefail so a cmake failure fails this step with its own error, rather than tee masking it as exit 0
         # and the failure resurfacing later in Build or the canary with a misleading message.

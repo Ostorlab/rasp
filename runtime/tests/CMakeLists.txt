@@ -81,6 +81,12 @@ foreach(check emulator root)
   gtest_discover_tests(rasp_android_${check}_test)
 endforeach()
 
+# The debugger, hooks and root checks read a second source through the shared util/direct_syscall helper, so their
+# tests link it too.
+foreach(check debugger hooks root)
+  target_sources(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src/util/direct_syscall.cpp)
+endforeach()
+
 add_executable(rasp_android_integrity_test android/checks/integrity_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
@@ -178,10 +184,10 @@ foreach(platform android ios)
     COMMAND_ERROR_IS_FATAL ANY)
   if(platform STREQUAL "android")
     set(capability_checks debugger emulator hooks identity integrity mitm root)
-    set(capability_util util/system_property.cpp util/app_storage.cpp util/apk_file.cpp)
+    set(capability_util util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp)
   else()
     set(capability_checks debugger emulator hooks identity integrity jailbreak mitm virtualizer)
-    set(capability_util util/macho.cpp util/sha256.cpp)
+    set(capability_util util/macho.cpp util/sha256.cpp util/process_query.cpp)
   endif()
   set(capability_sources ${PROJECT_SOURCE_DIR}/${platform}/src/builtin.cpp)
   foreach(check IN LISTS capability_checks)
@@ -204,3 +210,76 @@ foreach(platform android ios)
   endif()
   gtest_discover_tests(rasp_${platform}_capabilities_test TEST_PREFIX "${platform}.")
 endforeach()
+
+# Run the shipped Java bridge and JNI consumer on a real JVM, with Android services replaced at the Java boundary.
+find_package(Java QUIET COMPONENTS Runtime Development)
+find_package(JNI QUIET COMPONENTS JVM)
+if(Java_FOUND AND JNI_FOUND)
+  find_package(Threads REQUIRED)
+  add_executable(rasp_android_application_context_test android/util/application_context_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
+  target_include_directories(rasp_android_application_context_test PRIVATE ${JNI_INCLUDE_DIRS}
+    ${PROJECT_SOURCE_DIR}/android/src)
+  target_link_libraries(rasp_android_application_context_test PRIVATE rasp_warnings rasp_language
+    JNI::JVM Threads::Threads GTest::gtest_main)
+  gtest_discover_tests(rasp_android_application_context_test)
+  if(CMAKE_CXX_FLAGS MATCHES "fsanitize=")
+    message(STATUS "Real-JVM integration runs in the host preset; native Application Context tests run with sanitizers")
+  else()
+    add_library(rasp_android_context_bridge_jni SHARED android/context_bridge/driver.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/package_manager.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
+    target_include_directories(rasp_android_context_bridge_jni PRIVATE ${JNI_INCLUDE_DIRS}
+      ${PROJECT_SOURCE_DIR}/android/src)
+    target_link_libraries(rasp_android_context_bridge_jni PRIVATE rasp_warnings rasp_language JNI::JVM Threads::Threads)
+    file(GLOB_RECURSE bridge_test_java CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/java/*.java)
+    set(bridge_java ${PROJECT_SOURCE_DIR}/android/stub/co/ostorlab/rasp/RuntimeBridge.java)
+    set(bridge_test_classes ${CMAKE_CURRENT_BINARY_DIR}/context-bridge-classes)
+    add_custom_command(OUTPUT ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class
+      COMMAND ${Java_JAVAC_EXECUTABLE} -d ${bridge_test_classes} ${bridge_java} ${bridge_test_java}
+      DEPENDS ${bridge_java} ${bridge_test_java} VERBATIM)
+    add_custom_target(rasp_android_context_bridge_java ALL
+      DEPENDS ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class)
+    foreach(mode late early concurrent lifetime unavailable)
+      add_test(NAME AndroidContextBridge.${mode}
+        COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.BridgeTest
+          $<TARGET_FILE:rasp_android_context_bridge_jni> ${mode})
+      set_tests_properties(AndroidContextBridge.${mode} PROPERTIES TIMEOUT 30)
+    endforeach()
+  endif()
+else()
+  message(STATUS "Android bridge JVM integration tests unavailable: install a JDK and set JAVA_HOME")
+endif()
+
+# Exercise hooks()' Android dispatch against Linux's real own-process procfs, without an Android device claim.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_library(rasp_android_hooks_dispatch OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/direct_syscall.cpp)
+  target_compile_definitions(rasp_android_hooks_dispatch PRIVATE __ANDROID__)
+  target_include_directories(rasp_android_hooks_dispatch PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+  target_link_libraries(rasp_android_hooks_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
+  add_executable(rasp_android_hooks_dispatch_test android/checks/hooks_test.cpp
+    $<TARGET_OBJECTS:rasp_android_hooks_dispatch>)
+  target_compile_definitions(rasp_android_hooks_dispatch_test PRIVATE RASP_TEST_ANDROID_HOOKS)
+  target_include_directories(rasp_android_hooks_dispatch_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_android_hooks_dispatch_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_android_hooks_dispatch_test TEST_PREFIX "AndroidDispatch.")
+endif()
+
+add_executable(rasp_android_direct_syscall_test android/util/direct_syscall_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/direct_syscall.cpp)
+target_include_directories(rasp_android_direct_syscall_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_android_direct_syscall_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_direct_syscall_test)
+
+target_sources(rasp_ios_debugger_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
+target_sources(rasp_ios_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
+add_executable(rasp_ios_process_query_test ios/util/process_query_test.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
+target_include_directories(rasp_ios_process_query_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_process_query_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_ios_process_query_test)
