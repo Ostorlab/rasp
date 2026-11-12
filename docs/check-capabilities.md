@@ -8,8 +8,20 @@ because different source, compiler or plugin builds can share it.
 `packer/src/rasp_packer/checks_manifest.json` is the versioned source of truth for built-in
 group, signal and source identities. Its entries come from the platform check implementations
 and production `builtin.cpp` dispatchers. The catalogue describes possible outputs, not
-execution evidence or device attestation. Schema 1, revision 4 declares 32 Android and 26 iOS
+execution evidence or device attestation. Schema 1, revision 6 declares 46 Android and 26 iOS
 built-in signal/source identities.
+
+The current canonical catalogue ID is `28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4`. Revision5
+`c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5` remains
+foreign to this revision6 consumer even with matching pristine bytes and sidecar.
+
+Revision5 adds four [Android identity observations](android-signer-observations.md): actual
+Application package, complete current signer sets from APK and PackageManager, and ordered
+single-signer rotation history. The two legacy certificate outputs remain first-signer
+strings. Identity has nine expected outputs; error/unsupported sources are present coverage,
+not missing or benign. Native cycle identities and typed test expectations generate from
+the canonical manifest without a draft overlay; RT07's immutable metadata/observation handoff
+and all RT06/RT08 collectors remain intact.
 
 ## Group selection and output semantics
 
@@ -140,3 +152,10 @@ reference, stage each ABI's binary with its sidecar, and verify the installed wh
 same consumer contract. Changing the selected runtime reference requires matching packer,
 metadata and fixture expectations. This repository's local wheel tests do not establish that
 another publisher preserves the association; verify that release path independently.
+
+
+Revision6 adds the opt-in Android `overlay` group's ten [window observation outputs](android-window-observations.md),
+source `window_callback`: two finite availability/coverage strings and eight bounded integer snapshots/deltas.
+All revision5 signer/current/history, service context, inline-hook and iOS rows are preserved exactly. Each selected
+actual measurement cycle drains window events once and hands the same immutable metadata/observations to both
+plugin callbacks. Complete source coverage is not continuous window ownership or evidence of overlay absence.

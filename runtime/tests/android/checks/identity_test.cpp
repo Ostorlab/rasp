@@ -7,14 +7,18 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+#include <yyjson.h>
 
 #include "rasp/observation.h"
+#include "rasp/util/read_file.h"
 #include "support/files.h"
+#include "util/signing_certificates.h"
 
 namespace rasp::android::checks {
 namespace {
@@ -205,6 +209,14 @@ TEST(Identity, observePackageManagerSigner_whenTheCertificateCouldntBeRead_repor
       (Observation{.signal = "sig.cert_sha256", .source = "package_manager", .status = Status::kError, .value = {}}));
 }
 
+TEST(Identity, identity_whenSelected_includesVersionedSignerAndApplicationObservations) {
+  const auto observations = identity();
+  EXPECT_EQ(observations.size(), 9U);
+  for (const auto& observation : observations) {
+    EXPECT_EQ(observation.status, Status::kUnsupported);
+  }
+}
+
 TEST(Identity, identity_whenOffAndroid_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(
       identity(),
@@ -214,7 +226,122 @@ TEST(Identity, identity_whenOffAndroid_reportsEveryCheckAsUnsupported) {
           {.signal = "id.code_path", .source = "dladdr", .status = Status::kUnsupported, .value = {}},
           {.signal = "sig.cert_sha256", .source = "apk_signing_block", .status = Status::kUnsupported, .value = {}},
           {.signal = "sig.cert_sha256", .source = "package_manager", .status = Status::kUnsupported, .value = {}},
+          {.signal = "id.package.v1", .source = "application_context", .status = Status::kUnsupported, .value = {}},
+          {.signal = "sig.current_sha256.v1",
+           .source = "apk_signing_block",
+           .status = Status::kUnsupported,
+           .value = {}},
+          {.signal = "sig.current_sha256.v1", .source = "package_manager", .status = Status::kUnsupported, .value = {}},
+          {.signal = "sig.history_sha256.v1", .source = "package_manager", .status = Status::kUnsupported, .value = {}},
       }));
+}
+
+/// Loads fixture inputs as raw public certificates; an absent list represents collection unavailability.
+[[nodiscard]] std::optional<util::Certificates> fixture_certificates(const yyjson_val* array) {
+  if (!yyjson_is_arr(array)) {
+    return std::nullopt;
+  }
+  util::Certificates result;
+  for (std::size_t index = 0; index < yyjson_arr_size(array); ++index) {
+    const char* filename = yyjson_get_str(yyjson_arr_get(array, index));
+    if (filename == nullptr) {
+      return std::nullopt;
+    }
+    const auto certificate = rasp::util::read_file(std::string(RASP_TEST_CERTIFICATE_DIR) + "/" + filename, 65536);
+    if (!certificate.has_value()) {
+      return std::nullopt;
+    }
+    result.emplace_back(certificate->begin(), certificate->end());
+  }
+  return result;
+}
+
+/// Reads an expected digest-only list from the portable consumer fixture.
+[[nodiscard]] std::optional<std::vector<std::string>> fixture_digests(const yyjson_val* array) {
+  if (!yyjson_is_arr(array)) {
+    return std::nullopt;
+  }
+  std::vector<std::string> digests;
+  for (std::size_t index = 0; index < yyjson_arr_size(array); ++index) {
+    const char* digest = yyjson_get_str(yyjson_arr_get(array, index));
+    if (digest == nullptr) {
+      return std::nullopt;
+    }
+    digests.emplace_back(digest);
+  }
+  return digests;
+}
+
+/// Parses a fixture observation through the public status/value contract, rejecting invalid fixture data.
+[[nodiscard]] std::optional<Observation> fixture_observation(const yyjson_val* row) {
+  const char* signal = yyjson_get_str(yyjson_obj_get(row, "signal"));
+  const char* source = yyjson_get_str(yyjson_obj_get(row, "source"));
+  const char* status = yyjson_get_str(yyjson_obj_get(row, "status"));
+  if (signal == nullptr || source == nullptr || status == nullptr) {
+    return std::nullopt;
+  }
+  const std::string_view expected_status(status);
+  const yyjson_val* value = yyjson_obj_get(row, "value");
+  if (expected_status == "ok") {
+    const auto digests = fixture_digests(value);
+    if (!digests.has_value()) {
+      return std::nullopt;
+    }
+    return observed(signal, source, *digests);
+  }
+  if (!yyjson_is_null(value)) {
+    return std::nullopt;
+  }
+  if (expected_status == "error") {
+    return failed(signal, source);
+  }
+  if (expected_status == "unsupported") {
+    return unsupported(signal, source);
+  }
+  return std::nullopt;
+}
+
+/// Checks one portable consumer case against production current/history digest conversion.
+void check_fixture_case(const yyjson_val* test_case) {
+  const auto apk = fixture_certificates(yyjson_obj_get(test_case, "apk_current"));
+  const auto pm = fixture_certificates(yyjson_obj_get(test_case, "package_current"));
+  const auto history = fixture_certificates(yyjson_obj_get(test_case, "package_history"));
+  const std::vector<Observation> actual{
+      observe_current_signers("apk_signing_block", apk),
+      observe_current_signers("package_manager", pm),
+      yyjson_get_bool(yyjson_obj_get(test_case, "history_unsupported"))
+          ? unsupported("sig.history_sha256.v1", "package_manager")
+          : observe_signing_history(history),
+  };
+  const yyjson_val* expected = yyjson_obj_get(test_case, "expected");
+  ASSERT_EQ(yyjson_arr_size(expected), actual.size());
+  for (std::size_t row = 0; row < actual.size(); ++row) {
+    const auto observation = fixture_observation(yyjson_arr_get(expected, row));
+    ASSERT_TRUE(observation.has_value());
+    EXPECT_EQ(actual[row], *observation);
+  }
+}
+
+TEST(Identity, observeSignerSets_whenPortableConsumerControls_matchVersionedContract) {
+  const auto text = rasp::util::read_file(RASP_TEST_IDENTITY_FIXTURE, 131072);
+  ASSERT_TRUE(text.has_value());
+  const std::unique_ptr<yyjson_doc, decltype(&yyjson_doc_free)> document(yyjson_read(text->data(), text->size(), 0),
+                                                                         &yyjson_doc_free);
+  ASSERT_NE(document, nullptr);
+  const yyjson_val* cases = yyjson_obj_get(yyjson_doc_get_root(document.get()), "cases");
+  ASSERT_EQ(yyjson_arr_size(cases), 5U);
+  for (std::size_t index = 0; index < yyjson_arr_size(cases); ++index) {
+    check_fixture_case(yyjson_arr_get(cases, index));
+  }
+}
+
+TEST(Identity, observeCurrentSigners_whenEmptyMalformedOrTooManyCertificates_reportsErrorWithoutAList) {
+  for (const auto& certificates :
+       {util::Certificates{}, util::Certificates{{1, 2, 3}}, util::Certificates(33, std::vector<std::uint8_t>{1})}) {
+    const auto observation = observe_current_signers("apk_signing_block", certificates);
+    EXPECT_EQ(observation.status, Status::kError);
+    EXPECT_EQ(observation.value.index(), 0U);
+  }
 }
 
 }  // namespace

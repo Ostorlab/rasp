@@ -1,5 +1,8 @@
 add_library(rasp SHARED
   src/builtin.cpp
+  src/events/window_bridge.cpp
+  src/events/window_events.cpp
+  src/checks/overlay.cpp
   src/entry.cpp
   src/monitoring.cpp
   src/apk/archive.cpp
@@ -23,6 +26,8 @@ add_library(rasp SHARED
   src/util/private_storage.cpp
   src/util/application_context.cpp
   src/util/package_manager.cpp
+  src/util/package_identity.cpp
+  src/util/signing_certificates.cpp
   src/util/jni.cpp
   src/util/service_components.cpp
   src/util/system_property.cpp)

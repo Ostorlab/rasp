@@ -75,6 +75,53 @@
     {
       "name": "stalled_check",
       "finished_snapshot_emitted": false
+    },
+    {
+      "name": "identity_malformed_source_is_present_error",
+      "execution_finished": true,
+      "config_known": true,
+      "expected": 9,
+      "seen": 9,
+      "missing": [],
+      "extra": 0,
+      "dropped": 0,
+      "complete": true,
+      "present_observation": {
+        "signal": "sig.current_sha256.v1",
+        "source": "package_manager",
+        "status": "error",
+        "value": null
+      }
+    },
+    {
+      "name": "window_events_atomic_drain",
+      "expected": 10,
+      "seen": 10,
+      "missing": [],
+      "complete": true,
+      "next_cycle_touch_events": 0,
+      "retained_prior_cycle_unchanged": true,
+      "observer_state": "active",
+      "coverage": "best_effort",
+      "touch_events": 1
+    },
+    {
+      "name": "window_adapter_error_metadata_present",
+      "expected": 10,
+      "seen": 10,
+      "missing": [],
+      "complete": true,
+      "observer_state": "error",
+      "coverage": "unknown",
+      "touch_events": 0
+    },
+    {
+      "name": "window_disabled_does_not_drain",
+      "expected": 0,
+      "seen": 0,
+      "complete": true,
+      "pending_event_consumed": false,
+      "next_enabled_touch_events": 1
     }
   ],
   "delivery": {
@@ -86,5 +133,16 @@
       "batchId",
       "observedAt"
     ]
+  },
+  "catalogue": {
+    "schema_version": 1,
+    "revision": 6,
+    "catalogue_id": "28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4",
+    "observation_counts": {
+      "android": 46,
+      "ios": 26
+    },
+    "android_identity_outputs": 9,
+    "android_window_outputs": 10
   }
 }

@@ -46,6 +46,7 @@ def main() -> None:
         "/// Generated catalogue expectations for compiled dispatch.\nconstexpr auto kExpected = std::to_array<Expected>({\n"
         + ",\n".join(records)
         + "\n});\n"
+        + f"constexpr std::string_view kExpectedCatalogueId = {json.dumps(capabilities.catalogue_id())};\n"
         + f"constexpr auto kStatusMasks = std::to_array<unsigned>({{{status_masks}}});\n"
     )
 

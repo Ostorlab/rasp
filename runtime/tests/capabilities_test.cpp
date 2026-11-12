@@ -81,6 +81,16 @@ void check_group(const std::string& group) {
   }
 }
 
+TEST(Capabilities, generatedCycleCatalogue_whenCanonical_matchesExactIdentityAndOutputCount) {
+#ifdef RASP_CAPABILITY_ANDROID
+  const auto catalogue = rasp::cycle_catalogue("android");
+#else
+  const auto catalogue = rasp::cycle_catalogue("ios");
+#endif
+  EXPECT_EQ(catalogue.catalogue_id, kExpectedCatalogueId);
+  EXPECT_EQ(catalogue.outputs.size(), kExpected.size());
+}
+
 TEST(Capabilities, statusVocabulary_whenGenerated_matchesNativeEnumsIncludingTimeout) {
   ASSERT_EQ(kStatusMasks.size(), 4U);
   EXPECT_EQ(kStatusMasks[0], 1U << static_cast<unsigned>(rasp::Status::kOk));

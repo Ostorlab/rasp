@@ -165,6 +165,8 @@ def testCatalogue_whenSourceInventoryCompared_coversEveryBuiltinSignal() -> None
                 if service_group is True
                 else r'constexpr std::string_view k\w*Signal = "([^"]+)";'
             )
+            if platform == "android" and group["name"] == "overlay":
+                pattern = r'"(overlay\.[a-z_]+)"'
             signals = set(re.findall(pattern, source))
             assert signals == {row["signal"] for row in group["observations"]}
 
@@ -277,7 +279,7 @@ def testParseCatalogue_whenTimeoutDeclared_roundTripsWithoutChangingProductionCa
     assert capabilities.canonical(parsed) == encoded
     assert capabilities.catalogue_id() == current_id
     assert (
-        current_id == "eaac77e3bdbf7f21af2abfb79a7868ccf516e5c3f758d25c90127550e3e7db7c"
+        current_id == "28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4"
     )
     assert all(
         "timeout" not in output["statuses"]
@@ -359,8 +361,8 @@ def testCatalogue_whenAndroidServiceMetadataRegistered_preservesVersionedContext
     android = document["platforms"]["android"]
     groups = {group["name"]: group for group in android["groups"]}
     assert document["schema_version"] == 1
-    assert document["revision"] == 4
-    assert sum(len(group["observations"]) for group in android["groups"]) == 32
+    assert document["revision"] == 6
+    assert sum(len(group["observations"]) for group in android["groups"]) == 46
     assert (
         sum(
             len(group["observations"])
@@ -441,3 +443,122 @@ def testServiceContractFixtures_whenComparedWithCatalogue_preserveTypesAndUnknow
                     assert isinstance(value, str)
             else:
                 assert "value" not in observation
+
+
+def testCatalogue_whenAndroidSignerSetsRegistered_preservesLegacyScalarsAndCompleteSets() -> (
+    None
+):
+    document = capabilities.catalogue()
+    groups = document["platforms"]["android"]["groups"]
+    identity = next(group for group in groups if group["name"] == "identity")
+    rows = {(row["signal"], row["source"]): row for row in identity["observations"]}
+    assert document["schema_version"] == 1
+    assert document["revision"] == 6
+    assert len(rows) == 9
+    assert identity["required"] is True
+    for source in ("apk_signing_block", "package_manager"):
+        assert rows[("sig.cert_sha256", source)]["value_kind"] == "string"
+        assert rows[("sig.cert_sha256", source)]["value_cardinality"] == "scalar"
+    contracts = (
+        ("id.package.v1", "application_context", "string"),
+        ("sig.current_sha256.v1", "apk_signing_block", "string_list"),
+        ("sig.current_sha256.v1", "package_manager", "string_list"),
+        ("sig.history_sha256.v1", "package_manager", "string_list"),
+    )
+    for signal, source, kind in contracts:
+        row = rows[(signal, source)]
+        assert row["value_kind"] == kind
+        assert row["cardinality"] == "one"
+        assert row["value_cardinality"] == (
+            "scalar" if kind == "string" else "variable"
+        )
+        assert set(row["statuses"]) == {"ok", "error", "unsupported"}
+        assert row["supported_on"] == "android"
+
+
+def testSignerContractFixture_whenCanonicalRegistrationCompared_matchesExactRowsAndIdentity() -> (
+    None
+):
+    fixture = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "docs/fixtures/android-signer-observations-v1.json"
+    )
+    document = json.loads(fixture.read_bytes())
+    identity = next(
+        group
+        for group in capabilities.catalogue()["platforms"]["android"]["groups"]
+        if group["name"] == "identity"
+    )
+    rows = {(row["signal"], row["source"]): row for row in identity["observations"]}
+    assert document["registration"] == "schema1_revision6"
+    assert document["catalogue_id"] == capabilities.catalogue_id()
+    assert len(document["observations"]) == 4
+    for row in document["observations"]:
+        assert row == rows[(row["signal"], row["source"])]
+
+
+def testCatalogue_whenWindowObservationRegistered_preservesApprovedRevisionFiveExactly() -> (
+    None
+):
+    document = capabilities.catalogue()
+    assert document["schema_version"] == 1
+    assert document["revision"] == 6
+    assert (
+        sum(
+            len(group["observations"])
+            for group in document["platforms"]["android"]["groups"]
+        )
+        == 46
+    )
+    assert (
+        sum(
+            len(group["observations"])
+            for group in document["platforms"]["ios"]["groups"]
+        )
+        == 26
+    )
+    groups = document["platforms"]["android"]["groups"]
+    selected = [group for group in groups if group["name"] == "overlay"]
+    assert len(selected) == 1
+    assert selected[0]["required"] is False
+    outputs = selected[0]["observations"]
+    assert len(outputs) == 10
+    assert len({(row["signal"], row["source"]) for row in outputs}) == 10
+    assert all(row["source"] == "window_callback" for row in outputs)
+    previous = copy.deepcopy(document)
+    previous["revision"] = 5
+    previous["platforms"]["android"]["groups"] = [
+        group
+        for group in previous["platforms"]["android"]["groups"]
+        if group["name"] != "overlay"
+    ]
+    assert (
+        hashlib.sha256(capabilities.canonical(previous)).hexdigest()
+        == "c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5"
+    )
+
+
+def testWindowContractFixture_whenCanonicalCompared_matchesExactRegisteredOutputs() -> (
+    None
+):
+    fixture = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "docs/fixtures/android-window-observations-v1.json"
+    )
+    document = json.loads(fixture.read_bytes())
+    group = next(
+        group
+        for group in capabilities.catalogue()["platforms"]["android"]["groups"]
+        if group["name"] == "overlay"
+    )
+    assert document["registration"] == "schema1_revision6"
+    assert document["catalogue_id"] == capabilities.catalogue_id()
+    assert document["observations"] == group["observations"]
+    assert [row["value_kind"] for row in group["observations"]] == [
+        "string",
+        "string",
+        *(["integer"] * 8),
+    ]
+    assert all(
+        row["statuses"] == ["ok", "unsupported"] for row in group["observations"]
+    )

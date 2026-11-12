@@ -89,7 +89,12 @@ JavaVM* fixture_vm() {
 }  // namespace
 
 /// Substitutes only the JNI VM enumeration boundary for this dedicated native test executable.
+/// Darwin assembly labels include the C ABI underscore; this fixture must match the actual JNI call reference.
+#ifdef __APPLE__
+extern "C" jint enumerate_vms(JavaVM** /*vm*/, jsize /*unused*/, jsize* /*count*/) __asm__("_JNI_GetCreatedJavaVMs");
+#else
 extern "C" jint enumerate_vms(JavaVM** /*vm*/, jsize /*unused*/, jsize* /*count*/) __asm__("JNI_GetCreatedJavaVMs");
+#endif
 extern "C" jint enumerate_vms(JavaVM** vm, jsize /*capacity*/, jsize* count) {
   *vm = state().fault == VmFault::kNullVm ? nullptr : fixture_vm();
   *count = 1;

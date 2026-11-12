@@ -55,6 +55,34 @@ Physical-device execution is **not run** by the host script or by compilation; r
 also requires development runtime artifacts, a test signing key and adb access. It asserts integration, not device
 integrity or cryptographic attestation.
 
+## Window observation mode (RT10)
+
+The same Application now explicitly starts window observation after successful delayed initialization. Its Activity
+attaches its already resumed window one second later, because public lifecycle callbacks cannot enumerate existing
+Activities. Later Activity resumes/pauses/rotation use the real public lifecycle adapter. Build with SDK35 using the
+same commands; pack with `--checks identity,overlay`, and
+run `check.sh protected.apk --windows`. The mode checks
+all ten production output identities, active adapter and best-effort coverage on the next selected monitor pass.
+Use the matching schema1 revision6 runtime/stub and exact sidecars; root owns final release publication.
+
+On a dedicated API31+ device, tap the visible fixture, rotate repeatedly, use Home and return, open two Activity
+instances in supported multi-window mode, then dismiss them. Keep the app visible through a selected monitor pass
+(nominally sixty seconds after the preceding pass); verify touch deltas and active window snapshots follow the
+[documented interval contract](../../../../../docs/android-window-observations.md). For manual Dialog coverage,
+add a Dialog in a local host variant and explicitly attach after show/detach before dismiss or pause. Test a host
+callback installed before attachment and a replacement afterward: the replacement must remain installed, loss
+must be reported, and old wrappers retained inside its chain must remain inert after stop. Repeat start/stop from
+main thread and reject calls from a worker. A release/minified host must retain RuntimeBridge and RuntimeBridge$*.
+
+For obscured/partially obscured flags, use an explicitly authorized benign overlay fixture on the dedicated test
+device, touch both covered/uncovered portions, and record OS/API/ABI, target SDK, overlay settings and observed flags.
+Android12+ may block untrusted touches before the app receives them; a zero counter is not absence evidence. Do not
+inject fabricated MotionEvent flags and label them actual OS coverage. Normal/obscured/partial/blocked touches and
+system accessibility/legitimate overlays need separate recorded cases. Never classify the benign fixture as malware.
+The host-JVM suite covers flag handling deterministically; it does not establish OEM dispatch or device efficacy.
+
+No ADB/hardware run is claimed by fixture compilation. No permissions or flags are added to the host manifest.
+
 ## Service metadata checks
 
 To exercise the production public service collectors, pack this same attached host with
