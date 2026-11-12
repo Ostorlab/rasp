@@ -63,7 +63,7 @@ Activities. Later Activity resumes/pauses/rotation use the real public lifecycle
 same commands; pack with `--checks identity,overlay`, and
 run `check.sh protected.apk --windows`. The mode checks
 all ten production output identities, active adapter and best-effort coverage on the next selected monitor pass.
-Use the matching schema1 revision6 runtime/stub and exact sidecars; root owns final release publication.
+Use the matching schema1 revision7 runtime/stub and exact sidecars; root owns final release publication.
 
 On a dedicated API31+ device, tap the visible fixture, rotate repeatedly, use Home and return, open two Activity
 instances in supported multi-window mode, then dismiss them. Keep the app visible through a selected monitor pass
@@ -105,3 +105,15 @@ entry or service content probe is added.
 [Exact output names, flag semantics, public API references and visibility limits](../../../../../docs/android-service-observations.md)
 apply. This optional fixture was compiled locally; device execution, vendor/profile coverage and minified-host
 behavior remain separate validation and must be reported as such.
+
+## Root and environment context checks
+
+Pack the same late-attached host with
+`--checks identity,root_packages,root_context,proxy,developer_settings` and run
+`check.sh /tmp/rt12-device/protected.apk --root-context` after development signing as above.
+The task-only check requires all six selected output identities after attachment and explicit unsupported
+settings truth. Inspect package visibility and actual device proxy configuration separately; `not_visible`
+does not establish absence and proxy/overlay/namespace presence is context. The runtime exports no PAC URL.
+Repeat with no proxy, an authorized manual proxy and a PAC configuration without fetching its content in the
+collector; record stock/vendor/profile and error states. No physical-device result is established by compiling
+this fixture or by the Linux/JVM simulations. See [the exact contract](../../../../../docs/android-root-context.md).

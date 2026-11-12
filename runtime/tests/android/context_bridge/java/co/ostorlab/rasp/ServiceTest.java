@@ -44,13 +44,105 @@ public final class ServiceTest {
     private static final String ENABLED = "ime.enabled_components/input_method_manager ";
     private static final String CURRENT = "ime.current_component/input_method_manager ";
     private static final String NOTIFY = "notification.enabled_listeners/settings_secure ";
+    private static final String PACKAGES = "root.manager_packages_v1/package_manager ";
+    private static final String PROXY = "net.default_proxy_v1/connectivity_manager ";
+    private static void rootContextTests(Application app) {
+        app.forbidPackageName = true;
+        for (int fault = 3; fault < 9; ++fault) {
+            if (!faultySnapshot(fault).equals((fault < 6 ? PACKAGES : PROXY) + "error")) throw new AssertionError("context fault state");
+        }
+        for (boolean worker : new boolean[]{false, true}) {
+            String local = snapshot(6, worker);
+            if (System.getProperty("os.name").equals("Linux")) {
+                if (!local.startsWith("root.mountinfo_context_v1/proc_self_mountinfo ok [mounts=") ||
+                    !local.contains("root.mount_namespace_v1/proc_self_ns_mnt ok mnt:[")) throw new AssertionError("own proc context: " + local);
+            } else {
+                // macOS runs the real JNI fixture, but has no Linux /proc mount namespace.
+                String unavailable = "root.mountinfo_context_v1/proc_self_mountinfo error\n"
+                    + "root.mount_namespace_v1/proc_self_ns_mnt error";
+                if (!local.equals(unavailable)) throw new AssertionError("unavailable proc context: " + local);
+            }
+        }
+        String hidden = PACKAGES + "ok [com.topjohnwu.magisk not_visible, me.weishu.kernelsu not_visible, me.bmax.apatch not_visible]";
+        expect(3, hidden);
+        app.packages.visible.add("com.topjohnwu.magisk");
+        expect(3, hidden.replace("magisk not_visible", "magisk visible"));
+        for (int failure : new int[]{1, 2, 3}) {
+            app.packages.failure = failure;
+            expect(3, PACKAGES + "error");
+        }
+        app.packages.failure = 0;
+        android.content.pm.PackageManager savedPackages = app.packages;
+        app.packages = null;
+        expect(3, PACKAGES + "error");
+        app.packages = savedPackages;
+        app.fail = true;
+        expect(3, PACKAGES + "error");
+        app.fail = false;
+        android.net.ConnectivityManager savedConnectivity = app.connectivity;
+        app.connectivity = null;
+        expect(4, PROXY + "error");
+        app.connectivity = savedConnectivity;
+        for (int api : new int[]{31, 32, 33, 34, 35, 36}) {
+            Build.VERSION.SDK_INT = api;
+            expect(3, hidden.replace("magisk not_visible", "magisk visible"));
+            expect(4, PROXY + "ok [mode=none]");
+            expect(5, "debug.adb_enabled_v1/settings_global unsupported\ndebug.developer_options_enabled_v1/settings_global unsupported");
+        }
+        Build.VERSION.SDK_INT = 35;
+        expect(4, PROXY + "ok [mode=none]");
+        app.connectivity.proxy = new android.net.ProxyInfo();
+        expect(4, PROXY + "ok [mode=manual, host=proxy.example, port=8080]");
+        for (String bad : new String[]{null, "", "user:secret@proxy", "user:secret", "[", ":::", "proxy/path", "proxy\n", "x".repeat(254), "é"}) {
+            app.connectivity.proxy.host = bad;
+            expect(4, PROXY + "error");
+        }
+        for (String host : new String[]{"localhost", "127.0.0.1", "[::1]", "2001:db8::1"}) {
+            app.connectivity.proxy.host = host;
+            expect(4, PROXY + "ok [mode=manual, host=" + host + ", port=8080]");
+        }
+        app.connectivity.proxy.host = "127.0.0.1";
+        app.connectivity.proxy.port = 0;
+        expect(4, PROXY + "error");
+        app.connectivity.proxy.port = 65536;
+        expect(4, PROXY + "error");
+        app.connectivity.proxy.pac = new android.net.Uri(false);
+        expect(4, PROXY + "ok [mode=pac]");
+        app.connectivity.proxy.pac = null;
+        app.connectivity.proxy.host = "proxy.example";
+        app.connectivity.proxy.port = 8080;
+        expect(4, PROXY + "ok [mode=manual, host=proxy.example, port=8080]");
+        app.connectivity.proxy.fail = true;
+        expect(4, PROXY + "error");
+        app.connectivity.proxy.fail = false;
+        app.connectivity.proxy = null;
+        app.connectivity.fail = true;
+        expect(4, PROXY + "error");
+        app.connectivity.fail = false;
+        Build.VERSION.SDK_INT = 30;
+        expect(3, PACKAGES + "unsupported");
+        expect(4, PROXY + "unsupported");
+        Build.VERSION.SDK_INT = -1;
+        expect(3, PACKAGES + "error");
+        expect(4, PROXY + "error");
+        Build.VERSION.SDK_INT = 35;
+        for (int pass = 0; pass < 1000; ++pass) {
+            if (!workerSnapshot(3).equals(hidden.replace("magisk not_visible", "magisk visible"))) throw new AssertionError("package worker refs");
+            if (!workerSnapshot(4).equals(PROXY + "ok [mode=none]")) throw new AssertionError("proxy worker refs");
+        }
+        expect(5, "debug.adb_enabled_v1/settings_global unsupported\ndebug.developer_options_enabled_v1/settings_global unsupported");
+        app.forbidPackageName = false;
+    }
     public static void main(String[] args) {
         System.load(args[0]);
+        expect(3, PACKAGES + "error");
+        expect(4, PROXY + "error");
         expect(0, A11Y + "error");
         expect(1, ENABLED + "error\n" + CURRENT + "error");
         expect(2, NOTIFY + "error");
         Application app = new Application();
         if (RuntimeBridge.initialize(app) != RuntimeBridge.INITIALIZED) throw new AssertionError();
+        rootContextTests(app);
         expectCycleRetention(app);
         for (int faultKind = 0; faultKind < 3; ++faultKind) {
             if (!faultySnapshot(faultKind).equals(A11Y + "error")) throw new AssertionError("JNI fault not explicit");

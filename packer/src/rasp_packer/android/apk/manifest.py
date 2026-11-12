@@ -108,3 +108,11 @@ def raise_min_sdk_version(manifest: bytes, minimum: int) -> bytes:
         return axml.set_min_sdk_version(manifest, minimum)
     except axml.AxmlError as error:
         raise errors.ManifestError(str(error)) from error
+
+
+def add_package_queries(manifest: bytes, packages: tuple[str, ...]) -> bytes:
+    """Add only selected exact queries while preserving all host manifest declarations."""
+    try:
+        return axml.add_package_queries(manifest, packages)
+    except axml.AxmlError as error:
+        raise errors.ManifestError(str(error)) from error

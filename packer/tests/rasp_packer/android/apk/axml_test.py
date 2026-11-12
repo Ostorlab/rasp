@@ -143,3 +143,41 @@ def testSetAppComponentFactory_whenReapplied_repointsToTheSameValue() -> None:
 
     assert axml.read_app_component_factory(twice) == _STUB
     assert axml.read_application_class(twice) == "com.example.withapp.MyApp"
+
+
+def testPackageQueries_whenAddedTwice_preservesHostEntriesAndAttributes() -> None:
+    original = _with_application()
+    host = axml.add_package_queries(original, ("org.example.host",))
+    selected = ("com.topjohnwu.magisk", "me.weishu.kernelsu", "me.bmax.apatch")
+    edited = axml.add_package_queries(host, selected)
+    assert axml.read_package_queries(edited) == ("org.example.host", *selected)
+    assert axml.add_package_queries(edited, selected) == edited
+    assert axml.read_application_class(edited) == axml.read_application_class(original)
+    assert axml.read_manifest_package(edited) == axml.read_manifest_package(original)
+    assert b"QUERY_ALL_PACKAGES" not in edited
+
+
+def testPackageQueries_whenHostHasIntentProviderAndSelectedPackage_preservesEveryExistingQuery() -> (
+    None
+):
+    original = (_FIXTURES / "manifest_with_queries.bin").read_bytes()
+    selected = ("com.topjohnwu.magisk", "me.weishu.kernelsu", "me.bmax.apatch")
+    edited = axml.add_package_queries(original, selected)
+    assert axml.read_package_queries(edited) == ("org.example.partner", *selected)
+    assert axml.add_package_queries(edited, selected) == edited
+    for text in (
+        "org.example.documents",
+        "android.intent.action.VIEW",
+        "https",
+        "android.permission.CAMERA",
+    ):
+        assert text.encode() in edited or text.encode("utf-16-le") in edited
+    assert axml.read_version_name(edited) == "1.2"
+    assert axml.read_min_sdk_version(edited) == 31
+
+
+def testPackageQueries_whenChunkIsMalformed_rejectsWithoutLooping() -> None:
+    with pytest.raises(axml.AxmlError, match="chunk"):
+        axml.add_package_queries(
+            _with_application() + bytes(8), ("com.topjohnwu.magisk",)
+        )

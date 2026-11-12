@@ -194,3 +194,52 @@ def testSetMinSdkVersion_whenUsesSdkHasNoMinSdk_shouldRaise() -> None:
         proto_manifest.ProtoManifestError, match="no android:minSdkVersion"
     ):
         proto_manifest.set_min_sdk_version(element, 21)
+
+
+def testPackageQueries_whenAddedTwice_preservesHostEntriesAndAttributes(
+    manifest_bytes: bytes,
+) -> None:
+    host = proto_manifest.add_package_queries(manifest_bytes, ("org.example.host",))
+    selected = ("com.topjohnwu.magisk", "me.weishu.kernelsu", "me.bmax.apatch")
+    edited = proto_manifest.add_package_queries(host, selected)
+    assert proto_manifest.read_package_queries(edited) == (
+        "org.example.host",
+        *selected,
+    )
+    assert proto_manifest.add_package_queries(edited, selected) == edited
+    assert proto_manifest.read_package(edited) == proto_manifest.read_package(
+        manifest_bytes
+    )
+    assert proto_manifest.read_version_name(edited) == proto_manifest.read_version_name(
+        manifest_bytes
+    )
+    assert b"QUERY_ALL_PACKAGES" not in edited
+
+
+def testPackageQueries_whenHostHasIntentProviderAndSelectedPackage_preservesEveryExistingQuery() -> (
+    None
+):
+    original = (
+        pathlib.Path(__file__).parent.parent / "apk/fixtures/manifest_with_queries.pb"
+    ).read_bytes()
+    selected = ("com.topjohnwu.magisk", "me.weishu.kernelsu", "me.bmax.apatch")
+    edited = proto_manifest.add_package_queries(original, selected)
+    assert proto_manifest.read_package_queries(edited) == (
+        "org.example.partner",
+        *selected,
+    )
+    assert proto_manifest.add_package_queries(edited, selected) == edited
+    for text in (
+        "org.example.documents",
+        "android.intent.action.VIEW",
+        "https",
+        "android.permission.CAMERA",
+    ):
+        assert text.encode() in edited
+    assert proto_manifest.read_version_name(edited) == "1.2"
+    assert proto_manifest.read_min_sdk_version(edited) == 31
+
+
+def testPackageQueries_whenProtoIsTruncated_rejectsWithoutPartialMutation() -> None:
+    with pytest.raises(proto_manifest.ProtoManifestError):
+        proto_manifest.add_package_queries(b"\x0a\xff", ("com.topjohnwu.magisk",))

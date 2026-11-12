@@ -160,3 +160,5 @@ Please don't report a vulnerability in a public issue. See [`SECURITY.md`](SECUR
 ## License
 
 [Apache-2.0](LICENSE)
+
+See [opt-in Android root and environment context](docs/android-root-context.md) for fixed manager visibility queries, own mount context, public proxy metadata and unsupported developer-settings truth. Existing root/jailbreak refusal observations do not prove an intact stock platform.

@@ -3,8 +3,8 @@ set -euo pipefail
 apk="${1:?signed protected APK with development runtime}"
 adb="${ADB:-adb}"
 mode="${2:-}"
-if [[ -n "$mode" && "$mode" != --services && "$mode" != --windows ]]; then
-  echo 'second argument must be --services or --windows when checking opt-in metadata' >&2
+if [[ -n "$mode" && "$mode" != --services && "$mode" != --windows && "$mode" != --root-context ]]; then
+  echo 'second argument must be --services, --windows or --root-context when checking opt-in metadata' >&2
   exit 2
 fi
 api="$("$adb" shell getprop ro.build.version.sdk | tr -d '\r')"
@@ -47,3 +47,25 @@ if sys.argv[2] == "--services":
             assert all(identity + " unsupported" in line for line in results), "unguarded selected IME"
         print("Service metadata (inspect expected device state; error means unknown):", results[-1])
 PY
+
+if [[ "$mode" == --root-context ]]; then
+  python3 - "$log" <<'PY_CONTEXT'
+import pathlib
+import sys
+lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
+marker = next(index for index, line in enumerate(lines) if "initialized after attachment" in line)
+for identity in (
+    "root.manager_packages_v1/package_manager",
+    "root.mountinfo_context_v1/proc_self_mountinfo",
+    "root.mount_namespace_v1/proc_self_ns_mnt",
+    "net.default_proxy_v1/connectivity_manager",
+    "debug.adb_enabled_v1/settings_global",
+    "debug.developer_options_enabled_v1/settings_global",
+):
+    results = [line for line in lines[marker + 1:] if identity + " " in line]
+    assert len(results) > 0, "missing selected output: " + identity
+    if identity.startswith("debug."):
+        assert all(identity + " unsupported" in line for line in results), "settings truth must remain unsupported"
+    print("Root/environment context (compare device state; no verdict):", results[-1])
+PY_CONTEXT
+fi

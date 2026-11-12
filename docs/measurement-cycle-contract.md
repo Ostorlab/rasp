@@ -113,8 +113,8 @@ supported compiler CI remain necessary validation; host execution is no device
 health evidence. Session/run generation does not depend on installation storage.
 
 
-RT10 ordinary-merges the exact approved RT09 parent. Canonical schema1/revision6 declares **46 Android/26 iOS**
-identities, catalogue `28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4`. The ten opt-in window outputs consume one bounded FIFO drain per selected actual
+The combined runtime preserves RT10's ordinary merge of the exact approved RT09 parent. Canonical schema1/revision7 declares **52 Android/26 iOS**
+identities, catalogue `c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`. The ten opt-in window outputs consume one bounded FIFO drain per selected actual
 measurement cycle through the same production builtin dispatcher; disabled selection does not drain. Legacy and
 additive callbacks retain the same immutable snapshot, including interval/loss metadata and observations, across
 later drains and Context destruction. Real-JVM caller and attached-native-worker tests exercise that handoff.

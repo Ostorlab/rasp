@@ -157,3 +157,5 @@ Verification limitations:
 - The verifier trusts the runtime build and upstream DEX splitter, and compares loader/payload bytes without adding another DEX parser.
 - It does not run checks on a device or validate store signatures. AAB `native.pb`/`BundleConfig.pb`, delivery configuration, generated split APKs and their final alignment are not certified here. Google Play/bundletool generate those APKs; validate, sign and test the generated artifacts with the target platform tools before shipping.
 - Fixture-sized runtime binaries exercise the archive/config contract in tests; real Android and iOS builds and devices remain separate platform validation.
+
+See [opt-in Android root and environment context](../docs/android-root-context.md) for fixed manager visibility queries, own mount context, public proxy metadata and unsupported developer-settings truth. Existing root/jailbreak refusal observations do not prove an intact stock platform.

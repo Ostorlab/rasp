@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "registration": "schema1_revision6",
+  "registration": "schema1_revision7",
   "group": "identity",
   "legacy_semantics": "sig.cert_sha256 remains a scalar first-signer digest; proc_cmdline is a process-name-derived legacy value",
   "observations": [
@@ -249,5 +249,5 @@
       ]
     }
   ],
-  "catalogue_id": "28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4"
+  "catalogue_id": "c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf"
 }
