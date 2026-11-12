@@ -1,15 +1,27 @@
 /// Real-JVM integration of the shipped bridge and PackageManager consumer, with JNI allocation/lookup fault injection.
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <jni.h>
 #include <jni_md.h>
+#include <memory>
 #include <optional>
+#include <span>
+#include <string>
 #include <thread>
 #include <vector>
 
+#include "builtin.h"
+#include "rasp/config.h"
+#include "rasp/context.h"
+#include "rasp/cycle.h"
+#include "rasp/observation.h"
+#include "rasp/plugin.h"
 #include "util/application_context.h"
 #include "util/jni.h"
+#include "util/package_identity.h"
 #include "util/package_manager.h"
 
 namespace {
@@ -117,7 +129,233 @@ jboolean native_thread_read(JNIEnv* env, jclass /*test*/) {
   return success ? JNI_TRUE : JNI_FALSE;
 }
 
+/// Owning callback retention verifies that observations and metadata remain one immutable handoff.
+constexpr rasp::plugins::Key<std::shared_ptr<const rasp::CycleSnapshot>> kRetainedIdentityCycle{"test.identity.cycle"};
+/// Confirms both callback forms received the same snapshot object.
+constexpr rasp::plugins::Key<bool> kIdentityCyclePaired{"test.identity.paired"};
+
+/// Retains the snapshot only while the production callback span matches its owned observations.
+void retain_identity_cycle(std::span<const rasp::Observation> observations, rasp::plugins::Context& context) {
+  const auto snapshot = context.get(rasp::plugins::kCycleSnapshot);
+  if (snapshot.has_value() && std::ranges::equal((*snapshot)->observations, observations)) {
+    context.put(kRetainedIdentityCycle, *snapshot);
+  }
+}
+
+/// Verifies the additive callback receives the same object already retained by the legacy callback.
+void confirm_identity_cycle(const std::shared_ptr<const rasp::CycleSnapshot>& snapshot,
+                            rasp::plugins::Context& context) {
+  const auto retained = context.get(kRetainedIdentityCycle);
+  context.put(kIdentityCyclePaired, retained.has_value() && *retained == snapshot);
+}
+
+/// Executes actual identity dispatch through the same finite snapshot/callback path as production monitoring.
+[[nodiscard]] std::shared_ptr<const rasp::CycleSnapshot> identity_cycle() {
+  const rasp::Config config{.build_id = "identity-fixture", .checks = std::vector<std::string>{"identity"}};
+  rasp::CycleMonitor monitor;
+  rasp::plugins::Context context;
+  constexpr rasp::plugins::Plugin kPlugin{
+      .init = nullptr,
+      .checks = {},
+      .on_observations = retain_identity_cycle,
+      .on_cycle = confirm_identity_cycle,
+  };
+  const std::array plugins{&kPlugin};
+  const auto catalogue = rasp::cycle_catalogue("android");
+  auto snapshot = monitor.run(config, catalogue, plugins, context, [](const rasp::Config& selection, const void*) {
+    return rasp::android::run_checks(selection);
+  });
+  const auto retained = context.get(kRetainedIdentityCycle);
+  if (!retained.has_value() || *retained != snapshot || context.get(rasp::plugins::kCycleSnapshot).has_value() ||
+      context.get(kIdentityCyclePaired) != true) {
+    return nullptr;
+  }
+  const auto& metadata = snapshot->metadata;
+  if (!metadata.complete || !metadata.execution_finished || metadata.expected != 9U || metadata.seen != 9U ||
+      !metadata.missing.empty() || metadata.extra != 0 || metadata.dropped != 0 || snapshot->observations.size() != 9 ||
+      metadata.catalogue_id != catalogue.catalogue_id) {
+    return nullptr;
+  }
+  return snapshot;
+}
+
+/// Calls the actual production group dispatcher and transfers only its serialized observations to Java assertions.
+jobjectArray identity_rows(JNIEnv* env, jclass /*test*/) {
+  const auto snapshot = identity_cycle();
+  if (snapshot == nullptr) {
+    check(env, false);
+    return nullptr;
+  }
+  const auto& observations = snapshot->observations;
+  jclass string_class = env->FindClass("java/lang/String");
+  if (rasp::android::util::threw(env) || string_class == nullptr) {
+    return nullptr;
+  }
+  jobjectArray rows = env->NewObjectArray(static_cast<jsize>(observations.size()), string_class, nullptr);
+  if (rasp::android::util::threw(env) || rows == nullptr) {
+    return nullptr;
+  }
+  for (std::size_t index = 0; index < observations.size(); ++index) {
+    const auto text = rasp::describe(observations[index]);
+    jstring row = env->NewStringUTF(text.c_str());
+    if (rasp::android::util::threw(env) || row == nullptr) {
+      return nullptr;
+    }
+    env->SetObjectArrayElement(rows, static_cast<jsize>(index), row);
+    env->DeleteLocalRef(row);
+    if (rasp::android::util::threw(env)) {
+      return nullptr;
+    }
+  }
+  env->DeleteLocalRef(string_class);
+  return rows;
+}
+
+/// Injects reference, method, frame, and array-copy failures into the compiled public collector.
+jboolean identity_faults(JNIEnv* env, jclass /*test*/) {
+  const auto* original = env->functions;
+  auto table = *original;
+  table.NewLocalRef = fail_reference;
+  env->functions = &table;
+  const auto missing = rasp::android::util::read_package_identity(env);
+  env->functions = original;
+  if (missing.package_name.has_value() || missing.current.has_value() || env->ExceptionCheck() != JNI_FALSE) {
+    return JNI_FALSE;
+  }
+  table.PushLocalFrame = [](JNIEnv* frame_env, jint) -> jint {
+    jclass error = frame_env->FindClass("java/lang/OutOfMemoryError");
+    static_cast<void>(frame_env->ThrowNew(error, "injected frame failure"));
+    frame_env->DeleteLocalRef(error);
+    return JNI_ERR;
+  };
+  env->functions = &table;
+  const auto frame_failed = rasp::android::util::read_package_identity(env);
+  env->functions = original;
+  if (frame_failed.current.has_value() || frame_failed.package_name.has_value() || env->ExceptionCheck() != JNI_FALSE) {
+    return JNI_FALSE;
+  }
+  table = *original;
+  table.GetByteArrayRegion = [](JNIEnv* copy_env, jbyteArray, jsize, jsize, jbyte*) {
+    static_cast<void>(fail_reference(copy_env, nullptr));
+  };
+  env->functions = &table;
+  const auto copy_failed = rasp::android::util::read_package_identity(env);
+  env->functions = original;
+  if (copy_failed.current.has_value() || env->ExceptionCheck() != JNI_FALSE) {
+    return JNI_FALSE;
+  }
+  table = *original;
+  table.GetArrayLength = [](JNIEnv* array_env, jarray) -> jsize {
+    static_cast<void>(fail_reference(array_env, nullptr));
+    return -1;
+  };
+  env->functions = &table;
+  const auto array_failed = rasp::android::util::read_package_identity(env);
+  env->functions = original;
+  if (array_failed.current.has_value() || env->ExceptionCheck() != JNI_FALSE) {
+    return JNI_FALSE;
+  }
+  table = *original;
+  table.GetMethodID = [](JNIEnv*, jclass, const char*, const char*) -> jmethodID { return nullptr; };
+  env->functions = &table;
+  const auto method_failed = rasp::android::util::read_package_identity(env);
+  env->functions = original;
+  return !method_failed.current.has_value() && !method_failed.package_name.has_value() &&
+                 env->ExceptionCheck() == JNI_FALSE &&
+                 !rasp::android::util::read_package_identity(nullptr).current.has_value()
+             ? JNI_TRUE
+             : JNI_FALSE;
+}
+
+/// Exercises current/history collection on an attached native worker and detaches before the worker exits.
+jboolean identity_thread_reads(JNIEnv* env, jclass /*test*/) {
+  JavaVM* vm = nullptr;
+  if (env->GetJavaVM(&vm) != JNI_OK) {
+    return JNI_FALSE;
+  }
+  const auto expected = identity_cycle();
+  if (expected == nullptr) {
+    return JNI_FALSE;
+  }
+  bool success = true;
+  std::thread reader([&success, vm, expected] {
+    JNIEnv* thread_env = rasp::android::util::attached_env();
+    if (thread_env == nullptr) {
+      success = false;
+      return;
+    }
+    for (std::size_t pass = 0; pass < 1000; ++pass) {
+      const auto snapshot = identity_cycle();
+      if (snapshot == nullptr || snapshot->observations != expected->observations ||
+          thread_env->ExceptionCheck() != JNI_FALSE) {
+        success = false;
+        break;
+      }
+    }
+    success = vm->DetachCurrentThread() == JNI_OK && success;
+  });
+  reader.join();
+  return success ? JNI_TRUE : JNI_FALSE;
+}
+
+/// Registers test-only probes independently of the shipped RuntimeBridge entry.
+[[nodiscard]] bool register_identity_test(JNIEnv* env) {
+  jclass test = env->FindClass("co/ostorlab/rasp/IdentityTest");
+  auto rows_name = std::to_array("rows");
+  auto rows_signature = std::to_array("()[Ljava/lang/String;");
+  auto faults_name = std::to_array("faults");
+  auto faults_signature = std::to_array("()Z");
+  auto thread_name = std::to_array("threadReads");
+  const std::array<JNINativeMethod, 3> methods{
+      {
+          {
+              .name = thread_name.data(),
+              .signature = faults_signature.data(),
+              // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): RegisterNatives requires a void* function entry.
+              .fnPtr = reinterpret_cast<void*>(&identity_thread_reads),
+          },
+          {
+              .name = rows_name.data(),
+              .signature = rows_signature.data(),
+              // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): RegisterNatives requires a void* function entry.
+              .fnPtr = reinterpret_cast<void*>(&identity_rows),
+          },
+          {
+              .name = faults_name.data(),
+              .signature = faults_signature.data(),
+              // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): RegisterNatives requires a void* function entry.
+              .fnPtr = reinterpret_cast<void*>(&identity_faults),
+          },
+      },
+  };
+  const bool success =
+      test != nullptr && env->RegisterNatives(test, methods.data(), static_cast<jint>(methods.size())) == JNI_OK;
+  env->DeleteLocalRef(test);
+  return success;
+}
+
 }  // namespace
+
+/// Implements only the Android API-level boundary for the host JVM's production dispatcher object.
+extern "C" int android_get_device_api_level() {
+  JNIEnv* env = rasp::android::util::attached_env();
+  if (env == nullptr) {
+    return -1;
+  }
+  jclass version = env->FindClass("android/os/Build$VERSION");
+  if (rasp::android::util::threw(env) || version == nullptr) {
+    return -1;
+  }
+  jfieldID field = env->GetStaticFieldID(version, "SDK_INT", "I");
+  if (rasp::android::util::threw(env) || field == nullptr) {
+    env->DeleteLocalRef(version);
+    return -1;
+  }
+  const jint api = env->GetStaticIntField(version, field);
+  const bool failed = rasp::android::util::threw(env);
+  env->DeleteLocalRef(version);
+  return failed ? -1 : api;
+}
 
 /// Registers the production bridge and test-only probes; no test API ships in librasp.
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
@@ -126,7 +364,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     return JNI_ERR;
   }
   auto* env = static_cast<JNIEnv*>(raw_env);
-  if (!rasp::android::util::register_context_bridge(env)) {
+  if (!rasp::android::util::register_context_bridge(env) || !register_identity_test(env)) {
     return JNI_ERR;
   }
   jclass test = env->FindClass("co/ostorlab/rasp/BridgeTest");

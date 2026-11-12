@@ -277,7 +277,7 @@ def testParseCatalogue_whenTimeoutDeclared_roundTripsWithoutChangingProductionCa
     assert capabilities.canonical(parsed) == encoded
     assert capabilities.catalogue_id() == current_id
     assert (
-        current_id == "eaac77e3bdbf7f21af2abfb79a7868ccf516e5c3f758d25c90127550e3e7db7c"
+        current_id == "c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5"
     )
     assert all(
         "timeout" not in output["statuses"]
@@ -359,8 +359,8 @@ def testCatalogue_whenAndroidServiceMetadataRegistered_preservesVersionedContext
     android = document["platforms"]["android"]
     groups = {group["name"]: group for group in android["groups"]}
     assert document["schema_version"] == 1
-    assert document["revision"] == 4
-    assert sum(len(group["observations"]) for group in android["groups"]) == 32
+    assert document["revision"] == 5
+    assert sum(len(group["observations"]) for group in android["groups"]) == 36
     assert (
         sum(
             len(group["observations"])
@@ -441,3 +441,55 @@ def testServiceContractFixtures_whenComparedWithCatalogue_preserveTypesAndUnknow
                     assert isinstance(value, str)
             else:
                 assert "value" not in observation
+
+
+def testCatalogue_whenAndroidSignerSetsRegistered_preservesLegacyScalarsAndCompleteSets() -> (
+    None
+):
+    document = capabilities.catalogue()
+    groups = document["platforms"]["android"]["groups"]
+    identity = next(group for group in groups if group["name"] == "identity")
+    rows = {(row["signal"], row["source"]): row for row in identity["observations"]}
+    assert document["schema_version"] == 1
+    assert document["revision"] == 5
+    assert len(rows) == 9
+    assert identity["required"] is True
+    for source in ("apk_signing_block", "package_manager"):
+        assert rows[("sig.cert_sha256", source)]["value_kind"] == "string"
+        assert rows[("sig.cert_sha256", source)]["value_cardinality"] == "scalar"
+    contracts = (
+        ("id.package.v1", "application_context", "string"),
+        ("sig.current_sha256.v1", "apk_signing_block", "string_list"),
+        ("sig.current_sha256.v1", "package_manager", "string_list"),
+        ("sig.history_sha256.v1", "package_manager", "string_list"),
+    )
+    for signal, source, kind in contracts:
+        row = rows[(signal, source)]
+        assert row["value_kind"] == kind
+        assert row["cardinality"] == "one"
+        assert row["value_cardinality"] == (
+            "scalar" if kind == "string" else "variable"
+        )
+        assert set(row["statuses"]) == {"ok", "error", "unsupported"}
+        assert row["supported_on"] == "android"
+
+
+def testSignerContractFixture_whenCanonicalRegistrationCompared_matchesExactRowsAndIdentity() -> (
+    None
+):
+    fixture = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "docs/fixtures/android-signer-observations-v1.json"
+    )
+    document = json.loads(fixture.read_bytes())
+    identity = next(
+        group
+        for group in capabilities.catalogue()["platforms"]["android"]["groups"]
+        if group["name"] == "identity"
+    )
+    rows = {(row["signal"], row["source"]): row for row in identity["observations"]}
+    assert document["registration"] == "schema1_revision5"
+    assert document["catalogue_id"] == capabilities.catalogue_id()
+    assert len(document["observations"]) == 4
+    for row in document["observations"]:
+        assert row == rows[(row["signal"], row["source"])]

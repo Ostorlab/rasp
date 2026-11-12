@@ -1,0 +1,253 @@
+{
+  "schema_version": 1,
+  "registration": "schema1_revision5",
+  "group": "identity",
+  "legacy_semantics": "sig.cert_sha256 remains a scalar first-signer digest; proc_cmdline is a process-name-derived legacy value",
+  "observations": [
+    {
+      "signal": "id.package.v1",
+      "source": "application_context",
+      "value_kind": "string",
+      "cardinality": "one",
+      "value_cardinality": "scalar",
+      "statuses": [
+        "ok",
+        "error",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Actual retained Application.getPackageName via supported Context only, independent of global process aliases; no ActivityThread fallback. API31+. Missing Context/JNI/permission or null/empty/malformed/over-255-character package is error without a value. Public owned package metadata only, not attestation."
+    },
+    {
+      "signal": "sig.current_sha256.v1",
+      "source": "apk_signing_block",
+      "value_kind": "string_list",
+      "cardinality": "one",
+      "value_cardinality": "variable",
+      "statuses": [
+        "ok",
+        "error",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Complete sorted unique lowercase SHA256 digests of current signer leaves for exactly one applicable v2/v3/v3.1 scheme; chain entries and rotation history are not concurrent signers. API31+, v3.1 from API33; at most ten v2 signers, one applicable v3/v3.1 signer. Bounded ZIP32 region reads; missing/malformed/empty/over-limit input is error, unsupported scheme selection is unsupported, never OK empty. Untrusted file hashes, not signature or lineage verification."
+    },
+    {
+      "signal": "sig.current_sha256.v1",
+      "source": "package_manager",
+      "value_kind": "string_list",
+      "cardinality": "one",
+      "value_cardinality": "variable",
+      "statuses": [
+        "ok",
+        "error",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Complete current getApkContentsSigners digests for the retained Application owned package using GET_SIGNING_CERTIFICATES, sorted unique lowercase SHA256. Supported Context only, API31+. At most32 raw certificates,64KiB each and256KiB aggregate before deduplication. Missing Context/JNI/permission, null/empty/malformed/over-limit array is error without a partial or empty clean set. History is separate; no signature/attestation proof."
+    },
+    {
+      "signal": "sig.history_sha256.v1",
+      "source": "package_manager",
+      "value_kind": "string_list",
+      "cardinality": "one",
+      "value_cardinality": "variable",
+      "statuses": [
+        "ok",
+        "error",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Public SigningInfo.getSigningCertificateHistory digests in oldest-to-current order including current; singleton without rotation, unsupported for validated parallel signing and never treated as concurrent current signers. Supported retained Context, owned package and API31+. At most32 certificates,64KiB each and256KiB aggregate. Missing/null/empty/malformed/over-limit history or terminal mismatch is error without a value. No local lineage verification or signing-registry trust claim."
+    }
+  ],
+  "cases": [
+    {
+      "name": "benign_single_signer",
+      "apk_current": [
+        "signer_a.der"
+      ],
+      "package_current": [
+        "signer_a.der"
+      ],
+      "package_history": [
+        "signer_a.der"
+      ],
+      "history_unsupported": false,
+      "expected": [
+        {
+          "signal": "sig.current_sha256.v1",
+          "source": "apk_signing_block",
+          "status": "ok",
+          "value": [
+            "d9974cc9a6e1ed1d417dd5320a46a68d8bebf8fdb7eceea443e44514129463a3"
+          ]
+        },
+        {
+          "signal": "sig.current_sha256.v1",
+          "source": "package_manager",
+          "status": "ok",
+          "value": [
+            "d9974cc9a6e1ed1d417dd5320a46a68d8bebf8fdb7eceea443e44514129463a3"
+          ]
+        },
+        {
+          "signal": "sig.history_sha256.v1",
+          "source": "package_manager",
+          "status": "ok",
+          "value": [
+            "d9974cc9a6e1ed1d417dd5320a46a68d8bebf8fdb7eceea443e44514129463a3"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "benign_parallel_signing",
+      "apk_current": [
+        "signer_b.der",
+        "signer_a.der",
+        "signer_b.der"
+      ],
+      "package_current": [
+        "signer_a.der",
+        "signer_b.der"
+      ],
+      "package_history": null,
+      "history_unsupported": true,
+      "expected": [
+        {
+          "signal": "sig.current_sha256.v1",
+          "source": "apk_signing_block",
+          "status": "ok",
+          "value": [
+            "8db5c276ca1e1944ee73cb0b8d41885f930619466385d3e4198f2dd01fcdde2b",
+            "d9974cc9a6e1ed1d417dd5320a46a68d8bebf8fdb7eceea443e44514129463a3"
+          ]
+        },
+        {
+          "signal": "sig.current_sha256.v1",
+          "source": "package_manager",
+          "status": "ok",
+          "value": [
+            "8db5c276ca1e1944ee73cb0b8d41885f930619466385d3e4198f2dd01fcdde2b",
+            "d9974cc9a6e1ed1d417dd5320a46a68d8bebf8fdb7eceea443e44514129463a3"
+          ]
+        },
+        {
+          "signal": "sig.history_sha256.v1",
+          "source": "package_manager",
+          "status": "unsupported",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "benign_rotation_oldest_to_current",
+      "apk_current": [
+        "signer_b.der"
+      ],
+      "package_current": [
+        "signer_b.der"
+      ],
+      "package_history": [
+        "signer_a.der",
+        "signer_b.der"
+      ],
+      "history_unsupported": false,
+      "expected": [
+        {
+          "signal": "sig.current_sha256.v1",
+          "source": "apk_signing_block",
+          "status": "ok",
+          "value": [
+            "8db5c276ca1e1944ee73cb0b8d41885f930619466385d3e4198f2dd01fcdde2b"
+          ]
+        },
+        {
+          "signal": "sig.current_sha256.v1",
+          "source": "package_manager",
+          "status": "ok",
+          "value": [
+            "8db5c276ca1e1944ee73cb0b8d41885f930619466385d3e4198f2dd01fcdde2b"
+          ]
+        },
+        {
+          "signal": "sig.history_sha256.v1",
+          "source": "package_manager",
+          "status": "ok",
+          "value": [
+            "d9974cc9a6e1ed1d417dd5320a46a68d8bebf8fdb7eceea443e44514129463a3",
+            "8db5c276ca1e1944ee73cb0b8d41885f930619466385d3e4198f2dd01fcdde2b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "independent_sources_disagree",
+      "apk_current": [
+        "signer_a.der"
+      ],
+      "package_current": [
+        "signer_b.der"
+      ],
+      "package_history": [
+        "signer_b.der"
+      ],
+      "history_unsupported": false,
+      "expected": [
+        {
+          "signal": "sig.current_sha256.v1",
+          "source": "apk_signing_block",
+          "status": "ok",
+          "value": [
+            "d9974cc9a6e1ed1d417dd5320a46a68d8bebf8fdb7eceea443e44514129463a3"
+          ]
+        },
+        {
+          "signal": "sig.current_sha256.v1",
+          "source": "package_manager",
+          "status": "ok",
+          "value": [
+            "8db5c276ca1e1944ee73cb0b8d41885f930619466385d3e4198f2dd01fcdde2b"
+          ]
+        },
+        {
+          "signal": "sig.history_sha256.v1",
+          "source": "package_manager",
+          "status": "ok",
+          "value": [
+            "8db5c276ca1e1944ee73cb0b8d41885f930619466385d3e4198f2dd01fcdde2b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unavailable_is_unknown",
+      "apk_current": null,
+      "package_current": null,
+      "package_history": null,
+      "history_unsupported": false,
+      "expected": [
+        {
+          "signal": "sig.current_sha256.v1",
+          "source": "apk_signing_block",
+          "status": "error",
+          "value": null
+        },
+        {
+          "signal": "sig.current_sha256.v1",
+          "source": "package_manager",
+          "status": "error",
+          "value": null
+        },
+        {
+          "signal": "sig.history_sha256.v1",
+          "source": "package_manager",
+          "status": "error",
+          "value": null
+        }
+      ]
+    }
+  ],
+  "catalogue_id": "c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5"
+}

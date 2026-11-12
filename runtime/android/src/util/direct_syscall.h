@@ -22,8 +22,8 @@ struct SyscallResult {
 /// A replaceable native boundary taking up to four machine-word arguments.
 using SystemCall = SyscallResult (*)(long number, const std::array<std::uintptr_t, 4>& arguments);
 
-/// Invokes the hookable libc syscall entry and captures its errno.
-/// @param number The platform's syscall number.
+/// Invokes Linux's hookable libc syscall entry and captures its errno; other hosts return ENOSYS.
+/// @param number The Linux syscall number.
 /// @param arguments Four machine-word arguments, zero for unused slots.
 /// @return The syscall return value and errno, without interpreting either.
 [[nodiscard]] SyscallResult libc_syscall(long number, const std::array<std::uintptr_t, 4>& arguments);
