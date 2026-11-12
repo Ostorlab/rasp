@@ -65,7 +65,7 @@ key as above, and run:
 runtime/tests/android/context_bridge/device/check.sh /tmp/rt08-device/protected.apk --services
 ```
 
-The optional check requires every selected service output after the delayed supported initialization. On API31/33
+The optional check requires every selected service output after the delayed supported initialization. On API31–33 (31, 32 and 33)
 the current IME output must be unsupported. On API34/35 it should report the user's selected component, or explicit
 error when unavailable. An error is surfaced as unknown and is never proof of an empty device state. Compare output
 against the dedicated test device's enabled-service settings yourself: valid empty lists, TalkBack/password manager,

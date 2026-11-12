@@ -1,6 +1,7 @@
 """Tests of adding the runtime to a Mach-O executable."""
 
 import pathlib
+import struct
 
 import lief
 import pytest
@@ -115,4 +116,39 @@ def testAddRuntime_whenNoRoomForTheLoadCommands_raisesAndLeavesTheFileUnchanged(
     with pytest.raises(errors.HeaderPaddingError):
         macho.add_runtime(executable)
 
+    assert executable.read_bytes() == before
+
+
+@pytest.mark.parametrize("arm64_first", [True, False])
+def testAddRuntime_whenFatBinaryMixesArchitectures_rejectsBeforeMutation(
+    executable: pathlib.Path, arm64_first: bool
+) -> None:
+    arm = executable.read_bytes()
+    x86 = bytearray(arm)
+    x86[4:8] = (0x01000007).to_bytes(4, "little")
+    slices = [(0x0100000C, arm), (0x01000007, bytes(x86))]
+    if arm64_first is False:
+        slices.reverse()
+    blob = bytearray(struct.pack(">II", 0xCAFEBABE, 2))
+    offset = 0x4000
+    for machine, data in slices:
+        blob.extend(struct.pack(">IIIII", machine, 0, offset, len(data), 14))
+        offset = ((offset + len(data) + 0x3FFF) // 0x4000) * 0x4000
+    for index, (_, data) in enumerate(slices):
+        offset = struct.unpack_from(">I", blob, 8 + index * 20 + 8)[0]
+        blob.extend(bytes(offset - len(blob)))
+        blob.extend(data)
+    executable.write_bytes(blob)
+    parsed = lief.MachO.parse(str(executable))
+    assert parsed is not None
+    assert parsed.size == 2
+    assert {binary.header.cpu_type for binary in parsed} == {
+        lief.MachO.Header.CPU_TYPE.ARM64,
+        lief.MachO.Header.CPU_TYPE.X86_64,
+    }
+    before = executable.read_bytes()
+    with pytest.raises(
+        errors.UnsupportedBinaryError, match="unsupported Mach-O architecture"
+    ):
+        macho.add_runtime(executable)
     assert executable.read_bytes() == before

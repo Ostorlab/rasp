@@ -61,8 +61,9 @@ namespace rasp::android::checks {
 ///
 /// `task_path` holds one folder per thread, each with a `comm` file. A complete read accepts one to fifteen
 /// non-control name bytes followed by a newline (at most 16 bytes total). Only these kernel-visible bytes are matched;
-/// a marker beyond the kernel's truncation point is invisible. At most 4096 entries are read. The result contains the
-/// lexicographically smallest 32 distinct matching names; reaching the output cap does not stop enumeration.
+/// a marker beyond the kernel's truncation point is invisible. Only numeric thread-ID entries count toward the
+/// 4096-thread limit or have their comm read. The result contains the lexicographically smallest 32 distinct matching
+/// names; reaching the output cap does not stop enumeration.
 ///
 /// A listing failure, an entry beyond the task limit, or any unreadable or malformed comm makes the whole observation
 /// an error with no value, even if earlier names matched. Disappearance during enumeration, permission denial and
@@ -89,13 +90,14 @@ struct ResolvedFunction {
 /// file, the sign of an inline hook: Frida's Interceptor, Dobby and Substrate overwrite a function's first instructions
 /// in memory with a jump, while the file keeps the original bytes.
 ///
-/// The complete bounded maps snapshot is validated before lookup. The unique RX, non-writable mapping gives the
-/// file offset of the address. A unique defined STT_FUNC symbol with nonzero size must translate through an immutable
-/// executable PT_LOAD to that same offset. At most min(16, symbol size) bytes are read through the OS own-process
-/// memory API, never dereferenced directly. A short mapping or OS read fails the comparison. Thumb low bits are removed
-/// from both code addresses; only AArch64 accepts top-byte tags. Production resolution requires the native ELF machine.
-/// Loader-declared text relocations and IFUNC resolvers are not comparable. Ordinary PLT/GOT data relocation does not
-/// rewrite these bytes. This reports differences, including authorized instrumentation, without a malware verdict.
+/// The complete bounded maps snapshot is parsed once per call; every malformed or overlapping record fails before
+/// lookup. The unique RX, non-writable mapping gives the file offset of the address. A unique defined STT_FUNC symbol
+/// with nonzero size must translate through an immutable executable PT_LOAD to that same offset. At most min(16, symbol
+/// size) bytes are read through the OS own-process memory API, never dereferenced directly. A short mapping or OS read
+/// fails the comparison. Thumb low bits are removed from both code addresses; only AArch64 accepts top-byte tags.
+/// Production resolution requires the native ELF machine. Loader-declared text relocations and IFUNC resolvers are not
+/// comparable. Ordinary PLT/GOT data relocation does not rewrite these bytes. This reports differences, including
+/// authorized instrumentation, without a malware verdict.
 ///
 /// @param maps_path The complete memory map, /proc/self/maps in production, limited to 4 MiB and 8192 bytes per line.
 /// @param functions One to 64 distinct function names, each 1 to 128 bytes without NUL, with resolved addresses.

@@ -379,8 +379,8 @@ TEST(Hooks, observeInlineHooks_whenMemoryBecameUnreadable_reportsAnErrorWithoutC
 }
 #endif
 
-TEST(Hooks, observeInlineHooks_whenMemoryReadIsShort_reportsAnError) {
 #ifdef __linux__
+TEST(Hooks, observeInlineHooks_whenMemoryReadIsShort_reportsAnError) {
   const TemporaryDirectory directory;
   LoadedLibrary library = load(kArm64Library);
   const long page_size = sysconf(_SC_PAGESIZE);
@@ -398,8 +398,8 @@ TEST(Hooks, observeInlineHooks_whenMemoryReadIsShort_reportsAnError) {
   const auto result = observe_inline_hooks(maps, functions);
   EXPECT_EQ(munmap(memory, 2 * size), 0);
   EXPECT_EQ(result, inline_failed());
-#endif
 }
+#endif
 
 TEST(Hooks, observeInlineHooks_whenFunctionExtentIsZero_reportsAnError) {
   const TemporaryDirectory directory;
@@ -472,6 +472,52 @@ TEST(Hooks, observeInlineHooks_whenMapsContainInvalidRecords_neverReportsClean) 
     EXPECT_EQ(observe_inline_hooks(path, functions), inline_failed());
   }
   ASSERT_TRUE(write_file(path, maps->substr(0, maps->size() - 1)));
+  EXPECT_EQ(observe_inline_hooks(path, functions), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenAnyMappingsOverlap_reportsWholeObservationError) {
+  const TemporaryDirectory directory;
+  LoadedLibrary library = load(kArm64Library);
+  library.memory[kArm64First] ^= 0xFFU;
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+      {.name = "rasp_fixture_second", .address = address_of(library, kArm64Second)},
+  });
+  const std::string path = write_library_maps(directory, library);
+  const auto maps = read_file(path);
+  ASSERT_TRUE(maps.has_value());
+  for (const std::string_view overlap : {
+           "1000-2000 r--p 0 00:00 0 /unrelated\n1000-2000 r--p 0 00:00 0 /duplicate\n",
+           "1000-3000 r--p 0 00:00 0 /unrelated\n1800-2000 ---p 0 00:00 0 /nested\n",
+           "1800-3000 r--p 0 00:00 0 /unrelated\n1000-2000 r--p 0 00:00 0 /partial\n",
+       }) {
+    ASSERT_TRUE(write_file(path, *maps + std::string(overlap)));
+    EXPECT_EQ(observe_inline_hooks(path, functions), inline_failed());
+  }
+  const auto start = address_of(library, 0);
+  ASSERT_TRUE(write_file(
+      path, *maps + std::format("{:x}-{:x} r-xp 0 00:00 1 {}\n", start, start + library.memory.size(), library.path)));
+  EXPECT_EQ(observe_inline_hooks(path, functions), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenMappingsAreUnorderedAndAdjacent_comparesEveryFunctionEachTime) {
+  const TemporaryDirectory directory;
+  LoadedLibrary library = load(kArm64Library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+      {.name = "rasp_fixture_second", .address = address_of(library, kArm64Second)},
+  });
+  const auto start = address_of(library, 0);
+  const auto boundary = address_of(library, kArm64Second);
+  const std::string path = write_maps(
+      directory, std::format("{:x}-{:x} r-xp {:x} 00:00 1 {}\n{:x}-{:x} r-xp 0 00:00 1 {}\n", boundary,
+                             start + library.memory.size(), kArm64Second, library.path, start, boundary, library.path));
+  EXPECT_EQ(observe_inline_hooks(path, functions), inline_hooks({}));
+  library.memory[kArm64Second] ^= 0xFFU;
+  EXPECT_EQ(observe_inline_hooks(path, functions), inline_hooks({"rasp_fixture_second"}));
+  const auto maps = read_file(path);
+  ASSERT_TRUE(maps.has_value());
+  ASSERT_TRUE(write_file(path, *maps + "malformed\n"));
   EXPECT_EQ(observe_inline_hooks(path, functions), inline_failed());
 }
 
@@ -766,6 +812,28 @@ TEST(Hooks, observeThreads_whenCommReadIsDenied_reportsAnError) {
   std::filesystem::permissions(path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, error);
   ASSERT_FALSE(error);
   EXPECT_EQ(result, failed("hook.threads", "proc_task"));
+}
+
+TEST(Hooks, observeThreads_whenEntriesAreNotThreadIds_skipsNamesAndUnreadableEntries) {
+  const TemporaryDirectory directory;
+  ASSERT_TRUE(write_thread(directory.path(), 123, "gum-js-loop"));
+  for (const std::string_view name : {"frida", "123suffix", "+42", " 42", "42.0"}) {
+    std::error_code error;
+    ASSERT_TRUE(std::filesystem::create_directory(directory.path() + "/" + std::string(name), error));
+    ASSERT_FALSE(error);
+  }
+  ASSERT_TRUE(write_file(directory.path() + "/frida/comm", "frida-fake\n"));
+  EXPECT_EQ(observe_threads(directory.path()), threads({"gum-js-loop"}));
+}
+
+TEST(Hooks, observeThreads_whenNumericLimitHasStrayEntry_doesNotCountOrReadIt) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  for (int thread_id = 1; thread_id <= 4096; ++thread_id) {
+    ASSERT_TRUE(write_thread(directory.path(), thread_id, "worker"));
+  }
+  ASSERT_TRUE(write_file(directory.path() + "/not-a-tid", ""));
+  EXPECT_EQ(observe_threads(directory.path()), threads({}));
 }
 
 TEST(Hooks, observeThreads_whenTaskLimitIsExceeded_neverReportsClean) {

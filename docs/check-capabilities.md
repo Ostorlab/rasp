@@ -30,7 +30,7 @@ read-error and truncation limits.
 Android `hook.inline/prologue` emits one observation with a variable string list of at most
 32 distinct changed libc/libdl names in fixed resolution order. An empty OK list requires all
 32 comparisons to succeed. Unavailable symbols/libraries, invalid ELF/maps, incomparable
-relocations and denied/short/stale memory reads are error results with no value or partial
+relocations and denied/short/stale memory reads are error results with neither a value nor a partial
 list. Off Android or on an unimplemented Android build architecture it is unsupported.
 Authorized instrumentation can change these bytes; this is not a malware verdict. The fixed
 list cannot cover other inline sites, renamed/unlisted targets, hidden modules or matching
@@ -40,7 +40,7 @@ as for the existing map/thread list outputs. Revision 2 and 3 artifacts remain f
 consumer even when their sidecars match their own pristine bytes.
 
 Android's opt-in `accessibility`, `input_method` and `notification_access` groups add four
-fixed output identities. Accessibility emits enabled component/capability/request-mask records;
+fixed output identities. The accessibility collector emits enabled accessibility component/capability/flag records;
 IME emits an enabled-component list plus the API34+ selected component; notification access
 emits enabled-listener components through the AndroidX-compatible secure setting. API31–33
 selected IME is explicitly unsupported, never inferred from the enabled list. The schema1
@@ -52,8 +52,8 @@ or settings strings can be empty OK. Assistive services/keyboards and authorized
 are legitimate context. Neither enabled access nor capability flags establish malware or
 active control. Existing groups, identity-only defaults and all iOS outputs are preserved.
 
-Android's supported release presets target API31+ and the four listed ABIs. The iOS release
-preset and consumer support arm64/iOS12+. `ios_device` probes emit unsupported on simulators
+Android's supported release presets target API31+ and the four ABIs listed in
+`checks_manifest.json`: `arm64-v8a`, `armeabi-v7a`, `x86_64` and `x86`. The iOS release preset and consumer support arm64/iOS12+. `ios_device` probes emit unsupported on simulators
 and non-iOS hosts; `apple` emulator tells also work on simulators; `never` means an explicit
 unsupported observation, such as iOS user CAs. Android probes emit unsupported off Android.
 Other build floors and targets require deliberate catalogue and consumer support.
@@ -75,15 +75,23 @@ and the platform package-resource READMEs. Ship each binary and its sidecar toge
 discovery uses `importlib.resources`, including installed wheels. Native CI stages real
 release artifacts and checks binding plus production config readers and writers.
 
-Validation bounds JSON to 128 KiB and rejects duplicate keys, groups or signal/source pairs;
-unknown structure, schema, kinds, statuses or support conditions; foreign catalogue
-identities; target/floor mismatches; and changed binary digests. A self-consistent foreign
-catalogue is still refused. There is no runtime-version lookup or current-catalogue fallback.
+Validation caps sidecar JSON at 128 KiB and rejects:
+
+- Duplicate keys, groups or signal/source pairs.
+- Unknown structure, schema, kinds, statuses or support conditions.
+- Foreign catalogue identities, even when self-consistent.
+- Target/floor mismatches.
+- Changed binary digests.
+
+There is no runtime-version lookup or current-catalogue fallback. Android resource discovery
+validates every present binary/sidecar pair in the installed distribution, including ABIs
+not selected for injection. Corruption in any present pair fails closed; selected-artifact
+provenance is a separate contract and does not narrow this distribution validation.
 
 A missing sidecar permits legacy packing with unknown capabilities:
-`PackResult.capability_bindings` is `None`. A selected mixture of known and legacy ABIs is
-also unknown. Invalid present metadata raises `InvalidRuntimeError` before protected output
-creation. Generating new metadata for an arbitrary old binary is not a valid release process;
+`PackResult.capability_bindings` is `None`. If the selected ABI set mixes artifacts with and without sidecars,
+`capability_bindings` is also `None`. Only an absent sidecar permits the legacy unknown state.
+Invalid present metadata raises `InvalidRuntimeError` before protected output creation. Generating new metadata for an arbitrary old binary is not a valid release process;
 capabilities must come from that binary's actual source build.
 
 Config insertion changes the binary. On iOS, the pristine sidecar is removed from the copied
