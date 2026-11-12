@@ -14,8 +14,8 @@ namespace rasp::ios::checks {
 /// On a physical iOS device it runs every probe. Anywhere else, on a simulator, a Mac or a Linux host, every
 /// observation is unsupported instead, so the result still shows that the check ran.
 ///
-/// @return One observation per signal and source, in this order: dbg.traced through sysctl, dbg.parent through getppid,
-/// then dbg.exception_ports through task_get_exception_ports.
+/// @return One observation per signal and source, in this order: dbg.traced through sysctl, dbg.traced through
+/// syscall, dbg.parent through getppid, then dbg.exception_ports through task_get_exception_ports.
 [[nodiscard]] std::vector<Observation> debugger();
 
 /// Reports whether the kernel marks the app's process as traced by a debugger.
@@ -29,6 +29,19 @@ namespace rasp::ios::checks {
 /// error status when sysctl fails or doesn't return a whole `kinfo_proc` entry, and the unsupported status on a system
 /// without these process flags.
 [[nodiscard]] Observation observe_traced();
+
+/// Reports the same `P_TRACED` flag as observe_traced, read a second way to catch a hook on the libc sysctl.
+///
+/// The traced flag read through the libc `sysctl` function can be lied to: a hook on `sysctl`, a common debugger
+/// bypass, clears the flag before the probe sees it. This probe makes the same `kinfo_proc` request as a direct system
+/// call, which that hook never runs, so a hook that hides the flag from one source leaves the two sources disagreeing.
+/// A hook on the `syscall` wrapper itself would still catch both, but that is a rarer and more invasive hook than one
+/// on `sysctl`.
+///
+/// @return One dbg.traced observation read through syscall: true when the flag is set, false when it is not. It has an
+/// error status when the system call fails or doesn't return a whole `kinfo_proc` entry, and the unsupported status on
+/// a system without these process flags.
+[[nodiscard]] Observation observe_traced_syscall();
 
 /// Reports the process id of the app's parent process.
 ///
