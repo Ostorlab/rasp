@@ -248,8 +248,8 @@ foreach(platform android ios)
     set(capability_util events/window_events.cpp util/signing_certificates.cpp util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp
       util/elf.cpp util/service_components.cpp)
   else()
-    set(capability_checks debugger emulator hooks identity integrity jailbreak mitm virtualizer)
-    set(capability_util util/macho.cpp util/sha256.cpp util/process_query.cpp)
+    set(capability_checks debugger emulator hooks identity integrity jailbreak mitm virtualizer capture)
+    set(capability_util util/macho.cpp util/sha256.cpp util/process_query.cpp capture/capture_events.cpp)
   endif()
   set(capability_sources ${PROJECT_SOURCE_DIR}/${platform}/src/builtin.cpp)
   foreach(check IN LISTS capability_checks)
@@ -563,3 +563,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(rasp_android_root_namespace_test PRIVATE RASP_TEST_WRAP_FSTAT)
   target_link_options(rasp_android_root_namespace_test PRIVATE -Wl,--wrap=fstat)
 endif()
+
+add_executable(rasp_ios_capture_events_test ios/capture/capture_events_test.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/capture/capture_events.cpp)
+target_include_directories(rasp_ios_capture_events_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_capture_events_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_ios_capture_events_test)
+
+target_sources(rasp_ios_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/checks/capture.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/capture/capture_events.cpp)

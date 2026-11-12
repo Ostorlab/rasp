@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "checks/capture.h"
 #include "checks/debugger.h"
 #include "checks/emulator.h"
 #include "checks/hooks.h"
@@ -20,7 +21,8 @@
 
 namespace rasp::ios {
 
-std::vector<Observation> run_checks(const Config& config, std::string_view inserted_libraries) {
+std::vector<Observation> run_checks(const Config& config, std::string_view inserted_libraries,
+                                    const capture::Input* capture_input) {
   std::vector<Observation> builtin;
   if (is_check_enabled(config, "jailbreak")) {
     std::ranges::move(checks::jailbreak(), std::back_inserter(builtin));
@@ -45,6 +47,11 @@ std::vector<Observation> run_checks(const Config& config, std::string_view inser
   }
   if (is_check_enabled(config, "mitm")) {
     std::ranges::move(checks::mitm(), std::back_inserter(builtin));
+  }
+  const bool screenshots = is_check_enabled(config, "screenshot");
+  const bool recording = is_check_enabled(config, "screen_recording");
+  if (screenshots || recording) {
+    std::ranges::move(checks::capture(screenshots, recording, capture_input), std::back_inserter(builtin));
   }
   return builtin;
 }

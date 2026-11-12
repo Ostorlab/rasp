@@ -418,7 +418,7 @@ TEST(LocalDecision, evaluate_whenEveryCanonicalTupleEnumerated_hasClosedFiniteIn
       EXPECT_LE(decision.evidence.capacity(), 10U);
     }
   }
-  EXPECT_EQ(total, 99U);
+  EXPECT_EQ(total, 125U);
 }
 /// Owning callback handoff used by a real plugin consumer.
 constexpr rasp::plugins::Key<std::shared_ptr<const rasp::CycleSnapshot>> kRetained{"test.decision.retained"};
@@ -537,6 +537,64 @@ TEST(LocalDecision,
                                       .value = std::int64_t{99},
                                   },
                               });
+    const auto* decision = row(snapshot->local_decisions, rule_id);
+    ASSERT_NE(decision, nullptr);
+    EXPECT_EQ(decision->reason, rasp::LocalReason::kStatusUnavailable);
+    EXPECT_EQ(snapshot->local_decisions.predicates_evaluated, 0U);
+  }
+}
+
+TEST(LocalDecision, evaluate_whenIOSCaptureRegistered_keepsAllTwentySixUnknownWithoutPredicates) {
+  std::vector<rasp::Observation> inputs;
+  for (const auto& output : rasp::cycle_catalogue("ios").outputs) {
+    if (output.group == "screenshot" || output.group == "screen_recording") {
+      inputs.push_back(rasp::observed(output.signal, output.source, true));
+    }
+  }
+  ASSERT_EQ(inputs.size(), 26U);
+  const auto snapshot = run("ios", {"screenshot", "screen_recording"}, inputs);
+  ASSERT_EQ(snapshot->local_decisions.reason, rasp::LocalReason::kNone);
+  EXPECT_EQ(snapshot->local_decisions.predicates_evaluated, 0U);
+  EXPECT_EQ(snapshot->local_decisions.coverage, rasp::LocalCoverage::kComplete);
+  for (const auto& input : inputs) {
+    const auto* decision = row(snapshot->local_decisions, "local.ios." + input.signal + "." + input.source);
+    ASSERT_NE(decision, nullptr);
+    EXPECT_EQ(decision->reason, rasp::LocalReason::kUnregisteredRule);
+    EXPECT_EQ(decision->verdict, rasp::LocalVerdict::kUnknown);
+    EXPECT_EQ(decision->severity, rasp::LocalSeverity::kUnknown);
+    EXPECT_EQ(decision->confidence, rasp::LocalConfidence::kUnavailable);
+    EXPECT_FALSE(decision->predicate_evaluated);
+  }
+}
+TEST(LocalDecision, evaluate_whenIOSCaptureEligibilityFails_appliesEligibilityBeforeUnregistered) {
+  const std::string rule_id = "local.ios.capture.screenshot.callback_events.uiapplication_screenshot";
+  const auto absent = run("ios", {"screenshot"}, {});
+  ASSERT_EQ(absent->local_decisions.reason, rasp::LocalReason::kNone);
+  const auto* missing = row(absent->local_decisions, rule_id);
+  ASSERT_NE(missing, nullptr);
+  EXPECT_EQ(missing->reason, rasp::LocalReason::kMissingObservation);
+  const std::vector<rasp::Observation> inputs{
+      rasp::observed("capture.screenshot.callback_events", "uiapplication_screenshot", true),
+  };
+  const auto disabled = run("ios", {}, inputs);
+  const auto* disabled_row = row(disabled->local_decisions, rule_id);
+  ASSERT_NE(disabled_row, nullptr);
+  EXPECT_EQ(disabled_row->reason, rasp::LocalReason::kConfigDisabled);
+  rasp::CycleMonitor monitor;
+  rasp::plugins::Context context;
+  const rasp::Config missing_config;
+  const auto unknown = monitor.run(missing_config, rasp::cycle_catalogue("ios"), {}, context, supplied, &inputs);
+  const auto* unknown_row = row(unknown->local_decisions, rule_id);
+  ASSERT_NE(unknown_row, nullptr);
+  EXPECT_EQ(unknown_row->reason, rasp::LocalReason::kConfigUnknown);
+  const auto duplicate = run("ios", {"screenshot"}, {inputs[0], inputs[0]});
+  const auto* duplicate_row = row(duplicate->local_decisions, rule_id);
+  ASSERT_NE(duplicate_row, nullptr);
+  EXPECT_EQ(duplicate_row->reason, rasp::LocalReason::kDuplicateObservation);
+  for (const auto status : {rasp::Status::kUnsupported, rasp::Status::kError, rasp::Status::kTimeout}) {
+    const auto snapshot =
+        run("ios", {"screenshot"},
+            {{.signal = inputs[0].signal, .source = inputs[0].source, .status = status, .value = true}});
     const auto* decision = row(snapshot->local_decisions, rule_id);
     ASSERT_NE(decision, nullptr);
     EXPECT_EQ(decision->reason, rasp::LocalReason::kStatusUnavailable);
