@@ -9,13 +9,15 @@ Before you change anything here, read [CONTRIBUTING.md](CONTRIBUTING.md): it lis
 The code is grouped the same way at every level. `util/` holds generic helpers that know nothing about RASP. Every other folder is one domain module, named after the job it does, such as `checks/`, which produces the observations, and on Android, `payload/`, which recovers the app's protected code. When a module has a part shared by every platform, that part is in `core/`, and its platform part is in the folder with the same name under `ios/` or `android/`. Every built-in check is platform code, so the built-in checks are only in the platform folders.
 
 - `core/`: code shared by every platform. It uses no platform API.
+  - `include/rasp/config.h`: `Config`, the runtime's config that the packer writes into the app (the build id and the ids of the check groups to run), and `is_check_enabled`. Without a list of groups, no group runs.
+  - `include/rasp/parse_config.h`: `parse_config`, which reads the config from the JSON the packer writes. Members it doesn't know are ignored.
   - `include/rasp/observation.h`: `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`), and `observed`, `unsupported` and `failed`, which build one.
   - `include/rasp/util/`: generic helpers.
     - `logging.h`: `rasp::log` and `kLoggingEnabled`, the development logging that release builds leave out.
     - `read_file.h`: `read_file`, which reads a whole file up to a size limit, for the checks that read files under `/proc` and `/sys`.
   - `src/`: the code of these headers, in the same folders.
 - `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it starts the thread that runs the checks.
-  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It runs the checks, then runs them again every 60 seconds. A development build logs each observation. It runs until the process exits, and iOS suspends it while the app is in the background.
+  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It runs the check groups the config lists, then runs them again every 60 seconds. A development build logs each observation. It runs until the process exits, and iOS suspends it while the app is in the background.
   - `src/checks/`: the iOS checks. Each one reports observations.
     - `debugger.h`: the debugger checks. Off a physical device every observation has the unsupported status.
       - `dbg.traced`: whether the kernel marks the app's process as traced by a debugger, read through sysctl from the `P_TRACED` flag of the process. The monitoring thread reads it on every pass, so it also sees a debugger that attaches after launch.
@@ -36,13 +38,23 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
         - the cryptex OS images under `/private/preboot/.../Cryptexes/OS/System/`, where modern iOS keeps stock frameworks such as WebKit
 
         A virtualizer maps its own runtime into the guest from its data container, so those images show up here (at most 64 such images are reported). A clean process reports an empty list.
+    - `hooks.h`: the hooking checks. Off a physical device every observation has the unsupported status.
+      - `hook.maps_hits`: the paths of the images loaded in the process, read through dyld, that name a known instrumentation or hooking framework (Frida, Cycript, Substrate and the tweak loaders that replace it, SSL Kill Switch and the like), matched on the file name or on a folder that only holds tweaks, without regard to case.
+      - `hook.dyld_env`: the value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, read through getenv, the libraries the environment asks dyld to insert into the app.
+      - `hook.frida_port`: whether a TCP connection to port 27042 of the loopback address is accepted, read through connect, the port frida-server and Frida Gadget listen on by default.
+      - `hook.rwx_regions`: the regions of the app's memory that are both writable and executable, read through vm_region, where injected code is often written.
+    - `identity.h`: the app-identity self-check, which reports the identity the app runs with, which a repackaged or re-signed copy changes. Off a physical device every observation has the unsupported status.
+      - `id.bundle_id`: the bundle identifier of the app's main bundle, read through two sources. `CFBundle` is the value CoreFoundation reports, and `Info.plist` is the `CFBundleIdentifier` key read from the main bundle's Info.plist file on disk, so a hook on CFBundle shows as two values that disagree.
+      - `id.team_id`: the Team ID of the code signature of the app's main executable, read through `code_signature`.
+      - `id.cdhash`: the cdhash of the code signature of the app's main executable, read through `code_signature`.
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
 - `android/`: `librasp.so`, the runtime for Android, and the stub that loads it. When the library loads, it starts the thread that runs the checks. The stub then has it install the on-demand class loader, which decrypts each of the app's own dex files the first time one of its classes is needed.
   - `src/entry.cpp`: a load-time constructor that starts the runtime's thread.
-  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It runs the checks, then runs them again every 60 seconds. A development build logs each observation. It runs until the process exits.
+  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It runs the check groups the config lists, then runs them again every 60 seconds. A development build logs each observation. It runs until the process exits.
   - `src/checks/`: the Android checks. Each one reports observations.
     - `debugger.h`: the debugger checks. They run on Android; off Android every observation has the unsupported status.
       - `dbg.tracer_pid`: the process id of the native debugger attached to the app, 0 when there is none, read from the `TracerPid:` line of `/proc/self/status`.
+      - `dbg.java_debugger`: whether a Java debugger is connected to the app, read through two sources that fail in different ways. `jdwp_threads` is the names of the app's threads that belong to JDWP, the connection of a Java debugger, read from `/proc/self/task/*/comm`: `ADB-JDWP Connec` runs while the app can be debugged, `JDWP Transport ` and `JDWP Event Help` start when a debugger attaches and stay after it detaches, and only `JDWP Command Re` runs while a debugger is attached. `debug_api` is what `android.os.Debug.isDebuggerConnected` returns through JNI, or an error status when the call can't be made or throws. Renamed threads leave the method returning `true`, and a hook on the method leaves the threads, so hiding one source shows as two values that disagree.
     - `emulator.h`: the emulator checks, which report whether the app runs on an emulator or a virtualized device rather than real hardware. They run on Android; off Android every observation has the unsupported status.
       - `emu.props`: the build properties whose value is an emulator tell, read through the system property store, as `name=value`. The hardware property is `goldfish` or `ranchu` (the Android emulator's machines), one of the QEMU flags `ro.kernel.qemu` or `ro.boot.qemu` is set, or the product name, model or device carries `sdk`, `emulator` or `generic`. A real device sets these to its own hardware and product names, so none match and the check reports nothing.
     - `hooks.h`: the hooking checks. They run on Android; off Android every observation has the unsupported status.

@@ -19,7 +19,9 @@ from tests.rasp_packer import conftest
 _FIXTURES = pathlib.Path(__file__).parent / "apk" / "fixtures"
 _MANIFEST = "manifest_with_application_and_version.bin"
 _PACKAGE = "com.example.withapp"
-_CONFIG = runtime_config.RuntimeConfig(build_id="rasp-build/v1:" + "ab" * 32)
+_CONFIG = runtime_config.RuntimeConfig(
+    build_id="rasp-build/v1:" + "ab" * 32, checks=("identity",)
+)
 _STUB_DEX = b"stub dex bytes"
 _ARM64_SO = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _ARSC = b"resources table"
