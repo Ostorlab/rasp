@@ -2,6 +2,11 @@
 
 The C++ runtime libraries that the packer adds to a protected app. They run the checks inside the app.
 
+Owned monitor snapshots include [typed local decision evidence](../docs/local-decisions-contract.md).
+The existing `on_cycle` callback receives the same immutable observations, coverage and report-only
+results. Disabled/missing/unavailable rows remain unknown; evaluated predicate counts are separate
+from row counts. These client observations grant no backend or operation authority.
+
 Android signing-block and key/map/DEX reads use bounded descriptors; see the
 [archive read limits](../docs/android-archive-reads.md) for allocation caps,
 ZIP validation, symlink compatibility and concurrent-mutation limits.

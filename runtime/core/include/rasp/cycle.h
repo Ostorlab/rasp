@@ -12,6 +12,7 @@
 
 #include "rasp/config.h"
 #include "rasp/context.h"
+#include "rasp/decision.h"
 #include "rasp/observation.h"
 
 namespace rasp::plugins {
@@ -123,6 +124,8 @@ struct CycleSnapshot {
   CycleMetadata metadata;
   /// Owned bounded observations; no spans into a later run.
   std::vector<Observation> observations;
+  /// Report-only typed decisions and evidence indices from this exact owned run.
+  LocalDecisionReport local_decisions{};
 };
 /// A process-local monitor state, created on its monitoring thread at startup.
 class CycleMonitor {

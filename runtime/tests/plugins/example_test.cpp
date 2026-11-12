@@ -3,10 +3,12 @@
 
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "rasp/context.h"
+#include "rasp/cycle.h"
 #include "rasp/observation.h"
 #include "rasp/plugin.h"
 #include "rasp/plugins/registry.h"
@@ -43,6 +45,19 @@ TEST(ExamplePlugin, runPlugins_whenInitialisedThenRunTwice_reportsTheBuildIdItsR
                         observed("example.runs", "counter", std::int64_t{2}),
                         observed("example.seen", "on_observations", static_cast<std::int64_t>(first.size())),
                     }));
+}
+TEST(ExamplePlugin, onCycle_whenRealMonitorPublishes_retainsSameImmutableOwningUnit) {
+  CycleMonitor monitor;
+  Context context;
+  constexpr Key<std::shared_ptr<const CycleSnapshot>> kRetainedCycle{"example.owned_cycle.v1"};
+  const auto snapshot =
+      monitor.run({.build_id = "test", .checks = std::vector<std::string>{}}, cycle_catalogue("android"), compiled_in(),
+                  context, [](const Config&, const void*) { return std::vector<Observation>{}; });
+  const auto retained = context.get(kRetainedCycle);
+  ASSERT_TRUE(retained.has_value());
+  EXPECT_EQ(*retained, snapshot);
+  EXPECT_EQ((*retained)->local_decisions.predicates_evaluated, 0U);
+  EXPECT_FALSE(context.get(kCycleSnapshot).has_value());
 }
 
 }  // namespace

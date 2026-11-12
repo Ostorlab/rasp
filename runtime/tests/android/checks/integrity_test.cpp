@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "support/decision.h"
 #include "support/files.h"
 
 namespace rasp::android::checks {
@@ -456,6 +457,10 @@ TEST(Integrity, observeTextHashes_whenMemoryMatchesTheFile_reportsEqualHashes) {
   const std::optional<std::string> hash = sha256_hex(text);
   ASSERT_TRUE(hash.has_value());
   EXPECT_EQ(observations, (std::vector<Observation>{hashed("file", *hash), hashed("memory", *hash)}));
+  const auto snapshot = test_support::decide("android", observations);
+  EXPECT_TRUE(std::ranges::any_of(snapshot->local_decisions.rows, [](const auto& decision) {
+    return decision.rule_id == "local.android.integrity_pair" && decision.reason == LocalReason::kHashesEqualUntrusted;
+  }));
 }
 
 TEST(Integrity, observeTextHashes_whenElf32MemoryMatchesTheFile_reportsEqualHashes) {
@@ -491,6 +496,11 @@ TEST(Integrity, observeTextHashes_whenMemoryWasPatched_reportsDifferentHashes) {
   EXPECT_EQ(observations[0].status, Status::kOk);
   EXPECT_EQ(observations[1].status, Status::kOk);
   EXPECT_NE(observations[0].value, observations[1].value);
+  const auto snapshot = test_support::decide("android", observations);
+  EXPECT_TRUE(std::ranges::any_of(snapshot->local_decisions.rows, [](const auto& decision) {
+    return decision.rule_id == "local.android.integrity_pair" && decision.reason == LocalReason::kHashesDiffer &&
+           decision.confidence == LocalConfidence::kLimited;
+  }));
 }
 
 TEST(Integrity, observeTextHashes_whenFileIsMissing_reportsAnError) {

@@ -18,6 +18,7 @@ configure_file(include/rasp/version.h.in ${CMAKE_CURRENT_BINARY_DIR}/include/ras
 
 add_library(rasp_core STATIC
   src/cycle.cpp
+  src/decision.cpp
   src/util/uuid.cpp
   src/config.cpp
   src/embedded_config.cpp

@@ -16,13 +16,16 @@ target_link_libraries(rasp_core_test PRIVATE rasp_core rasp_warnings rasp_langua
 target_compile_definitions(rasp_core_test PRIVATE RASP_EXPECTED_VERSION="${PROJECT_VERSION}")
 gtest_discover_tests(rasp_core_test)
 
-foreach(test config context cycle embedded_config install_id observation parse_config plugins/init_plugins plugins/plugin plugins/registry plugins/run_plugins)
+foreach(test config context cycle decision embedded_config install_id observation parse_config plugins/init_plugins plugins/plugin plugins/registry plugins/run_plugins)
   cmake_path(GET test FILENAME name)
   add_executable(rasp_core_${name}_test core/${test}_test.cpp)
   target_link_libraries(rasp_core_${name}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
   gtest_discover_tests(rasp_core_${name}_test)
 endforeach()
 target_include_directories(rasp_core_install_id_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_core_decision_test PRIVATE rasp_yyjson)
+target_compile_definitions(rasp_core_decision_test PRIVATE
+  RASP_ASSESSMENT_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/core/assessment_vectors.json")
 list(LENGTH rasp_compiled_plugins rasp_expected_plugin_count)
 target_link_libraries(rasp_core_registry_test PRIVATE rasp_plugins)
 target_compile_definitions(rasp_core_registry_test PRIVATE RASP_EXPECTED_PLUGIN_COUNT=${rasp_expected_plugin_count})

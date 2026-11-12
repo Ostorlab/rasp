@@ -152,8 +152,11 @@ void finish_cycle(CycleDispatch& cycle, std::vector<Observation> observations) {
                       metadata.duration_ns.has_value() && metadata.unknown_groups == 0 && metadata.missing.empty() &&
                       metadata.extra == 0 && metadata.dropped == 0 && metadata.unknown_status == 0 &&
                       !metadata.overflow;
-  cycle.snapshot = std::make_shared<const CycleSnapshot>(
-      CycleSnapshot{.metadata = std::move(metadata), .observations = std::move(observations)});
+  LocalDecisionReport decisions = evaluate_local_decisions(
+      metadata, std::span<const Observation>(observations).first(cycle.builtin_observations), cycle.catalogue);
+  cycle.snapshot = std::make_shared<const CycleSnapshot>(CycleSnapshot{.metadata = std::move(metadata),
+                                                                       .observations = std::move(observations),
+                                                                       .local_decisions = std::move(decisions)});
 }
 
 CycleCatalogue cycle_catalogue(std::string_view platform) {
@@ -178,6 +181,7 @@ std::shared_ptr<const CycleSnapshot> CycleMonitor::run(const Config& config, con
   const auto dispatch_guard = context.lock_dispatch();
   static_cast<void>(context.take(plugins::kCycleSnapshot));
   CycleDispatch cycle;
+  cycle.catalogue = catalogue;
   cycle.clock = clock_;
   CycleMetadata& metadata = cycle.metadata;
   metadata.session_id = session_id_;

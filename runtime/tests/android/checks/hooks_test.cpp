@@ -5,6 +5,7 @@
 
 #include "checks/hooks.h"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cerrno>
@@ -29,6 +30,7 @@
 #include <dlfcn.h>
 #include <pthread.h>
 #endif
+#include "support/decision.h"
 #include "support/files.h"
 #include "support/syscall_files.h"
 #include "util/direct_syscall.h"
@@ -193,6 +195,13 @@ TEST(Hooks, observeMaps_whenFridaAgentIsMapped_reportsItUnderMapsHitsThroughBoth
   ASSERT_EQ(observations.size(), 3U);
   EXPECT_EQ(observations[0], maps_hits({line}));
   EXPECT_EQ(observations[2], maps_hits({line}, "proc_maps_syscall"));
+  const auto snapshot = test_support::decide("android", observations);
+  EXPECT_TRUE(std::ranges::any_of(snapshot->local_decisions.rows, [](const auto& decision) {
+    return decision.rule_id == "native.android.hook.maps_hits.proc_maps" && decision.verdict == LocalVerdict::kThreat &&
+           decision.confidence == LocalConfidence::kLimited;
+  }));
+  ASSERT_EQ(snapshot->local_decisions.relations.size(), 1U);
+  EXPECT_EQ(snapshot->local_decisions.relations[0].state, LocalRelationState::kAgreePresent);
 }
 
 TEST(Hooks, observeMaps_whenAMarkerIsUppercase_matchesCaseInsensitively) {

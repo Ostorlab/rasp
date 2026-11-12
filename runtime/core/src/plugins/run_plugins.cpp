@@ -76,6 +76,7 @@ std::vector<Observation> dispatch_plugins(std::span<const Plugin* const> plugins
     std::vector<Observation> retained;
     append(retained, std::move(observations), *metadata, text_bytes);
     observations = std::move(retained);
+    cycle->builtin_observations = observations.size();
   }
   for (const Plugin* const plugin : plugins) {
     for (const Check check : plugin->checks) {
