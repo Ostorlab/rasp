@@ -1,7 +1,7 @@
 # Embedded local policy and adapted host operations
 
-**Embedded local policy** is an optional, offline, bounded set of rules embedded
-in a build. It lets the host gate a named operation on the runtime's own typed
+**Embedded local policy** is an optional, offline, bounded set of rules the packer
+writes into a protected build. It lets the host gate a named operation on the runtime's own typed
 measurements immediately before that operation. Without `local_policy`, the packer
 writes the same legacy config bytes and the runtime remains report-only. Check
 selection, required identity checks and capture opt-in keep their existing behavior.

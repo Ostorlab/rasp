@@ -333,3 +333,52 @@ def testPolicy_whenSelectionBoundsAreExceeded_rejectsWithoutTruncation(
         ]
     with pytest.raises(errors.InvalidLocalPolicyError):
         local_policy.parse(json.dumps(document).encode())
+
+
+@pytest.mark.parametrize(
+    ("platform", "abi"),
+    [
+        (platform, abi)
+        for platform, target in capabilities.catalogue()["platforms"].items()
+        for abi in target["abis"]
+    ],
+)
+def testSupport_whenUsingCatalogueTarget_bindsFixtureAndRejectsWrongFloor(
+    platform: str, abi: str
+) -> None:
+    target = capabilities.catalogue()["platforms"][platform]
+    fixture = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "docs/fixtures"
+        / f"local-policy-{platform}-v1.json"
+    )
+    policy = local_policy.load(fixture)
+    local_policy.validate_for(policy, platform, ("debugger", "identity"), "demo-1")
+    descriptor = local_policy.emit_support(
+        b"runtime", platform, abi, target["minimum_os"]
+    )
+    binding = local_policy.bind(b"runtime", descriptor, platform, abi, required=True)
+    assert binding is not None
+    assert binding.platform == policy.platform
+    assert binding.abi == abi
+    document = json.loads(descriptor)
+    assert document["minimum_os"] == target["minimum_os"]
+    document["minimum_os"] = "0"
+    with pytest.raises(errors.InvalidRuntimeError, match="binding mismatch"):
+        local_policy.bind(
+            b"runtime", local_policy.canonical(document), platform, abi, required=True
+        )
+
+
+@pytest.mark.parametrize("platform", ["", "other", "Android"])
+def testSupport_whenPlatformUnknown_raisesTypedRuntimeError(platform: str) -> None:
+    target = capabilities.catalogue()["platforms"]["android"]
+    descriptor = local_policy.emit_support(
+        b"runtime", "android", target["abis"][0], target["minimum_os"]
+    )
+    with pytest.raises(
+        errors.InvalidRuntimeError, match="unsupported policy-support target"
+    ):
+        local_policy.bind(
+            b"runtime", descriptor, platform, target["abis"][0], required=True
+        )

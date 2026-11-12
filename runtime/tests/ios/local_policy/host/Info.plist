@@ -12,10 +12,4 @@
 <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
 <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
 <key>UILaunchScreen</key><dict/>
-<key>UIApplicationSceneManifest</key><dict>
-<key>UIApplicationSupportsMultipleScenes</key><true/>
-<key>UISceneConfigurations</key><dict><key>UIWindowSceneSessionRoleApplication</key><array><dict>
-<key>UISceneConfigurationName</key><string>Capture</string>
-<key>UISceneDelegateClassName</key><string>CaptureSceneDelegate</string>
-</dict></array></dict></dict>
 </dict></plist>

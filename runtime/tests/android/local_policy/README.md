@@ -25,8 +25,9 @@ The host compiles that exact policy hash before packing. Rebuild it for a change
 policy/hash, including a changed policy_version. The actual operation admits only
 a non-null decision whose `allows()` returns true: status OK and final ALLOW.
 REPORT, unknown actions and non-OK results never admit through this accessor.
-Candidate ALLOW alone is advisory and does not establish admission. It reads a historical owned copy; gate again immediately before execution
-following any queue, resume or retry.
+Candidate ALLOW alone is advisory and does not establish admission. The decision is
+a historical owned copy, not a reusable permit; call the gate again immediately
+before execution after any queue, resume or retry.
 
 The native fixture tests exercise the shipping C/JNI facade and actual adapted
 in-memory operation for benign, indicator, unavailable status, stale, clock,

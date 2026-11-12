@@ -46,10 +46,10 @@ is `None`). `effective_checks` records config selection, not execution evidence.
 
 `--local-policy policy.json` (Python `local_policy=`) embeds a bounded opt-in policy
 for both Android and iOS.
-Absence preserves the exact legacy config and report-only behavior. Any explicit
+Without `--local-policy`, the packer writes the exact legacy config and the app stays report-only. Any explicit
 policy requires compatible policy-support descriptors and actual host ABI exports
 for every injected native artifact. The packer reports effective policy/config
-hashes; it cannot prove host adaptation. See [policy, API and compatibility](../docs/local-policy-contract.md).
+hashes; it cannot prove host adaptation. See [the local policy contract](../docs/local-policy-contract.md).
 
 ## Android
 
