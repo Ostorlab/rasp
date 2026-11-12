@@ -103,7 +103,7 @@ def testIsDangerous_whenZipCannotBeRead_returnsTrue(
     def _raise(*_: object, **__: object) -> object:
         raise OSError("cannot read")
 
-    monkeypatch.setattr(archive_safety.zipfile, "ZipFile", _raise)
+    monkeypatch.setattr(zipfile, "ZipFile", _raise)
 
     assert archive_safety.is_dangerous(app) is True
 
