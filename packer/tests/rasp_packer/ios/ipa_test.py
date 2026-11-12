@@ -118,6 +118,21 @@ def testExtract_whenEntryIsASymbolicLink_raisesInvalidAppError(
         _extract(ipa_file, tmp_path)
 
 
+def testExtract_whenDestinationPayloadSymlinksOutside_rejectsWithoutExternalWrite(
+    ipa_file: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (destination / "Payload").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(errors.InvalidAppError, match="outside the archive root"):
+        ipa.extract(ipa_file, destination)
+
+    assert list(outside.iterdir()) == []
+
+
 def testExtract_whenNoPayload_raisesInvalidAppError(tmp_path: pathlib.Path) -> None:
     path = tmp_path / "Demo.ipa"
     with zipfile.ZipFile(path, "w") as archive:

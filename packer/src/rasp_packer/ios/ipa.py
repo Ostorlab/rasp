@@ -11,14 +11,15 @@ import pathlib
 import plistlib
 import stat
 import zipfile
+import zlib
 from typing import Any
 from xml.parsers import expat
 
+from rasp_packer import archive_validation
 from rasp_packer import errors
 from rasp_packer import identity
 
 _PAYLOAD = "Payload"
-_MAX_EXTRACTED_BYTES = 4 * 1024 * 1024 * 1024
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -62,19 +63,37 @@ def extract(ipa: pathlib.Path, destination: pathlib.Path) -> AppBundle:
             existing executable.
     """
     try:
+        archive_validation.check_file(ipa)
         archive = zipfile.ZipFile(ipa)
     except zipfile.BadZipFile as error:
         raise errors.InvalidAppError(f"{ipa} is not a zip archive") from error
     except OSError as error:
         raise errors.InvalidAppError(f"cannot read {ipa}: {error.strerror}") from error
-    with archive:
-        entries = archive.infolist()
-        _check_entries(entries, destination)
-        for entry in entries:
-            path = pathlib.Path(archive.extract(entry, destination))
-            mode = _mode(entry)
-            if mode != 0:
-                os.chmod(path, mode)
+    try:
+        with archive:
+            entries = archive.infolist()
+            archive_validation.check_entries(entries)
+            root = destination.resolve()
+            for entry in entries:
+                target = (destination / entry.filename).resolve()
+                if target != root and root not in target.parents:
+                    raise errors.InvalidAppError(
+                        f"the entry {entry.filename} is outside the archive root"
+                    )
+            for entry in entries:
+                path = pathlib.Path(archive.extract(entry, destination))
+                mode = _mode(entry)
+                if mode != 0:
+                    os.chmod(path, mode)
+    except (
+        zipfile.BadZipFile,
+        OSError,
+        RuntimeError,
+        NotImplementedError,
+        EOFError,
+        zlib.error,
+    ) as error:
+        raise errors.InvalidAppError(f"cannot extract IPA: {error}") from error
     return _find_bundle(destination / _PAYLOAD)
 
 
@@ -109,24 +128,6 @@ def _mode(entry: zipfile.ZipInfo) -> int:
     return stat.S_IMODE(entry.external_attr >> 16)
 
 
-def _check_entries(entries: list[zipfile.ZipInfo], destination: pathlib.Path) -> None:
-    root = destination.resolve()
-    if sum(entry.file_size for entry in entries) > _MAX_EXTRACTED_BYTES:
-        raise errors.InvalidAppError(
-            f"the archive holds more than {_MAX_EXTRACTED_BYTES} bytes"
-        )
-    for entry in entries:
-        if stat.S_ISLNK(entry.external_attr >> 16) is True:
-            raise errors.InvalidAppError(
-                f"symbolic links are not supported: {entry.filename}"
-            )
-        target = (destination / entry.filename).resolve()
-        if target != root and root not in target.parents:
-            raise errors.InvalidAppError(
-                f"the entry {entry.filename} is outside the archive root"
-            )
-
-
 def _find_bundle(payload_dir: pathlib.Path) -> AppBundle:
     if payload_dir.is_dir() is False:
         raise errors.InvalidAppError("the archive has no Payload directory")
@@ -140,7 +141,7 @@ def _find_bundle(payload_dir: pathlib.Path) -> AppBundle:
             f"Payload holds {len(apps)} app bundles, expected 1"
         )
     app_dir = apps[0]
-    info = _read_info(app_dir / "Info.plist")
+    info = read_info(app_dir / "Info.plist")
     executable = app_dir / _executable_name(info)
     if executable.is_file() is False:
         raise errors.InvalidAppError(
@@ -157,7 +158,7 @@ def _find_bundle(payload_dir: pathlib.Path) -> AppBundle:
     )
 
 
-def _read_info(info_plist: pathlib.Path) -> dict[str, Any]:
+def read_info(info_plist: pathlib.Path) -> dict[str, Any]:
     """Reads the app's `Info.plist`, which must be a dictionary."""
     if info_plist.is_file() is False:
         raise errors.InvalidAppError("the app bundle has no Info.plist")
