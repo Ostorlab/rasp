@@ -36,14 +36,12 @@
 #include "rasp/observation.h"
 #include "rasp/panic.h"
 #include "rasp/plugins/registry.h"
+#include "rasp/schedule.h"
 #include "rasp/util/logging.h"
 
 namespace rasp::ios {
 
 namespace {
-
-/// How long the thread waits between two runs of the checks.
-constexpr std::chrono::seconds kCheckInterval{60};
 
 /// The folder of the app's sandbox that keeps the install id, under its home folder: Library/Application Support,
 /// which iOS never deletes to free space, unlike Library/Caches. The id's file is excluded from backups, so an id
@@ -112,10 +110,11 @@ struct Environment {
   return config;
 }
 
-/// The thread: reads the runtime's config and initialises the plugins with it, then runs the jailbreak, debugger,
-/// hooking, app-identity, emulator, virtualizer and network-interception checks, each only when the config enables its
-/// group, and the plugins, then again every kCheckInterval, until the process exits. The config and the context the
-/// plugins share are locals of this thread, which never returns, so they live as long as the process.
+/// The thread: reads the runtime's config and initialises the plugins with it, then, until the process exits, runs the
+/// jailbreak, debugger, hooking, app-identity, code-signing, emulator, virtualizer and network-interception checks,
+/// each only when the config enables its group, arms a panic when they detect something, runs the plugins and waits a
+/// random check_interval. The config and the context the plugins share are locals of this thread, which never returns,
+/// so they live as long as the process.
 ///
 /// @param argument What the runtime read from the app's environment when it loaded, an Environment allocated with
 /// `new` that the thread takes and keeps until the process exits.
@@ -159,7 +158,11 @@ void* monitor(void* argument) {
         rasp::log(describe(observation));
       }
     }
-    std::this_thread::sleep_for(kCheckInterval);
+    const std::chrono::milliseconds interval = check_interval();
+    if constexpr (rasp::kLoggingEnabled) {
+      rasp::log("next run in " + std::to_string(interval.count()) + " ms");
+    }
+    std::this_thread::sleep_for(interval);
   }
 }
 

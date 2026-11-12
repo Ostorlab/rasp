@@ -7,6 +7,7 @@ add_library(rasp_core STATIC
   src/observation.cpp
   src/panic.cpp
   src/parse_config.cpp
+  src/schedule.cpp
   src/plugins/init_plugins.cpp
   src/plugins/run_plugins.cpp
   src/util/read_file.cpp)

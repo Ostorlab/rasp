@@ -17,7 +17,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
     - `read_file.h`: `read_file`, which reads a whole file up to a size limit, for the checks that read files under `/proc` and `/sys`.
   - `src/`: the code of these headers, in the same folders.
 - `ios/`: `RaspRuntime.framework`, the runtime for iOS. When the app loads it, it starts the thread that runs the checks.
-  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It runs the check groups the config lists, then runs them again every 60 seconds. A development build logs each observation. It runs until the process exits, and iOS suspends it while the app is in the background.
+  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It runs the check groups the config lists, then runs them again after a random wait of 30 to 90 seconds. A development build logs each observation and each wait. It runs until the process exits, and iOS suspends it while the app is in the background.
   - `src/checks/`: the iOS checks. Each one reports observations.
     - `debugger.h`: the debugger checks. Off a physical device every observation has the unsupported status.
       - `dbg.traced`: whether the kernel marks the app's process as traced by a debugger, the `P_TRACED` flag of the process, read through two sources. `sysctl` reads it through the libc `sysctl` function; `syscall` reads the same flag through a direct `sysctl` system call, which a hook on the libc `sysctl` never runs, so a hook that hides the flag from one source leaves the two disagreeing. The monitoring thread reads both on every pass, so it still sees a debugger that attaches after launch. The runtime reports both observations and doesn't decide; a server reads the disagreement.
@@ -50,7 +50,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
   - `src/util/logging.cpp`: the iOS backend of `rasp::log`, which writes to the system log with os_log.
 - `android/`: `librasp.so`, the runtime for Android, and the stub that loads it. When the library loads, it starts the thread that runs the checks. The stub then has it install the on-demand class loader, which decrypts each of the app's own dex files the first time one of its classes is needed.
   - `src/entry.cpp`: a load-time constructor that starts the runtime's thread.
-  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It runs the check groups the config lists, then runs them again every 60 seconds. A development build logs each observation. It runs until the process exits.
+  - `src/monitoring.h`: `start_monitoring`, the runtime's thread. It runs the check groups the config lists, then runs them again after a random wait of 30 to 90 seconds. A development build logs each observation and each wait. It runs until the process exits.
   - `src/checks/`: the Android checks. Each one reports observations.
     - `debugger.h`: the debugger checks. They run on Android; off Android every observation has the unsupported status.
       - `dbg.tracer_pid`: the process id of the native debugger attached to the app, 0 when there is none, read from the `TracerPid:` line of `/proc/self/status`.
