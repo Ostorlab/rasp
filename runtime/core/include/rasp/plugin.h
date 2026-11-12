@@ -42,6 +42,8 @@ struct Plugin {
   /// @param context The values the plugins share, the same in every call. It lives as long as the process.
   void (*on_observations)(std::span<const Observation> observations, Context& context) = nullptr;
   /// Receives the immutable completed monitor snapshot after this plugin's legacy callback. May be null.
+  /// Its local_decisions interpret only the retained builtin prefix, stay unverified/report-only, and
+  /// distinguish unavailable rows from predicates_evaluated. No callback can mutate a retained cycle.
   /// Direct legacy run_plugins calls do not invoke it. Retain the pointer for asynchronous consumption.
   /// @param snapshot Metadata and observations with shared immutable ownership.
   /// @param context Process plugin values; the cycle key contains the same snapshot during callbacks.
