@@ -266,11 +266,15 @@ jobs:
       - name: Check development capture ABI and build the actual UIKit host
         run: |
           ./tests/ios/capture/check_framework.sh build/ios-dev/ios/RaspRuntime.framework "$RUNNER_TEMP/ios-capture-debug"
-          cmake -S tests/ios/capture/host -B "$RUNNER_TEMP/ios-capture-host" -G Xcode \
+          cmake -S tests/ios/capture/host -B "$RUNNER_TEMP/ios-capture-host" -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
             -DRASP_FRAMEWORK="$PWD/build/ios-dev/ios/RaspRuntime.framework"
-          cmake --build "$RUNNER_TEMP/ios-capture-host" --config Debug --parallel 2 -- CODE_SIGNING_ALLOWED=NO
+          cmake --build "$RUNNER_TEMP/ios-capture-host" --parallel 2
+          host="$RUNNER_TEMP/ios-capture-host/CaptureHost.app"
+          xcrun vtool -show-build "$host/CaptureHost" | grep -qxE ' *minos 12\.0'
+          cmp build/ios-dev/ios/RaspRuntime.framework/RaspRuntime "$host/Frameworks/RaspRuntime.framework/RaspRuntime"
       - name: Check the development build writes logs
         run: nm -u build/ios-dev/ios/RaspRuntime.framework/RaspRuntime | grep -q _os_log
 

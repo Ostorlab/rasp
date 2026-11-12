@@ -12,15 +12,18 @@ cd runtime
 cmake --preset ios-dev
 cmake --build --preset ios-dev --parallel 2
 ./tests/ios/capture/check_framework.sh "$PWD/build/ios-dev/ios/RaspRuntime.framework" /tmp/capture-abi
-cmake -S tests/ios/capture/host -B build/capture-host -G Xcode \
+cmake -S tests/ios/capture/host -B build/capture-host -G "Unix Makefiles" \
+  -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
   -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DRASP_FRAMEWORK="$PWD/build/ios-dev/ios/RaspRuntime.framework"
-cmake --build build/capture-host --config Debug --parallel 2 -- CODE_SIGNING_ALLOWED=NO
+cmake --build build/capture-host --parallel 2
 ```
 
-That last command is a real iOS host compile/link gate, not a signed device run. For device
-execution, configure your normal development team/signing in the generated Xcode project,
-create the fixture IPA, and pack it with the matching runtime/sidecar and
+That last command builds an unsigned iOS app bundle with the actual Xcode compiler/SDK, not a
+signed device run. The Makefiles generator preserves iOS 12 without Xcode 27's project-level
+minimum-target rejection; the runtime already uses this compiler path. The bundle explicitly
+copies the matching framework and uses `@executable_path/Frameworks`. For device execution,
+create the fixture IPA from `build/capture-host/CaptureHost.app`, then pack it with the matching runtime/sidecar and
 `--checks screenshot,screen_recording`. Follow the packer's normal unsigned-output signing
 steps before installing on the device. The host links only the six public C functions; packing
 must use the same matching framework ABI. Do not substitute a simulator or synthetic notification
