@@ -17,7 +17,7 @@ https://github.com/user-attachments/assets/a43d48ed-75ec-43b1-ad76-77fc08826493
 - **No source code changes:** protect the build you already ship.
 - **Choose the checks:** turn on only the check groups that fit your users.
 - **Detects:** root and jailbreak, debuggers, Frida and other hooking, emulators, app virtualizers, network
-  interception (VPN tunnels and proxies), changes to the runtime's own code (reported for server-side comparison), and repackaged copies.
+  interception (VPN tunnels and proxies), raw runtime-code hashes with report-only comparison evidence, and repackaged copies.
 - **Runs all the time:** the checks run when the app starts, then every 60 seconds.
 - **Events on the Ostorlab platform:** protect apps and see their events in
   [Mobile ADR](#use-adr-on-the-ostorlab-platform) (Mobile Application Detection & Response).
@@ -103,7 +103,7 @@ result = packer.pack(
 | `jailbreak` | | ✓ | Jailbreak files, sandbox escape and process spawning |
 | `debugger` | ✓ | ✓ | A debugger attached to the app |
 | `hooks` | ✓ | ✓ | Frida and other hooking frameworks; on Android, changed libc/libdl entry bytes ([limits](runtime/inline_hooks.md)) |
-| `integrity` | ✓ | ✓ | File/memory SHA-256 observations of the runtime's own code; no local comparison or tampering verdict |
+| `integrity` | ✓ | ✓ | Raw file/memory SHA-256 and [report-only comparison](docs/local-decisions-contract.md); equality is not a trusted baseline |
 | `mitm` | ✓ | ✓ | VPN tunnels, and proxies on iOS |
 | `identity` | ✓ | ✓ | A repackaged copy of the app (always on) |
 | `emulator` | ✓ | ✓ | An emulator or the iOS Simulator |
