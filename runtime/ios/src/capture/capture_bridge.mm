@@ -18,24 +18,24 @@ using rasp::ios::capture::Scope;
 __attribute__((visibility("hidden")))
 @interface RaspCaptureCoordinator : NSObject {
  @public
-  std::int64_t session_;
-  std::int64_t generation_;
-  std::int64_t selection_ordinal_;
-  std::uint32_t options_;
-  BOOL running_;
-  BOOL scene_mode_;
-  BOOL application_active_;
-  BOOL infrastructure_ready_;
-  BOOL selection_ready_;
-  BOOL selection_present_;
-  BOOL entry_in_progress_;
-  __weak id selected_;
-  __weak UIScreen* screen_;
-  id trait_token_;
-  id screen_token_;
-  id screenshot_token_;
-  std::array<id, 7> lifecycle_tokens_;
-  NSTimer* timer_;
+  std::int64_t capture_session;
+  std::int64_t capture_generation;
+  std::int64_t capture_selection_ordinal;
+  std::uint32_t capture_options;
+  BOOL capture_running;
+  BOOL capture_scene_mode;
+  BOOL capture_application_active;
+  BOOL capture_infrastructure_ready;
+  BOOL capture_selection_ready;
+  BOOL capture_selection_present;
+  BOOL capture_entry_in_progress;
+  __weak id capture_selected;
+  __weak UIScreen* capture_screen;
+  id capture_trait_token;
+  id capture_screen_token;
+  id capture_screenshot_token;
+  std::array<id, 7> capture_lifecycle_tokens;
+  NSTimer* capture_timer;
 }
 /// Installs only the shared application lifecycle/timer slots.
 - (BOOL)install_process;
@@ -80,13 +80,13 @@ __attribute__((visibility("hidden")))
   }
 }
 - (BOOL)observe:(NSNotificationName)name slot:(NSUInteger)slot scene:(BOOL)scene {
-  if (slot >= 7 || std::span{lifecycle_tokens_}[slot] != nil) {
+  if (slot >= 7 || std::span{capture_lifecycle_tokens}[slot] != nil) {
     return NO;
   }
   __weak RaspCaptureCoordinator* weak_self = self;
-  const std::int64_t session = session_;
-  const std::int64_t selection = selection_ordinal_;
-  std::span{lifecycle_tokens_}[slot] = [NSNotificationCenter.defaultCenter
+  const std::int64_t session = capture_session;
+  const std::int64_t selection = capture_selection_ordinal;
+  std::span{capture_lifecycle_tokens}[slot] = [NSNotificationCenter.defaultCenter
       addObserverForName:name
                   object:nil
                    queue:nil
@@ -99,8 +99,8 @@ __attribute__((visibility("hidden")))
                   return;
                 }
                 RaspCaptureCoordinator* owner = weak_self;
-                if (owner == nil || !owner->running_ || owner->session_ != session ||
-                    (scene && owner->selection_ordinal_ != selection)) {
+                if (owner == nil || !owner->capture_running || owner->capture_session != session ||
+                    (scene && owner->capture_selection_ordinal != selection)) {
                   return;
                 }
                 @try {
@@ -113,20 +113,20 @@ __attribute__((visibility("hidden")))
                   }
                 }
               }];
-  return std::span{lifecycle_tokens_}[slot] != nil;
+  return std::span{capture_lifecycle_tokens}[slot] != nil;
 }
 - (BOOL)clear_capture:(Availability)reason remove_lifecycle:(BOOL)remove_lifecycle {
-  capture_events().invalidate(session_, reason);
-  generation_ = 0;
+  capture_events().invalidate(capture_session, reason);
+  capture_generation = 0;
   BOOL clean = YES;
-  if (trait_token_ != nil) {
+  if (capture_trait_token != nil) {
     @try {
       if (__builtin_available(iOS 17.0, *)) {
-        id owner = selected_;
+        id owner = capture_selected;
         if (owner != nil && [owner isKindOfClass:UIWindowScene.class]) {
-          [static_cast<UIWindowScene*>(owner) unregisterForTraitChanges:trait_token_];
+          [static_cast<UIWindowScene*>(owner) unregisterForTraitChanges:capture_trait_token];
         }
-        trait_token_ = nil;
+        capture_trait_token = nil;
       } else {
         clean = NO;
       }
@@ -135,19 +135,19 @@ __attribute__((visibility("hidden")))
       clean = NO;
     }
   }
-  if (![self remove_notification:&screen_token_]) {
+  if (![self remove_notification:&capture_screen_token]) {
     clean = NO;
   }
   if (remove_lifecycle) {
     for (NSUInteger index = 3; index < 7; ++index) {
-      if (![self remove_notification:&std::span{lifecycle_tokens_}[index]]) {
+      if (![self remove_notification:&std::span{capture_lifecycle_tokens}[index]]) {
         clean = NO;
       }
     }
   }
-  screen_ = nil;
+  capture_screen = nil;
   if (!clean) {
-    capture_events().failure(session_, 1, Availability::kTeardownError);
+    capture_events().failure(capture_session, 1, Availability::kTeardownError);
   }
   return clean;
 }
@@ -162,32 +162,33 @@ __attribute__((visibility("hidden")))
       healthy = NO;
     }
     __weak RaspCaptureCoordinator* weak_self = self;
-    const std::int64_t session = session_;
-    timer_ = [NSTimer timerWithTimeInterval:5.0
-                                    repeats:YES
-                                      block:^(NSTimer* timer) {
-                                        static_cast<void>(timer);
-                                        if (pthread_main_np() == 0) {
-                                          capture_events().reject(session, 0, 0, true);
-                                          capture_events().reject(session, 1, 0, true);
-                                          return;
-                                        }
-                                        RaspCaptureCoordinator* owner = weak_self;
-                                        if (owner == nil || owner->session_ != session || !owner->running_) {
-                                          return;
-                                        }
-                                        @try {
-                                          static_cast<void>([owner refresh]);
-                                        } @catch (NSException* exception) {
-                                          static_cast<void>(exception);
-                                          capture_events().failure(session, 0, Availability::kError);
-                                          capture_events().failure(session, 1, Availability::kError);
-                                        }
-                                      }];
-    if (timer_ == nil) {
+    const std::int64_t session = capture_session;
+    capture_timer =
+        [NSTimer timerWithTimeInterval:5.0
+                               repeats:YES
+                                 block:^(NSTimer* timer) {
+                                   static_cast<void>(timer);
+                                   if (pthread_main_np() == 0) {
+                                     capture_events().reject(session, 0, 0, true);
+                                     capture_events().reject(session, 1, 0, true);
+                                     return;
+                                   }
+                                   RaspCaptureCoordinator* owner = weak_self;
+                                   if (owner == nil || owner->capture_session != session || !owner->capture_running) {
+                                     return;
+                                   }
+                                   @try {
+                                     static_cast<void>([owner refresh]);
+                                   } @catch (NSException* exception) {
+                                     static_cast<void>(exception);
+                                     capture_events().failure(session, 0, Availability::kError);
+                                     capture_events().failure(session, 1, Availability::kError);
+                                   }
+                                 }];
+    if (capture_timer == nil) {
       healthy = NO;
     } else {
-      [NSRunLoop.mainRunLoop addTimer:timer_ forMode:NSRunLoopCommonModes];
+      [NSRunLoop.mainRunLoop addTimer:capture_timer forMode:NSRunLoopCommonModes];
     }
   } @catch (NSException* exception) {
     static_cast<void>(exception);
@@ -196,9 +197,9 @@ __attribute__((visibility("hidden")))
   return healthy;
 }
 - (BOOL)install_screenshot {
-  const std::int64_t session = session_;
+  const std::int64_t session = capture_session;
   @try {
-    screenshot_token_ =
+    capture_screenshot_token =
         [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationUserDidTakeScreenshotNotification
                                                         object:nil
                                                          queue:nil
@@ -206,69 +207,69 @@ __attribute__((visibility("hidden")))
                                                       static_cast<void>(notification);
                                                       capture_events().screenshot(session);
                                                     }];
-    return screenshot_token_ != nil;
+    return capture_screenshot_token != nil;
   } @catch (NSException* exception) {
     static_cast<void>(exception);
     return NO;
   }
 }
 - (int32_t)start:(uint32_t)options {
-  if (running_) {
-    return options_ == options ? RASP_IOS_CAPTURE_NO_CHANGE : RASP_IOS_CAPTURE_OPTIONS_CONFLICT;
+  if (capture_running) {
+    return capture_options == options ? RASP_IOS_CAPTURE_NO_CHANGE : RASP_IOS_CAPTURE_OPTIONS_CONFLICT;
   }
   const int32_t cleanup = [self stop];
   if (cleanup == RASP_IOS_CAPTURE_CLEANUP_ERROR) {
     return cleanup;
   }
-  session_ = capture_events().start((options & RASP_IOS_CAPTURE_SCREENSHOTS) != 0,
-                                    (options & RASP_IOS_CAPTURE_RECORDING) != 0);
-  if (session_ <= 0) {
+  capture_session = capture_events().start((options & RASP_IOS_CAPTURE_SCREENSHOTS) != 0,
+                                           (options & RASP_IOS_CAPTURE_RECORDING) != 0);
+  if (capture_session <= 0) {
     return RASP_IOS_CAPTURE_EXHAUSTED;
   }
-  options_ = options;
-  running_ = YES;
-  application_active_ = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+  capture_options = options;
+  capture_running = YES;
+  capture_application_active = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
   const BOOL healthy = [self install_process];
-  infrastructure_ready_ = healthy;
+  capture_infrastructure_ready = healthy;
   if (!healthy) {
-    capture_events().failure(session_, 0, Availability::kRegistrationError);
-    capture_events().failure(session_, 1, Availability::kRegistrationError);
+    capture_events().failure(capture_session, 0, Availability::kRegistrationError);
+    capture_events().failure(capture_session, 1, Availability::kRegistrationError);
     return RASP_IOS_CAPTURE_REGISTRATION_ERROR;
   }
-  if ((options_ & RASP_IOS_CAPTURE_SCREENSHOTS) != 0 && ![self install_screenshot]) {
-    capture_events().failure(session_, 0, Availability::kRegistrationError);
+  if ((capture_options & RASP_IOS_CAPTURE_SCREENSHOTS) != 0 && ![self install_screenshot]) {
+    capture_events().failure(capture_session, 0, Availability::kRegistrationError);
     return RASP_IOS_CAPTURE_REGISTRATION_ERROR;
   }
-  if (screenshot_token_ != nil) {
-    capture_events().screenshot_ready(session_, application_active_);
+  if (capture_screenshot_token != nil) {
+    capture_events().screenshot_ready(capture_session, capture_application_active);
   }
   return RASP_IOS_CAPTURE_OK;
 }
 - (int32_t)select:(id)object scene:(BOOL)scene {
-  if (!running_) {
+  if (!capture_running) {
     return RASP_IOS_CAPTURE_NOT_STARTED;
   }
-  if ((options_ & RASP_IOS_CAPTURE_RECORDING) == 0) {
+  if ((capture_options & RASP_IOS_CAPTURE_RECORDING) == 0) {
     return RASP_IOS_CAPTURE_NOT_REQUESTED;
   }
-  if (!infrastructure_ready_) {
+  if (!capture_infrastructure_ready) {
     return RASP_IOS_CAPTURE_REGISTRATION_ERROR;
   }
-  if (selection_present_ && selected_ == object && scene_mode_ == scene) {
+  if (capture_selection_present && capture_selected == object && capture_scene_mode == scene) {
     return RASP_IOS_CAPTURE_NO_CHANGE;
   }
   if (![self clear_capture:Availability::kNoSelection remove_lifecycle:YES]) {
     return RASP_IOS_CAPTURE_CLEANUP_ERROR;
   }
-  selected_ = nil;
-  if (selection_ordinal_ == INT64_MAX) {
+  capture_selected = nil;
+  if (capture_selection_ordinal == INT64_MAX) {
     return RASP_IOS_CAPTURE_EXHAUSTED;
   }
-  ++selection_ordinal_;
-  selected_ = object;
-  selection_present_ = YES;
-  scene_mode_ = scene;
-  selection_ready_ = NO;
+  ++capture_selection_ordinal;
+  capture_selected = object;
+  capture_selection_present = YES;
+  capture_scene_mode = scene;
+  capture_selection_ready = NO;
   BOOL healthy = YES;
   if (scene) {
     if (__builtin_available(iOS 13.0, *)) {
@@ -287,26 +288,26 @@ __attribute__((visibility("hidden")))
     }
   }
   if (!healthy) {
-    capture_events().failure(session_, 1, Availability::kRegistrationError);
+    capture_events().failure(capture_session, 1, Availability::kRegistrationError);
     return RASP_IOS_CAPTURE_REGISTRATION_ERROR;
   }
-  selection_ready_ = YES;
+  capture_selection_ready = YES;
   return [self refresh];
 }
 - (void)sample:(SampleKind)kind {
-  const std::int64_t generation = generation_;
-  const std::int64_t serial = capture_events().ticket(session_, generation);
+  const std::int64_t generation = capture_generation;
+  const std::int64_t serial = capture_events().ticket(capture_session, generation);
   if (serial <= 0) {
     return;
   }
-  id object = selected_;
+  id object = capture_selected;
   if (object == nil) {
     static_cast<void>([self clear_capture:Availability::kOwnerGone remove_lifecycle:YES]);
-    selection_present_ = NO;
+    capture_selection_present = NO;
     return;
   }
   int state = -1;
-  if (scene_mode_) {
+  if (capture_scene_mode) {
     if (__builtin_available(iOS 17.0, *)) {
       const UISceneCaptureState actual = static_cast<UIWindowScene*>(object).traitCollection.sceneCaptureState;
       switch (actual) {
@@ -323,7 +324,7 @@ __attribute__((visibility("hidden")))
           break;
       }
     } else {
-      UIScreen* screen = screen_;
+      UIScreen* screen = capture_screen;
       if (screen != nil) {
         state = screen.isCaptured ? 1 : 0;
       }
@@ -331,58 +332,57 @@ __attribute__((visibility("hidden")))
   } else {
     if (__builtin_available(iOS 17.0, *)) {
       return;
-    } else {
-      UIScreen* screen = screen_;
-      if (screen != nil) {
-        state = screen.isCaptured ? 1 : 0;
-      }
+    }
+    UIScreen* screen = capture_screen;
+    if (screen != nil) {
+      state = screen.isCaptured ? 1 : 0;
     }
   }
-  capture_events().sample(session_, generation, serial, kind, state);
+  capture_events().sample(capture_session, generation, serial, kind, state);
 }
 - (int32_t)refresh {
-  if (!running_) {
+  if (!capture_running) {
     return RASP_IOS_CAPTURE_NOT_STARTED;
   }
-  if (!infrastructure_ready_) {
+  if (!capture_infrastructure_ready) {
     return RASP_IOS_CAPTURE_REGISTRATION_ERROR;
   }
   if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) {
-    application_active_ = NO;
+    capture_application_active = NO;
   }
-  if (screenshot_token_ != nil && timer_ != nil) {
-    capture_events().screenshot_ready(session_, application_active_);
+  if (capture_screenshot_token != nil && capture_timer != nil) {
+    capture_events().screenshot_ready(capture_session, capture_application_active);
   }
   @try {
     return [self refresh_capture];
   } @catch (NSException* exception) {
     static_cast<void>(exception);
-    capture_events().failure(session_, 1, Availability::kError);
+    capture_events().failure(capture_session, 1, Availability::kError);
     return RASP_IOS_CAPTURE_UNAVAILABLE;
   }
 }
 - (int32_t)refresh_capture {
-  if ((options_ & RASP_IOS_CAPTURE_RECORDING) == 0) {
+  if ((capture_options & RASP_IOS_CAPTURE_RECORDING) == 0) {
     return RASP_IOS_CAPTURE_OK;
   }
-  if (!selection_present_) {
+  if (!capture_selection_present) {
     return RASP_IOS_CAPTURE_OK;
   }
-  id object = selected_;
+  id object = capture_selected;
   if (object == nil) {
     static_cast<void>([self clear_capture:Availability::kOwnerGone remove_lifecycle:YES]);
-    selection_present_ = NO;
+    capture_selection_present = NO;
     return RASP_IOS_CAPTURE_OK;
   }
-  if (!selection_ready_) {
+  if (!capture_selection_ready) {
     return RASP_IOS_CAPTURE_REGISTRATION_ERROR;
   }
-  BOOL eligible = application_active_;
+  BOOL eligible = capture_application_active;
   UIScreen* screen = nil;
   BOOL modern = NO;
-  if (scene_mode_) {
+  if (capture_scene_mode) {
     if (__builtin_available(iOS 13.0, *)) {
-      UIWindowScene* scene = static_cast<UIWindowScene*>(object);
+      auto* const scene = static_cast<UIWindowScene*>(object);
       eligible = scene.activationState == UISceneActivationStateForegroundActive;
       if (__builtin_available(iOS 17.0, *)) {
         modern = YES;
@@ -391,7 +391,7 @@ __attribute__((visibility("hidden")))
       }
     }
   } else {
-    UIWindow* window = static_cast<UIWindow*>(object);
+    auto* const window = static_cast<UIWindow*>(object);
     eligible = eligible && !window.hidden;
     screen = window.screen;
   }
@@ -399,7 +399,7 @@ __attribute__((visibility("hidden")))
     return [self clear_capture:Availability::kInactive remove_lifecycle:NO] ? RASP_IOS_CAPTURE_OK
                                                                             : RASP_IOS_CAPTURE_CLEANUP_ERROR;
   }
-  if (generation_ > 0 && (modern || screen_ == screen)) {
+  if (capture_generation > 0 && (modern || capture_screen == screen)) {
     [self sample:SampleKind::kResample];
     return RASP_IOS_CAPTURE_OK;
   }
@@ -407,23 +407,23 @@ __attribute__((visibility("hidden")))
     return RASP_IOS_CAPTURE_CLEANUP_ERROR;
   }
   if (!modern && screen == nil) {
-    capture_events().failure(session_, 1, Availability::kError);
+    capture_events().failure(capture_session, 1, Availability::kError);
     return RASP_IOS_CAPTURE_UNAVAILABLE;
   }
   return [self install_selected:object modern:modern screen:screen];
 }
 - (int32_t)install_selected:(id)object modern:(BOOL)modern screen:(UIScreen*)screen {
-  generation_ = capture_events().open(session_, modern ? Scope::kScene : Scope::kScreen);
-  if (generation_ <= 0) {
+  capture_generation = capture_events().open(capture_session, modern ? Scope::kScene : Scope::kScreen);
+  if (capture_generation <= 0) {
     return RASP_IOS_CAPTURE_EXHAUSTED;
   }
   __weak RaspCaptureCoordinator* weak_self = self;
-  const std::int64_t session = session_;
-  const std::int64_t generation = generation_;
+  const std::int64_t session = capture_session;
+  const std::int64_t generation = capture_generation;
   @try {
     if (modern) {
       if (__builtin_available(iOS 17.0, *)) {
-        trait_token_ = [static_cast<UIWindowScene*>(object)
+        capture_trait_token = [static_cast<UIWindowScene*>(object)
             registerForTraitChanges:@[ UITraitSceneCaptureState.class ]
                         withHandler:^(id<UITraitEnvironment> environment, UITraitCollection* previous) {
                           static_cast<void>(environment);
@@ -433,8 +433,8 @@ __attribute__((visibility("hidden")))
                             return;
                           }
                           RaspCaptureCoordinator* owner = weak_self;
-                          if (owner == nil || !owner->running_ || owner->session_ != session ||
-                              owner->generation_ != generation) {
+                          if (owner == nil || !owner->capture_running || owner->capture_session != session ||
+                              owner->capture_generation != generation) {
                             capture_events().reject(session, 1, generation, false);
                             return;
                           }
@@ -447,8 +447,8 @@ __attribute__((visibility("hidden")))
                         }];
       }
     } else {
-      screen_ = screen;
-      screen_token_ = [NSNotificationCenter.defaultCenter
+      capture_screen = screen;
+      capture_screen_token = [NSNotificationCenter.defaultCenter
           addObserverForName:UIScreenCapturedDidChangeNotification
                       object:nil
                        queue:nil
@@ -458,12 +458,12 @@ __attribute__((visibility("hidden")))
                       return;
                     }
                     RaspCaptureCoordinator* owner = weak_self;
-                    if (owner == nil || !owner->running_ || owner->session_ != session ||
-                        owner->generation_ != generation) {
+                    if (owner == nil || !owner->capture_running || owner->capture_session != session ||
+                        owner->capture_generation != generation) {
                       capture_events().reject(session, 1, generation, false);
                       return;
                     }
-                    if (notification.object != owner->screen_) {
+                    if (notification.object != owner->capture_screen) {
                       return;
                     }
                     @try {
@@ -476,28 +476,28 @@ __attribute__((visibility("hidden")))
     }
   } @catch (NSException* exception) {
     static_cast<void>(exception);
-    capture_events().failure(session_, 1, Availability::kRegistrationError);
+    capture_events().failure(capture_session, 1, Availability::kRegistrationError);
     return RASP_IOS_CAPTURE_REGISTRATION_ERROR;
   }
-  if ((modern && trait_token_ == nil) || (!modern && screen_token_ == nil)) {
-    capture_events().failure(session_, 1, Availability::kRegistrationError);
+  if ((modern && capture_trait_token == nil) || (!modern && capture_screen_token == nil)) {
+    capture_events().failure(capture_session, 1, Availability::kRegistrationError);
     return RASP_IOS_CAPTURE_REGISTRATION_ERROR;
   }
-  capture_events().registered(session_, generation_);
+  capture_events().registered(capture_session, capture_generation);
   [self sample:SampleKind::kInitial];
   return RASP_IOS_CAPTURE_OK;
 }
 - (void)lifecycle:(NSNotification*)notification scene:(BOOL)scene {
   if (scene) {
-    if (notification.object != selected_) {
+    if (notification.object != capture_selected) {
       return;
     }
     if (__builtin_available(iOS 13.0, *)) {
       if ([notification.name isEqualToString:UISceneDidDisconnectNotification]) {
         const BOOL clean = [self clear_capture:Availability::kDisconnected remove_lifecycle:YES];
-        selection_present_ = NO;
+        capture_selection_present = NO;
         if (clean) {
-          selected_ = nil;
+          capture_selected = nil;
         }
         return;
       }
@@ -507,12 +507,12 @@ __attribute__((visibility("hidden")))
       }
     }
   } else {
-    application_active_ = [notification.name isEqualToString:UIApplicationDidBecomeActiveNotification];
-    if (!application_active_) {
-      if (screenshot_token_ != nil) {
-        capture_events().screenshot_ready(session_, false);
+    capture_application_active = [notification.name isEqualToString:UIApplicationDidBecomeActiveNotification];
+    if (!capture_application_active) {
+      if (capture_screenshot_token != nil) {
+        capture_events().screenshot_ready(capture_session, false);
       }
-      if (!scene_mode_) {
+      if (!capture_scene_mode) {
         static_cast<void>([self clear_capture:Availability::kInactive remove_lifecycle:NO]);
       }
       return;
@@ -521,34 +521,34 @@ __attribute__((visibility("hidden")))
   static_cast<void>([self refresh]);
 }
 - (int32_t)stop {
-  const BOOL was_running = running_;
-  capture_events().stop(session_);
-  running_ = NO;
-  infrastructure_ready_ = NO;
+  const BOOL was_running = capture_running;
+  capture_events().stop(capture_session);
+  capture_running = NO;
+  capture_infrastructure_ready = NO;
   BOOL clean = [self clear_capture:Availability::kDeactivated remove_lifecycle:YES];
   for (NSUInteger index = 0; index < 3; ++index) {
-    if (![self remove_notification:&std::span{lifecycle_tokens_}[index]]) {
+    if (![self remove_notification:&std::span{capture_lifecycle_tokens}[index]]) {
       clean = NO;
     }
   }
-  if (![self remove_notification:&screenshot_token_]) {
+  if (![self remove_notification:&capture_screenshot_token]) {
     clean = NO;
   }
   @try {
-    [timer_ invalidate];
-    timer_ = nil;
+    [capture_timer invalidate];
+    capture_timer = nil;
   } @catch (NSException* exception) {
     static_cast<void>(exception);
     clean = NO;
   }
-  selection_present_ = NO;
+  capture_selection_present = NO;
   if (clean) {
-    selected_ = nil;
-    options_ = 0;
-    capture_events().cleanup_complete(session_);
+    capture_selected = nil;
+    capture_options = 0;
+    capture_events().cleanup_complete(capture_session);
   } else {
-    capture_events().failure(session_, 0, Availability::kTeardownError);
-    capture_events().failure(session_, 1, Availability::kTeardownError);
+    capture_events().failure(capture_session, 0, Availability::kTeardownError);
+    capture_events().failure(capture_session, 1, Availability::kTeardownError);
   }
   if (!clean) {
     return RASP_IOS_CAPTURE_CLEANUP_ERROR;
@@ -566,7 +566,7 @@ namespace {
 /// Obtains the main-thread owner only after an explicit start.
 [[nodiscard]] RaspCaptureCoordinator* coordinator(bool create) {
   if (coordinator_storage() == nullptr && create) {
-    RaspCaptureCoordinator* owner = [[RaspCaptureCoordinator alloc] init];
+    RaspCaptureCoordinator* const owner = [[RaspCaptureCoordinator alloc] init];
     coordinator_storage() = (__bridge_retained void*)owner;
   }
   return (__bridge RaspCaptureCoordinator*)coordinator_storage();
@@ -594,22 +594,22 @@ namespace {
       if (owner == nil) {
         return create ? RASP_IOS_CAPTURE_UNAVAILABLE : RASP_IOS_CAPTURE_NOT_STARTED;
       }
-      if (owner->entry_in_progress_) {
+      if (owner->capture_entry_in_progress) {
         return RASP_IOS_CAPTURE_UNAVAILABLE;
       }
-      owner->entry_in_progress_ = YES;
+      owner->capture_entry_in_progress = YES;
       const int32_t result = operation(owner);
-      owner->entry_in_progress_ = NO;
+      owner->capture_entry_in_progress = NO;
       return result;
     } @catch (NSException* exception) {
       static_cast<void>(exception);
       if (owner != nil) {
-        owner->entry_in_progress_ = NO;
+        owner->capture_entry_in_progress = NO;
         if ((affected & RASP_IOS_CAPTURE_SCREENSHOTS) != 0) {
-          capture_events().failure(owner->session_, 0, Availability::kError);
+          capture_events().failure(owner->capture_session, 0, Availability::kError);
         }
         if ((affected & RASP_IOS_CAPTURE_RECORDING) != 0) {
-          capture_events().failure(owner->session_, 1, Availability::kError);
+          capture_events().failure(owner->capture_session, 1, Availability::kError);
         }
       }
       return RASP_IOS_CAPTURE_UNAVAILABLE;
@@ -625,13 +625,15 @@ int32_t rasp_ios_capture_start(uint32_t options) {
     return [owner start:options];
   });
 }
+/// Preserve the approved public void* function-pointer type; the borrowed UIKit object is not const.
+/// NOLINTNEXTLINE(misc-const-correctness)
 int32_t rasp_ios_capture_select_scene(void* window_scene) {
   return perform(false, RASP_IOS_CAPTURE_RECORDING, ^int32_t(RaspCaptureCoordinator* owner) {
     if (window_scene == nullptr) {
       return RASP_IOS_CAPTURE_INVALID_ARGUMENT;
     }
     if (__builtin_available(iOS 13.0, *)) {
-      id object = (__bridge id)window_scene;
+      id const object = (__bridge id)window_scene;
       if (![object isKindOfClass:UIWindowScene.class]) {
         return RASP_IOS_CAPTURE_INVALID_ARGUMENT;
       }
@@ -640,12 +642,14 @@ int32_t rasp_ios_capture_select_scene(void* window_scene) {
     return RASP_IOS_CAPTURE_UNSUPPORTED_TARGET_OR_MODE;
   });
 }
+/// Preserve the approved public void* function-pointer type; the borrowed UIKit object is not const.
+/// NOLINTNEXTLINE(misc-const-correctness)
 int32_t rasp_ios_capture_select_legacy_window(void* window) {
   return perform(false, RASP_IOS_CAPTURE_RECORDING, ^int32_t(RaspCaptureCoordinator* owner) {
     if (window == nullptr) {
       return RASP_IOS_CAPTURE_INVALID_ARGUMENT;
     }
-    id object = (__bridge id)window;
+    id const object = (__bridge id)window;
     if (![object isKindOfClass:UIWindow.class]) {
       return RASP_IOS_CAPTURE_INVALID_ARGUMENT;
     }
@@ -660,21 +664,23 @@ int32_t rasp_ios_capture_select_legacy_window(void* window) {
     return [owner select:object scene:NO];
   });
 }
+/// Preserve the approved public void* function-pointer type; the borrowed UIKit object is not const.
+/// NOLINTNEXTLINE(misc-const-correctness)
 int32_t rasp_ios_capture_clear_selection(void* selected_object) {
   return perform(false, RASP_IOS_CAPTURE_RECORDING, ^int32_t(RaspCaptureCoordinator* owner) {
     if (selected_object == nullptr) {
       return RASP_IOS_CAPTURE_INVALID_ARGUMENT;
     }
-    if (!owner->running_) {
+    if (!owner->capture_running) {
       return RASP_IOS_CAPTURE_NOT_STARTED;
     }
-    if (owner->selected_ != (__bridge id)selected_object) {
+    if (owner->capture_selected != (__bridge id)selected_object) {
       return RASP_IOS_CAPTURE_NO_CHANGE;
     }
     const BOOL clean = [owner clear_capture:Availability::kNoSelection remove_lifecycle:YES];
     if (clean) {
-      owner->selected_ = nil;
-      owner->selection_present_ = NO;
+      owner->capture_selected = nil;
+      owner->capture_selection_present = NO;
     }
     return clean ? RASP_IOS_CAPTURE_OK : RASP_IOS_CAPTURE_CLEANUP_ERROR;
   });

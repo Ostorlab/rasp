@@ -2,12 +2,12 @@
 #pragma once
 #include <stdint.h>
 
-#if defined(__GNUC__)
+#ifdef __GNUC__
 #define RASP_IOS_CAPTURE_API __attribute__((visibility("default")))
 #else
 #define RASP_IOS_CAPTURE_API
 #endif
-#if defined(__APPLE__)
+#ifdef __APPLE__
 #define RASP_IOS_CAPTURE_HOST __attribute__((availability(ios_app_extension, unavailable)))
 #else
 #define RASP_IOS_CAPTURE_HOST
