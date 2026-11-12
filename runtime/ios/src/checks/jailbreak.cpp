@@ -3,11 +3,10 @@
 
 #include "checks/jailbreak.h"
 
-#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <fcntl.h>
-#include <iterator>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -71,12 +70,32 @@ constexpr std::array<std::string_view, 21> kArtifactPaths = {
 };
 
 /// Whether access finds a file at `path`.
-[[nodiscard]] bool found_by_access(const std::string& path) { return access(path.c_str(), F_OK) == 0; }
+[[nodiscard]] std::optional<bool> found_by_access(const std::string& path) {
+  if (path.empty() || path.contains('\0')) {
+    return std::nullopt;
+  }
+  if (access(path.c_str(), F_OK) == 0) {
+    return true;
+  }
+  if (errno == ENOENT || errno == ENOTDIR) {
+    return false;
+  }
+  return std::nullopt;
+}
 
 /// Whether stat finds a file at `path`.
-[[nodiscard]] bool found_by_stat(const std::string& path) {
+[[nodiscard]] std::optional<bool> found_by_stat(const std::string& path) {
+  if (path.empty() || path.contains('\0')) {
+    return std::nullopt;
+  }
   struct stat info{};
-  return stat(path.c_str(), &info) == 0;
+  if (stat(path.c_str(), &info) == 0) {
+    return true;
+  }
+  if (errno == ENOENT || errno == ENOTDIR) {
+    return false;
+  }
+  return std::nullopt;
 }
 
 /// One way of asking whether a file exists at a path.
@@ -84,7 +103,7 @@ struct PathSource {
   /// The observation's source, such as access or stat.
   std::string_view name;
   /// Whether this source finds a file at the path.
-  bool (*exists)(const std::string& path);
+  std::optional<bool> (*exists)(const std::string& path);
 };
 
 /// The sources jb.fs_paths reads each path through, in the order their observations are reported.
@@ -101,18 +120,36 @@ std::vector<Observation> observe_paths(std::span<const std::string_view> paths) 
   observations.reserve(kPathSources.size());
   for (const PathSource& source : kPathSources) {
     std::vector<std::string> found;
-    std::ranges::copy_if(candidates, std::back_inserter(found), source.exists);
-    observations.push_back(observed(kPathsSignal, source.name, std::move(found)));
+    bool complete = true;
+    for (const auto& path : candidates) {
+      const auto exists = source.exists(path);
+      if (!exists.has_value()) {
+        complete = false;
+        break;
+      }
+      if (*exists) {
+        found.push_back(path);
+      }
+    }
+    observations.push_back(complete ? observed(kPathsSignal, source.name, std::move(found))
+                                    : failed(kPathsSignal, source.name));
   }
   return observations;
 }
 
 Observation observe_sandbox_write(std::string_view probe_path) {
+  if (probe_path.empty() || probe_path.contains('\0')) {
+    return failed(kSandboxSignal, "open");
+  }
   const std::string path(probe_path);
-  const int descriptor = creat(path.c_str(), S_IRUSR | S_IWUSR);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): POSIX exclusive open avoids truncating host files.
+  const int descriptor = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR);
   if (descriptor >= 0) {
-    close(descriptor);
-    unlink(path.c_str());
+    const bool closed = close(descriptor) == 0;
+    const bool removed = unlink(path.c_str()) == 0;
+    if (!closed || !removed) {
+      return failed(kSandboxSignal, "open");
+    }
     return observed(kSandboxSignal, "open", true);
   }
   switch (errno) {

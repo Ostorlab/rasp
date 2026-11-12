@@ -62,8 +62,8 @@
     }
   ],
   "counter_interval": "delta since previous selected drain, including session transitions; first duration -1; no touches never proves absence",
-  "registration": "schema1_revision6",
-  "catalogue_id": "28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4",
+  "registration": "schema1_revision8",
+  "catalogue_id": "479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a",
   "observations": [
     {
       "signal": "overlay.observer_state",

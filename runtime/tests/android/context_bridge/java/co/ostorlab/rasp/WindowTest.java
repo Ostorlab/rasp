@@ -147,6 +147,39 @@ public final class WindowTest {
             super.setCallback(callback);
         }
     }
+    private static void duplicateWindowTeardown(Application app, Window.Callback original) {
+        check(RuntimeBridge.startWindowObservation(app) == RuntimeBridge.INITIALIZED);
+        RejectingWindow window = new RejectingWindow(); window.setCallback(original);
+        check(RuntimeBridge.attachWindow(window) == RuntimeBridge.INITIALIZED);
+        Window.Callback wrapper = window.getCallback();
+        window.reject = true;
+        check(RuntimeBridge.attachWindow(window) == RuntimeBridge.ALREADY_INITIALIZED);
+        check(window.getCallback() == wrapper);
+        wrapper.onDetachedFromWindow();
+        check(RuntimeBridge.attachWindow(window) == RuntimeBridge.JNI_ERROR);
+        check(window.getCallback() == wrapper);
+        wrapper.dispatchTouchEvent(new MotionEvent(3));
+        String[] failure = read(true); contains(failure, "coverage", "loss_detected");
+        contains(failure, "lost_windows", "1");
+        contains(failure, "active_windows", "0"); contains(failure, "touch_events", "0");
+        window.reject = false;
+        check(RuntimeBridge.stopWindowObservation() == RuntimeBridge.INITIALIZED);
+        window.setCallback(original);
+        check(RuntimeBridge.startWindowObservation(app) == RuntimeBridge.INITIALIZED);
+        check(RuntimeBridge.attachWindow(window) == RuntimeBridge.INITIALIZED);
+        wrapper = window.getCallback(); wrapper.onDetachedFromWindow();
+        check(RuntimeBridge.attachWindow(window) == RuntimeBridge.OWNERSHIP_LOST);
+        check(window.getCallback() == original);
+        check(RuntimeBridge.attachWindow(window) == RuntimeBridge.INITIALIZED);
+        Window.Callback replacement = delegate(new java.util.ArrayList<>(), null);
+        window.setCallback(replacement); window.reject = true;
+        check(RuntimeBridge.attachWindow(window) == RuntimeBridge.OWNERSHIP_LOST);
+        check(window.getCallback() == replacement);
+        check(RuntimeBridge.stopWindowObservation() == RuntimeBridge.INITIALIZED);
+        window.reject = false;
+        read(true);
+    }
+
     public static void main(String[] args) throws Exception {
         // Force main-looper initialization before spawning a worker.
         Looper.getMainLooper();
@@ -299,6 +332,7 @@ public final class WindowTest {
         app.resume(unregister); check(unregister.getWindow().getCallback() == original);
         contains(read(true), "observer_state", "error");
         app.failUnregister = false; app.callbacks.clear();
+        duplicateWindowTeardown(app, original);
         adapterFailures(app, original);
         check(registrationFailure()); contains(read(true), "observer_state", "error");
         System.out.println("actual Java/JNI/window dispatcher lifecycle, forwarding, loss, overflow, concurrency PASS");

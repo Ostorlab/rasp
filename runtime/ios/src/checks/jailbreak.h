@@ -24,8 +24,8 @@ namespace rasp::ios::checks {
 /// Reports which of `paths` exist, read through two sources, access and stat.
 ///
 /// Each path is looked up twice. A hook that hides a jailbreak file from one source but not the other makes the two
-/// lists disagree, which is itself a sign of tampering. Both observations are produced even when no path exists: an
-/// empty list is a real answer, not a failure.
+/// lists disagree; ordinary sequential changes can also do that. ENOENT/ENOTDIR means not found in the caller's
+/// view. Other lookup failures invalidate the whole source, without a partial list or proof of stock.
 ///
 /// @param paths The paths to look for, such as the known jailbreak artifact paths.
 /// @return Two jb.fs_paths observations: the paths found through access, then the paths found through stat.
@@ -33,10 +33,10 @@ namespace rasp::ios::checks {
 
 /// Reports whether the app can create a file at `probe_path`, a path outside its sandbox.
 ///
-/// A sandboxed app cannot write there, so a success means the sandbox is not in force, as on a jailbroken device. The
-/// probe file is removed at once when the write succeeds. A refusal the sandbox explains (permission denied, a
-/// read-only filesystem, or a missing parent directory) is reported as false; any other failure is reported as an
-/// error.
+/// Exclusive creation never truncates an existing host file or follows a final symlink. A new probe is removed
+/// immediately; close/cleanup failures are error. Historical false means only that this attempted write was refused
+/// or its parent was missing (EPERM/EACCES/EROFS/ENOENT). Sealed-volume and policy refusals cannot prove an intact
+/// sandbox or absence of jailbreak. Other failures, including an existing path, are error.
 ///
 /// @param probe_path The path to try to create, outside the app's sandbox.
 /// @return One jb.sandbox_escape observation read through open: true when the file was created, false when the write

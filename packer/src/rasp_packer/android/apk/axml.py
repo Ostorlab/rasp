@@ -31,6 +31,7 @@ reference to those strings.
 The parser is checked against manifests produced by aapt2; see the tests.
 """
 
+import collections.abc
 import dataclasses
 import struct
 from typing import Self
@@ -729,6 +730,8 @@ def _permission_region(data: bytes) -> tuple[_StringPool, bytearray]:
             elif kind == RES_XML_END_ELEMENT_TYPE and (header != 16 or size < 24):
                 raise AxmlError("invalid capture manifest end element")
             offset += size
+        for _ in _query_nodes(region, pool):
+            pass
         return pool, region
     except (IndexError, struct.error, UnicodeError, ValueError) as error:
         raise AxmlError("malformed capture manifest") from error
@@ -845,3 +848,157 @@ def ensure_uses_permission(data: bytes, permission: str) -> bytes:
         return result
     except (IndexError, struct.error, UnicodeError, ValueError) as error:
         raise AxmlError("malformed capture manifest") from error
+
+
+def _query_nodes(
+    region: _Buffer, pool: _StringPool
+) -> collections.abc.Iterator[tuple[int, int, int, tuple[str, ...]]]:
+    """Walk validated element chunks without modifying host query intents/providers or nesting."""
+    stack: list[str] = []
+    offset = 0
+    while offset < len(region):
+        if len(region) - offset < 8:
+            raise AxmlError("truncated XML chunk")
+        kind, header, size = struct.unpack_from("<HHI", region, offset)
+        if size < header or header < 8 or size > len(region) - offset:
+            raise AxmlError("invalid XML chunk size")
+        if kind in (RES_XML_START_ELEMENT_TYPE, RES_XML_END_ELEMENT_TYPE):
+            if size < (36 if kind == RES_XML_START_ELEMENT_TYPE else 24):
+                raise AxmlError("truncated element")
+            name = _string(pool, _u32(region, offset + 20))
+            if kind == RES_XML_START_ELEMENT_TYPE:
+                stack.append(name)
+                attributes = _u16(region, offset + 24) + _NODE_HEADER_SIZE
+                if (
+                    _u16(region, offset + 26) != _ATTRIBUTE_SIZE
+                    or attributes < 36
+                    or attributes + _u16(region, offset + 28) * _ATTRIBUTE_SIZE > size
+                ):
+                    raise AxmlError("invalid element attributes")
+                if len(stack) > 256:
+                    raise AxmlError("XML nesting exceeds limit")
+            elif len(stack) == 0 or stack[-1] != name:
+                raise AxmlError("unbalanced XML elements")
+            yield offset, size, kind, tuple(stack)
+            if kind == RES_XML_END_ELEMENT_TYPE:
+                stack.pop()
+        offset += size
+    if len(stack) != 0:
+        raise AxmlError("unclosed XML element")
+
+
+def read_package_queries(data: bytes) -> tuple[str, ...]:
+    """Read exact direct package queries in order, without enumerating or changing intents/providers."""
+    pool, region = _split(data)
+    result: list[str] = []
+    for offset, _, kind, path in _query_nodes(region, pool):
+        if kind != RES_XML_START_ELEMENT_TYPE or path != (
+            "manifest",
+            "queries",
+            "package",
+        ):
+            continue
+        attributes = offset + _NODE_HEADER_SIZE + _u16(region, offset + 24)
+        for index in range(_u16(region, offset + 28)):
+            attribute = attributes + index * _ATTRIBUTE_SIZE
+            namespace = _u32(region, attribute)
+            if (
+                namespace != _NO_ENTRY
+                and _string(pool, namespace) == ANDROID_NAMESPACE
+                and _string(pool, _u32(region, attribute + 4)) == "name"
+            ):
+                if region[attribute + 15] != _TYPE_STRING:
+                    raise AxmlError("package query name must be literal")
+                result.append(_string(pool, _u32(region, attribute + 16)))
+    return tuple(result)
+
+
+def add_package_queries(data: bytes, packages: tuple[str, ...]) -> bytes:
+    """Append missing exact package queries, retaining every original host element and attribute.
+
+    Only the caller's fixed selected list is added; no permission or broad query is introduced.
+    Reapplication is byte-identical. Missing queries are inserted in the first direct queries element.
+    """
+    existing = read_package_queries(data)
+    missing = tuple(
+        dict.fromkeys(package for package in packages if package not in existing)
+    )
+    if len(missing) == 0:
+        return data
+    pool, raw = _split(data)
+    region = bytearray(raw)
+    resource_map = _resource_map(region)
+    name_index = _attribute_name_index(resource_map, ATTR_NAME_RESOURCE_ID)
+    if name_index is None:
+        name_index = len(resource_map)
+        _shift_string_references(region, name_index)
+        _insert_resource_map_entry(region, name_index, ATTR_NAME_RESOURCE_ID)
+        pool.insert(name_index, "name")
+    namespace = pool.index(ANDROID_NAMESPACE)
+    if namespace is None:
+        raise AxmlError("manifest has no android namespace string")
+
+    def index(text: str) -> int:
+        found = pool.index(text)
+        return pool.append(text) if found is None else found
+
+    def start(tag: int, attribute: bytes = b"") -> bytes:
+        return (
+            struct.pack(
+                "<HHIII",
+                RES_XML_START_ELEMENT_TYPE,
+                16,
+                36 + len(attribute),
+                0,
+                _NO_ENTRY,
+            )
+            + struct.pack(
+                "<IIHHHHHH",
+                _NO_ENTRY,
+                tag,
+                20,
+                20,
+                1 if len(attribute) > 0 else 0,
+                0,
+                0,
+                0,
+            )
+            + attribute
+        )
+
+    def end(tag: int) -> bytes:
+        return struct.pack(
+            "<HHIIIII", RES_XML_END_ELEMENT_TYPE, 16, 24, 0, _NO_ENTRY, _NO_ENTRY, tag
+        )
+
+    package_tag = index("package")
+    added = bytearray()
+    for package in missing:
+        value = index(package)
+        attribute = struct.pack(
+            "<IIIHBBI", namespace, name_index, value, 8, 0, _TYPE_STRING, value
+        )
+        added.extend(start(package_tag, attribute) + end(package_tag))
+    insertion = next(
+        (
+            offset
+            for offset, _, kind, path in _query_nodes(region, pool)
+            if kind == RES_XML_END_ELEMENT_TYPE and path == ("manifest", "queries")
+        ),
+        None,
+    )
+    if insertion is None:
+        insertion = next(
+            (
+                offset
+                for offset, _, kind, path in _query_nodes(region, pool)
+                if kind == RES_XML_END_ELEMENT_TYPE and path == ("manifest",)
+            ),
+            None,
+        )
+        if insertion is None:
+            raise AxmlError("manifest has no root closing element")
+        tag = index("queries")
+        added = bytearray(start(tag) + added + end(tag))
+    region[insertion:insertion] = added
+    return _assemble(pool, region)

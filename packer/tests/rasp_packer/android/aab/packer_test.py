@@ -275,3 +275,63 @@ def testPackAab_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     )
     assert app_identity.package_name == _PACKAGE
     assert app_identity.version == "1.0"
+
+
+@pytest.mark.parametrize("selected", [True, False])
+def testPack_whenRootPackagesSelected_addsOnlyExactOptInQueries(
+    tmp_path: pathlib.Path, selected: bool
+) -> None:
+    app = tmp_path / "app.aab"
+    output = tmp_path / "protected.aab"
+    _make_aab(app)
+    config = runtime_config.RuntimeConfig(
+        build_id=_BUILD_ID,
+        checks=("identity", "root_packages") if selected else ("identity",),
+    )
+    packer.pack(
+        app=app,
+        output=output,
+        config=config,
+        artifacts=_artifacts(),
+        aab_splitter=_recorded_aab_split(),
+    )
+    with zipfile.ZipFile(output) as archive:
+        manifest = archive.read("base/manifest/AndroidManifest.xml")
+    assert proto_manifest.read_package_queries(manifest) == (
+        resources.ROOT_MANAGER_PACKAGES_V1 if selected else ()
+    )
+    assert b"QUERY_ALL_PACKAGES" not in manifest
+
+
+@pytest.mark.parametrize("oversize", ["map", "map_utf8", "dex"])
+def testPack_whenPayloadExceedsRuntimeLimit_rejectsBeforePublication(
+    tmp_path: pathlib.Path, oversize: str
+) -> None:
+    app = tmp_path / "app.aab"
+    output = tmp_path / "protected.aab"
+    _make_aab(app)
+    business = split.BusinessDex(
+        path="business/0.dex",
+        data=b"x" * (64 * 1024 * 1024 + 1) if oversize == "dex" else b"dex",
+        classes=(
+            ("x" * (8 * 1024 * 1024),)
+            if oversize == "map"
+            else ("é" * (4 * 1024 * 1024),)
+            if oversize == "map_utf8"
+            else (f"{_PACKAGE}.A",)
+        ),
+    )
+
+    def splitter(app_data: object, package: str) -> split.Split:
+        return split.Split(framework=_FRAMEWORK, business=(business,))
+
+    with pytest.raises(errors.InvalidAppError, match="runtime payload limit"):
+        packer.pack(
+            app=app,
+            output=output,
+            config=_CONFIG,
+            artifacts=_artifacts(),
+            aab_splitter=splitter,
+        )
+    assert output.exists() is False
+    assert list(tmp_path.glob(".rasp-*")) == []

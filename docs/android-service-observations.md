@@ -45,8 +45,8 @@ sorting. No parallel component/flag arrays can lose association.
 | Public OS API level | Accessibility | Enabled IMEs | Selected IME | Notification listeners |
 |---|---|---|---|---|
 | Below 31 | unsupported | unsupported | unsupported | unsupported |
-| 31, 32, 33 | public enabled list + masks | public enabled list, fallback context only | unsupported; no lookup of the API34 method | AndroidX-compatible secure setting pattern |
-| 34, 35 and later | same public enabled list + masks | same public enabled list | public `getCurrentInputMethodInfo()` | same pattern; denied/missing values remain error |
+| 31, 32, 33 | enabled accessibility component/capability/flag records | public enabled list, fallback context only | unsupported; no lookup of the API34 method | AndroidX-compatible secure setting pattern; denied/missing values remain error |
+| 34, 35 and later | same enabled accessibility component/capability/flag records | same public enabled list | public `getCurrentInputMethodInfo()` | same pattern; denied/missing values remain error |
 
 The runtime's supported Android floor is 31. Version gates use public `Build.VERSION.SDK_INT`, before looking up
 newer methods. An unreadable/malformed SDK value reports error. Future OS versions are attempted through these
@@ -143,8 +143,8 @@ allows repeatable measurement after real Application attachment without adding a
 and host tests do not establish physical-device, vendor/profile, minified-host or service effectiveness results.
 [Portable positive, benign and unknown examples](fixtures/android-service-observations-v1.json) define exact output
 names and semantics for coordinated backend/UI adoption. They deliberately contain no malware-family or automatic
-malware verdict. These four outputs, introduced in schema1revision4, remain unchanged in schema1revision6, catalogue `28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4`,
+malware verdict. These four outputs, introduced in schema 1, revision 4, remain unchanged in schema 1, revision 8, catalogue `479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a`,
 alongside the inherited inline-hook and second-source contracts. Native CMake emits sidecars
-for this combined source; a pristine revision3 sidecar remains foreign to its revision6 consumer.
+for this combined source; a pristine revision 3 sidecar remains foreign to its revision 8 consumer.
 See [binding and expected-output semantics](check-capabilities.md). Backend/UI adoption remains
 a separate coordinated change.

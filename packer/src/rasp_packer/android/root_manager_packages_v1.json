@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "reviewed_on": "2026-11-12",
+  "purpose": "Selected root-manager package visibility context only; not installation, activity or root proof",
+  "packages": [
+    {"name": "com.topjohnwu.magisk", "source": "https://github.com/topjohnwu/Magisk", "scope": "Default upstream manager identifier; repackaged variants excluded"},
+    {"name": "me.weishu.kernelsu", "source": "https://github.com/tiann/KernelSU/blob/main/manager/app/build.gradle.kts", "scope": "Default upstream manager identifier; PR/custom variants excluded"},
+    {"name": "me.bmax.apatch", "source": "https://github.com/bmax121/APatch", "scope": "Default upstream manager identifier; custom variants excluded"}
+  ]
+}

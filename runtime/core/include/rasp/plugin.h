@@ -32,9 +32,13 @@ struct Plugin {
   void (*init)(const Config& config, Context& context);
   /// The plugin's checks.
   std::span<const Check> checks;
-  /// Receives all the observations. May be null.
+  /// Receives observations retained for this dispatch. May be null.
+  /// Monitor dispatch is bounded to 256 observations, 64 KiB text and 64 entries per string list; oversized
+  /// observations are dropped whole. This span may therefore omit measured data and carries no drop/coverage
+  /// accounting. Prefer on_cycle to consume and retain the owned snapshot with that metadata.
+  /// Direct legacy run_plugins calls preserve their unbounded behavior without cycle metadata.
   ///
-  /// @param observations All the observations, valid only during the call.
+  /// @param observations The retained monitor observations, or direct legacy results, valid only during the call.
   /// @param context The values the plugins share, the same in every call. It lives as long as the process.
   void (*on_observations)(std::span<const Observation> observations, Context& context) = nullptr;
   /// Receives the immutable completed monitor snapshot after this plugin's legacy callback. May be null.

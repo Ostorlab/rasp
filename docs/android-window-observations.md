@@ -5,8 +5,9 @@ It counts MotionEvent obscuration flags received by this app. It does not identi
 screens, prevent taps, or prove malware. Legitimate overlays and system windows are context too. Android can block
 some obscured touches before delivery; such touches are outside this observer's coverage.
 
-Registered once in canonical schema1 revision6, **46 Android/26 iOS** outputs, catalogue
-`28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4`. The ten rows generate both native cycle identities and compiled expectations from the same manifest.
+Introduced in schema 1, revision 6 and retained unchanged in canonical schema 1, revision 8,
+**73 Android/26 iOS** outputs, catalogue
+`479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a`. The ten rows generate both native cycle identities and compiled expectations from the same manifest.
 All prior signer/service/inline/iOS rows are preserved exactly; the temporary selector is removed.
 
 ## Host setup
@@ -42,15 +43,17 @@ thread for each currently active Activity. Call `attachWindow(dialog.getWindow()
 they are not guessed from a global inventory. All adapter APIs require the main thread; worker calls return
 WRONG_THREAD without changing state. Automatic lifecycle callbacks follow Android's main-thread contract.
 
-`stopWindowObservation()` disables every retained wrapper **before** releasing entries and unregistering lifecycle
-callbacks. It restores the previous callback only if the window still directly owns that wrapper. A host's later
-callback remains untouched. An old wrapper retained inside a newer host chain remains an inert delegate, including
-after restart. Call stop during host teardown; calls are idempotent. Adapter-owned construction, scheduling/removal and lifecycle
-window-lookup exceptions trigger error teardown without escaping the lifecycle callback. If Handler removal fails,
-an already queued task can remain but is inert and never reschedules. All wrapper state is disabled and native
-window state is cleared even when unregister/removal/restoration fails. Exceptions from the actual delegated
-Window.Callback are forwarded unchanged. The Application Context retained by `initialize`
-has process lifetime and is not cleared by stopping window observations.
+`stopWindowObservation()` releases the observer under these rules:
+
+- It disables every retained wrapper **before** releasing entries and unregistering lifecycle callbacks.
+- It restores the previous callback only while the window still directly owns that wrapper; a later host callback remains untouched.
+- An old wrapper retained inside a newer host chain remains an inert delegate, including after restart.
+- Stop is idempotent and should be called during host teardown.
+- Adapter construction, scheduling/removal and lifecycle window-lookup exceptions trigger error teardown without escaping the lifecycle callback. A queued task left by failed Handler removal stays inert and never reschedules.
+- All wrappers are disabled and native window state is cleared even if unregister/removal/restoration fails. A duplicate attach that fails during restoration returns `JNI_ERROR`, with fault metadata, rather than a clean ownership-loss result.
+- Exceptions from the delegated `Window.Callback` are forwarded unchanged.
+
+The Application Context retained by `initialize` has process lifetime and is not cleared by stopping window observations.
 
 | Return | Meaning |
 |---|---|
@@ -74,25 +77,25 @@ the existing chain does. Destroy/pause/manual detach removes the slot. Collected
 probe and reported lost. A single Handler task checks slots nominally every second while active, on lifecycle
 resume, and a wrapper checks direct ownership before each received touch. A stalled main looper delays probes.
 
-Callback replacement between probes, including replacement and restoration, cannot be observed reliably through
-public APIs. A host wrapper installed above ADR is treated as lost ownership even if it delegates to ADR. No output
-claims uninterrupted coverage. Reattach explicitly to begin a new segment after loss. A probe never reinstalls an
-observer over a newer host callback. All 25 public Window.Callback methods (including default methods and both
-ActionMode/search overloads) forward exactly once with original arguments, results and exceptions. Touch telemetry
-runs before the host's dispatchTouchEvent and never consumes, blocks, modifies, or redispatches the MotionEvent.
+Public callback ownership and forwarding have these limits:
+
+- Replacement and restoration between probes cannot be observed reliably through public APIs. A host wrapper above ADR counts as lost ownership even when it delegates to ADR.
+- Reattach explicitly to begin a new segment after loss. A probe never reinstalls an observer over a newer host callback, and no output claims uninterrupted coverage.
+- All 25 public `Window.Callback` methods, including defaults and ActionMode/search overloads, forward once with their original arguments, results and exceptions.
+- Touch telemetry runs before the host's `dispatchTouchEvent`; it never consumes, blocks, modifies or redispatches the `MotionEvent`.
 
 No event allocation or JNI reference is queued. Native ingress validates session, token, event kind and flag mask.
 Old-session, malformed and unknown-window inputs are rejected and counted. Tokens are positive, ephemeral,
 process/session-local integers; they are neither class/view names nor exported observations. Session tokens never
 wrap. Only the two public obscuration bits cross JNI; other MotionEvent flags are masked out in Java.
 
-On overflow the newest record is dropped, the saturating drop counter increments, and current window state/loss
-metadata still updates. The fixed FIFO includes open/close/loss/fault records, so fewer than 128 touch records may
-fit in an interval. Retained touches are exact; after drops they are **lower bounds** for the interval. Native writes
-and drains share a mutex; no Java calls occur while it is held. One selected drain consumes each record once in FIFO
-order and resets interval counters. Disabling selection does not drain: old events remain bounded and accrue drops.
-Repeated explicit collector calls each consume a new interval; downstream cycle integration must call once per
-selected monitor pass and reuse the owned observations for plugins/reporting.
+The FIFO and interval rules are:
+
+- Overflow drops the newest record and increments a saturating drop counter while retaining current window-state/loss accounting. Open/close/loss/fault records also occupy the 128 slots, so fewer than 128 touches may fit.
+- Retained touches are exact; after drops they are lower bounds for that interval.
+- Native writes and drains share a mutex, with no Java call under that lock.
+- Each selected drain consumes records once in FIFO order and resets interval counters. Disabled selection does not drain; bounded events can accumulate drops.
+- Repeated explicit collector calls each consume a new interval. Monitor integration drains once per selected pass and reuses the owned observations for reporting and plugins.
 
 ## Exact outputs
 
@@ -112,6 +115,9 @@ clean security verdict. Off Android each row is `unsupported` with no value. iOS
 | overlay.lost_windows | integer | Detected lost window ownership/collection or adapter/slot failures in interval; saturates. May include repeated failures, not unique windows. |
 | overlay.invalid_events | integer | Rejected malformed, stale or unknown-token JNI inputs in interval; saturates. |
 | overlay.interval_ms | integer | Monotonic time since previous selected drain; first drain is -1 (no prior boundary). Subsequent zero is a measured short interval. |
+
+Cycle `complete` requires all ten expected rows to be returned. An error or inactive observer can still supply
+complete metadata; completeness does not establish continuous touch coverage or a clean verdict.
 
 The first delta includes retained events since native handoff initialization, including sessions before the first
 selected drain, but its elapsed duration is unknown. Subsequent deltas include **all** session segments since the
@@ -158,15 +164,15 @@ PYTHONPATH=src python -m pytest -q tests/rasp_packer/android/window_bridge_integ
 These tests use the SDK-compiled host APK and the repository's real InsecureBankv2 AAB, the actual splitter and
 post-pack verifier, and the built native libraries. They assert one bridge/nested wrapper definition and exact
 native configuration bytes for all four ABIs. These fixture tests also cover the unknown capability path with no sidecars. Release validation additionally builds
-an isolated installed wheel with exact revision6 sidecars and exercises the public APK/AAB path and real post-pack
+an isolated installed wheel with exact revision 8 sidecars and exercises the public APK/AAB path and real post-pack
 verifier, including mismatched artifacts and malformed staged-output controls. No installed Android behavior is implied by successful archive verification.
 
+
+## How the monitor drains and reports window observations
 
 The actual Android monitor selects builtins through `CycleMonitor.run` once per cycle. `run_checks` drains this
 FIFO once only when `overlay` is selected. Its ten observations and interval/availability/loss fields remain together
 inside the immutable cycle snapshot retained by both legacy and additive plugin callbacks. A later cycle or Context
-cleanup cannot overwrite that retained interval. `complete` means all ten expected rows were returned; an error or
-inactive observer can still produce complete metadata, which is not continuous touch coverage or a clean verdict.
-The real-JVM fixture exercises these production paths on the caller and an attached native worker, including a
+cleanup cannot overwrite that retained interval. The real-JVM fixture exercises these production paths on the caller and an attached native worker, including a
 second zero-touch drain and retained prior run/session/sequence metadata. No separate window-specific cycle header
 or expectation append exists: both generated native headers use the one canonical manifest.

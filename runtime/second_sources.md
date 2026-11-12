@@ -11,16 +11,16 @@ mount change can produce legitimate divergence. Hooked user-space and compromise
 | Android/debugger | `dbg.java_debugger` | `jdwp_threads`, `debug_api` | Existing name list, then JNI boolean |
 | Android/hooks | `hook.maps_hits` | `proc_maps`, `proc_maps_syscall` | First 32 marker-matching map lines |
 | Android/hooks | `hook.rwx_regions` | `proc_maps` | First 32 writable/executable map lines |
-| Android/hooks | `hook.threads` | `proc_task` | Existing RT03 sorted/deduplicated visible name list |
+| Android/hooks | `hook.threads` | `proc_task` | Sorted/deduplicated visible name list |
 | Android/root | `root.fs_paths` | `access`, `stat`, `faccessat_syscall` | Artifact paths found, in candidate order |
 | Android/root | `root.mounts`, `root.rw_mounts` | Each pair through `proc_mounts`, then through `proc_mounts_syscall` | First 32 matching mount lines per signal |
 | iOS/debugger | `dbg.traced` | `sysctl`, `sysctl_syscall` | Boolean `P_TRACED` flag |
 | iOS/debugger | `dbg.parent` | `getppid`, `sysctl_syscall` | Raw parent PID, without judging the parent |
 | iOS/debugger | `dbg.exception_ports` | `task_get_exception_ports` | Existing exception mask; crash reporters can set ports |
 
-The complete Android hooks vector is maps hits/libc, RWX/libc, maps hits/syscall, threads. Root continues with the
+The complete Android hooks vector is maps hits/libc, RWX/libc, maps hits/syscall, threads, then inline entry-byte differences through `prologue` ([contract and limits](inline_hooks.md)). Root continues with the
 existing SELinux and property sources. JNI uses the current attached-env/local-frame implementation and retains the
-existing `debug_api` name; the superseded PR178 JNI discovery path does not replace it.
+existing `debug_api` name; an earlier JNI-based debugger-discovery path does not replace it.
 
 Every source keeps its own status/value even if another succeeds or disagrees. `kError` and `kUnsupported` have
 no value (monostate), never a guessed zero, false, or empty list. Path lookups return absent only for ENOENT/ENOTDIR;
@@ -43,7 +43,7 @@ records, validate all records including those after the output cap, and reject l
 Maps validate address order, permissions and numeric fields. Mounts validate all six fields. A source with any
 truncated/malformed record yields error for all of its observations, without a partial clean list.
 
-RT03 thread bounds and error handling are preserved: 4096 entries, complete visible comm names of 1–15 non-control
+Thread bounds and error handling are preserved: 4096 numeric thread-ID entries (other entries are skipped before counting or reading), complete visible comm names of 1–15 non-control
 bytes plus newline, at most 32 distinct names retained, continued enumeration after the output cap, and whole-source
 failure on an incomplete snapshot. Renaming, kernel truncation and hiding remain evasion limits.
 
@@ -59,9 +59,7 @@ public sysctl/getppid/Mach interfaces, iOS12 deployment target and API31 Android
 Host tests exercise real file parsing, typed denied/error/short/invalid-count syscall fixtures, source divergence,
 compiled Android hooks() dispatch on Linux own-process procfs, and the real plugin callback. The opaque iOS native
 transport fixtures exercise PID/carry/result/size checks through the production query helper; they do not execute
-Darwin instructions or decode an actual device kinfo_proc. Original PR178 arm64 iOS CI passed, but it does not validate
-these final sources. Exact final-head supported LLVM23 and macOS/Xcode iOS release/dev/tidy/artifact CI remains required
-after approved publication. Physical stock/rooted/debugged-device calibration remains separate and unperformed here.
+Darwin instructions or decode an actual device kinfo_proc. Earlier arm64 iOS CI runs passed but did not exercise these final sources. Exact final-head supported LLVM23 and macOS/Xcode iOS release/dev/tidy/artifact CI remains required. Physical stock/rooted/debugged-device calibration remains separate and unperformed here.
 
 Expected-source manifests must be versioned per release/platform/architecture/config. Register the syscall sources
 above alongside existing ones; retain unsupported entries on unsupported architectures and do not require successful

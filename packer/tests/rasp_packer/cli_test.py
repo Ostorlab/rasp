@@ -1,6 +1,8 @@
 """Tests of the `rasp` command line."""
 
 import contextlib
+import errno
+import os
 import pathlib
 from importlib import metadata
 
@@ -281,4 +283,37 @@ def testMain_whenPackedRuntimeHasWrongArchitecture_failsWithoutSuccessfulOutput(
     assert captured.out == ""
     assert "unsupported Mach-O architecture" in captured.err
     assert (tmp_path / "out.ipa").exists() is False
+    assert list(tmp_path.glob(".rasp-*")) == []
+
+
+@pytest.mark.parametrize("failure", ["missing_parent", "hard_link"])
+def testMain_whenOutputCannotBePublished_reportsCleanErrorWithoutOutput(
+    ipa_file: pathlib.Path,
+    runtime: pathlib.Path,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: str,
+) -> None:
+    monkeypatch.setattr(
+        ios_resources, "framework", lambda _: contextlib.nullcontext(runtime)
+    )
+    arguments = _pack_arguments(tmp_path)
+    arguments[1] = str(ipa_file)
+    output = tmp_path / "out.ipa"
+    if failure == "missing_parent":
+        output = tmp_path / "missing" / "out.ipa"
+        arguments[-1] = str(output)
+    else:
+
+        def fail_link(*args: object, **kwargs: object) -> None:
+            raise OSError(errno.EOPNOTSUPP, "hard links unavailable")
+
+        monkeypatch.setattr(os, "link", fail_link)
+    assert cli.main([*arguments, "--checks", "identity"]) == cli.EXIT_FAILED
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("rasp pack: cannot ")
+    assert "Traceback" not in captured.err
+    assert output.exists() is False
     assert list(tmp_path.glob(".rasp-*")) == []

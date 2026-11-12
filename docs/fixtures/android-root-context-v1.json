@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "scope": "Portable native examples, not wire schema or device results. Six fixed outputs across four opt-in groups.",
+  "cases": [
+    {
+      "name": "benign_stock_namespace_and_visibility_limited_queries",
+      "platform": "android",
+      "api_level": 35,
+      "interpretation": "Stock namespaces and overlays are context; not_visible does not prove nonexistence; developer settings truth is unavailable. Namespace number is a process-local example, never a cross-device identifier.",
+      "observations": [
+        {
+          "signal": "root.manager_packages_v1",
+          "source": "package_manager",
+          "status": "ok",
+          "value": [
+            "com.topjohnwu.magisk not_visible",
+            "me.weishu.kernelsu not_visible",
+            "me.bmax.apatch not_visible"
+          ]
+        },
+        {
+          "signal": "root.mountinfo_context_v1",
+          "source": "proc_self_mountinfo",
+          "status": "ok",
+          "value": [
+            "mounts=2",
+            "overlay=1",
+            "shared=1",
+            "master=1",
+            "root_rw=false"
+          ]
+        },
+        {
+          "signal": "root.mount_namespace_v1",
+          "source": "proc_self_ns_mnt",
+          "status": "ok",
+          "value": "mnt:[4026531840]"
+        },
+        {
+          "signal": "net.default_proxy_v1",
+          "source": "connectivity_manager",
+          "status": "ok",
+          "value": [
+            "mode=none"
+          ]
+        },
+        {
+          "signal": "debug.adb_enabled_v1",
+          "source": "settings_global",
+          "status": "unsupported"
+        },
+        {
+          "signal": "debug.developer_options_enabled_v1",
+          "source": "settings_global",
+          "status": "unsupported"
+        }
+      ]
+    },
+    {
+      "name": "visible_selected_manager_and_authorized_proxy",
+      "platform": "android",
+      "api_level": 31,
+      "interpretation": "Selected identifier is visible and manual HTTP proxy metadata is exposed. No installation, activity, root, malware or MITM verdict.",
+      "observations": [
+        {
+          "signal": "root.manager_packages_v1",
+          "source": "package_manager",
+          "status": "ok",
+          "value": [
+            "com.topjohnwu.magisk visible",
+            "me.weishu.kernelsu not_visible",
+            "me.bmax.apatch not_visible"
+          ]
+        },
+        {
+          "signal": "root.mountinfo_context_v1",
+          "source": "proc_self_mountinfo",
+          "status": "ok",
+          "value": [
+            "mounts=2",
+            "overlay=1",
+            "shared=1",
+            "master=1",
+            "root_rw=false"
+          ]
+        },
+        {
+          "signal": "root.mount_namespace_v1",
+          "source": "proc_self_ns_mnt",
+          "status": "ok",
+          "value": "mnt:[4026531840]"
+        },
+        {
+          "signal": "net.default_proxy_v1",
+          "source": "connectivity_manager",
+          "status": "ok",
+          "value": [
+            "mode=manual",
+            "host=proxy.example",
+            "port=8080"
+          ]
+        },
+        {
+          "signal": "debug.adb_enabled_v1",
+          "source": "settings_global",
+          "status": "unsupported"
+        },
+        {
+          "signal": "debug.developer_options_enabled_v1",
+          "source": "settings_global",
+          "status": "unsupported"
+        }
+      ]
+    },
+    {
+      "name": "denied_or_unavailable_inputs",
+      "platform": "android",
+      "api_level": 35,
+      "interpretation": "Unavailable Context, denied/malformed/disappearing files or JNI failures do not become clean/empty/disabled.",
+      "observations": [
+        {
+          "signal": "root.manager_packages_v1",
+          "source": "package_manager",
+          "status": "error"
+        },
+        {
+          "signal": "root.mountinfo_context_v1",
+          "source": "proc_self_mountinfo",
+          "status": "error"
+        },
+        {
+          "signal": "root.mount_namespace_v1",
+          "source": "proc_self_ns_mnt",
+          "status": "error"
+        },
+        {
+          "signal": "net.default_proxy_v1",
+          "source": "connectivity_manager",
+          "status": "error"
+        },
+        {
+          "signal": "debug.adb_enabled_v1",
+          "source": "settings_global",
+          "status": "unsupported"
+        },
+        {
+          "signal": "debug.developer_options_enabled_v1",
+          "source": "settings_global",
+          "status": "unsupported"
+        }
+      ]
+    },
+    {
+      "name": "pac_configuration_without_url_export",
+      "platform": "android",
+      "api_level": 35,
+      "interpretation": "PAC exists; no URI string, host, path, query, fragment, credentials or fetched PAC content exported.",
+      "observations": [
+        {
+          "signal": "root.manager_packages_v1",
+          "source": "package_manager",
+          "status": "ok",
+          "value": [
+            "com.topjohnwu.magisk not_visible",
+            "me.weishu.kernelsu not_visible",
+            "me.bmax.apatch not_visible"
+          ]
+        },
+        {
+          "signal": "root.mountinfo_context_v1",
+          "source": "proc_self_mountinfo",
+          "status": "ok",
+          "value": [
+            "mounts=2",
+            "overlay=1",
+            "shared=1",
+            "master=1",
+            "root_rw=false"
+          ]
+        },
+        {
+          "signal": "root.mount_namespace_v1",
+          "source": "proc_self_ns_mnt",
+          "status": "ok",
+          "value": "mnt:[4026531840]"
+        },
+        {
+          "signal": "net.default_proxy_v1",
+          "source": "connectivity_manager",
+          "status": "ok",
+          "value": [
+            "mode=pac"
+          ]
+        },
+        {
+          "signal": "debug.adb_enabled_v1",
+          "source": "settings_global",
+          "status": "unsupported"
+        },
+        {
+          "signal": "debug.developer_options_enabled_v1",
+          "source": "settings_global",
+          "status": "unsupported"
+        }
+      ]
+    }
+  ],
+  "registration": "schema1_revision8",
+  "catalogue_id": "479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a"
+}

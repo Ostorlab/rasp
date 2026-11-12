@@ -1,4 +1,4 @@
-/// Actual shipped dispatcher and CycleMonitor exercised with a test-only provisional catalogue.
+/// Actual shipped dispatcher and CycleMonitor exercised with the canonical production catalogue.
 #include "android/events/capture_driver.h"
 
 #include <algorithm>
@@ -31,79 +31,6 @@ bool& cold_support() {
 }
 /// Reports actual production cold-start version semantics to the JVM assertions.
 jboolean cold_support_correct(JNIEnv* /*unused*/, jclass /*unused*/) { return cold_support() ? JNI_TRUE : JNI_FALSE; }
-constexpr std::array<rasp::CycleOutput, 21> kFixtureRows{
-    {
-        {.group = "screenshot", .signal = "capture.screenshot.observer_state", .source = "activity_screen_capture"},
-        {.group = "screenshot", .signal = "capture.screenshot.permission", .source = "activity_screen_capture"},
-        {.group = "screenshot", .signal = "capture.screenshot.coverage", .source = "activity_screen_capture"},
-        {.group = "screenshot", .signal = "capture.screenshot.active_activities", .source = "activity_screen_capture"},
-        {.group = "screenshot", .signal = "capture.screenshot.callback_events", .source = "activity_screen_capture"},
-        {.group = "screenshot", .signal = "capture.screenshot.lost_registrations", .source = "activity_screen_capture"},
-        {.group = "screenshot", .signal = "capture.screenshot.invalid_events", .source = "activity_screen_capture"},
-        {.group = "screenshot", .signal = "capture.screenshot.counter_overflow", .source = "activity_screen_capture"},
-        {.group = "screenshot", .signal = "capture.screenshot.interval_ms", .source = "activity_screen_capture"},
-        {
-            .group = "screen_recording",
-            .signal = "capture.recording.observer_state",
-            .source = "window_manager_recording",
-        },
-        {
-            .group = "screen_recording",
-            .signal = "capture.recording.permission",
-            .source = "window_manager_recording",
-        },
-        {
-            .group = "screen_recording",
-            .signal = "capture.recording.coverage",
-            .source = "window_manager_recording",
-        },
-        {
-            .group = "screen_recording",
-            .signal = "capture.recording.active_activities",
-            .source = "window_manager_recording",
-        },
-        {
-            .group = "screen_recording",
-            .signal = "capture.recording.visibility",
-            .source = "window_manager_recording",
-        },
-        {
-            .group = "screen_recording",
-            .signal = "capture.recording.initial_samples",
-            .source = "window_manager_recording",
-        },
-        {
-            .group = "screen_recording",
-            .signal = "capture.recording.callback_events",
-            .source = "window_manager_recording",
-        },
-        {
-            .group = "screen_recording",
-            .signal = "capture.recording.visibility_changes",
-            .source = "window_manager_recording",
-        },
-        {
-            .group = "screen_recording",
-            .signal = "capture.recording.lost_registrations",
-            .source = "window_manager_recording",
-        },
-        {
-            .group = "screen_recording",
-            .signal = "capture.recording.invalid_events",
-            .source = "window_manager_recording",
-        },
-        {
-            .group = "screen_recording",
-            .signal = "capture.recording.counter_overflow",
-            .source = "window_manager_recording",
-        },
-        {
-            .group = "screen_recording",
-            .signal = "capture.recording.interval_ms",
-            .source = "window_manager_recording",
-        },
-    },
-};
 constexpr rasp::plugins::Key<std::shared_ptr<const rasp::CycleSnapshot>> kRetained{"test.capture.retained"};
 constexpr rasp::plugins::Key<bool> kPaired{"test.capture.paired"};
 /// Retains the exact owning snapshot seen by the actual legacy callback.
@@ -118,7 +45,7 @@ void confirm(const std::shared_ptr<const rasp::CycleSnapshot>& snapshot, rasp::p
   const auto retained = context.get(kRetained);
   context.put(kPaired, retained.has_value() && *retained == snapshot);
 }
-/// Uses the actual selected dispatcher exactly once, without loading a draft into production.
+/// Uses the actual selected dispatcher exactly once, using canonical generated identities.
 std::shared_ptr<const rasp::CycleSnapshot> cycle(rasp::CycleMonitor& monitor, rasp::plugins::Context& context,
                                                  unsigned int mask) {
   rasp::Config config;
@@ -136,11 +63,7 @@ std::shared_ptr<const rasp::CycleSnapshot> cycle(rasp::CycleMonitor& monitor, ra
       .on_cycle = confirm,
   };
   const std::array plugins{&kPlugin};
-  const rasp::CycleCatalogue catalogue{
-      .platform = "android",
-      .catalogue_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      .outputs = kFixtureRows,
-  };
+  const auto catalogue = rasp::cycle_catalogue("android");
   auto snapshot = monitor.run(config, catalogue, plugins, context, [](const rasp::Config& selection, const void*) {
     return rasp::android::run_checks(selection);
   });

@@ -152,7 +152,7 @@ def parse_catalogue(data: bytes) -> dict[str, Any]:
                         "unknown or duplicate capability status"
                     )
                 if observation["supported_on"] not in (
-                    ("android",)
+                    ("android", "never")
                     if name == "android"
                     else ("ios_device", "apple", "never")
                 ):

@@ -1,8 +1,8 @@
-"""Real SDK/NDK archive integration; no device or canonical catalogue claim.
+"""Real SDK/NDK archive integration with explicit unknown-binding compatibility.
 
 Provide RASP_CAPTURE_STUB, RASP_CAPTURE_HOST_APK, RASP_CAPTURE_NATIVE_DIRECTORY and
 RASP_CAPTURE_AAPT2 after building the actual stub, harmless host and four native ABIs.
-This exercises the unknown-binding compatibility path without loading a draft catalogue.
+This exercises the unknown-binding compatibility path using actual production libraries.
 Installed public release/canonical bindings are checked independently after integration.
 """
 

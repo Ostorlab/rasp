@@ -17,6 +17,7 @@ import collections.abc
 import contextlib
 import dataclasses
 import importlib.resources
+import json
 import os
 import pathlib
 
@@ -25,6 +26,17 @@ from rasp_packer import errors
 
 STUB_FACTORY_CLASS = "co.ostorlab.rasp.RaspStub"
 RUNTIME_LIBRARY = "librasp.so"
+
+ROOT_MANAGER_PACKAGES_V1: tuple[str, ...] = tuple(
+    entry["name"]
+    for entry in json.loads(
+        (
+            importlib.resources.files("rasp_packer.android")
+            / "root_manager_packages_v1.json"
+        ).read_text()
+    )["packages"]
+)
+"""Fixed selected identifiers shared with native generation; not an app inventory."""
 
 _STUB_DEX = "stub.dex"
 _LIBRARY_DIRECTORY = "lib"

@@ -96,6 +96,42 @@
       "skipped": [
         "overlay"
       ]
+    },
+    {
+      "platform": "android",
+      "requested": [
+        "root_packages",
+        "root_context",
+        "proxy",
+        "developer_settings",
+        "root_packages"
+      ],
+      "effective_checks": [
+        "developer_settings",
+        "identity",
+        "proxy",
+        "root_context",
+        "root_packages"
+      ],
+      "skipped": []
+    },
+    {
+      "platform": "ios",
+      "requested": [
+        "root_packages",
+        "root_context",
+        "proxy",
+        "developer_settings"
+      ],
+      "effective_checks": [
+        "identity"
+      ],
+      "skipped": [
+        "root_packages",
+        "root_context",
+        "proxy",
+        "developer_settings"
+      ]
     }
   ],
   "unknown_release": {
@@ -211,10 +247,10 @@
   ],
   "catalogue": {
     "schema_version": 1,
-    "revision": 6,
-    "catalogue_id": "28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4",
+    "revision": 8,
+    "catalogue_id": "479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a",
     "observation_counts": {
-      "android": 46,
+      "android": 73,
       "ios": 26
     }
   },

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -18,15 +19,17 @@ namespace rasp::android::apk {
 /// Reads one stored (uncompressed) entry from an APK by name.
 ///
 /// The packer writes the runtime's assets stored, not compressed, so the runtime reads them without an inflate step
-/// and without a zip library. The APK is memory-mapped and parsed through its central directory; an entry that is
-/// compressed, rather than stored, is refused.
+/// and without a zip library. The APK is read through bounded descriptor regions. Only a unique stored entry with
+/// consistent local/central metadata is accepted; ZIP64, encryption and ambiguous names are refused.
 ///
 /// @param apk_path The APK file to read.
 /// @param name The entry's full name in the APK, such as `assets/rasp/payload.bin`.
-/// @return The entry's bytes. Nothing when the file can't be mapped, the entry is absent, the entry is compressed, or
-/// the archive is malformed.
+/// @param max_bytes Explicit caller allocation limit, at most 64 MiB + 28 bytes.
+/// @return The entry's bytes, or nothing on malformed/over-limit input, I/O or detected mutation. Regular ZIP32
+/// files up to 2 GiB minus one byte, a 16 MiB directory and 65,534 entries are supported. Symlinks to regular files
+/// are followed. Metadata equality does not prove authenticity or an immutable snapshot.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& apk_path,
-                                                                         std::string_view name);
+                                                                         std::string_view name, std::size_t max_bytes);
 
 /// Finds the certificate of the key that Android uses as the signer of the APK whose bytes are `apk`, on a device at
 /// `api_level`.
@@ -52,7 +55,8 @@ namespace rasp::android::apk {
 ///
 /// @param apk_path The APK file to read.
 /// @param api_level The API level of the device.
-/// @return The certificate's DER bytes. Nothing when the file can't be mapped, or find_signing_certificate finds none.
+/// @return The certificate's DER bytes. Nothing on I/O, malformed/over-limit input or detected changes. Reads a bounded
+/// ZIP tail and at most 1 MiB of signing block, retaining legacy selection and first-certificate semantics.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_signing_certificate(const std::string& apk_path,
                                                                                 std::uint32_t api_level);
 

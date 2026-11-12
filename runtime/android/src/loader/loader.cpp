@@ -68,7 +68,8 @@ struct State {
 /// @param apk The path of the app's APK.
 /// @return The key. Nothing when the key entry is absent or is not kKeySize bytes.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_payload_key(const std::string& apk) {
-  std::optional<std::vector<std::uint8_t>> key = rasp::android::apk::read_stored_entry(apk, payload::kKeyEntry);
+  std::optional<std::vector<std::uint8_t>> key =
+      rasp::android::apk::read_stored_entry(apk, payload::kKeyEntry, payload::kKeySize);
   if (!key.has_value() || key->size() != payload::kKeySize) {
     return std::nullopt;
   }

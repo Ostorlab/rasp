@@ -5,13 +5,18 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <fcntl.h>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <latch>
 #include <optional>
+#include <spawn.h>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 #include "rasp/util/read_file.h"
@@ -88,7 +93,7 @@ TEST(InstallId, loadOrCreateInstallId_whenTwoInstallsCreateAnId_givesThemDiffere
   EXPECT_NE(*first, *second);
 }
 
-/// Bounds retry only in the concurrent fixture; production lock acquisition never waits.
+/// Bounds the concurrent fixture beyond the legacy API's own finite busy-contention budget.
 std::optional<std::string> retry_identity(std::string_view directory) {
   for (int attempt = 0; attempt < 100; ++attempt) {
     auto identity = load_or_create_install_id(directory);
@@ -157,6 +162,89 @@ TEST(InstallId, loadOrCreateInstallId_whenTheKeptFileIsNotAnId_preservesItAndRet
     EXPECT_FALSE(id.has_value()) << kept;
     EXPECT_EQ(util::read_file(id_path(directory), 64), kept);
   }
+}
+
+/// Spawns a separate lock owner and waits for its ready byte, closing both pipe ends on every path.
+[[nodiscard]] std::optional<pid_t> spawn_lock_holder(const std::string& root, bool short_lock) {
+  std::array<int, 2> ready{};
+  if (pipe(ready.data()) != 0) {
+    return std::nullopt;
+  }
+  posix_spawn_file_actions_t actions;
+  if (posix_spawn_file_actions_init(&actions) != 0) {
+    static_cast<void>(close(ready[0]));
+    static_cast<void>(close(ready[1]));
+    return std::nullopt;
+  }
+  const std::string lock_path = root + "/rasp_install_id.lock";
+  const bool prepared = posix_spawn_file_actions_adddup2(&actions, ready[1], STDOUT_FILENO) == 0 &&
+                        posix_spawn_file_actions_addclose(&actions, ready[0]) == 0 &&
+                        posix_spawn_file_actions_addclose(&actions, ready[1]) == 0 &&
+                        posix_spawn_file_actions_addopen(&actions, 3, lock_path.c_str(), O_RDWR, 0) == 0;
+  std::string executable = RASP_STORAGE_PROBE;
+  std::string path = root;
+  std::string mode = short_lock ? "--lock-short" : "--lock-long";
+  std::string unused;
+  std::array<char*, 5> arguments{executable.data(), path.data(), mode.data(), unused.data(), nullptr};
+  std::array<char*, 1> environment{nullptr};
+  pid_t child = -1;
+  const bool spawned =
+      prepared && posix_spawn(&child, executable.c_str(), &actions, nullptr, arguments.data(), environment.data()) == 0;
+  const bool destroyed = posix_spawn_file_actions_destroy(&actions) == 0;
+  const bool write_closed = close(ready[1]) == 0;
+  char byte = 0;
+  const bool received = spawned && read(ready[0], &byte, 1) == 1 && byte == '!';
+  const bool read_closed = close(ready[0]) == 0;
+  if (received && destroyed && write_closed && read_closed) {
+    return child;
+  }
+  if (spawned) {
+    int status = -1;
+    static_cast<void>(waitpid(child, &status, 0));
+  }
+  return std::nullopt;
+}
+
+/// Checks the child's normal exit before any assertion can abandon a live process.
+void wait_lock_holder(pid_t child) {
+  int status = -1;
+  ASSERT_EQ(waitpid(child, &status, 0), child);
+  EXPECT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
+/// Confirms unavailable or retried reads never replace or change an existing identity.
+void check_kept_identity(const TemporaryDirectory& directory, const struct stat& before,
+                         const std::optional<std::string>& identity) {
+  struct stat after{};
+  ASSERT_EQ(stat(id_path(directory).c_str(), &after), 0);
+  EXPECT_EQ(after.st_ino, before.st_ino);
+  EXPECT_EQ(test_support::read_file(id_path(directory)), identity);
+}
+
+/// Runs the real legacy entry while an independently exec'd child owns the validated private lock.
+void check_process_contention(bool release_within_budget) {
+  const TemporaryDirectory directory;
+  const auto identity = load_or_create_install_id(directory.path());
+  ASSERT_TRUE(identity.has_value());
+  struct stat before{};
+  ASSERT_EQ(stat(id_path(directory).c_str(), &before), 0);
+  const auto child = spawn_lock_holder(directory.path(), release_within_budget);
+  ASSERT_TRUE(child.has_value());
+  const auto result = load_or_create_install_id(directory.path());
+  wait_lock_holder(*child);
+  EXPECT_EQ(result.has_value(), release_within_budget);
+  if (result.has_value()) {
+    EXPECT_EQ(result, identity);
+  }
+  check_kept_identity(directory, before, identity);
+}
+
+TEST(InstallId, loadOrCreateInstallId_whenChildReleasesLockWithinBudget_returnsExistingIdentity) {
+  check_process_contention(true);
+}
+
+TEST(InstallId, loadOrCreateInstallId_whenChildKeepsLockBeyondBudget_returnsUnavailableWithoutReplacingIdentity) {
+  check_process_contention(false);
 }
 
 TEST(InstallId, loadOrCreateInstallId_whenTheFolderDoesNotExist_returnsNothing) {

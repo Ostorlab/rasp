@@ -578,7 +578,7 @@ public final class RuntimeBridge {
                     TouchCallback callback = entry.callback.get();
                     try {
                         if (callback != null && callback.enabled && window.getCallback() == callback) return ALREADY_INITIALIZED;
-                        release(index, true);
+                        if (release(index, true) == JNI_ERROR) return JNI_ERROR;
                         return OWNERSHIP_LOST;
                     } catch (RuntimeException | LinkageError error) {
                         release(index, true);
