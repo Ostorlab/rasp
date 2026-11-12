@@ -241,8 +241,6 @@ jobs:
           python3 tools/capabilities.py verify "$binary" ios arm64 12.0
           "$RUNNER_TEMP/build-tools/bin/pip" install 'lief==1.0.0'
           "$RUNNER_TEMP/build-tools/bin/python" tools/verify_packaging.py "$binary" ios arm64
-      - name: Link installed primitive C and C++ policy consumers
-        run: bash tests/android/local_policy/check_library.sh "$RUNNER_TEMP/runtime-release" '${{ matrix.abi }}' "$RUNNER_TEMP/policy-release"
       - name: Configure the development build with the private storage plugin consumer
         run: cmake --preset ios-dev -DRASP_PLUGINS=tests/plugins/private_storage
       - name: Build the development build
@@ -361,6 +359,8 @@ jobs:
           python3 tools/capabilities.py verify "$binary" android '${{ matrix.abi }}' 31
           "$RUNNER_TEMP/build-tools/bin/pip" install 'lief==1.0.0'
           "$RUNNER_TEMP/build-tools/bin/python" tools/verify_packaging.py "$binary" android '${{ matrix.abi }}'
+      - name: Link installed primitive C and C++ policy consumers
+        run: bash tests/android/local_policy/check_library.sh "$RUNNER_TEMP/runtime-release" '${{ matrix.abi }}' "$RUNNER_TEMP/policy-release"
       - name: Configure the development build with the private storage plugin consumer
         run: cmake --preset android-dev -DANDROID_ABI=${{ matrix.abi }} -DRASP_PLUGINS=tests/plugins/private_storage
       - name: Build the development build
