@@ -22,6 +22,53 @@ public final class CaptureTest {
         check(android.view.WindowManager.callbacks.isEmpty());
         read(3);
     }
+    /** Drive the real private primitive JNI boundary at the gap before the next Java aggregate update. */
+    private static void primitive(int source, int token, int kind, int value) throws Exception {
+        java.lang.reflect.Field current = RuntimeBridge.class.getDeclaredField("captures"); current.setAccessible(true);
+        Object session = current.get(null);
+        java.lang.reflect.Field epoch = session.getClass().getDeclaredField("epoch"); epoch.setAccessible(true);
+        java.lang.reflect.Method ingress = RuntimeBridge.class.getDeclaredMethod("captureEventNative",
+                long.class, int.class, int.class, int.class, int.class);
+        ingress.setAccessible(true);
+        check(Boolean.TRUE.equals(ingress.invoke(null, epoch.getLong(session), source, token, kind, value)));
+    }
+    /** Deterministic monitor drains between actual Java/JNI primitive calls, not only lifecycle completion. */
+    private static void interleavedDrains(android.app.Application app, int api) throws Exception {
+        check(RuntimeBridge.startCaptureObservation(app, true, false) == 0);
+        android.app.Activity a = activity(app), b = activity(app);
+        app.resume(a); app.resume(b);
+        a.failCaptureRemoval = true;
+        check(RuntimeBridge.detachCaptureActivity(a) == RuntimeBridge.JNI_ERROR);
+        row(read(1), "screenshot", "observer_state", "ok partial");
+        primitive(0, 3, 1, 0); // C's native open before the Java summarizeShots aggregate.
+        String[] between = read(1);
+        row(between, "screenshot", "observer_state", "ok partial");
+        row(between, "screenshot", "coverage", "ok unknown");
+        row(between, "screenshot", "active_activities", "ok 2");
+        row(between, "screenshot", "lost_registrations", "ok 0");
+        row(between, "screenshot", "invalid_events", "ok 0");
+        primitive(0, 0, 5, 8); // The valid Java aggregate still has quarantined A.
+        b.screenshot(); row(read(1), "screenshot", "callback_events", "ok 1");
+        a.failCaptureRemoval = false; stop(app);
+        if (api < 35) return;
+        check(RuntimeBridge.startCaptureObservation(app, false, true) == 0);
+        android.view.WindowManager.initial = 1;
+        a = activity(app); b = activity(app); app.resume(a); app.resume(b); read(2);
+        primitive(1, 1, 2, 0); // Owner close before the still-valid member's close.
+        String[] ownerGap = read(2);
+        row(ownerGap, "recording", "observer_state", "ok no_active_activity");
+        row(ownerGap, "recording", "visibility", "ok unknown");
+        row(ownerGap, "recording", "coverage", "ok unknown");
+        row(ownerGap, "recording", "active_activities", "ok 0");
+        primitive(1, 2, 4, 0); // A fresh initial state establishes the new member as owner.
+        String[] transferred = read(2);
+        row(transferred, "recording", "observer_state", "ok active");
+        row(transferred, "recording", "visibility", "ok not_visible");
+        row(transferred, "recording", "active_activities", "ok 1");
+        row(transferred, "recording", "initial_samples", "ok 1");
+        row(transferred, "recording", "visibility_changes", "ok 0");
+        stop(app);
+    }
     public static void main(String[] args) throws Exception {
         try {
             RuntimeBridge.class.getDeclaredMethod("startCaptureObservation", android.app.Application.class,
@@ -212,6 +259,7 @@ public final class CaptureTest {
         check(RuntimeBridge.attachCaptureActivity(activity(app)) == RuntimeBridge.ACTIVITY_LIMIT);
         row(read(1), "screenshot", "active_activities", "ok 32");
         stop(app);
+        interleavedDrains(app, api);
         System.out.println("PASS capture API" + api + ": production Java/JNI/CycleMonitor with simulated public platform boundaries");
     }
 }

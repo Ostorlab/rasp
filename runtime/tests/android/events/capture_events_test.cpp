@@ -148,6 +148,50 @@ TEST(CaptureEvents, push_whenPermissionBecomesUnknown_invalidatesOnlyThatSource)
   EXPECT_EQ(result[1].visibility, 1);
 }
 
+TEST(CaptureEvents, open_whenQuarantineRemains_preservesPartialAcrossInterleavedDrains) {
+  CaptureEvents events;
+  events.platform(35);
+  const auto epoch = events.start(true, true);
+  grant(events, epoch);
+  open_screenshots(epoch, events, 2);
+  ASSERT_TRUE(events.push(epoch, 0, 1, CaptureKind::kClose, 0));
+  ASSERT_TRUE(events.push(epoch, 0, 0, CaptureKind::kState, 10));
+  EXPECT_EQ(events.drain(true, false)[0].state, CaptureState::kPartial);
+  ASSERT_TRUE(events.push(epoch, 0, 3, CaptureKind::kOpen, 0));
+  const auto gap = events.drain(true, false)[0];
+  EXPECT_EQ(gap.state, CaptureState::kPartial);
+  EXPECT_EQ(gap.active_activities, 2);
+  EXPECT_EQ(gap.lost, 0);
+  EXPECT_EQ(gap.invalid, 0);
+  ASSERT_TRUE(events.push(epoch, 0, 0, CaptureKind::kState, 8));
+  EXPECT_EQ(events.drain(true, false)[0].state, CaptureState::kPartial);
+  ASSERT_TRUE(events.push(epoch, 0, 0, CaptureKind::kState, 7));
+  EXPECT_EQ(events.drain(true, false)[0].state, CaptureState::kActive);
+}
+
+TEST(CaptureEvents, close_whenRecordingOwnerLeaves_invalidatesBeforeOtherMemberClose) {
+  CaptureEvents events;
+  events.platform(35);
+  const auto epoch = events.start(true, true);
+  grant(events, epoch);
+  ASSERT_TRUE(events.push(epoch, 1, 1, CaptureKind::kOpen, 0));
+  ASSERT_TRUE(events.push(epoch, 1, 2, CaptureKind::kOpen, 0));
+  ASSERT_TRUE(events.push(epoch, 1, 1, CaptureKind::kInitial, 1));
+  static_cast<void>(events.drain(false, true));
+  ASSERT_TRUE(events.push(epoch, 1, 1, CaptureKind::kClose, 0));
+  const auto gap = events.drain(false, true)[1];
+  EXPECT_EQ(gap.state, CaptureState::kNoActiveActivity);
+  EXPECT_EQ(gap.active_activities, 1);
+  EXPECT_EQ(gap.visibility, -1);
+  EXPECT_FALSE(events.push(epoch, 1, 0, CaptureKind::kState, 7));
+  ASSERT_TRUE(events.push(epoch, 1, 2, CaptureKind::kInitial, 0));
+  const auto transferred = events.drain(false, true)[1];
+  EXPECT_EQ(transferred.state, CaptureState::kActive);
+  EXPECT_EQ(transferred.active_activities, 1);
+  EXPECT_EQ(transferred.initial_samples, 1);
+  EXPECT_EQ(transferred.changes, 0);
+}
+
 TEST(CaptureEvents, push_whenConcurrentWithDrain_countsEachAcceptedCallbackOnce) {
   CaptureEvents events;
   events.platform(35);

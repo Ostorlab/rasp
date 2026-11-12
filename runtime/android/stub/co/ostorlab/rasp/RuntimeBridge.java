@@ -299,6 +299,9 @@ public final class RuntimeBridge {
         boolean removeRecording() {
             if (recorder == null) return true;
             recorder.enabled = false; recorder.preparing = false; recorder.live = false;
+            if (recordingOwner != null && recordingOwner.recordingOpen) {
+                emit(1, recordingOwner.token, 2, 0); recordingOwner.recordingOpen = false;
+            }
             for (CaptureEntry entry : entries) if (entry != null && entry.recordingOpen) {
                 emit(1, entry.token, 2, 0); entry.recordingOpen = false;
             }

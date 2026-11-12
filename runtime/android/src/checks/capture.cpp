@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
@@ -50,7 +51,8 @@ void append(std::vector<Observation>& rows, const events::CaptureSnapshot& snaps
     coverage = "best_effort";
   }
   add("coverage", coverage, true);
-  add("active_activities", snapshot.active_activities);
+  const bool current = !recording || snapshot.state == events::CaptureState::kActive;
+  add("active_activities", current ? snapshot.active_activities : std::int64_t{0});
   if (recording) {
     std::string visibility = "unknown";
     if (snapshot.visibility == 1) {

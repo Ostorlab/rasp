@@ -122,6 +122,9 @@ bool CaptureEvents::availability(int source, CaptureSnapshot& snapshot, int valu
   if (((value == 7 || value == 8) && snapshot.active_activities == 0) || (source == 1 && value == 8)) {
     return reject(snapshot);
   }
+  if (source == 1 && value == 7 && (recording_owner_ == 0 || snapshot.visibility < 0)) {
+    return reject(snapshot);
+  }
   snapshot.state = static_cast<CaptureState>(value);
   if (source == 0 && snapshot.active_activities > 0 &&
       (snapshot.state == CaptureState::kRegistrationError || snapshot.state == CaptureState::kTeardownError)) {
@@ -176,9 +179,6 @@ bool CaptureEvents::open(int source, CaptureSnapshot& snapshot, int token) {
   entry->token = token;
   entry->sources |= mask;
   ++snapshot.active_activities;
-  if (source == 0) {
-    snapshot.state = CaptureState::kActive;
-  }
   return true;
 }
 
@@ -223,6 +223,7 @@ bool CaptureEvents::activity(int source, CaptureSnapshot& snapshot, int token, C
     if (source == 1 && token == recording_owner_) {
       recording_owner_ = 0;
       snapshot.visibility = -1;
+      snapshot.state = CaptureState::kNoActiveActivity;
     }
     if (snapshot.active_activities == 0) {
       snapshot.state = CaptureState::kNoActiveActivity;

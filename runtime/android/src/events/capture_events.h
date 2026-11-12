@@ -41,6 +41,7 @@ struct CaptureSnapshot {
   CaptureState state = CaptureState::kNeverStarted;
   int permission = 0;
   int visibility = -1;
+  /// Internal memberships; recording export requires a healthy owner and fresh initial state too.
   std::int64_t active_activities = 0;
   std::int64_t callbacks = 0;
   std::int64_t initial_samples = 0;

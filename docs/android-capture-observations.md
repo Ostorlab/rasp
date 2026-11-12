@@ -89,6 +89,12 @@ partial/loss metadata. Global source/executor failures invalidate that source. R
 failure invalidates the one recording consumer and prevents replacement until cleanup succeeds.
 Irrecoverable removal failure can require process restart before that source can register again.
 
+The monitor can sample between lifecycle primitives. Opening another screenshot registration
+preserves partial/error availability until an explicit valid aggregate update confirms recovery.
+Recording owner close immediately makes availability and visibility unknown, retaining internal
+eligible memberships for transfer. The exported recording Activity count stays zero until a
+fresh initial state establishes a healthy owner; that initial sample is not a transition.
+
 All host methods, Activity access and registration/removal require the main thread. Callbacks use
 a main-thread Executor; callback work updates fixed primitive counters and enums. No collection
 or report transport runs on that thread. Public Android calls can involve Binder and cannot
