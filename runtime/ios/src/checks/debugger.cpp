@@ -50,9 +50,9 @@ constexpr std::string_view kTracedSyscallSource = "syscall";
 constexpr std::string_view kParentSignal = "dbg.parent";
 /// The source of the parent-process probe's first read, the libc getppid.
 constexpr std::string_view kParentSource = "getppid";
-/// The source of the parent-process probe's second read, the `kinfo_proc` entry through sysctl, which a hook on
-/// getppid never runs.
-constexpr std::string_view kParentSysctlSource = "sysctl";
+/// The source of the parent-process probe's second read, the `kinfo_proc` entry through a direct system call, which a
+/// hook on the libc getppid never runs.
+constexpr std::string_view kParentSyscallSource = "syscall";
 /// The signal of the exception-port probe.
 constexpr std::string_view kExceptionPortsSignal = "dbg.exception_ports";
 /// The source of the exception-port probe.
@@ -75,7 +75,7 @@ constexpr std::array kProbes = {
     Probe{.signal = kTracedSignal, .source = kTracedSource, .observe = observe_traced},
     Probe{.signal = kTracedSignal, .source = kTracedSyscallSource, .observe = observe_traced_syscall},
     Probe{.signal = kParentSignal, .source = kParentSource, .observe = observe_parent},
-    Probe{.signal = kParentSignal, .source = kParentSysctlSource, .observe = observe_parent_sysctl},
+    Probe{.signal = kParentSignal, .source = kParentSyscallSource, .observe = observe_parent_syscall},
     Probe{.signal = kExceptionPortsSignal, .source = kExceptionPortsSource, .observe = observe_exception_ports},
 };
 
@@ -144,15 +144,15 @@ Observation observe_traced_syscall() {
 
 Observation observe_parent() { return observed(kParentSignal, kParentSource, static_cast<std::int64_t>(getppid())); }
 
-Observation observe_parent_sysctl() {
+Observation observe_parent_syscall() {
 #ifdef __APPLE__
   kinfo_proc info{};
-  if (!read_process_info(info, false)) {
-    return failed(kParentSignal, kParentSysctlSource);
+  if (!read_process_info(info, true)) {
+    return failed(kParentSignal, kParentSyscallSource);
   }
-  return observed(kParentSignal, kParentSysctlSource, static_cast<std::int64_t>(info.kp_eproc.e_ppid));
+  return observed(kParentSignal, kParentSyscallSource, static_cast<std::int64_t>(info.kp_proc.p_ppid));
 #else
-  return unsupported(kParentSignal, kParentSysctlSource);
+  return unsupported(kParentSignal, kParentSyscallSource);
 #endif
 }
 
