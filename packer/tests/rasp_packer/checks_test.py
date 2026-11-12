@@ -15,7 +15,10 @@ _RUNTIME = pathlib.Path(__file__).resolve().parents[3] / "runtime"
 def testChecks_whenComparedWithTheRuntime_listsTheGroupsItRunsInItsOrder(
     platform: platforms.Platform,
 ) -> None:
-    monitoring = (_RUNTIME / platform / "src" / "monitoring.cpp").read_text()
+    dispatch_file = (
+        "builtin.cpp" if platform == platforms.Platform.IOS else "monitoring.cpp"
+    )
+    monitoring = (_RUNTIME / platform / "src" / dispatch_file).read_text()
 
     runtime_groups = re.findall(r'is_check_enabled\(config, "(\w+)"\)', monitoring)
 
@@ -80,3 +83,10 @@ def testResolveChecks_whenUnknownChecksRepeat_reportsEachOnceInOrder() -> None:
 
     assert resolved.checks == ("identity", "root")
     assert resolved.skipped == ("zeta", "alpha")
+
+
+def testResolveChecks_whenIosIntegritySelected_preservesRuntimeCheck() -> None:
+    resolved = checks.resolve_checks(platforms.Platform.IOS, ["integrity"])
+
+    assert resolved.checks == ("identity", "integrity")
+    assert resolved.skipped == ()
