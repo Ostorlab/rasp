@@ -18,6 +18,9 @@ if(RASP_BUILD_TESTS)
   FetchContent_Declare(googletest
     URL https://github.com/google/googletest/releases/download/v1.17.0/googletest-1.17.0.tar.gz
     URL_HASH SHA256=65fab701d9829d38cb77c14acdc431d2108bfdbf8979e40eb8ae567edf10b27c SYSTEM)
+  # Apply the shared test-only policy before this first GoogleTest consumer.
+  set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+  set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(googletest)
   # Match the shipped no-RTTI fixtures; mixed RTTI vtables fail UBSan during gtest discovery.
   target_link_libraries(gtest PRIVATE rasp_language)
