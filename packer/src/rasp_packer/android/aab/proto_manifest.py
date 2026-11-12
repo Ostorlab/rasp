@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import dataclasses
 
+from rasp_packer.android import capture_permissions
+
 ANDROID_NS = "http://schemas.android.com/apk/res/android"
 
 _FIELD_XML_ELEMENT = 1
@@ -48,6 +50,74 @@ _WIRE_FIXED32 = 5
 
 _RESOURCE_ID_APP_COMPONENT_FACTORY = 0x0101057A
 _RESOURCE_ID_MIN_SDK_VERSION = 0x101020C
+
+
+def ensure_uses_permission(data: bytes, permission: str) -> bytes:
+    """Insert one normal capture permission as a direct base manifest child; reject host restrictions."""
+    if permission not in tuple(value for _, value in capture_permissions.PERMISSIONS):
+        raise ProtoManifestError("unsupported capture permission")
+    if len(data) > capture_permissions.MAX_MANIFEST_BYTES:
+        raise ProtoManifestError("capture manifest exceeds bounds")
+    roots = [
+        field for field in _parse_fields(data) if field.number == _FIELD_XML_ELEMENT
+    ]
+    if len(roots) != 1 or not isinstance(roots[0].value, bytes):
+        raise ProtoManifestError("capture manifest requires one root element")
+    root = roots[0]
+    assert isinstance(root.value, bytes)
+    fields = _parse_fields(root.value)
+    names = [field.value for field in fields if field.number == _FIELD_ELEMENT_NAME]
+    if names != [b"manifest"]:
+        raise ProtoManifestError("capture manifest root is not manifest")
+    found = False
+    for child in fields:
+        if child.number != _FIELD_ELEMENT_CHILD:
+            continue
+        if not isinstance(child.value, bytes):
+            raise ProtoManifestError("capture manifest child is not a node")
+        elements = [
+            field
+            for field in _parse_fields(child.value)
+            if field.number == _FIELD_XML_ELEMENT
+        ]
+        if len(elements) != 1 or not isinstance(elements[0].value, bytes):
+            continue
+        children = _parse_fields(elements[0].value)
+        tags = [
+            field.value for field in children if field.number == _FIELD_ELEMENT_NAME
+        ]
+        if tags not in (
+            [b"uses-permission"],
+            [b"uses-permission-sdk-23"],
+            [b"uses-permission-sdk-m"],
+        ):
+            continue
+        if _read_string_attr(children, "name", ANDROID_NS) != permission:
+            continue
+        attributes = [
+            field for field in children if field.number == _FIELD_ELEMENT_ATTR
+        ]
+        if tags != [b"uses-permission"] or len(attributes) != 1:
+            raise ProtoManifestError(
+                f"selected capture permission is restricted: {permission}"
+            )
+        found = True
+    if found is True:
+        return data
+    attribute = _build_string_attr(ANDROID_NS, "name", permission, 0x01010003)
+    element = _encode_field(
+        _FIELD_ELEMENT_NAME, _WIRE_LENGTH_DELIMITED, b"uses-permission"
+    )
+    element += _encode_field(_FIELD_ELEMENT_ATTR, _WIRE_LENGTH_DELIMITED, attribute)
+    node = _encode_field(_FIELD_XML_ELEMENT, _WIRE_LENGTH_DELIMITED, element)
+    addition = _encode_field(_FIELD_ELEMENT_CHILD, _WIRE_LENGTH_DELIMITED, node)
+    rewritten = _encode_field(
+        _FIELD_XML_ELEMENT, _WIRE_LENGTH_DELIMITED, root.value + addition
+    )
+    result = data[: root.start] + rewritten + data[root.end :]
+    if len(result) > capture_permissions.MAX_MANIFEST_BYTES:
+        raise ProtoManifestError("edited capture manifest exceeds bounds")
+    return result
 
 
 class ProtoManifestError(Exception):

@@ -81,7 +81,52 @@ inject fabricated MotionEvent flags and label them actual OS coverage. Normal/ob
 system accessibility/legitimate overlays need separate recorded cases. Never classify the benign fixture as malware.
 The host-JVM suite covers flag handling deterministically; it does not establish OEM dispatch or device efficacy.
 
-No ADB/hardware run is claimed by fixture compilation. No permissions or flags are added to the host manifest.
+No ADB/hardware run is claimed by fixture compilation. The touch observer adds no permissions or window flags;
+capture permissions are injected only when their corresponding groups are selected.
+
+## Screenshot and recording observation mode
+
+Build with public SDK35 and the matching compile-only bridge. The host explicitly starts both capture sources
+after Application initialization and attaches its already resumed MainActivity one second later. Its manifest
+deliberately omits capture permissions so the packer's selection-dependent insertion is exercised. Pack a development
+artifact selecting `identity,screenshot,screen_recording`, sign with a local test key, and install only on a
+dedicated test device. Keep all bridge nested classes in a separate minified-host run.
+
+Only neutral fixture text should be visible. No screenshot pixels, recorded content or input text belongs in
+runtime telemetry or the test report. The screenshot API shows an Android notice; explain it to the tester first.
+
+1. On API31 and33, wait for a selected monitor cycle and record explicit unsupported source data. On API34,
+   screenshot is available and recording remains unsupported. On API35+, test both independently. Record API,
+   device/OEM, ABI, target SDK, build/catalogue identifiers and actual observation statuses separately.
+2. On API34+, while MainActivity is resumed and registered, take a screenshot using the device's physical
+   hardware-button combination. Wait for the selected monitor pass and inspect callback/loss counters together.
+   Do not use `adb screencap` or instrumentation screenshot commands as positive callback evidence.
+3. On API35+, start the system recorder with explicit tester consent. Test both full-screen and app-only selection
+   where offered. Observe initial `not_visible` before recording, a later `visible` notification when applicable,
+   and a later `not_visible` state after stop. Start recording before launching/resuming the fixture in a separate
+   case: its initial returned state must be retained even if there is no later callback.
+4. Pause/resume, use Home/return, rotate and recreate MainActivity. Recording visibility becomes unknown after
+   observer-owner detach until a fresh successful registration; retained interval evidence must survive.
+   Leave another app foreground or select another app for recording as a separate negative/visibility-limit case.
+   A zero callback counter or `not_visible` result does not establish device-wide capture absence.
+5. Launch the fixture's neutral second Activity in another task:
+
+   ```sh
+   adb shell am start -n fixture.contextbridge/.SecondaryActivity --activity-new-task --activity-multiple-task
+   ```
+
+   Use the device's split-screen controls to place both fixture Activities side by side. Record which Activities
+   are resumed according to that OS. Pause/destroy the recording owner while the other remains eligible; check
+   owner handover/loss and fresh initial state. One UID transition must not be multiplied by Activity count.
+   Screenshot notifications can arrive per Activity and are not a unique device-screenshot count.
+6. In a local host variant, explicitly stop/restart capture, attach an already resumed Activity, and call APIs
+   from a worker thread to check rejection. Repeat with capture permissions deliberately omitted, present and
+   effective, and denied/unavailable where the actual platform can reproduce that condition. These are normal
+   permissions; do not invent a dangerous-permission prompt or a device denial result unavailable on that OS.
+
+Keep raw availability/loss counters and actual outcomes, including failures, in the test record. Successful JVM
+and SDK compilation are not OS callback results. These physical-device, OEM, multi-window and minifier cases
+remain externally gated until actually run. This repository contains reproducible steps, not fabricated results.
 
 ## Service metadata checks
 

@@ -6,6 +6,7 @@
 #include <iterator>
 #include <vector>
 
+#include "checks/capture.h"
 #include "checks/debugger.h"
 #include "checks/emulator.h"
 #include "checks/hooks.h"
@@ -58,6 +59,11 @@ std::vector<Observation> run_checks(const Config& config) {
   }
   if (is_check_enabled(config, "overlay")) {
     std::ranges::move(checks::overlay(), std::back_inserter(observations));
+  }
+  const bool screenshot = is_check_enabled(config, "screenshot");
+  const bool recording = is_check_enabled(config, "screen_recording");
+  if (screenshot || recording) {
+    std::ranges::move(checks::capture(screenshot, recording), std::back_inserter(observations));
   }
   return observations;
 }

@@ -2,6 +2,19 @@ package android.app;
 
 public class Application extends android.content.Context {
     public volatile boolean fail;
+    public final java.util.Set<String> deniedPermissions = new java.util.HashSet<>();
+    public boolean rejectCaptureExecutor;
+    public boolean failPermission;
+    @Override public java.util.concurrent.Executor getMainExecutor() {
+        return command -> {
+            if (rejectCaptureExecutor) throw new java.util.concurrent.RejectedExecutionException("main looper unavailable");
+            command.run();
+        };
+    }
+    @Override public int checkSelfPermission(String permission) {
+        if (failPermission) throw new IllegalStateException("permission boundary failure");
+        return deniedPermissions.contains(permission) ? -1 : 0;
+    }
     public java.io.File getNoBackupFilesDir() { return null; }
     public boolean failRegistration;
     public boolean failUnregister;

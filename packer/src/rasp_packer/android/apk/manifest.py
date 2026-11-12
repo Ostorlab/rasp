@@ -7,7 +7,18 @@ error types.
 
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer.android import capture_permissions
 from rasp_packer.android.apk import axml
+
+
+def ensure_capture_permissions(data: bytes, checks: tuple[str, ...]) -> bytes:
+    """Add selected normal capture permissions without widening an existing restricted declaration."""
+    for permission in capture_permissions.selected(checks):
+        try:
+            data = axml.ensure_uses_permission(data, permission)
+        except axml.AxmlError as error:
+            raise errors.ManifestError(str(error)) from error
+    return data
 
 
 def app_identity(manifest: bytes) -> identity.AppIdentity:

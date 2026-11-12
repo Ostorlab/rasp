@@ -69,3 +69,33 @@ def testSetAppComponentFactory_whenAbsent_addsIt() -> None:
     edited = manifest.set_app_component_factory(data, "co.ostorlab.rasp.RaspStub")
 
     assert manifest.app_component_factory(edited) == "co.ostorlab.rasp.RaspStub"
+
+
+def testCapturePermissions_whenSelected_addsOnlySelectedAndIsIdempotent() -> None:
+    data = (_FIXTURES / "manifest_with_application_and_version.bin").read_bytes()
+    edited = manifest.ensure_capture_permissions(data, ("screenshot",))
+    assert edited != data
+    assert manifest.ensure_capture_permissions(edited, ("screenshot",)) == edited
+    assert manifest.ensure_capture_permissions(data, ()) == data
+    assert manifest.app_identity(edited) == manifest.app_identity(data)
+    assert axml.read_min_sdk_version(edited) == axml.read_min_sdk_version(data)
+    assert b"DETECT_SCREEN_RECORDING" not in edited
+    both = manifest.ensure_capture_permissions(edited, ("screen_recording",))
+    assert both != edited
+    assert (
+        manifest.ensure_capture_permissions(both, ("screenshot", "screen_recording"))
+        == both
+    )
+
+
+def testCapturePermissions_whenMalformedSelected_raisesManifestError() -> None:
+    with pytest.raises(errors.ManifestError):
+        manifest.ensure_capture_permissions(b"bad", ("screenshot",))
+
+
+def testCapturePermissions_whenHostRestrictsPermission_refusesPolicyWidening() -> None:
+    data = (_FIXTURES / "capture_restricted.bin").read_bytes()
+    with pytest.raises(errors.ManifestError, match="restricted"):
+        manifest.ensure_capture_permissions(data, ("screenshot",))
+    assert manifest.ensure_capture_permissions(data, ()) == data
+    assert manifest.ensure_capture_permissions(data, ("screen_recording",)) != data
