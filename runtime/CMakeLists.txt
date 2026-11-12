@@ -77,11 +77,14 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
   add_subdirectory(android)
 endif()
 
+if(RASP_BUILD_TESTS)
+  enable_testing()
+endif()
+
 if(RASP_BUILD_TESTS OR RASP_BUILD_KEY_COMPANION)
   add_subdirectory(companion)
 endif()
 
 if(RASP_BUILD_TESTS)
-  enable_testing()
   add_subdirectory(tests)
 endif()
