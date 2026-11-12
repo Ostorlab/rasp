@@ -188,6 +188,21 @@ ANDROID_JAR="$ANDROID_HOME/platforms/android-36/android.jar" android/stub/build.
 
 The packer adds `stub.dex` as the app's last dex file, and `librasp.so` under `lib/<abi>/`.
 
+Native builds also emit `<binary>.capabilities.json`, binding the built-in catalogue to the
+exact pristine binary digest. Distribute it with the binary. From `runtime/`, stage native
+artifacts at the package-resource paths before building the packer wheel:
+
+```
+cmake --install build/android --prefix <stage> --component runtime
+cmake --install build/ios --prefix <stage> --component runtime
+```
+
+Use the platform build available on the host; the iOS build requires macOS/Xcode. Copy the
+staged `rasp_packer/` resources into `packer/src/rasp_packer/`, including each sidecar, and add
+the separately built Android stub. The packer validates pristine bytes before config insertion.
+Missing metadata means legacy/unknown capabilities; invalid present metadata fails packing.
+See [the capability contract](../docs/check-capabilities.md) for trust and backend limits.
+
 ## Logs
 
 Only development builds write logs. A release build writes nothing to any log, so a protected app leaves no trace of the runtime in the device's log.
@@ -255,8 +270,4 @@ On the release binaries, it checks that:
 - neither imports any of `exit`, `_Exit`, `quick_exit`, `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `setenv`, `putenv`, `unsetenv`, `setlocale` and `setrlimit`. `.clang-tidy` forbids these functions in the source, and also `abort` and `std::terminate`, which the binary check leaves out;
 - neither writes logs: the framework imports no symbol with `_os_log` in its name and contains no `{public}` text, and the Android library imports no symbol with `__android_log` in its name and contains no `RaspRuntime` text.
 
-Native builds also emit an adjacent `.capabilities.json` sidecar binding the built-in check
-catalogue to the exact pristine binary digest. Distribute it with the binary. Use
-`cmake --install build/android --prefix <stage> --component runtime` (or `build/ios`) to
-stage the package resource layout. See [the capability contract](../docs/check-capabilities.md)
-for validation, unknown legacy releases and backend/complete-cycle dependencies.
+See [the capability contract](../docs/check-capabilities.md) for release metadata validation.

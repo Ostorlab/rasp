@@ -1,7 +1,7 @@
 """The check groups the runtime runs on each platform, and the ones every protected app runs.
 
-A check group is one function of the runtime's checks, run by its thread in runtime/<platform>/src/monitoring.cpp
-(iOS dispatch lives in builtin.cpp), and its id is the name of that function. The caller of the packer chooses the
+A check group is one function of the runtime's checks, dispatched by runtime/<platform>/src/builtin.cpp
+and run by its monitoring thread, and its id is the name of that function. The caller of the packer chooses the
 groups a protected app runs. The packer writes them into the runtime's config, and the runtime runs only those.
 """
 
@@ -20,12 +20,22 @@ CHECKS: collections.abc.Mapping[platforms.Platform, tuple[str, ...]] = {
 }
 """Current built-in groups; legacy artifacts use these only for config, without capability claims."""
 
-REQUIRED_CHECKS: frozenset[str] = frozenset(
-    group["name"]
-    for group in capabilities.catalogue()["platforms"]["android"]["groups"]
-    if group["required"]
+REQUIRED_CHECKS_BY_PLATFORM: collections.abc.Mapping[
+    platforms.Platform, frozenset[str]
+] = {
+    platform: frozenset(
+        group["name"]
+        for group in capabilities.catalogue()["platforms"][platform.value]["groups"]
+        if group["required"]
+    )
+    for platform in platforms.Platform
+}
+"""Required groups of each platform, used by config resolution."""
+
+REQUIRED_CHECKS: frozenset[str] = frozenset.intersection(
+    *REQUIRED_CHECKS_BY_PLATFORM.values()
 )
-"""Required groups from the catalogue, matching the packer's identity config semantics."""
+"""Compatibility view of groups required on every platform; use the platform mapping for selection."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -57,7 +67,7 @@ def resolve_checks(
         The chosen ids that are check groups of the platform with the required ones, and the
         skipped ids that are not.
     """
-    resolved = set(REQUIRED_CHECKS)
+    resolved = set(REQUIRED_CHECKS_BY_PLATFORM[platform])
     skipped: dict[str, None] = {}
     for check in checks:
         if check in CHECKS[platform]:

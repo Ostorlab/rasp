@@ -58,7 +58,7 @@ def pack(
             pristine,
             capabilities.read_sidecar(framework_dir / macho.RUNTIME_BINARY),
             "ios",
-            "arm64",
+            macho.RUNTIME_ABI,
         )
         bundle = ipa.extract(app, pathlib.Path(workspace))
         embedded = bundle.frameworks_dir / macho.RUNTIME_FRAMEWORK

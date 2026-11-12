@@ -1,118 +1,114 @@
-# Release-specific built-in capabilities (schema 1, revision 1)
+# Release-specific built-in capabilities
 
-`packer/src/rasp_packer/checks_manifest.json` is the source of truth for this revision's
-21 Android and 24 iOS built-in `(group, signal, source)` entries. It was audited against
-`runtime/{android,ios}/src/checks/*.cpp` and the production `builtin.cpp` dispatchers,
-including PR215 iOS integrity. `checks.py` reads this catalogue for requested, required
-and default selection. Identity is required by the public packer; no `--checks` means
-identity only. Unknown requested names are skipped and reported; repeated names count
-once. Native config parsing itself does not force identity when given absent/empty checks.
+An old or unmatched runtime must never silently receive the installed packer's current
+output expectations. The packer assigns capabilities only when a sidecar matches the exact
+pristine native binary, platform and supported ABI. A runtime version string is insufficient
+because different source, compiler or plugin builds can share it.
 
-Each entry declares its successful value kind (`none` for an always-unsupported source),
-one observation per invocation, possible
-statuses and support conditions. `string_list` values have variable length, including zero;
-list members are data, not additional signal/source identities. Android supports the four
-listed ABIs at API31+, iOS the shipped arm64/iOS12+ device build. `ios_device` probes emit
-unsupported on simulators/non-iOS hosts; `apple` emulator tells also work on simulators;
-`never` means an explicit unsupported observation (iOS user CAs). Android probes emit
-unsupported off Android. OS floors and ABI lists describe the supported release presets;
-other build targets/floors are rejected by the producer until deliberately modelled.
-Read `behavior` for per-source limitations and partial-data behavior. Non-OK statuses have
-no value. None of these built-ins emits timeout today, although the observation type
-supports it. This catalogue cannot establish that a probe completed or ran.
+`packer/src/rasp_packer/checks_manifest.json` is the versioned source of truth for built-in
+group, signal and source identities. Its entries come from the platform check implementations
+and production `builtin.cpp` dispatchers. The catalogue describes possible outputs, not
+execution evidence or device attestation.
 
-## Binding production to consumption
+## Group selection and output semantics
 
-CMake emits `<binary>.capabilities.json` using `runtime/tools/capabilities.py` after linking.
-The sidecar contains the full catalogue, schema version, SHA-256 of its canonical JSON,
-SHA-256 of the **pristine linked bytes**, platform, ABI and OS floor. The binary digest
-changes across different source/compiler/plugin builds sharing the same runtime version.
-No exports, constructors or runtime code are added for metadata. Plugin signal names,
-cardinality and possible plugin changes to built-in delivery remain **unmodelled**.
+`checks.py` resolves config groups from each platform's own catalogue entry:
 
-`cmake --install build/android --prefix <stage> --component runtime` stages the library
-and sidecar under `rasp_packer/android/resources/lib/<abi>/`. The same command with
-`build/ios` stages the entire framework, including its adjacent sidecar, under
-`rasp_packer/ios/resources/`. Add the separately built Android `stub.dex` as documented in
-the runtime README. Copy those staged package resources into `packer/src/rasp_packer/`
-before building the wheel. Package-resource discovery uses `importlib.resources`, including
-installed wheels. There is no separate release-publishing workflow in this base;
-`.github/workflows/runtime.yml` now stages and validates both native release platforms
-through the production packer binding and config readers/writers.
+- Identity is required on both current platforms; no `--checks` selects identity only.
+- Unknown requested names are skipped and reported; repeated names count once.
+- `REQUIRED_CHECKS_BY_PLATFORM` supplies required groups for the selected platform.
+  `REQUIRED_CHECKS` remains the compatibility view of groups required on every platform.
+- Native parsing does not force identity when config checks are absent or empty.
 
-Before config mutation, Android resources and the APK/AAB consumer validate the exact
-selected library bytes; iOS validates the exact pristine framework bytes it then writes.
-Validation bounds JSON size (128 KiB), rejects duplicate keys/groups/signal-source pairs,
-unknown structure/schema/kinds/statuses/conditions, foreign catalogue identities, target
-mismatches and byte digest mismatches. Even a self-consistent foreign catalogue is refused;
-there is no runtime-version-string lookup or fallback to the installed catalogue.
+Each source declares an observation count, successful value kind, statuses and support
+conditions. `string_list` values may contain zero or more members; those members are data,
+not additional observation identities. An always-unsupported source declares value kind
+`none`. Non-OK observations have no value. Read each entry's `behavior` for partial-data,
+read-error and truncation limits.
 
-Missing sidecar = legacy/unknown. Legacy packing continues with the documented check
-selection semantics, but `PackResult.capability_bindings` is `None`. A mix of known and
-legacy selected ABIs is also unknown. Invalid **present** sidecars fail packing with
-`InvalidRuntimeError`; no protected output is written. Copying a newly generated sidecar
-onto an old binary is not a valid release process: only its actual source build may emit
-capabilities. Hashes are association/integrity checks inside the release distribution,
-not tamper resistance, signatures, signature verification or device attestation.
+Android's supported release presets target API31+ and the four listed ABIs. The iOS release
+preset and consumer support arm64/iOS12+. `ios_device` probes emit unsupported on simulators
+and non-iOS hosts; `apple` emulator tells also work on simulators; `never` means an explicit
+unsupported observation, such as iOS user CAs. Android probes emit unsupported off Android.
+Other build floors and targets require deliberate catalogue and consumer support.
 
-The public `PackResult` exposes `effective_checks` (the config actually written) and
-`capability_bindings` (one `catalogue_id`, pristine `artifact_sha256`, platform, ABI and
-minimum OS per injected native artifact). `None` must never be expanded into current
-expectations. The CLI prints unknown capabilities explicitly. Config insertion changes
-binary bytes: the registered digest identifies the pre-config artifact, not a hash of the
-customer's configured/signed executable. The pristine iOS sidecar is removed from the copied framework before mutation; its
-provenance is returned to the caller, while the source artifact and sidecar stay untouched.
+The iOS consumer's expected ABI is `macho.RUNTIME_ABI`, matching the ARM64 slices that
+`macho.add_runtime` instruments. Metadata is checked against that contract; a sidecar cannot
+choose its own accepted architecture. Adding another ABI requires changes to the actual
+consumer and build support, not just a new sidecar value.
 
-## Complete-cycle / server-health dependency contract
+## Native build and packer binding
 
-`docs/fixtures/check-capabilities-v1.json` supplies selection/unknown-status examples.
-Register build ID, platform, effective groups and **validated** artifact bindings together
-in the authenticated backend build registry. Resolve outputs only for the exact registered
-catalogue identity; preserve per-ABI provenance. Reject unknown IDs/schema or mark health
-unsupported. Never populate current expectations for an unmatched release or `None`.
+A capabilities sidecar is the adjacent `<binary>.capabilities.json` file emitted by the
+native CMake build. It contains the full catalogue, schema version, canonical catalogue
+SHA-256, pristine linked-binary SHA-256, platform, ABI and OS floor. The build is the producer;
+the packer is the consumer that validates those bytes before inserting app config.
 
-For an enabled group, a future complete-cycle envelope must distinguish fixed observation
-identities from variable list values, snapshot vs delta, dropped/truncated outputs, error,
-unsupported and eventual timeout. Plugins can add/change delivery; their outputs cannot
-be assumed complete from this catalogue. Error/unsupported do not mean clean or missing;
-empty values are present observations. No cycle IDs, completion envelope, transport retry
-idempotency, server missing-check verdicts or freshness policy are implemented here.
-Silence/offline/suspension cannot establish runtime removal or bypass. Those workers must
-register the manifest alongside build config and explicitly add cycle/transport contracts.
+Build and stage instructions are in [the runtime build guide](../runtime/README.md#build)
+and the platform package-resource READMEs. Ship each binary and its sidecar together. Package
+discovery uses `importlib.resources`, including installed wheels. Native CI stages real
+release artifacts and checks binding plus production config readers and writers.
 
-## Adding checks and integrating RT03/RT04
+Validation bounds JSON to 128 KiB and rejects duplicate keys, groups or signal/source pairs;
+unknown structure, schema, kinds, statuses or support conditions; foreign catalogue
+identities; target/floor mismatches; and changed binary digests. A self-consistent foreign
+catalogue is still refused. There is no runtime-version lookup or current-catalogue fallback.
 
-Neither RT03 nor RT04 is present on base `fca230fa669a8a97c5c45dbf8dab9825930d374e`.
-When integrated, update this same catalogue and bump revision before emitting artifacts:
+A missing sidecar permits legacy packing with unknown capabilities:
+`PackResult.capability_bindings` is `None`. A selected mixture of known and legacy ABIs is
+also unknown. Invalid present metadata raises `InvalidRuntimeError` before protected output
+creation. Generating new metadata for an arbitrary old binary is not a valid release process;
+capabilities must come from that binary's actual source build.
 
-- RT03: register `hook.threads/proc_task` (string list; OK/error/unsupported), plus incomplete,
-  disappearing, denied, malformed, task-limit and truncation behavior from its final code.
-  Do not call generic gmain a marker or claim every renamed/hidden thread is visible.
-- RT04: register `proc_status_syscall` and `proc_maps_syscall`, and each added Android
-  syscall-wrapper path source independently with its failures;
-  register iOS direct sysctl/parent sources with their actual arm64/API gates and explicit
-  unsupported observations elsewhere. Preserve source divergence. A libc syscall wrapper
-  is hookable and is not an attestation source.
-- Future checks: add actual dispatch groups/output identities and required semantics,
-  model dynamic identities/cardinality explicitly (or mark unmodelled), retain typed values
-  and non-OK statuses, update contract fixtures and compiled dispatch tests, then rebuild
-  and distribute **binary plus sidecar**. New catalogue identities require deliberate
-  consumer/backend registry support; older consumer versions refuse them.
+Config insertion changes the binary. On iOS, the pristine sidecar is removed from the copied
+framework before mutation; the source binary and sidecar stay untouched. Returned provenance
+identifies the validated source artifact, not the configured or customer-signed executable.
 
-## External publisher and final-stack follow-ups
+`PackResult.effective_checks` records the groups actually written into config.
+`capability_bindings` records each selected native artifact's catalogue identity, pristine
+byte digest, platform, ABI and minimum OS. The CLI prints unknown capabilities explicitly.
+Direct platform `AppIdentity` access, equality and hashing remain compatible.
 
-The separate `rasp-plugins` repository's
-`.github/workflows/publish-packer.yml:252` currently stages only Android `librasp.so`,
-dropping the adjacent `.capabilities.json`. Its publisher must copy **both files** for
-every ABI, preserve their association through wheel creation, and verify the installed
-wheel with the production consumer. Its iOS tar path preserves the sidecar. This checkout
-does not change that external publisher. Until that follow-up lands, published Android
-artifacts lacking sidecars remain explicitly unknown; they must not receive this catalogue's
-expectations merely because the packer has it installed.
+These hashes associate files inside a trusted release distribution. They do not authenticate
+a release, resist an attacker who changes both files, prove a check ran or attest a device.
+Plugin outputs, cardinality and changes to built-in delivery remain unmodelled. Fixture and
+host tests do not establish physical-device detection behavior or replace native SDK CI.
 
-The final integration stack must incorporate reviewed/normalized RT04 upstream sources
-and then update the catalogue revision, source contracts, tests and producer/consumer
-artifacts together. This branch's catalogue covers only the approved PR215 base; it is
-not complete for later RT03/RT04 sources. Root owns that dependency sequence and publisher
-follow-up. Local artifact/wheel validation here includes the sidecar deliberately and does
-not establish that the separate publisher currently preserves Android provenance.
+## Backend and complete-cycle contract
+
+[The contract fixtures](fixtures/check-capabilities-v1.json) supply selection and unknown-state
+examples. Register build ID, platform, effective groups and validated artifact bindings
+together in the authenticated backend registry. Resolve expectations only for the exact
+registered catalogue identity and preserve per-ABI provenance. Unknown releases have
+unsupported expectations; never substitute the current catalogue.
+
+A future complete-cycle envelope must distinguish fixed observation identities from variable
+list values, snapshots from deltas, and complete delivery from dropped or truncated outputs.
+Error and unsupported observations are present results, not clean or missing checks. Empty
+values are present observations. Plugins can change delivery, so their completeness cannot
+be inferred from the built-in catalogue.
+
+Cycle IDs, completion envelopes, transport retry idempotency, missing-check verdicts and
+freshness policy are separate contracts. Silence, offline periods and suspension cannot
+establish runtime removal or bypass. No physical-device validation or check efficacy is
+implied by this manifest.
+
+## Catalogue and publisher updates
+
+When adding a built-in, register its actual dispatch group, signal/source identities, typed
+values, observation/value cardinality, statuses and ABI/API conditions. Model dynamic
+identities explicitly or mark them unmodelled. Preserve source divergence and non-OK results.
+Do not treat a generic `gmain` thread as an instrumentation marker or claim that every renamed
+or hidden thread is visible. A libc syscall wrapper is hookable and is not an attestation
+source.
+
+Bump the catalogue revision, update fixtures and compiled dispatch tests, then rebuild and
+ship binary plus sidecar. New catalogue identities require deliberate packer/backend support;
+foreign old catalogues remain rejected rather than being reassigned current expectations.
+Later independent checks require their own catalogue update when integrated.
+
+The external publisher must use the validator and catalogue from the selected runtime source
+reference, stage each ABI's binary with its sidecar, and verify the installed wheel using that
+same consumer contract. Changing the selected runtime reference requires matching packer,
+metadata and fixture expectations. This repository's local wheel tests do not establish that
+another publisher preserves the association; verify that release path independently.

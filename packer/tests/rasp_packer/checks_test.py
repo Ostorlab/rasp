@@ -5,6 +5,7 @@ import re
 
 import pytest
 
+from rasp_packer import capabilities
 from rasp_packer import checks
 from rasp_packer import platforms
 
@@ -88,3 +89,42 @@ def testResolveChecks_whenIosIntegritySelected_preservesRuntimeCheck() -> None:
 
     assert resolved.checks == ("identity", "integrity")
     assert resolved.skipped == ()
+
+
+@pytest.mark.parametrize(
+    ("platform", "other_required", "expected"),
+    [
+        (platforms.Platform.ANDROID, "jailbreak", ("identity", "root")),
+        (platforms.Platform.IOS, "root", ("identity", "jailbreak")),
+    ],
+)
+def testResolveChecks_whenPlatformRequirementsDiffer_keepsSelectionsSeparate(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: platforms.Platform,
+    other_required: str,
+    expected: tuple[str, ...],
+) -> None:
+    monkeypatch.setattr(
+        checks,
+        "REQUIRED_CHECKS_BY_PLATFORM",
+        {
+            platforms.Platform.ANDROID: frozenset({"identity", "root"}),
+            platforms.Platform.IOS: frozenset({"identity", "jailbreak"}),
+        },
+        raising=False,
+    )
+    resolved = checks.resolve_checks(platform, [other_required])
+    assert resolved.checks == expected
+    assert resolved.skipped == (other_required,)
+
+
+@pytest.mark.parametrize("platform", list(platforms.Platform))
+def testRequiredChecks_whenCatalogueRead_matchesSelectedPlatform(
+    platform: platforms.Platform,
+) -> None:
+    groups = capabilities.catalogue()["platforms"][platform.value]["groups"]
+    assert checks.REQUIRED_CHECKS_BY_PLATFORM[platform] == frozenset(
+        group["name"] for group in groups if group["required"]
+    )
+    assert checks.resolve_checks(platform, []).checks == ("identity",)
+    assert frozenset({"identity"}) == checks.REQUIRED_CHECKS

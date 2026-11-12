@@ -1,6 +1,7 @@
 """Tests of packing an IPA."""
 
 import collections.abc
+import json
 import pathlib
 import stat
 import zipfile
@@ -161,5 +162,22 @@ def testPack_whenBoundRuntimeChanged_rejectsBeforeWritingOutput(
     binary.write_bytes(binary.read_bytes() + b"changed")
     output = tmp_path / "bad.ipa"
     with pytest.raises(errors.InvalidRuntimeError, match="digest"):
+        packer.pack(app=ipa_file, output=output, runtime=runtime, config=_CONFIG)
+    assert output.exists() is False
+
+
+def testPack_whenSidecarClaimsUnsupportedAbi_rejectsBeforeOutput(
+    ipa_file: pathlib.Path, runtime: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    binary = runtime / "RaspRuntime"
+    metadata = json.loads(
+        capabilities.emit(binary.read_bytes(), "ios", "arm64", "12.0")
+    )
+    metadata["abi"] = "x86_64"
+    binary.with_name(binary.name + capabilities.SIDECAR_SUFFIX).write_bytes(
+        capabilities.canonical(metadata)
+    )
+    output = tmp_path / "unsupported.ipa"
+    with pytest.raises(errors.InvalidRuntimeError, match="platform/ABI"):
         packer.pack(app=ipa_file, output=output, runtime=runtime, config=_CONFIG)
     assert output.exists() is False
