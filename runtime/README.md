@@ -1,17 +1,15 @@
 # Runtime
 
-The optional [local policy host gate](../docs/local-policy-contract.md) reads the
-actual owned typed report before an explicitly adapted operation. It is offline,
-report-only by default, and never terminates the app or establishes server authority.
-The primitive C host API preserves the six iOS capture exports and adds exactly two
-versioned policy exports; Android retains JNI_OnLoad and those same two policy exports.
-
-The C++ runtime libraries that the packer adds to a protected app. They run the checks inside the app.
+The runtime is a set of C++ libraries that the packer adds to a protected app. They run the checks inside the app.
 
 Owned monitor snapshots include [typed local decision evidence](../docs/local-decisions-contract.md).
 The existing `on_cycle` callback receives the same immutable observations, coverage and report-only
 results. Disabled/missing/unavailable rows remain unknown; evaluated predicate counts are separate
-from row counts. These client observations grant no backend or operation authority.
+from row counts. An optional [local policy host gate](../docs/local-policy-contract.md) uses that owned
+report immediately before an explicitly adapted operation; report-only remains the default.
+These client observations grant no backend authorization. The gate never terminates the app.
+Its primitive C API adds exactly two versioned policy exports alongside the six iOS capture exports;
+Android retains JNI_OnLoad and the same two policy exports.
 
 Android signing-block and key/map/DEX reads use bounded descriptors; see the
 [archive read limits](../docs/android-archive-reads.md) for allocation caps,

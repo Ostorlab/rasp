@@ -88,8 +88,7 @@ public final class MainActivity extends Activity {
         HostOperationContext.GateResult result = owner.gate(1,sequence,attempt);
         consumed = result.context.state == 9;
         RuntimeBridge.PolicyDecision nativeDecision = result.nativeDecision;
-        if (result.context.status != 0 || nativeDecision == null || nativeDecision.status() != RuntimeBridge.POLICY_OK
-            || nativeDecision.action() != RuntimeBridge.POLICY_ALLOW) {
+        if (result.context.status != 0 || nativeDecision == null || !nativeDecision.allows()) {
             status.setText("Demo denied/unavailable; receipts: " + receipts); return;
         }
         receipts++;

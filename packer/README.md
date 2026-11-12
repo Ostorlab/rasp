@@ -42,13 +42,16 @@ missing sidecars pack as legacy with unknown capabilities (`PackResult.capabilit
 is `None`). `effective_checks` records config selection, not execution evidence. See
 [the capability contract](../docs/check-capabilities.md) and [runtime build guide](../runtime/README.md#build).
 
-## Android
+## Local policy
 
-`--local-policy policy.json` (Python `local_policy=`) embeds a bounded opt-in policy.
+`--local-policy policy.json` (Python `local_policy=`) embeds a bounded opt-in policy
+for both Android and iOS.
 Absence preserves the exact legacy config and report-only behavior. Any explicit
 policy requires compatible policy-support descriptors and actual host ABI exports
 for every injected native artifact. The packer reports effective policy/config
 hashes; it cannot prove host adaptation. See [policy, API and compatibility](../docs/local-policy-contract.md).
+
+## Android
 
 For Android the packer protects the app's code:
 

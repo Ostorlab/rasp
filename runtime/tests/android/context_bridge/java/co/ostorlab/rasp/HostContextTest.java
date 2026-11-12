@@ -23,8 +23,11 @@ public final class HostContextTest {
             ref(kind == 8 ? 0 : generation == 1 ? 1 : 3), ref(kind == 1 || kind == 8 || (kind == 4 && attempt == 0) ? 0 : 2));
     }
     private static HostOperationContext flow() {
+        return flow(HASH);
+    }
+    private static HostOperationContext flow(String expectedHash) {
         SystemClock.tick = 1000000000L;
-        HostOperationContext result = new HostOperationContext(new HostOperationContext.Binding("append_demo_receipt", HASH, true));
+        HostOperationContext result = new HostOperationContext(new HostOperationContext.Binding("append_demo_receipt", expectedHash, true));
         check(result.apply(event("start",1,1,0,0)).status == 0, "flow start");
         check(result.apply(event("begin",1,2,1,1)).status == 0, "flow begin");
         return result;
@@ -35,8 +38,22 @@ public final class HostContextTest {
         HostOperationContext startup = flow();
         check(startup.gate(1,2,1).context.status == 12, "unavailable real native service");
         check(startup.gate(1,2,1).context.reason == 13, "native failure consumed");
-        check(PolicyTest.initializeVersionNative(1), "native installation");
+        boolean reportOnly = args.length > 2 && args[2].equals("report_only");
+        check(PolicyTest.initializeNative(new long[] {1, reportOnly ? 1 : 0}), "native installation");
         PolicyTest.publishValuesNative(new long[] {0, 0, 1000000000L});
+        if (reportOnly) {
+            HostOperationContext advisory = flow("cd463047b2990133678d5afdd887eca134a46a1063c6d3c39b637472a4341fee");
+            HostOperationContext.GateResult result = advisory.gate(1,2,1);
+            check(result.context.status == 0 && result.nativeDecision != null, "coherent report-only context");
+            check(result.nativeDecision.action() == RuntimeBridge.POLICY_REPORT
+                && result.nativeDecision.candidateAction() == RuntimeBridge.POLICY_ALLOW
+                && !result.nativeDecision.allows(), "report candidate never admits");
+            int advisoryReceipts = 0;
+            if (result.context.status == 0 && result.nativeDecision.allows()) advisoryReceipts++;
+            check(advisoryReceipts == 0 && advisory.gate(1,2,1).context.reason == 13, "advisory consumes without effect");
+            System.out.println("Actual host-context REPORT candidate ALLOW appended zero receipts");
+            return;
+        }
         String previous = "";
         HostOperationContext owner = null;
         int receipts = 0;
@@ -56,7 +73,7 @@ public final class HostContextTest {
             if (f[1].equals("gate")) {
                 HostOperationContext.GateResult result = owner.gate(generation, sequence, attempt);
                 view = result.context; nativeDecision = result.nativeDecision;
-                if (view.status == 0 && nativeDecision != null && nativeDecision.status() == 0 && nativeDecision.action() == 2) receipts++;
+                if (view.status == 0 && nativeDecision != null && nativeDecision.allows()) receipts++;
             } else view = owner.apply(event(f[1], generation, sequence, attempt, secure));
             check(view.status == Integer.parseInt(f[7]), "status: " + line + " got=" + view.status);
             check(view.state == Integer.parseInt(f[8]), "state: " + line + " got=" + view.state);

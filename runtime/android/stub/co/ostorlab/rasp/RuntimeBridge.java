@@ -33,7 +33,8 @@ public final class RuntimeBridge {
     }
 
     /** Call again immediately before each actual adapted operation, on its execution thread.
-     * Non-OK/null/unknown action never permits an operation. REPORT is advisory only.
+     * Admit only a non-null result whose {@link PolicyDecision#allows()} is true; an OK call may DENY.
+     * Non-OK, REPORT and unknown actions never admit. REPORT remains advisory only.
      * Compile the expected policy hash into the host; do not obtain its expectation from this runtime.
      */
     public static PolicyDecision gateLocalOperation(String operation, String expectedPolicySha256) {
@@ -99,6 +100,11 @@ public final class RuntimeBridge {
         }
         public int status() { return policyInt(bytes, 8); }
         public int action() { return policyInt(bytes, 12); }
+        /** True only for OK and final ALLOW; candidateAction is never admission.
+         * This is an owned historical decision for the immediate operation, not reusable authorization.
+         * Discard it and call gateLocalOperation again after queuing, resuming or retrying.
+         */
+        public boolean allows() { return status() == POLICY_OK && action() == POLICY_ALLOW; }
         public int candidateAction() { return policyInt(bytes, 16); }
         public int reason() { return policyInt(bytes, 20); }
         public int configState() { return policyInt(bytes, 24); }

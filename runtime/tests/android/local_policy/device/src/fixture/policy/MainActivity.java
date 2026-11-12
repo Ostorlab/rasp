@@ -32,14 +32,15 @@ public final class MainActivity extends Activity {
     }
     private void appendReceipt() {
         final RuntimeBridge.PolicyDecision decision;
-        try { decision = RuntimeBridge.gateLocalOperation("append_demo_receipt", EXPECTED_POLICY_SHA256); }
-        catch (RuntimeException | LinkageError error) { status.setText("Runtime unavailable; no receipt appended"); return; }
-        if (decision == null || decision.status() != RuntimeBridge.POLICY_OK
-                || (decision.action() != RuntimeBridge.POLICY_ALLOW && decision.action() != RuntimeBridge.POLICY_REPORT)) {
-            status.setText("Denied/unavailable before append; receipts: " + receipts.size()); return;
+        try {
+            decision = RuntimeBridge.gateLocalOperation("append_demo_receipt", EXPECTED_POLICY_SHA256);
+            if (decision == null || !decision.allows()) {
+                status.setText("Not admitted before append; receipts: " + receipts.size()); return;
+            }
+        } catch (RuntimeException | LinkageError error) {
+            status.setText("Runtime unavailable; no receipt appended"); return;
         }
         receipts.add(1);
-        status.setText("Receipts: " + receipts.size() + (decision.action() == RuntimeBridge.POLICY_REPORT
-                ? "; explicit report-only branch, not enforced" : "; adapted local gate allowed"));
+        status.setText("Receipts: " + receipts.size() + "; adapted local gate allowed");
     }
 }
