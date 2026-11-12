@@ -5,6 +5,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/omvll_ios.cmake)
 add_library(RaspRuntime SHARED
   src/entry.cpp
   src/monitoring.cpp
+  src/checks/codesign.cpp
   src/checks/debugger.cpp
   src/checks/emulator.cpp
   src/checks/hooks.cpp

@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include "checks/codesign.h"
 #include "checks/debugger.h"
 #include "checks/emulator.h"
 #include "checks/hooks.h"
@@ -137,6 +138,9 @@ void* monitor(void* argument) {
     }
     if (is_check_enabled(config, "identity")) {
       std::ranges::move(checks::identity(), std::back_inserter(builtin));
+    }
+    if (is_check_enabled(config, "codesign")) {
+      std::ranges::move(checks::codesign(), std::back_inserter(builtin));
     }
     if (is_check_enabled(config, "emulator")) {
       std::ranges::move(checks::emulator(), std::back_inserter(builtin));
