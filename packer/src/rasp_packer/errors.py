@@ -42,7 +42,7 @@ class InvalidAppError(Error):
 
 
 class DangerousAppError(Error):
-    """The app archive holds an unsafe entry: an encrypted entry, or a name that escapes the root."""
+    """The app archive holds an unsafe entry (encrypted, a symlink, or escaping the root), or cannot be read."""
 
 
 class UnsupportedBinaryError(Error):

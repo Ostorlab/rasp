@@ -3,10 +3,15 @@
 import pathlib
 import zipfile
 
+import pytest
+
 from rasp_packer import archive_safety
 
 # Bit 0 of a zip entry's general-purpose flags marks it encrypted.
 _ENCRYPTED_FLAG = 0x1
+
+# The Unix mode of a symbolic link, in the high half of a zip entry's external attributes.
+_SYMLINK_EXTERNAL_ATTR = (0o120777) << 16
 
 
 def _write_zip(path: pathlib.Path, names: list[str]) -> None:
@@ -75,6 +80,30 @@ def testIsDangerous_whenEntryIsEncrypted_returnsTrue(tmp_path: pathlib.Path) -> 
     app = tmp_path / "app.apk"
     _write_zip(app, ["classes.dex"])
     _mark_encrypted(app)
+
+    assert archive_safety.is_dangerous(app) is True
+
+
+def testIsDangerous_whenEntryIsSymlink_returnsTrue(tmp_path: pathlib.Path) -> None:
+    app = tmp_path / "app.apk"
+    with zipfile.ZipFile(app, "w") as archive:
+        info = zipfile.ZipInfo("link")
+        info.external_attr = _SYMLINK_EXTERNAL_ATTR
+        archive.writestr(info, b"/etc/passwd")
+
+    assert archive_safety.is_dangerous(app) is True
+
+
+def testIsDangerous_whenZipCannotBeRead_returnsTrue(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app.apk"
+    _write_zip(app, ["classes.dex"])
+
+    def _raise(*_: object, **__: object) -> object:
+        raise OSError("cannot read")
+
+    monkeypatch.setattr(archive_safety.zipfile, "ZipFile", _raise)
 
     assert archive_safety.is_dangerous(app) is True
 
