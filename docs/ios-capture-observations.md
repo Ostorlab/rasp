@@ -42,7 +42,9 @@ synthetic notifications do not establish physical-device efficacy.
 ## Host API
 
 Use the matching framework's `Headers/ios_capture.h` (`#include <RaspRuntime/ios_capture.h>`).
-It declares exactly six fixed C exports; the framework carries its own libc++, so the boundary
+It declares exactly six fixed capture C exports. Two additional versioned policy exports live in
+`<RaspRuntime/local_policy_host.h>`, for eight framework exports total (see the
+[local policy contract](local-policy-contract.md)). The framework carries its own libc++, so the boundary
 contains fixed-width integers and borrowed opaque pointers, never C++ strings or containers.
 Call every function on main after normal UIApplication initialization. A pointer must be a live
 object of the documented UIKit type; this API cannot validate an arbitrary forged address.

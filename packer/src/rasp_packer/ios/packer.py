@@ -13,6 +13,7 @@ import tempfile
 from rasp_packer import capabilities
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer import local_policy
 from rasp_packer import platforms
 from rasp_packer import runtime_config
 from rasp_packer import verification
@@ -62,6 +63,19 @@ def pack(
             "ios",
             macho.RUNTIME_ABI,
         )
+        policy_binding = local_policy.bind(
+            pristine,
+            local_policy.read_support(framework_dir / macho.RUNTIME_BINARY),
+            "ios",
+            macho.RUNTIME_ABI,
+            required=config.local_policy is not None,
+        )
+        if policy_binding is not None:
+            runtime_binary.verify_policy_exports(pristine)
+        if config.local_policy is not None and binding is None:
+            raise errors.InvalidRuntimeError(
+                "local policy requires matching native capability binding"
+            )
         bundle = ipa.extract(app, pathlib.Path(workspace))
         embedded = bundle.frameworks_dir / macho.RUNTIME_FRAMEWORK
         if embedded.exists() is True:
@@ -73,6 +87,9 @@ def pack(
         shutil.copytree(framework_dir, embedded)
         runtime_file = embedded / macho.RUNTIME_BINARY
         runtime_file.with_name(runtime_file.name + capabilities.SIDECAR_SUFFIX).unlink(
+            missing_ok=True
+        )
+        runtime_file.with_name(runtime_file.name + local_policy.SUPPORT_SUFFIX).unlink(
             missing_ok=True
         )
         runtime_file.write_bytes(runtime_binary.write_config(pristine, config))
@@ -97,4 +114,5 @@ def pack(
         bundle.identity,
         effective_checks=config.checks,
         bindings=(binding,) if binding is not None else None,
+        local_policy_bindings=(policy_binding,) if policy_binding is not None else None,
     )

@@ -16,6 +16,9 @@ https://github.com/user-attachments/assets/a43d48ed-75ec-43b1-ad76-77fc08826493
 - **Android and iOS:** APK, AAB and IPA.
 - **No source code changes:** protect the build you already ship.
 - **Choose the checks:** turn on only the check groups that fit your users.
+- **Optional operation gating:** use a bounded [embedded local policy](docs/local-policy-contract.md)
+  to gate a named host operation on the runtime's own typed measurements. This requires
+  an explicit host source call immediately before the operation.
 - **Detects:** root and jailbreak, debuggers, Frida and other hooking, emulators, app virtualizers, network
   interception (VPN tunnels and proxies), raw runtime-code hashes with report-only comparison evidence, and repackaged copies.
 - **Runs all the time:** the checks run when the app starts, then every 60 seconds.
@@ -127,6 +130,11 @@ Each check and the signals it reports are described in [`runtime/README.md`](run
 | Runtime build | CMake 4.4, Clang from LLVM 23; the Android NDK, SDK and a JDK for Android; Xcode on a Mac for iOS |
 
 ## Documentation
+
+[Embedded local policy](docs/local-policy-contract.md) is optional; without it the
+runtime keeps its existing report-only behavior. A sensitive-operation gate requires
+explicit host source calls immediately before the actual operation; packing alone
+does not adapt business actions or authorize backend transactions.
 
 - [`packer/README.md`](packer/README.md): the packer, its options, build ids and checks.
 - [`runtime/README.md`](runtime/README.md): the runtime, each check, building and logs.

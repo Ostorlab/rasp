@@ -6,6 +6,7 @@
 #include <string>
 
 #include "rasp/config.h"
+#include "rasp/local_policy.h"
 #include "rasp/parse_config.h"
 
 namespace rasp {
@@ -27,11 +28,22 @@ std::array<volatile char, kEmbeddedConfigSize> embedded_config{'{', '}'};
 
 Config read_embedded_config() {
   std::string json;
+  bool terminated = false;
   for (const volatile char& character : embedded_config) {
     if (character == '\0') {
-      break;
+      terminated = true;
+    } else if (terminated) {
+      Config invalid;
+      invalid.local_policy.state = LocalPolicyStateKind::kInvalid;
+      return invalid;
+    } else {
+      json.push_back(character);
     }
-    json.push_back(character);
+  }
+  if (!terminated) {
+    Config invalid;
+    invalid.local_policy.state = LocalPolicyStateKind::kInvalid;
+    return invalid;
   }
   return parse_config(json);
 }

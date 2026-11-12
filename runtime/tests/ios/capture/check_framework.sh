@@ -18,6 +18,8 @@ nm -gUj "$binary" | LC_ALL=C sort > "$work/exports.txt"
 diff -u "$root/ios/capture_exports.txt" "$work/exports.txt"
 # PUBLIC_HEADER is part of the framework that is also staged into the packer wheel.
 cmp "$root/ios/include/rasp/ios_capture.h" "$framework/Headers/ios_capture.h"
+cmp "$root/core/include/rasp/local_policy_host.h" "$framework/Headers/local_policy_host.h"
+cmp "$root/ios/module.modulemap" "$framework/Modules/module.modulemap"
 xcrun vtool -show-build "$binary" | grep -qxE ' *minos 12\.0'
 xcodebuild -version
 xcrun --sdk iphoneos --show-sdk-version
@@ -29,4 +31,11 @@ for language in c objective-c c++ objective-c++; do
     -isysroot "$(xcrun --sdk iphoneos --show-sdk-path)" \
     "${flags[@]}" -F "$(dirname "$framework")" "$root/tests/ios/capture/host_link.c" \
     -framework RaspRuntime -o "$work/host-${language//+/p}"
+  xcrun --sdk iphoneos clang -x "$language" -target arm64-apple-ios12.0 \
+    -isysroot "$(xcrun --sdk iphoneos --show-sdk-path)" \
+    "${flags[@]}" -F "$(dirname "$framework")" "$root/tests/host/local_policy_host.c" \
+    -framework RaspRuntime -o "$work/policy-host-${language//+/p}"
 done
+xcrun --sdk iphoneos swiftc -warnings-as-errors -target arm64-apple-ios12.0 \
+  -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" -F "$(dirname "$framework")" \
+  "$root/tests/ios/local_policy/host.swift" -o "$work/policy-host-swift"

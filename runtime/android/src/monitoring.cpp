@@ -3,12 +3,14 @@
 #include "monitoring.h"
 
 #include <chrono>
+#include <memory>
 #include <optional>
 #include <pthread.h>
 #include <string>
 #include <thread>
 
 #include "builtin.h"
+#include "local_policy_state.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/cycle.h"
@@ -45,12 +47,14 @@ constexpr std::chrono::seconds kCheckInterval{60};
 /// @return Never returns.
 void* monitor(void* /*argument*/) {
   const Config config = read_config();
+  auto* const policy_state = install_local_policy(std::make_unique<LocalPolicyState>(config, "android"));
   CycleMonitor cycle_monitor;
   rasp::plugins::Context context;
   rasp::plugins::init_plugins(rasp::plugins::compiled_in(), config, context);
   while (true) {
-    const auto snapshot = cycle_monitor.run(config, cycle_catalogue("android"), rasp::plugins::compiled_in(), context,
-                                            [](const Config& selection, const void*) { return run_checks(selection); });
+    const auto snapshot = cycle_monitor.run(
+        config, cycle_catalogue("android"), rasp::plugins::compiled_in(), context,
+        [](const Config& selection, const void*) { return run_checks(selection); }, nullptr, policy_state);
     if constexpr (kLoggingEnabled) {
       for (const Observation& observation : snapshot->observations) {
         rasp::log(describe(observation));

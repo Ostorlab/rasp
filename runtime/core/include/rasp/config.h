@@ -7,6 +7,8 @@
 #include <string_view>
 #include <vector>
 
+#include "rasp/local_policy.h"
+
 namespace rasp {
 
 /// The runtime's config, which the packer writes into the protected app. Each field is empty when the runtime can't
@@ -21,6 +23,8 @@ struct Config {
   /// creates on the first launch and keeps in the app's own storage (`install_id.h`). `std::nullopt` when the runtime
   /// can't read or keep it. The packer does not write it.
   std::optional<std::string> install_id = std::nullopt;
+  /// Explicit host-called policy; absence retains report-only behavior.
+  LocalPolicy local_policy{};
 };
 
 /// Whether the protected app runs a check group.

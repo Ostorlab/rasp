@@ -275,6 +275,14 @@ jobs:
           host="$RUNNER_TEMP/ios-capture-host/CaptureHost.app"
           xcrun vtool -show-build "$host/CaptureHost" | grep -qxE ' *minos 12\.0'
           cmp build/ios-dev/ios/RaspRuntime.framework/RaspRuntime "$host/Frameworks/RaspRuntime.framework/RaspRuntime"
+          cmake -S tests/ios/local_policy/host -B "$RUNNER_TEMP/ios-policy-host" -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Debug -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DRASP_FRAMEWORK="$PWD/build/ios-dev/ios/RaspRuntime.framework"
+          cmake --build "$RUNNER_TEMP/ios-policy-host" --parallel 2
+          policy_host="$RUNNER_TEMP/ios-policy-host/PolicyHost.app"
+          xcrun vtool -show-build "$policy_host/PolicyHost" | grep -qxE ' *minos 12\.0'
+          cmp build/ios-dev/ios/RaspRuntime.framework/RaspRuntime "$policy_host/Frameworks/RaspRuntime.framework/RaspRuntime"
       - name: Check the development build writes logs
         run: nm -u build/ios-dev/ios/RaspRuntime.framework/RaspRuntime | grep -q _os_log
 
@@ -326,7 +334,9 @@ jobs:
           readelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           lib=build/android/android/librasp.so
           file "$lib" | grep -qF "${{ matrix.file }}"
-          test -z "$("$nm" -D --defined-only "$lib" | awk '{ print $3 }' | grep -vx 'JNI_OnLoad')"
+          "$nm" -D --defined-only "$lib" | awk '{ print $3 }' | LC_ALL=C sort > "$RUNNER_TEMP/android-exports.txt"
+          printf '%s\n' JNI_OnLoad rasp_local_policy_gate_v1 rasp_local_policy_info_v1 > "$RUNNER_TEMP/android-expected-exports.txt"
+          diff -u "$RUNNER_TEMP/android-expected-exports.txt" "$RUNNER_TEMP/android-exports.txt"
           test -z "$("$readelf" -S "$lib" | grep -oE '\.symtab|\.debug_[a-z_]+')"
           "$readelf" --dynamic "$lib" | grep -q 'INIT_ARRAY'
           "$nm" -D -u "$lib" | awk '{ print $2 }' | sed 's/@.*//' | grep -qx 'JNI_GetCreatedJavaVMs'
@@ -349,6 +359,8 @@ jobs:
           python3 tools/capabilities.py verify "$binary" android '${{ matrix.abi }}' 31
           "$RUNNER_TEMP/build-tools/bin/pip" install 'lief==1.0.0'
           "$RUNNER_TEMP/build-tools/bin/python" tools/verify_packaging.py "$binary" android '${{ matrix.abi }}'
+      - name: Link installed primitive C and C++ policy consumers
+        run: bash tests/android/local_policy/check_library.sh "$RUNNER_TEMP/runtime-release" '${{ matrix.abi }}' "$RUNNER_TEMP/policy-release"
       - name: Configure the development build with the private storage plugin consumer
         run: cmake --preset android-dev -DANDROID_ABI=${{ matrix.abi }} -DRASP_PLUGINS=tests/plugins/private_storage
       - name: Build the development build
@@ -359,9 +371,14 @@ jobs:
         run: |
           nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
           "$nm" -D -u build/android-dev/android/librasp.so | grep -q __android_log_write
+      - name: Stage development and link primitive policy consumers
+        run: |
+          cmake --install build/android-dev --prefix "$RUNNER_TEMP/runtime-debug" --component runtime
+          bash tests/android/local_policy/check_library.sh "$RUNNER_TEMP/runtime-debug" '${{ matrix.abi }}' "$RUNNER_TEMP/policy-debug"
       - name: Build the stub
         run: |
           jar="$(ls -d "$ANDROID_HOME"/platforms/android-*/android.jar | sort -V | tail -1)"
           d8="$(ls "$ANDROID_HOME"/build-tools/*/d8 | sort -V | tail -1)"
           ANDROID_JAR="$jar" D8="$d8" ./android/stub/build.sh "$RUNNER_TEMP"
           test -s "$RUNNER_TEMP/stub.dex"
+          ANDROID_JAR="$jar" ANDROID_BUILD_TOOLS="$(dirname "$d8")" bash tests/android/local_policy/device/build.sh "$RUNNER_TEMP/policy-host" "$RUNNER_TEMP/runtime-bridge-compile-only.jar"
