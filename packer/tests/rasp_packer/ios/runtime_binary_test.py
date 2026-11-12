@@ -7,7 +7,7 @@ from rasp_packer import runtime_config
 from rasp_packer.ios import runtime_binary
 from tests.rasp_packer import conftest
 
-_CONFIG = runtime_config.RuntimeConfig(build_id="build-1")
+_CONFIG = runtime_config.RuntimeConfig(build_id="build-1", checks=("identity",))
 _BINARY = (conftest.RUNTIME_CONFIG_DATA / "RaspRuntime").read_bytes()
 _UNIVERSAL_BINARY = (
     conftest.RUNTIME_CONFIG_DATA / "RaspRuntime-universal"
@@ -34,7 +34,7 @@ def testWriteConfig_whenGivenAUniversalBinary_writesTheConfigIntoEverySlice() ->
 
 
 def testWriteConfig_whenTheConfigDoesNotFit_raisesConfigTooLargeError() -> None:
-    config = runtime_config.RuntimeConfig(build_id="x" * 4096)
+    config = runtime_config.RuntimeConfig(build_id="x" * 4096, checks=("identity",))
 
     with pytest.raises(errors.ConfigTooLargeError):
         runtime_binary.write_config(_BINARY, config)

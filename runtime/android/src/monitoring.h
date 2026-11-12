@@ -7,9 +7,10 @@ namespace rasp::android {
 /// Starts the thread that runs the checks, and returns at once.
 ///
 /// The thread first initialises the plugins compiled into the runtime, with the runtime's config, which the packer
-/// wrote into librasp.so.
-/// Then it runs the built-in checks and the plugins, and runs them again every 60 seconds. A development build logs
-/// each observation.
+/// wrote into librasp.so, and the install id it keeps in the app's `no_backup` folder.
+/// Then it runs the built-in checks of the groups the config enables, and the plugins, and runs them again every 60
+/// seconds. No group runs when the config has no `checks` list or the list is empty. A development build logs each
+/// observation.
 ///
 /// Nothing is checked when the thread can't be started. Otherwise the thread never ends: it runs until the process
 /// exits. The thread is detached: the app never waits for it, and the app may exit at any moment while it runs.
