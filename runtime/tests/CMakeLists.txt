@@ -164,16 +164,18 @@ endif()
 gtest_discover_tests(rasp_ios_builtin_test)
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+# Tidy consumes the compilation database after configure, without building any targets.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  ${PROJECT_SOURCE_DIR}/tools/capability_header.py
+  ${PROJECT_SOURCE_DIR}/../packer/src/rasp_packer/capabilities.py
+  ${PROJECT_SOURCE_DIR}/../packer/src/rasp_packer/checks_manifest.json)
 foreach(platform android ios)
   set(expectations_dir ${CMAKE_CURRENT_BINARY_DIR}/capabilities/${platform})
   file(MAKE_DIRECTORY ${expectations_dir})
-  add_custom_command(OUTPUT ${expectations_dir}/capability_expectations.h
+  execute_process(
     COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/capability_header.py
       ${expectations_dir}/capability_expectations.h ${platform}
-    DEPENDS ${PROJECT_SOURCE_DIR}/tools/capability_header.py
-      ${PROJECT_SOURCE_DIR}/../packer/src/rasp_packer/capabilities.py
-      ${PROJECT_SOURCE_DIR}/../packer/src/rasp_packer/checks_manifest.json
-    VERBATIM)
+    COMMAND_ERROR_IS_FATAL ANY)
   if(platform STREQUAL "android")
     set(capability_checks debugger emulator hooks identity integrity mitm root)
     set(capability_util util/system_property.cpp util/app_storage.cpp util/apk_file.cpp)
