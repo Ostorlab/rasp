@@ -139,5 +139,7 @@ Same-process allocation failure is not crash isolation.
 Tests cover pinned parity, invalid inputs, selection/coverage, plugin collisions,
 retained cycles, real platform dispatch and changed-byte collector fixtures.
 Host/sanitizer/cross-build/artifact gates do not establish physical-device efficacy,
-false-positive rates, Apple execution or policy denial. HD02 owns subsequent
-explicitly opted-in operation policy; report-only remains the default.
+false-positive rates, Apple execution or policy denial. Optional
+[embedded operation policy](local-policy-contract.md) consumes this exact owned
+typed report through a separate, explicitly host-called gate. Report-only remains
+the default; the report itself does not acquire server authority.

@@ -2,6 +2,7 @@
 
 import collections.abc
 import dataclasses
+import hashlib
 import pathlib
 import re
 
@@ -9,6 +10,7 @@ from rasp_packer import capabilities
 from rasp_packer import checks as check_groups
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer import local_policy as policy_module
 from rasp_packer import platforms
 from rasp_packer import runtime_config
 from rasp_packer.android import packer as android_packer
@@ -44,6 +46,12 @@ class PackResult:
     skipped_checks: tuple[str, ...]
     effective_checks: tuple[str, ...] = ()
     capability_bindings: tuple[capabilities.Binding, ...] | None = None
+    local_policy_bindings: tuple[policy_module.Binding, ...] | None = dataclasses.field(
+        default=None, compare=False
+    )
+    policy_mode: str = dataclasses.field(default="report_only", compare=False)
+    policy_sha256: str = dataclasses.field(default="", compare=False)
+    effective_config_sha256: str = dataclasses.field(default="", compare=False)
 
 
 def pack(
@@ -53,6 +61,7 @@ def pack(
     output: pathlib.Path,
     build_id: str,
     checks: collections.abc.Sequence[str],
+    local_policy: policy_module.Policy | None = None,
 ) -> PackResult:
     """Protects a built app: adds the runtime and writes the protected app to `output`.
 
@@ -92,10 +101,14 @@ def pack(
     """
     _check_build_id(build_id)
     resolved_checks = check_groups.resolve_checks(platform, checks)
+    if local_policy is not None:
+        local_policy = policy_module.validate_for(
+            local_policy, platform.value, resolved_checks.checks, build_id
+        )
     if output.exists() is True:
         raise errors.OutputExistsError(f"{output} already exists")
     config = runtime_config.RuntimeConfig(
-        build_id=build_id, checks=resolved_checks.checks
+        build_id=build_id, checks=resolved_checks.checks, local_policy=local_policy
     )
     packed: identity.AppIdentity
     match platform:
@@ -111,6 +124,14 @@ def pack(
         skipped_checks=resolved_checks.skipped,
         effective_checks=packed.effective_checks,
         capability_bindings=packed.bindings,
+        local_policy_bindings=packed.local_policy_bindings,
+        policy_mode="report_only" if local_policy is None else local_policy.mode,
+        policy_sha256=hashlib.sha256(policy_module.DEFAULT_POLICY).hexdigest()
+        if local_policy is None
+        else local_policy.sha256,
+        effective_config_sha256=policy_module.effective_hash(
+            build_id, config.checks, local_policy
+        ),
     )
 
 

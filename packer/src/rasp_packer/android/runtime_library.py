@@ -14,6 +14,16 @@ from rasp_packer import runtime_config
 ELF_SECTION = ".rasp_config"
 
 
+def verify_policy_exports(library: bytes) -> None:
+    """Reject config-only/old binaries even if someone supplies a matching support descriptor."""
+    elf = lief.ELF.parse(io.BytesIO(library))
+    expected = {"JNI_OnLoad", "rasp_local_policy_gate_v1", "rasp_local_policy_info_v1"}
+    if elf is None or {symbol.name for symbol in elf.exported_symbols} != expected:
+        raise errors.InvalidRuntimeError(
+            "runtime local policy exports do not match the supported ABI"
+        )
+
+
 def write_config(library: bytes, config: runtime_config.RuntimeConfig) -> bytes:
     """Writes the config into a runtime library.
 

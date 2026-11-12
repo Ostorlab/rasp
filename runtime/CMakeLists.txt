@@ -52,12 +52,9 @@ if(RASP_LOGGING)
 endif()
 
 include(cmake/yyjson.cmake)
+include(cmake/tf_psa_crypto.cmake)
 add_subdirectory(core)
 include(cmake/plugins.cmake)
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Android" OR CMAKE_SYSTEM_NAME STREQUAL "iOS" OR RASP_BUILD_TESTS)
-  include(cmake/tf_psa_crypto.cmake)
-endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Android" OR RASP_BUILD_TESTS)
   include(cmake/loader_dex.cmake)

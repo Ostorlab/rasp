@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "engine_version": 1,
+  "policy_id": "demo",
+  "policy_version": 1,
+  "mode": "gate",
+  "scope": "host_calls_only",
+  "platform": "android",
+  "catalogue_id": "2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d",
+  "report_schema_version": 1,
+  "report_reason_version": 1,
+  "native_metadata_version": 1,
+  "operations": [
+    {
+      "name": "append_demo_receipt",
+      "max_evidence_age_ms": 75000,
+      "max_cycle_duration_ms": 5000,
+      "rules": [
+        {
+          "rule_id": "native.android.dbg.tracer_pid.proc_status",
+          "rule_version": 1
+        }
+      ]
+    }
+  ]
+}

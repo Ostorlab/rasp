@@ -18,6 +18,7 @@
 
 #include "builtin.h"
 #include "checks/hooks.h"
+#include "local_policy_state.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/cycle.h"
@@ -112,6 +113,7 @@ struct Environment {
 void* monitor(void* argument) {
   const std::unique_ptr<const Environment> environment(static_cast<Environment*>(argument));
   const Config config = read_config(environment->install_id_directory);
+  auto* const policy_state = install_local_policy(std::make_unique<LocalPolicyState>(config, "ios"));
   CycleMonitor cycle_monitor;
   rasp::plugins::Context context;
   rasp::plugins::init_plugins(rasp::plugins::compiled_in(), config, context);
@@ -121,7 +123,7 @@ void* monitor(void* argument) {
         [](const Config& selection, const void* state) {
           return run_checks(selection, static_cast<const Environment*>(state)->inserted_libraries);
         },
-        environment.get());
+        environment.get(), policy_state);
     if constexpr (kLoggingEnabled) {
       for (const Observation& observation : snapshot->observations) {
         rasp::log(describe(observation));

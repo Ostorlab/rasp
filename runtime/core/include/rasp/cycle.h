@@ -19,6 +19,7 @@ namespace rasp::plugins {
 struct Plugin;
 }
 namespace rasp {
+class LocalPolicyState;
 /// An exact compiled builtin output identity. The generated catalogue owns its strings.
 struct CycleOutput {
   /// Config group enabling this output.
@@ -146,7 +147,7 @@ class CycleMonitor {
   [[nodiscard]] std::shared_ptr<const CycleSnapshot> run(
       const Config& config, const CycleCatalogue& catalogue, std::span<const plugins::Plugin* const> plugins,
       plugins::Context& context, std::vector<Observation> (*builtins)(const Config&, const void*),
-      const void* argument = nullptr);
+      const void* argument = nullptr, LocalPolicyState* policy_state = nullptr);
 
  private:
   /// Serializes ordinals and clock samples across calls on this monitor.

@@ -3,6 +3,7 @@
 import dataclasses
 
 from rasp_packer import capabilities
+from rasp_packer import local_policy
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -24,5 +25,8 @@ class AppIdentity:
         default=(), compare=False, repr=False
     )
     bindings: tuple[capabilities.Binding, ...] | None = dataclasses.field(
+        default=None, compare=False, repr=False
+    )
+    local_policy_bindings: tuple[local_policy.Binding, ...] | None = dataclasses.field(
         default=None, compare=False, repr=False
     )

@@ -1,11 +1,19 @@
 # Runtime
 
-The C++ runtime libraries that the packer adds to a protected app. They run the checks inside the app.
+The runtime is a set of C++ libraries that the packer adds to a protected app. They run the checks inside the app.
 
 Owned monitor snapshots include [typed local decision evidence](../docs/local-decisions-contract.md).
 The existing `on_cycle` callback receives the same immutable observations, coverage and report-only
 results. Disabled/missing/unavailable rows remain unknown; evaluated predicate counts are separate
-from row counts. These client observations grant no backend or operation authority.
+from row counts.
+
+Each completed native cycle owns an immutable `LocalDecisionReport`.
+An optional [local policy host gate](../docs/local-policy-contract.md) reads that report
+immediately before an explicitly adapted operation; without an embedded policy the runtime remains report-only.
+
+These client observations grant no backend authorization. The gate never terminates the app.
+The primitive C API adds exactly two versioned policy exports alongside the six iOS capture exports;
+Android retains JNI_OnLoad and the same two policy exports.
 
 Android signing-block and key/map/DEX reads use bounded descriptors; see the
 [archive read limits](../docs/android-archive-reads.md) for allocation caps,
@@ -175,7 +183,7 @@ cmake --preset ios
 cmake --build --preset ios
 ```
 
-The framework is written to `build/ios/ios/RaspRuntime.framework`. Its install name is `@rpath/RaspRuntime.framework/RaspRuntime`, which the packer adds to the app's load commands. It exports exactly the six C capture integration functions listed in `ios/capture_exports.txt`; every other symbol is hidden. A load-time constructor starts the measurement worker; capture observation requires explicit host opt-in.
+The framework is written to `build/ios/ios/RaspRuntime.framework`. Its install name is `@rpath/RaspRuntime.framework/RaspRuntime`, which the packer adds to the app's load commands. It exports exactly eight C functions in `ios/capture_exports.txt`: six capture integration functions and two versioned local-policy functions; every other symbol is hidden. A load-time constructor starts the measurement worker; capture observation requires explicit host opt-in.
 
 The framework supports iOS 12.0 and later. It doesn't use the libc++ that comes with iOS, which only supports iOS 15 and later. Instead it links a static libc++ built from LLVM 23.1.3 for the same minimum iOS version, with all its symbols hidden. That library is built once and committed under `third_party/libcxx/`, and `cmake/libcxx.cmake` checks its hash and links it. The build steps, the one-line source change it needs, and the CI job that proves the committed library matches the source are described in `third_party/libcxx/README.md`.
 
@@ -187,7 +195,7 @@ cmake --preset android
 cmake --build --preset android
 ```
 
-The library is written to `build/android/android/librasp.so`. The only symbol it exports is the JVM's `JNI_OnLoad` hook. The checks start from a load-time constructor, and `JNI_OnLoad` binds the stub's native method with `RegisterNatives`, so the library exports no `Java_...` symbol. A release build is also stripped (`-Wl,--strip-all`), so it carries no symbol table and no debug sections. Every other symbol, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 12 (API 31) and later.
+The library is written to `build/android/android/librasp.so`. It exports exactly the JVM's `JNI_OnLoad` hook, `rasp_local_policy_gate_v1` and `rasp_local_policy_info_v1`. The checks start from a load-time constructor, and `JNI_OnLoad` binds the stub's native method with `RegisterNatives`, so the library exports no `Java_...` symbol. A release build is also stripped (`-Wl,--strip-all`), so it carries no static symbol table and no debug sections; the three exports above remain in the dynamic symbol table. Every other symbol, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 12 (API 31) and later.
 
 The payload decryption uses ChaCha20-Poly1305 from TF-PSA-Crypto, the cryptography library of the Mbed TLS project, and some checks use its SHA-256. Its source is committed as an archive under `third_party/tf-psa-crypto/`, and `cmake/tf_psa_crypto.cmake` checks the archive's hash, extracts it and builds it as a static library, for Android, for iOS and for the builds with tests. Its symbols are hidden like every other one. Why it is built this way, its configuration, and the CI job that proves the archive is the official release are described in `third_party/tf-psa-crypto/README.md`.
 
@@ -285,7 +293,7 @@ CI (`.github/workflows/runtime.yml`) runs:
 
 On the release binaries, it checks that:
 
-- the framework exports exactly the six C functions in `ios/capture_exports.txt`, with no other exports, and the Android library exports only the JVM's `JNI_OnLoad` hook;
+- the framework exports exactly the eight C functions in `ios/capture_exports.txt`, and Android exports exactly `JNI_OnLoad` and the same two versioned policy functions;
 - neither imports any of `exit`, `_Exit`, `quick_exit`, `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `setenv`, `putenv`, `unsetenv`, `setlocale` and `setrlimit`. `.clang-tidy` forbids these functions in the source, and also `abort` and `std::terminate`, which the binary check leaves out;
 - neither writes logs: the framework imports no symbol with `_os_log` in its name and contains no `{public}` text, and the Android library imports no symbol with `__android_log` in its name and contains no `RaspRuntime` text.
 

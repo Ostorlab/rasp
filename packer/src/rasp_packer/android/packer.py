@@ -196,6 +196,11 @@ def _pack_apk(
     bindings = resources_module.bindings(
         artifacts, (name.split("/")[1] for name in libraries)
     )
+    policy_bindings = resources_module.policy_bindings(
+        artifacts,
+        (name.split("/")[1] for name in libraries),
+        required=config.local_policy is not None,
+    )
     added = {
         KEY_ENTRY: key,
         MAP_ENTRY: map_frame,
@@ -219,7 +224,10 @@ def _pack_apk(
         expected_entries={apk_archive.MANIFEST_ENTRY: patched_manifest, **added},
     )
     return dataclasses.replace(
-        app_identity, effective_checks=config.checks, bindings=bindings
+        app_identity,
+        effective_checks=config.checks,
+        bindings=bindings,
+        local_policy_bindings=policy_bindings,
     )
 
 
@@ -278,6 +286,9 @@ def _pack_aab(
     }
     abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
     bindings = resources_module.bindings(artifacts, abis)
+    policy_bindings = resources_module.policy_bindings(
+        artifacts, abis, required=config.local_policy is not None
+    )
     lib_entries = {
         f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": runtime_library.write_config(
             artifacts.libraries[abi], config
@@ -304,7 +315,10 @@ def _pack_aab(
         expected_entries={aab_archive.MANIFEST_ENTRY: patched_manifest, **added},
     )
     return dataclasses.replace(
-        app_identity, effective_checks=config.checks, bindings=bindings
+        app_identity,
+        effective_checks=config.checks,
+        bindings=bindings,
+        local_policy_bindings=policy_bindings,
     )
 
 
