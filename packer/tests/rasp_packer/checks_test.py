@@ -15,9 +15,7 @@ _RUNTIME = pathlib.Path(__file__).resolve().parents[3] / "runtime"
 def testChecks_whenComparedWithTheRuntime_listsTheGroupsItRunsInItsOrder(
     platform: platforms.Platform,
 ) -> None:
-    dispatch_file = (
-        "builtin.cpp" if platform == platforms.Platform.IOS else "monitoring.cpp"
-    )
+    dispatch_file = "builtin.cpp"
     monitoring = (_RUNTIME / platform / "src" / dispatch_file).read_text()
 
     runtime_groups = re.findall(r'is_check_enabled\(config, "(\w+)"\)', monitoring)

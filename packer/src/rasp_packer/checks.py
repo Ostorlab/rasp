@@ -8,33 +8,24 @@ groups a protected app runs. The packer writes them into the runtime's config, a
 import collections.abc
 import dataclasses
 
+from rasp_packer import capabilities
 from rasp_packer import platforms
 
 CHECKS: collections.abc.Mapping[platforms.Platform, tuple[str, ...]] = {
-    platforms.Platform.ANDROID: (
-        "root",
-        "debugger",
-        "hooks",
-        "integrity",
-        "mitm",
-        "identity",
-        "emulator",
-    ),
-    platforms.Platform.IOS: (
-        "jailbreak",
-        "debugger",
-        "hooks",
-        "integrity",
-        "identity",
-        "emulator",
-        "virtualizer",
-        "mitm",
-    ),
+    platform: tuple(
+        group["name"]
+        for group in capabilities.catalogue()["platforms"][platform.value]["groups"]
+    )
+    for platform in platforms.Platform
 }
-"""The ids of the check groups of each platform, in the order the runtime runs them."""
+"""Current built-in groups; legacy artifacts use these only for config, without capability claims."""
 
-REQUIRED_CHECKS: frozenset[str] = frozenset({"identity"})
-"""The ids of the check groups every protected app runs, whatever the caller chooses, on every platform."""
+REQUIRED_CHECKS: frozenset[str] = frozenset(
+    group["name"]
+    for group in capabilities.catalogue()["platforms"]["android"]["groups"]
+    if group["required"]
+)
+"""Required groups from the catalogue, matching the packer's identity config semantics."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)

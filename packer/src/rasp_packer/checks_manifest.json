@@ -1,0 +1,734 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "plugins": "unmodelled",
+  "platforms": {
+    "android": {
+      "abis": [
+        "arm64-v8a",
+        "armeabi-v7a",
+        "x86_64",
+        "x86"
+      ],
+      "minimum_os": "31",
+      "groups": [
+        {
+          "name": "root",
+          "required": false,
+          "observations": [
+            {
+              "signal": "root.fs_paths",
+              "source": "access",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Fixed candidate paths read through access; access failure is treated as not found, not an error observation."
+            },
+            {
+              "signal": "root.fs_paths",
+              "source": "stat",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Fixed candidate paths read through stat; access failure is treated as not found, not an error observation."
+            },
+            {
+              "signal": "root.mounts",
+              "source": "proc_mounts",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "root.rw_mounts",
+              "source": "proc_mounts",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "root.selinux_enforcing",
+              "source": "selinuxfs",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "root.build_props",
+              "source": "system_property",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Only readable properties included; absent properties omitted from the list."
+            }
+          ]
+        },
+        {
+          "name": "debugger",
+          "required": false,
+          "observations": [
+            {
+              "signal": "dbg.tracer_pid",
+              "source": "proc_status",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "dbg.java_debugger",
+              "source": "jdwp_threads",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "dbg.java_debugger",
+              "source": "debug_api",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "JNI Debug API requires an attached VM; unavailable JNI is error."
+            }
+          ]
+        },
+        {
+          "name": "hooks",
+          "required": false,
+          "observations": [
+            {
+              "signal": "hook.maps_hits",
+              "source": "proc_maps",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "hook.rwx_regions",
+              "source": "proc_maps",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            }
+          ]
+        },
+        {
+          "name": "integrity",
+          "required": false,
+          "observations": [
+            {
+              "signal": "integ.text_sha256",
+              "source": "file",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Own runtime ELF text only; failed location, read or hash is error. File is an untrusted baseline."
+            },
+            {
+              "signal": "integ.text_sha256",
+              "source": "memory",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Own runtime ELF text only; failed location, read or hash is error. File is an untrusted baseline."
+            }
+          ]
+        },
+        {
+          "name": "mitm",
+          "required": false,
+          "observations": [
+            {
+              "signal": "mitm.tunnels",
+              "source": "getifaddrs",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "mitm.user_cas",
+              "source": "user_cacerts",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "JNI AndroidCAStore user aliases only; list length varies; JNI/read failures are error."
+            }
+          ]
+        },
+        {
+          "name": "identity",
+          "required": true,
+          "observations": [
+            {
+              "signal": "id.package",
+              "source": "proc_cmdline",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "id.uid",
+              "source": "getuid",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "id.code_path",
+              "source": "dladdr",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "sig.cert_sha256",
+              "source": "apk_signing_block",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "First current signer from APK signing block; unavailable/malformed/unsupported signer parsing is error, not verified signature trust."
+            },
+            {
+              "signal": "sig.cert_sha256",
+              "source": "package_manager",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "First current signer; API28+ SigningInfo, older branch uses legacy signatures. Runtime ships API31+; absent Context/JNI/certificate is error."
+            }
+          ]
+        },
+        {
+          "name": "emulator",
+          "required": false,
+          "observations": [
+            {
+              "signal": "emu.props",
+              "source": "system_property",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Only readable matching properties; missing properties omitted from the value."
+            }
+          ]
+        }
+      ]
+    },
+    "ios": {
+      "abis": [
+        "arm64"
+      ],
+      "minimum_os": "12.0",
+      "groups": [
+        {
+          "name": "jailbreak",
+          "required": false,
+          "observations": [
+            {
+              "signal": "jb.fs_paths",
+              "source": "access",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Fixed candidate paths through access; failed access is not found. Simulator/non-iOS unsupported."
+            },
+            {
+              "signal": "jb.fs_paths",
+              "source": "stat",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Fixed candidate paths through stat; failed access is not found. Simulator/non-iOS unsupported."
+            },
+            {
+              "signal": "jb.sandbox_escape",
+              "source": "open",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "jb.fork_ok",
+              "source": "fork",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            }
+          ]
+        },
+        {
+          "name": "debugger",
+          "required": false,
+          "observations": [
+            {
+              "signal": "dbg.traced",
+              "source": "sysctl",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "dbg.parent",
+              "source": "getppid",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "dbg.exception_ports",
+              "source": "task_get_exception_ports",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            }
+          ]
+        },
+        {
+          "name": "hooks",
+          "required": false,
+          "observations": [
+            {
+              "signal": "hook.maps_hits",
+              "source": "dyld",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "hook.dyld_env",
+              "source": "getenv",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Captured DYLD_INSERT_LIBRARIES truncated to 4096 bytes; empty string is valid. Simulator/non-iOS unsupported."
+            },
+            {
+              "signal": "hook.frida_port",
+              "source": "connect",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "hook.rwx_regions",
+              "source": "vm_region",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            }
+          ]
+        },
+        {
+          "name": "integrity",
+          "required": false,
+          "observations": [
+            {
+              "signal": "integ.text_sha256",
+              "source": "file",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Own arm64 runtime Mach-O __text only. Simulator/non-iOS unsupported. File encryption makes file hash unsupported; unsupported text fixups make both unsupported; malformed/unreadable data is error. File is untrusted baseline."
+            },
+            {
+              "signal": "integ.text_sha256",
+              "source": "memory",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Own arm64 runtime Mach-O __text only. Simulator/non-iOS unsupported. File encryption makes file hash unsupported; unsupported text fixups make both unsupported; malformed/unreadable data is error. File is untrusted baseline."
+            }
+          ]
+        },
+        {
+          "name": "identity",
+          "required": true,
+          "observations": [
+            {
+              "signal": "id.bundle_id",
+              "source": "CFBundle",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "id.bundle_id",
+              "source": "Info.plist",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "id.team_id",
+              "source": "code_signature",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Parsed Team ID may be empty; no trust-chain verification; read/parse failure is error. Simulator/non-iOS unsupported."
+            },
+            {
+              "signal": "id.cdhash",
+              "source": "code_signature",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "CodeDirectory digest; unknown hash type is error; no signature verification. Simulator/non-iOS unsupported."
+            }
+          ]
+        },
+        {
+          "name": "emulator",
+          "required": false,
+          "observations": [
+            {
+              "signal": "emu.simulator",
+              "source": "target_conditionals",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "apple",
+              "behavior": "Apple compile-time or sysctl machine tell, including simulator; non-Apple unsupported."
+            },
+            {
+              "signal": "emu.simulator",
+              "source": "sysctl",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "apple",
+              "behavior": "Apple compile-time or sysctl machine tell, including simulator; non-Apple unsupported."
+            }
+          ]
+        },
+        {
+          "name": "virtualizer",
+          "required": false,
+          "observations": [
+            {
+              "signal": "virt.exec_path",
+              "source": "dyld",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "virt.foreign_images",
+              "source": "dyld",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            }
+          ]
+        },
+        {
+          "name": "mitm",
+          "required": false,
+          "observations": [
+            {
+              "signal": "mitm.tunnels",
+              "source": "getifaddrs",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Only up interfaces with IPv4 tunnel names; IPv6-only tunnels can be absent; simulator/non-iOS unsupported."
+            },
+            {
+              "signal": "mitm.proxies",
+              "source": "CFNetworkCopySystemProxySettings",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "mitm.user_cas",
+              "source": "trust_store",
+              "value_kind": "none",
+              "cardinality": "one",
+              "value_cardinality": "none",
+              "statuses": [
+                "unsupported"
+              ],
+              "supported_on": "never",
+              "behavior": "Always unsupported; user trust store enumeration is not implemented."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

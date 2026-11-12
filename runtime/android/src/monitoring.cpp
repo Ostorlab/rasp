@@ -2,22 +2,14 @@
 
 #include "monitoring.h"
 
-#include <algorithm>
 #include <chrono>
-#include <iterator>
 #include <optional>
 #include <pthread.h>
 #include <string>
 #include <thread>
 #include <vector>
 
-#include "checks/debugger.h"
-#include "checks/emulator.h"
-#include "checks/hooks.h"
-#include "checks/identity.h"
-#include "checks/integrity.h"
-#include "checks/mitm.h"
-#include "checks/root.h"
+#include "builtin.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/embedded_config.h"
@@ -33,37 +25,6 @@ namespace {
 
 /// How long the thread waits between two runs of the checks.
 constexpr std::chrono::seconds kCheckInterval{60};
-
-/// Runs the built-in check groups that the runtime's config enables.
-///
-/// @param config The runtime's config.
-/// @return What they observed: the root, debugger, hooking, integrity, network-interception, app-identity and emulator
-/// checks, in that order, each only when the config enables its group.
-[[nodiscard]] std::vector<Observation> run_checks(const Config& config) {
-  std::vector<Observation> observations;
-  if (is_check_enabled(config, "root")) {
-    std::ranges::move(checks::root(), std::back_inserter(observations));
-  }
-  if (is_check_enabled(config, "debugger")) {
-    std::ranges::move(checks::debugger(), std::back_inserter(observations));
-  }
-  if (is_check_enabled(config, "hooks")) {
-    std::ranges::move(checks::hooks(), std::back_inserter(observations));
-  }
-  if (is_check_enabled(config, "integrity")) {
-    std::ranges::move(checks::integrity(), std::back_inserter(observations));
-  }
-  if (is_check_enabled(config, "mitm")) {
-    std::ranges::move(checks::mitm(), std::back_inserter(observations));
-  }
-  if (is_check_enabled(config, "identity")) {
-    std::ranges::move(checks::identity(), std::back_inserter(observations));
-  }
-  if (is_check_enabled(config, "emulator")) {
-    std::ranges::move(checks::emulator(), std::back_inserter(observations));
-  }
-  return observations;
-}
 
 /// The runtime's config, with the install id kept in the app's `no_backup` folder.
 ///

@@ -254,3 +254,9 @@ On the release binaries, it checks that:
 - the framework exports no symbols, and the Android library exports only the JVM's `JNI_OnLoad` hook;
 - neither imports any of `exit`, `_Exit`, `quick_exit`, `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `setenv`, `putenv`, `unsetenv`, `setlocale` and `setrlimit`. `.clang-tidy` forbids these functions in the source, and also `abort` and `std::terminate`, which the binary check leaves out;
 - neither writes logs: the framework imports no symbol with `_os_log` in its name and contains no `{public}` text, and the Android library imports no symbol with `__android_log` in its name and contains no `RaspRuntime` text.
+
+Native builds also emit an adjacent `.capabilities.json` sidecar binding the built-in check
+catalogue to the exact pristine binary digest. Distribute it with the binary. Use
+`cmake --install build/android --prefix <stage> --component runtime` (or `build/ios`) to
+stage the package resource layout. See [the capability contract](../docs/check-capabilities.md)
+for validation, unknown legacy releases and backend/complete-cycle dependencies.

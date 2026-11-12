@@ -107,3 +107,9 @@ The runtime runs its checks in groups, such as `debugger` or `hooks`. `src/rasp_
 - writes the ids sorted into the runtime config.
 
 An empty choice, such as `checks=[]`, runs only the required groups. Without `--checks`, the command line warns and packs the app with only the required groups.
+
+The native build's `.capabilities.json` sidecars belong beside their runtime binaries in
+package resources. The packer verifies exact pristine byte digests before config insertion;
+invalid metadata fails packing. Missing legacy metadata permits packing with explicitly
+unknown capabilities (`PackResult.capability_bindings is None`). `effective_checks` records
+the config groups, not execution evidence. See [the capability contract](../docs/check-capabilities.md).

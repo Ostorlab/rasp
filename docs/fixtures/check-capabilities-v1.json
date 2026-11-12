@@ -1,0 +1,15 @@
+{
+  "contract_version": 1,
+  "purpose": "Selection and unknown-release fixtures; not observations or real build registration",
+  "cases": [
+    {"platform": "android", "requested": [], "effective_checks": ["identity"], "skipped": []},
+    {"platform": "ios", "requested": ["hooks", "identity", "hooks", "root"], "effective_checks": ["hooks", "identity"], "skipped": ["root"]},
+    {"platform": "android", "requested": ["root", "debugger"], "effective_checks": ["debugger", "identity", "root"], "skipped": []}
+  ],
+  "unknown_release": {"capability_bindings": null, "expected_outputs": null, "health": "unsupported"},
+  "observation_examples": [
+    {"signal": "mitm.user_cas", "source": "trust_store", "status": "unsupported", "value": null},
+    {"signal": "integ.text_sha256", "source": "file", "status": "error", "value": null},
+    {"signal": "hook.maps_hits", "source": "proc_maps", "status": "ok", "value": []}
+  ]
+}

@@ -4,6 +4,7 @@ import pathlib
 
 import pytest
 
+from rasp_packer import capabilities
 from rasp_packer import errors
 from rasp_packer.android import resources
 
@@ -49,3 +50,20 @@ def testLoadFrom_whenAnAbiFolderHasNoLibrary_raisesMissingRuntimeArtifactError(
 
     with pytest.raises(errors.MissingRuntimeArtifactError, match="x86_64"):
         resources.load_from(tmp_path)
+
+
+def testBindings_whenMixedLegacyAndKnownArtifacts_returnsUnknown() -> None:
+    artifacts = resources.Artifacts(
+        stub_dex=b"stub",
+        libraries={"arm64-v8a": b"arm", "x86": b"x86"},
+        manifests={
+            "arm64-v8a": capabilities.emit(b"arm", "android", "arm64-v8a", "31")
+        },
+    )
+    assert resources.bindings(artifacts, ["arm64-v8a", "x86"]) is None
+
+
+def testBindings_whenNoSelectedArtifacts_returnsUnknown() -> None:
+    assert (
+        resources.bindings(resources.Artifacts(stub_dex=b"", libraries={}), []) is None
+    )

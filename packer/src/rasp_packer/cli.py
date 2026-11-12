@@ -113,9 +113,15 @@ def _pack(arguments: argparse.Namespace) -> int:
             f"rasp pack: warning: {check!r} is not a check of {arguments.platform}, skipped",
             file=sys.stderr,
         )
+    capability_status = "unknown (legacy runtime artifacts)"
+    if result.capability_bindings is not None:
+        capability_status = ",".join(
+            sorted({binding.catalogue_id for binding in result.capability_bindings})
+        )
     print(
         f"packed {arguments.platform} app: {result.output} "
         f"(package {result.package_name}, version {result.version}, build {result.build_id})"
+        f"\ncapabilities {capability_status}; effective checks {','.join(result.effective_checks)}"
     )
     return EXIT_OK
 

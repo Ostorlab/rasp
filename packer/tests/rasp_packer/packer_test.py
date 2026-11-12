@@ -13,7 +13,9 @@ from rasp_packer.android import packer as android_packer
 from rasp_packer.ios import packer as ios_packer
 
 _BUILD_ID = "a" * 64
-_IDENTITY = identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
+_IDENTITY = identity.AppIdentity(
+    package_name="dev.ostorlab.demo", version="1.2.3", effective_checks=("identity",)
+)
 
 
 def testPack_whenIosApp_packsWithAConfigHoldingTheGivenBuildId(
@@ -66,6 +68,7 @@ def testPack_whenIosApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
         version="1.2.3",
         build_id=_BUILD_ID,
         skipped_checks=(),
+        effective_checks=("identity",),
     )
 
 
@@ -242,4 +245,5 @@ def testPack_whenAndroidApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
         version="1.2.3",
         build_id=_BUILD_ID,
         skipped_checks=(),
+        effective_checks=("identity",),
     )

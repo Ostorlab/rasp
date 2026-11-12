@@ -5,10 +5,12 @@ The packer unpacks the IPA, makes the main executable load the runtime, embeds
 signature, and repacks the IPA. The result is unsigned: the customer signs it.
 """
 
+import dataclasses
 import pathlib
 import shutil
 import tempfile
 
+from rasp_packer import capabilities
 from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import runtime_config
@@ -36,7 +38,7 @@ def pack(
         runtime: The `RaspRuntime.framework` to embed. Defaults to the one bundled in the packer.
 
     Returns:
-        The app's bundle identifier and short version string, from its `Info.plist`.
+        The app's identity with additive effective_checks/bindings metadata; identity equality is preserved.
 
     Raises:
         InvalidRuntimeError: The runtime framework is missing or malformed, or its binary has no
@@ -51,6 +53,13 @@ def pack(
         resources.framework(runtime) as framework_dir,
         tempfile.TemporaryDirectory(prefix="rasp-packer-") as workspace,
     ):
+        pristine = (framework_dir / macho.RUNTIME_BINARY).read_bytes()
+        binding = capabilities.bind(
+            pristine,
+            capabilities.read_sidecar(framework_dir / macho.RUNTIME_BINARY),
+            "ios",
+            "arm64",
+        )
         bundle = ipa.extract(app, pathlib.Path(workspace))
         embedded = bundle.frameworks_dir / macho.RUNTIME_FRAMEWORK
         if embedded.exists() is True:
@@ -61,8 +70,13 @@ def pack(
         shutil.rmtree(bundle.app_dir / _CODE_SIGNATURE_DIR, ignore_errors=True)
         shutil.copytree(framework_dir, embedded)
         runtime_file = embedded / macho.RUNTIME_BINARY
-        runtime_file.write_bytes(
-            runtime_binary.write_config(runtime_file.read_bytes(), config)
+        runtime_file.with_name(runtime_file.name + capabilities.SIDECAR_SUFFIX).unlink(
+            missing_ok=True
         )
+        runtime_file.write_bytes(runtime_binary.write_config(pristine, config))
         ipa.archive(bundle.payload_dir, output)
-    return bundle.identity
+    return dataclasses.replace(
+        bundle.identity,
+        effective_checks=config.checks,
+        bindings=(binding,) if binding is not None else None,
+    )
