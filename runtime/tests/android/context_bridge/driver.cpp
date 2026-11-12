@@ -1,7 +1,6 @@
 /// Real-JVM integration of the shipped bridge and PackageManager consumer, with JNI allocation/lookup fault injection.
 
 #include "android/events/driver.h"
-#include "android/events/capture_driver.h"
 
 #include <algorithm>
 #include <array>
@@ -16,9 +15,10 @@
 #include <thread>
 #include <vector>
 
+#include "android/events/capture_driver.h"
 #include "builtin.h"
-#include "events/window_bridge.h"
 #include "events/capture_bridge.h"
+#include "events/window_bridge.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/cycle.h"
@@ -427,5 +427,6 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
   }
   env->DeleteLocalRef(test);
   return register_capture_test(env) && rasp::android::events::register_capture_bridge(env) && register_window_test(env)
-             ? JNI_VERSION_1_6 : JNI_ERR;
+             ? JNI_VERSION_1_6
+             : JNI_ERR;
 }
