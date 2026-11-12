@@ -36,6 +36,35 @@ extern "C" {
 #define RASP_LOCAL_BINDING_MISMATCH INT32_C(13)
 #define RASP_LOCAL_CONTENDED INT32_C(14)
 #define RASP_LOCAL_BAD_ARGUMENT INT32_C(15)
+/// Typed header-only constants for Swift, whose importer cannot consume INT32_C macros.
+/// Internal linkage preserves the fixed function-only export set.
+static const int32_t kRaspLocalDeny = RASP_LOCAL_DENY;
+static const int32_t kRaspLocalReport = RASP_LOCAL_REPORT;
+static const int32_t kRaspLocalAllow = RASP_LOCAL_ALLOW;
+static const int32_t kRaspLocalOk = RASP_LOCAL_OK;
+static const int32_t kRaspLocalInvalidArgument = RASP_LOCAL_INVALID_ARGUMENT;
+static const int32_t kRaspLocalUnsupportedAbi = RASP_LOCAL_UNSUPPORTED_ABI;
+static const int32_t kRaspLocalNotReady = RASP_LOCAL_NOT_READY;
+static const int32_t kRaspLocalBusy = RASP_LOCAL_BUSY;
+static const int32_t kRaspLocalInvalidPolicy = RASP_LOCAL_INVALID_POLICY;
+static const int32_t kRaspLocalUnsupportedPolicy = RASP_LOCAL_UNSUPPORTED_POLICY;
+static const int32_t kRaspLocalInternalError = RASP_LOCAL_INTERNAL_ERROR;
+static const int32_t kRaspLocalNoSelection = RASP_LOCAL_NO_SELECTION;
+static const int32_t kRaspLocalPolicyInvalid = RASP_LOCAL_POLICY_INVALID;
+static const int32_t kRaspLocalPolicyUnsupported = RASP_LOCAL_POLICY_UNSUPPORTED;
+static const int32_t kRaspLocalHashMismatch = RASP_LOCAL_HASH_MISMATCH;
+static const int32_t kRaspLocalOperationUnknown = RASP_LOCAL_OPERATION_UNKNOWN;
+static const int32_t kRaspLocalNoPublication = RASP_LOCAL_NO_PUBLICATION;
+static const int32_t kRaspLocalCoverageUnavailable = RASP_LOCAL_COVERAGE_UNAVAILABLE;
+static const int32_t kRaspLocalClockUnavailable = RASP_LOCAL_CLOCK_UNAVAILABLE;
+static const int32_t kRaspLocalStale = RASP_LOCAL_STALE;
+static const int32_t kRaspLocalSlowCycle = RASP_LOCAL_SLOW_CYCLE;
+static const int32_t kRaspLocalRequiredUnavailable = RASP_LOCAL_REQUIRED_UNAVAILABLE;
+static const int32_t kRaspLocalIndicatorPresent = RASP_LOCAL_INDICATOR_PRESENT;
+static const int32_t kRaspLocalAllAbsent = RASP_LOCAL_ALL_ABSENT;
+static const int32_t kRaspLocalBindingMismatch = RASP_LOCAL_BINDING_MISMATCH;
+static const int32_t kRaspLocalContended = RASP_LOCAL_CONTENDED;
+static const int32_t kRaspLocalBadArgument = RASP_LOCAL_BAD_ARGUMENT;
 /// Exact version-one request, valid aligned memory borrowed only during the call.
 struct RaspLocalGateRequestV1 {
   /// Exact primitive ABI version; callers set 1.

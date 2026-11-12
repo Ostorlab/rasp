@@ -1,5 +1,43 @@
 import RaspRuntime
 
+// Import every public vocabulary constant; values and signed CInt width remain stable.
+let actionVocabulary: [Int32] = [
+    kRaspLocalDeny,
+    kRaspLocalReport,
+    kRaspLocalAllow,
+]
+precondition(actionVocabulary == [0, 1, 2])
+let statusVocabulary: [Int32] = [
+    kRaspLocalOk,
+    kRaspLocalInvalidArgument,
+    kRaspLocalUnsupportedAbi,
+    kRaspLocalNotReady,
+    kRaspLocalBusy,
+    kRaspLocalInvalidPolicy,
+    kRaspLocalUnsupportedPolicy,
+    kRaspLocalInternalError,
+]
+precondition(statusVocabulary == [0, 1, 2, 3, 4, 5, 6, 7])
+let reasonVocabulary: [Int32] = [
+    kRaspLocalNoSelection,
+    kRaspLocalPolicyInvalid,
+    kRaspLocalPolicyUnsupported,
+    kRaspLocalHashMismatch,
+    kRaspLocalOperationUnknown,
+    kRaspLocalNoPublication,
+    kRaspLocalCoverageUnavailable,
+    kRaspLocalClockUnavailable,
+    kRaspLocalStale,
+    kRaspLocalSlowCycle,
+    kRaspLocalRequiredUnavailable,
+    kRaspLocalIndicatorPresent,
+    kRaspLocalAllAbsent,
+    kRaspLocalBindingMismatch,
+    kRaspLocalContended,
+    kRaspLocalBadArgument,
+]
+precondition(reasonVocabulary == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+
 // Owned Swift values and an actual adapted harmless operation; no private C++ object.
 var receipts: [UInt32] = []
 var request = RaspLocalGateRequestV1()
@@ -16,7 +54,7 @@ withUnsafeMutableBytes(of: &request.expected_policy_sha256) { destination in
 var decision = RaspLocalGateResultV1()
 let status = rasp_local_policy_gate_v1(&request, UInt32(MemoryLayout<RaspLocalGateRequestV1>.size),
                                       &decision, UInt32(MemoryLayout<RaspLocalGateResultV1>.size))
-if status == RASP_LOCAL_OK && decision.action == UInt32(RASP_LOCAL_ALLOW) {
+if status == kRaspLocalOk && decision.action == UInt32(kRaspLocalAllow) {
     receipts.append(1)
 }
 var policyInfo = RaspLocalPolicyInfoV1()

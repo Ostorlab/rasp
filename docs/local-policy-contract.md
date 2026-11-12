@@ -170,6 +170,9 @@ memory and exact sizes. Arbitrary invalid pointers cannot be contained by a C AB
 Policy version remains uint32 in C, UInt32 in Swift (widen with UInt64 for display),
 and Java `long` (zero-extended with Integer.toUnsignedLong).
 Sequence's Java getter explicitly returns raw uint64 bits as `sequenceBits()`.
+Swift uses the header's typed `kRaspLocal*` constants; C callers retain the
+`RASP_LOCAL_*` macros. The header-only `int32_t` constants have internal linkage
+and preserve the same values without adding framework exports.
 
 The full working C/ObjC/C++/ObjC++ probe is
 `runtime/tests/host/local_policy_host.c`; Swift is in

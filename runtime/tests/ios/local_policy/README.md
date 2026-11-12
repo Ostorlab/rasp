@@ -2,7 +2,9 @@
 
 `../capture/check_framework.sh` checks the exact eight exports, installed headers,
 module map, iOS12 floor, and actual C/ObjC/C++/ObjC++ plus Swift host linkage for both
-release and debug frameworks using the real Apple SDK. Only primitive C values cross
+release and debug frameworks using the real Apple SDK. The Swift host references
+all 27 typed `kRaspLocal*` constants because Swift cannot import the INT32_C macro form.
+Only primitive C values cross
 the private-libc++ boundary. Swift UInt32 fields preserve the uint32 version range.
 
 Configure `host/` using Unix Makefiles, the actual iOS toolchain, arm64/iphoneos,
