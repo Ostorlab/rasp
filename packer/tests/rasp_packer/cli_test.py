@@ -192,7 +192,11 @@ def testMain_whenACheckIsUnknown_warnsAndPacksWithTheOtherChecks(
         *, config: runtime_config.RuntimeConfig, **_: object
     ) -> identity.AppIdentity:
         configs.append(config)
-        return identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
+        return identity.AppIdentity(
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            effective_checks=config.checks,
+        )
 
     monkeypatch.setattr(android_packer, "pack", fake_pack)
 
@@ -230,7 +234,29 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     assert capsys.readouterr().out.strip() == (
         f"packed ios app: {tmp_path / 'out.ipa'} "
         f"(package dev.ostorlab.demo, version 1.2.3, build {_BUILD_ID}; unsigned, structurally verified)"
+        "\ncapabilities unknown (legacy runtime artifacts); effective checks"
     )
+
+
+def testPack_whenLegacyRuntime_reportsUnknownCapabilities(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        packer,
+        "pack",
+        lambda **_: packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="demo",
+            version="1",
+            build_id="build",
+            skipped_checks=(),
+            effective_checks=("identity",),
+        ),
+    )
+    assert cli.main([*_pack_arguments(tmp_path), "--checks", "identity"]) == cli.EXIT_OK
+    assert "capabilities unknown" in capsys.readouterr().out
 
 
 def testMain_whenPackedRuntimeHasWrongArchitecture_failsWithoutSuccessfulOutput(

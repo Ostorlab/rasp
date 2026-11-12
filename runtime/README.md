@@ -70,6 +70,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
       - `hook.maps_hits`: the lines of `/proc/self/maps` that name a known instrumentation framework (Frida, Substrate, Xposed and the like), matched case-insensitively.
       - `hook.rwx_regions`: the lines of `/proc/self/maps` that map memory both writable and executable, where injected code is often written.
       - `hook.threads` through `proc_task`: the lexicographically smallest 32 distinct visible thread names containing `gum-js-loop` or `frida`, ignoring case, from the app's own `/proc/self/task/*/comm`. Generic `gmain` and thread-pool names alone do not match. The scan accepts at most 4096 entries and 16 bytes per comm file (1–15 non-control name bytes plus newline); reaching 32 matches does not stop enumeration. A complete bounded read returns `kOk` and a string list, empty when nothing matches. Listing/read failures, disappeared entries, malformed names or extra tasks return `kError` with no value, even if some names matched. The status does not identify the failure's errno. These names are raw heuristic evidence: legitimate names can match, renaming or hiding threads evades the probe, markers past the kernel's 15-byte truncation point are invisible, and concurrent changes prevent an atomic snapshot. This is not exhaustive anti-Frida detection or cryptographic attestation.
+      - `hook.inline` through `prologue`: a bounded comparison of selected libc/libdl function-entry bytes with their on-disk ELF definitions. It emits one status and a list of changed names, without an enforcement action or malware verdict. See [inline_hooks.md](inline_hooks.md) for the exact list, limits, status contract and host/device validation boundary.
     - `identity.h`: the app-identity self-check. It reports the running package name, the process's own user id, the path the runtime's library loads from, and the SHA-256 of the certificate of the key that signed the APK, all read natively. Off Android every observation has the unsupported status.
       - `id.package`: the first NUL-separated field of `/proc/self/cmdline`, which Android sets to the process name, with any private `:<name>` suffix of a secondary process trimmed. That read is the package name for the main and private processes, but not for a global `android:process` name such as `com.other:remote`, where the process name isn't the package; an authoritative PackageManager read (`getPackageName`, when a Context is reachable) is left to a later JNI-aware path. A clone or a repackaged app published under a different name reports that other name.
       - `id.uid`: the process's own user id, from `getuid`. Android packs the user and the app into one number as `user_id * 100000 + app_id` (app id 10000-19999, with 99000-99999 reserved for isolated processes), so `uid / 100000` is the user the app runs under:
@@ -190,6 +191,21 @@ ANDROID_JAR="$ANDROID_HOME/platforms/android-36/android.jar" android/stub/build.
 
 The packer adds `stub.dex` as the app's last dex file, and `librasp.so` under `lib/<abi>/`.
 
+Native builds also emit `<binary>.capabilities.json`, binding the built-in catalogue to the
+exact pristine binary digest. Distribute it with the binary. From `runtime/`, stage native
+artifacts at the package-resource paths before building the packer wheel:
+
+```
+cmake --install build/android --prefix <stage> --component runtime
+cmake --install build/ios --prefix <stage> --component runtime
+```
+
+Use the platform build available on the host; the iOS build requires macOS/Xcode. Copy the
+staged `rasp_packer/` resources into `packer/src/rasp_packer/`, including each sidecar, and add
+the separately built Android stub. The packer validates pristine bytes before config insertion.
+Missing metadata means legacy/unknown capabilities; invalid present metadata fails packing.
+See [the capability contract](../docs/check-capabilities.md) for trust and backend limits.
+
 ## Logs
 
 Only development builds write logs. A release build writes nothing to any log, so a protected app leaves no trace of the runtime in the device's log.
@@ -256,6 +272,8 @@ On the release binaries, it checks that:
 - the framework exports no symbols, and the Android library exports only the JVM's `JNI_OnLoad` hook;
 - neither imports any of `exit`, `_Exit`, `quick_exit`, `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `setenv`, `putenv`, `unsetenv`, `setlocale` and `setrlimit`. `.clang-tidy` forbids these functions in the source, and also `abort` and `std::terminate`, which the binary check leaves out;
 - neither writes logs: the framework imports no symbol with `_os_log` in its name and contains no `{public}` text, and the Android library imports no symbol with `__android_log` in its name and contains no `RaspRuntime` text.
+
+See [the capability contract](../docs/check-capabilities.md) for release metadata validation.
 
 ## Independent second-source observations
 

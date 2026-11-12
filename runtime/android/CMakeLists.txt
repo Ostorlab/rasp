@@ -1,7 +1,7 @@
 add_library(rasp SHARED
+  src/builtin.cpp
   src/entry.cpp
   src/monitoring.cpp
-  src/builtin.cpp
   src/apk/archive.cpp
   src/apk/location.cpp
   src/checks/debugger.cpp
@@ -17,6 +17,7 @@ add_library(rasp SHARED
   src/payload/cipher.cpp
   src/payload/dex_store.cpp
   src/util/apk_file.cpp
+  src/util/elf.cpp
   src/util/direct_syscall.cpp
   src/util/app_storage.cpp
   src/util/application_context.cpp
@@ -35,3 +36,6 @@ if(RASP_LOGGING)
   target_sources(rasp PRIVATE src/util/logging.cpp)
   target_link_libraries(rasp PRIVATE log)
 endif()
+
+include(${PROJECT_SOURCE_DIR}/cmake/capabilities.cmake)
+rasp_capabilities(rasp android ${ANDROID_ABI} ${ANDROID_PLATFORM_LEVEL})

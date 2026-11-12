@@ -6,6 +6,7 @@ import zipfile
 
 import pytest
 
+from rasp_packer import capabilities
 from rasp_packer import errors
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
@@ -269,6 +270,61 @@ def testPack_whenValidApk_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     )
     assert app_identity.package_name == _PACKAGE
     assert app_identity.version == "2.4.1"
+
+
+@pytest.mark.parametrize("bound", [True, False])
+def testPack_whenRuntimeHasOrLacksManifest_reportsExactBindingOrUnknown(
+    tmp_path: pathlib.Path, bound: bool
+) -> None:
+    app = tmp_path / "app.apk"
+    _make_apk(app)
+    manifests = (
+        {"arm64-v8a": capabilities.emit(_ARM64_SO, "android", "arm64-v8a", "31")}
+        if bound is True
+        else {}
+    )
+    artifacts = resources.Artifacts(
+        stub_dex=_STUB_DEX, libraries={"arm64-v8a": _ARM64_SO}, manifests=manifests
+    )
+    result = packer.pack(
+        app=app,
+        output=tmp_path / "protected.apk",
+        config=_CONFIG,
+        artifacts=artifacts,
+        splitter=_recorded_split(),
+    )
+    assert result.effective_checks == _CONFIG.checks
+    assert (result.bindings is not None) is bound
+    if result.bindings is not None:
+        expected = capabilities.bind(
+            _ARM64_SO, manifests["arm64-v8a"], "android", "arm64-v8a"
+        )
+        assert expected is not None
+        assert result.bindings == (expected,)
+
+
+def testPack_whenRuntimeDigestMismatch_rejectsBeforeOutput(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "app.apk"
+    _make_apk(app)
+    artifacts = resources.Artifacts(
+        stub_dex=_STUB_DEX,
+        libraries={"arm64-v8a": _ARM64_SO},
+        manifests={
+            "arm64-v8a": capabilities.emit(b"wrong", "android", "arm64-v8a", "31")
+        },
+    )
+    output = tmp_path / "bad.apk"
+    with pytest.raises(errors.InvalidRuntimeError, match="digest"):
+        packer.pack(
+            app=app,
+            output=output,
+            config=_CONFIG,
+            artifacts=artifacts,
+            splitter=_recorded_split(),
+        )
+    assert output.exists() is False
 
 
 def testPack_whenArchiveWriterDropsRuntime_rejectsWithoutOutput(

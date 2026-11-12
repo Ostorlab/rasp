@@ -27,6 +27,7 @@ the native runtime are prebuilt artifacts from the runtime build; see resources.
 """
 
 import collections.abc
+import dataclasses
 import pathlib
 import zipfile
 
@@ -85,7 +86,7 @@ def pack(
         aab_splitter: Splits an AAB's classes from pre-extracted DEX entries.
 
     Returns:
-        The app's package name and version, read from its manifest.
+        The app's identity with additive effective_checks/bindings metadata; identity equality is preserved.
 
     Raises:
         InvalidApkError: The APK is invalid or missing required entries.
@@ -165,6 +166,10 @@ def _pack_apk(
         for dex in result.business
     }
     base_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
+    libraries = injection.library_entries(apk, artifacts)
+    bindings = resources_module.bindings(
+        artifacts, (name.split("/")[1] for name in libraries)
+    )
     added = {
         KEY_ENTRY: key,
         MAP_ENTRY: map_frame,
@@ -172,7 +177,7 @@ def _pack_apk(
         **base_dexes,
         **{
             name: runtime_library.write_config(library, config)
-            for name, library in injection.library_entries(apk, artifacts).items()
+            for name, library in libraries.items()
         },
     }
     apk.write(
@@ -187,7 +192,9 @@ def _pack_apk(
         config=config,
         expected_entries={apk_archive.MANIFEST_ENTRY: patched_manifest, **added},
     )
-    return app_identity
+    return dataclasses.replace(
+        app_identity, effective_checks=config.checks, bindings=bindings
+    )
 
 
 def _pack_aab(
@@ -237,6 +244,7 @@ def _pack_aab(
         ).items()
     }
     abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
+    bindings = resources_module.bindings(artifacts, abis)
     lib_entries = {
         f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": runtime_library.write_config(
             artifacts.libraries[abi], config
@@ -262,7 +270,9 @@ def _pack_aab(
         config=config,
         expected_entries={aab_archive.MANIFEST_ENTRY: patched_manifest, **added},
     )
-    return app_identity
+    return dataclasses.replace(
+        app_identity, effective_checks=config.checks, bindings=bindings
+    )
 
 
 def _aab_native_abis(aab: aab_archive.Aab) -> set[str]:

@@ -1,0 +1,936 @@
+{
+  "schema_version": 1,
+  "revision": 4,
+  "plugins": "unmodelled",
+  "platforms": {
+    "android": {
+      "abis": [
+        "arm64-v8a",
+        "armeabi-v7a",
+        "x86_64",
+        "x86"
+      ],
+      "minimum_os": "31",
+      "groups": [
+        {
+          "name": "root",
+          "required": false,
+          "observations": [
+            {
+              "signal": "root.fs_paths",
+              "source": "access",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Existing fixed artifact paths only. ENOENT/ENOTDIR means absent; denial, symlink-loop or other lookup failure makes this entire source error without a partial list. Stock sandbox denial is unknown, not clean or root proof."
+            },
+            {
+              "signal": "root.fs_paths",
+              "source": "stat",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Existing fixed artifact paths only. ENOENT/ENOTDIR means absent; denial, symlink-loop or other lookup failure makes this entire source error without a partial list. Stock sandbox denial is unknown, not clean or root proof."
+            },
+            {
+              "signal": "root.fs_paths",
+              "source": "faccessat_syscall",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Existing fixed artifact paths through libc's hookable faccessat syscall entry; only ENOENT/ENOTDIR is absent. Any invalid path, denial or syscall error invalidates this source without partial evidence; no other-process scan."
+            },
+            {
+              "signal": "root.mounts",
+              "source": "proc_mounts",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Own mount table, bounded to 1 MiB and 32 reported matching lines. Both observations from this source are error on unreadable, empty, truncated, overlong or malformed records, including after output cap; every record must be complete."
+            },
+            {
+              "signal": "root.rw_mounts",
+              "source": "proc_mounts",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Own mount table, bounded to 1 MiB and 32 reported matching lines. Both observations from this source are error on unreadable, empty, truncated, overlong or malformed records, including after output cap; every record must be complete."
+            },
+            {
+              "signal": "root.mounts",
+              "source": "proc_mounts_syscall",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Independent own-mount-table read through libc's hookable syscall entry, bounded to 1 MiB and 32 reported lines. Full-record validation, read/count/close failures yield error for both source observations without partial success; read timing may cause divergence."
+            },
+            {
+              "signal": "root.rw_mounts",
+              "source": "proc_mounts_syscall",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Independent own-mount-table read through libc's hookable syscall entry, bounded to 1 MiB and 32 reported lines. Full-record validation, read/count/close failures yield error for both source observations without partial success; read timing may cause divergence."
+            },
+            {
+              "signal": "root.selinux_enforcing",
+              "source": "selinuxfs",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "root.build_props",
+              "source": "system_property",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Only readable properties included; absent properties omitted from the list."
+            }
+          ]
+        },
+        {
+          "name": "debugger",
+          "required": false,
+          "observations": [
+            {
+              "signal": "dbg.tracer_pid",
+              "source": "proc_status",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Own TracerPid, bounded to 64 KiB; requires complete final newline and exactly one valid nonnegative signed PID. Missing, duplicate, malformed or unreadable fields are error, not zero."
+            },
+            {
+              "signal": "dbg.tracer_pid",
+              "source": "proc_status_syscall",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Independent own-status read through libc's hookable syscall entry; 64 KiB bound and complete valid TracerPid required. Invalid counts, truncated data, native/read/close failures are error; zero is a valid observed PID, not a substitute for failure."
+            },
+            {
+              "signal": "dbg.java_debugger",
+              "source": "jdwp_threads",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "dbg.java_debugger",
+              "source": "debug_api",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "JNI Debug API requires an attached VM; unavailable JNI is error."
+            }
+          ]
+        },
+        {
+          "name": "hooks",
+          "required": false,
+          "observations": [
+            {
+              "signal": "hook.maps_hits",
+              "source": "proc_maps",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Own proc maps bounded to 4 MiB; at most 32 matching lines reported. All records, including after output cap, must have valid addresses, permissions and numeric fields; empty/truncated/malformed or unreadable input makes this source error without partial results."
+            },
+            {
+              "signal": "hook.rwx_regions",
+              "source": "proc_maps",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Own proc maps bounded to 4 MiB; at most 32 matching lines reported. All records, including after output cap, must have valid addresses, permissions and numeric fields; empty/truncated/malformed or unreadable input makes this source error without partial results."
+            },
+            {
+              "signal": "hook.maps_hits",
+              "source": "proc_maps_syscall",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Independent own-maps read through libc's hookable syscall entry. At most 4 MiB read, 32 matching lines reported; validate every complete record, including after cap. Native/read/count/close or record failure is error; no syscall RWX observation is emitted."
+            },
+            {
+              "signal": "hook.threads",
+              "source": "proc_task",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Own /proc/self/task comm names only: at most 4096 entries; complete names of 1-15 non-control bytes plus newline. Up to 32 sorted/deduplicated matching names retained while continuing validation. Denial, disappearance, malformed/oversized name or incomplete enumeration makes the entire source error, with no partial list. Generic gmain is not a marker; renamed/hidden threads evade."
+            },
+            {
+              "signal": "hook.inline",
+              "source": "prologue",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Fixed libc/libdl entry comparison: at most 32 distinct changed function names in fixed resolution order; empty only after all 32 comparisons succeed. Compare min(16, nonzero symbol size) bytes from immutable executable ELF code with actual RX non-writable mapped addresses via checked own-process reads. Maps limited to 4 MiB/8192-byte lines, library 32 MiB; native ARM/Thumb, AArch64, x86 and x86_64 only. Missing/duplicate/reserved/IFUNC symbols, malformed metadata, text relocations, unavailable resolution, denied/short/stale reads or incomplete coverage produce error with no value and no partial list; unsupported off Android or for an unimplemented build architecture. Raw differences can include authorized instrumentation; matching disk/memory, unlisted/renamed targets, other inline sites, hidden modules and hookable APIs remain limitations, not malware or clean-device verdicts."
+            }
+          ]
+        },
+        {
+          "name": "integrity",
+          "required": false,
+          "observations": [
+            {
+              "signal": "integ.text_sha256",
+              "source": "file",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Own runtime ELF text only; failed location, read or hash is error. File is an untrusted baseline."
+            },
+            {
+              "signal": "integ.text_sha256",
+              "source": "memory",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Own runtime ELF text only; failed location, read or hash is error. File is an untrusted baseline."
+            }
+          ]
+        },
+        {
+          "name": "mitm",
+          "required": false,
+          "observations": [
+            {
+              "signal": "mitm.tunnels",
+              "source": "getifaddrs",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "mitm.user_cas",
+              "source": "user_cacerts",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "JNI AndroidCAStore user aliases only; list length varies; JNI/read failures are error."
+            }
+          ]
+        },
+        {
+          "name": "identity",
+          "required": true,
+          "observations": [
+            {
+              "signal": "id.package",
+              "source": "proc_cmdline",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "id.uid",
+              "source": "getuid",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "id.code_path",
+              "source": "dladdr",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+            },
+            {
+              "signal": "sig.cert_sha256",
+              "source": "apk_signing_block",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "First current signer from APK signing block; unavailable/malformed/unsupported signer parsing is error, not verified signature trust."
+            },
+            {
+              "signal": "sig.cert_sha256",
+              "source": "package_manager",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "First current signer through supported app Context, with optional RuntimeBridge.initialize(Context) cache and best-effort framework fallback. Context/VM/JNI/certificate unavailability or digest failure is error; API28+ SigningInfo is used at the API31+ runtime floor. No signature verification or hardware attestation."
+            }
+          ]
+        },
+        {
+          "name": "emulator",
+          "required": false,
+          "observations": [
+            {
+              "signal": "emu.props",
+              "source": "system_property",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Only readable matching properties; missing properties omitted from the value."
+            }
+          ]
+        },
+        {
+          "name": "accessibility",
+          "required": false,
+          "observations": [
+            {
+              "signal": "a11y.enabled_services",
+              "source": "accessibility_manager",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "API31+ public enabled AccessibilityServiceInfo list through the explicitly retained Application Context, not a private fallback. Sorted unique records package/full.Class capabilities=uint32 flags=uint32 preserve complete capability/request masks and distinct mask variants. At most 128 raw entries before deduplication, 1024 ASCII bytes per raw/normalized component and 131072 complete record bytes. Non-null empty list is OK empty; absent Context/service, denied/JNI/null/malformed/changing-size/over-limit reads are error with no partial list. Flags do not prove active control; legitimate assistive services are context, not malware. Off Android/below API31 unsupported."
+            }
+          ]
+        },
+        {
+          "name": "input_method",
+          "required": false,
+          "observations": [
+            {
+              "signal": "ime.enabled_components",
+              "source": "input_method_manager",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "API31+ public enabled IME list through the explicitly retained Application Context. Sorted unique canonical components, at most 128 raw entries before deduplication, 1024 ASCII bytes per raw/normalized component and 131072 complete bytes. Non-null empty list is OK empty; absent Context/service, denied/JNI/null/malformed/changing-size/over-limit reads are error with no partial list. This is enabled-list fallback context on API31-33, never a current-IME assertion. Independent of the selected component result; legitimate third-party/assistive keyboards are not malware. Off Android/below API31 unsupported."
+            },
+            {
+              "signal": "ime.current_component",
+              "source": "input_method_manager",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "API34+ public getCurrentInputMethodInfo reports the selected IME for the process user through the explicitly retained Application Context, not proof of a visible keyboard or processing text. API31-33 unsupported without newer-method lookup; no enabled-list substitution. One canonical component string, at most 1024 raw/normalized ASCII bytes. A null selected IME, absent Context/service, denied/JNI/malformed/over-limit read is error with no value, never empty-clean. Independent of enabled-list failures. Off Android/below API31 unsupported."
+            }
+          ]
+        },
+        {
+          "name": "notification_access",
+          "required": false,
+          "observations": [
+            {
+              "signal": "notification.enabled_listeners",
+              "source": "settings_secure",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "API31+ public Settings.Secure.getString of enabled_notification_listeners via the explicitly retained Application Context, following the AndroidX-compatible colon-separated component pattern; no hidden-field lookup or invented manager API. Sorted unique canonical components: at most 128 raw entries before deduplication, 1024 raw/normalized ASCII bytes per component and 131072 raw setting/complete output bytes. Only an explicit empty string is OK empty; null, absent Context/resolver, denied/JNI/malformed/over-limit reads are error with no partial list or stale cache. Current-user/vendor visibility limits apply; enabled access is not notification interception or malware proof. Off Android/below API31 unsupported."
+            }
+          ]
+        }
+      ]
+    },
+    "ios": {
+      "abis": [
+        "arm64"
+      ],
+      "minimum_os": "12.0",
+      "groups": [
+        {
+          "name": "jailbreak",
+          "required": false,
+          "observations": [
+            {
+              "signal": "jb.fs_paths",
+              "source": "access",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Fixed candidate paths through access; failed access is not found. Simulator/non-iOS unsupported."
+            },
+            {
+              "signal": "jb.fs_paths",
+              "source": "stat",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Fixed candidate paths through stat; failed access is not found. Simulator/non-iOS unsupported."
+            },
+            {
+              "signal": "jb.sandbox_escape",
+              "source": "open",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "jb.fork_ok",
+              "source": "fork",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            }
+          ]
+        },
+        {
+          "name": "debugger",
+          "required": false,
+          "observations": [
+            {
+              "signal": "dbg.traced",
+              "source": "sysctl",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "dbg.traced",
+              "source": "sysctl_syscall",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS ARM64 only; simulator, non-Apple and non-arm64 paths emit unsupported. Own kinfo_proc via Darwin svc getpid/sysctl using native SYS constants; invalid PID, carry/error, nonzero result or wrong structure size is error. Boolean P_TRACED value is not anti-hook assurance."
+            },
+            {
+              "signal": "dbg.parent",
+              "source": "getppid",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "dbg.parent",
+              "source": "sysctl_syscall",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS ARM64 only; simulator, non-Apple and non-arm64 paths emit unsupported. Raw own-parent PID from native kinfo_proc; invalid PID, carry/error, result/structure-size mismatch or negative parent is error. Sequential sources can legitimately diverge."
+            },
+            {
+              "signal": "dbg.exception_ports",
+              "source": "task_get_exception_ports",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            }
+          ]
+        },
+        {
+          "name": "hooks",
+          "required": false,
+          "observations": [
+            {
+              "signal": "hook.maps_hits",
+              "source": "dyld",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "hook.dyld_env",
+              "source": "getenv",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Captured DYLD_INSERT_LIBRARIES truncated to 4096 bytes; empty string is valid. Simulator/non-iOS unsupported."
+            },
+            {
+              "signal": "hook.frida_port",
+              "source": "connect",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "hook.rwx_regions",
+              "source": "vm_region",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            }
+          ]
+        },
+        {
+          "name": "integrity",
+          "required": false,
+          "observations": [
+            {
+              "signal": "integ.text_sha256",
+              "source": "file",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Own arm64 runtime Mach-O __text only. Simulator/non-iOS unsupported. File encryption makes file hash unsupported; unsupported text fixups make both unsupported; malformed/unreadable data is error. File is untrusted baseline."
+            },
+            {
+              "signal": "integ.text_sha256",
+              "source": "memory",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Own arm64 runtime Mach-O __text only. Simulator/non-iOS unsupported. File encryption makes file hash unsupported; unsupported text fixups make both unsupported; malformed/unreadable data is error. File is untrusted baseline."
+            }
+          ]
+        },
+        {
+          "name": "identity",
+          "required": true,
+          "observations": [
+            {
+              "signal": "id.bundle_id",
+              "source": "CFBundle",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "id.bundle_id",
+              "source": "Info.plist",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "id.team_id",
+              "source": "code_signature",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Parsed Team ID may be empty; no trust-chain verification; read/parse failure is error. Simulator/non-iOS unsupported."
+            },
+            {
+              "signal": "id.cdhash",
+              "source": "code_signature",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "CodeDirectory digest; unknown hash type is error; no signature verification. Simulator/non-iOS unsupported."
+            }
+          ]
+        },
+        {
+          "name": "emulator",
+          "required": false,
+          "observations": [
+            {
+              "signal": "emu.simulator",
+              "source": "target_conditionals",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "apple",
+              "behavior": "Apple compile-time or sysctl machine tell, including simulator; non-Apple unsupported."
+            },
+            {
+              "signal": "emu.simulator",
+              "source": "sysctl",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "apple",
+              "behavior": "Apple compile-time or sysctl machine tell, including simulator; non-Apple unsupported."
+            }
+          ]
+        },
+        {
+          "name": "virtualizer",
+          "required": false,
+          "observations": [
+            {
+              "signal": "virt.exec_path",
+              "source": "dyld",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "virt.foreign_images",
+              "source": "dyld",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            }
+          ]
+        },
+        {
+          "name": "mitm",
+          "required": false,
+          "observations": [
+            {
+              "signal": "mitm.tunnels",
+              "source": "getifaddrs",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Only up interfaces with IPv4 tunnel names; IPv6-only tunnels can be absent; simulator/non-iOS unsupported."
+            },
+            {
+              "signal": "mitm.proxies",
+              "source": "CFNetworkCopySystemProxySettings",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "mitm.user_cas",
+              "source": "trust_store",
+              "value_kind": "none",
+              "cardinality": "one",
+              "value_cardinality": "none",
+              "statuses": [
+                "unsupported"
+              ],
+              "supported_on": "never",
+              "behavior": "Always unsupported; user trust store enumeration is not implemented."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
