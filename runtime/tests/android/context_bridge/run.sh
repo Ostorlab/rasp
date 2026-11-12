@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
+case "$(uname -s)" in
+  Linux|Darwin) ;;
+  *) echo "Context bridge runner requires a Linux or macOS host" >&2; exit 2 ;;
+esac
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 runtime="$(cd "$here/../../.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-jdk="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"
-"${CXX:-clang++}" -std=c++23 -shared -fPIC -pthread -fno-exceptions -fno-rtti \
-  -Wall -Wextra -Werror -Wpedantic -I"$jdk/include" -I"$jdk/include/linux" -I"$runtime/android/src" \
-  "$here/driver.cpp" "$runtime/android/src/util/application_context.cpp" \
-  "$runtime/android/src/util/package_manager.cpp" "$runtime/android/src/util/jni.cpp" \
-  -o "$work/libbridge_test.so"
-mapfile -t sources < <(find "$here/java" -name '*.java' | sort)
-javac -d "$work/classes" "$runtime/android/stub/co/ostorlab/rasp/RuntimeBridge.java" "${sources[@]}"
-for mode in late early concurrent lifetime unavailable; do
-  java -Xcheck:jni -cp "$work/classes" co.ostorlab.rasp.BridgeTest "$work/libbridge_test.so" "$mode"
-done
+
+cmake --preset host -S "$runtime" -B "$work" "$@"
+cmake --build "$work" --parallel 2 --target \
+  rasp_android_context_bridge_jni rasp_android_context_bridge_java rasp_android_application_context_test
+ctest --test-dir "$work" --parallel 2 --output-on-failure --no-tests=error \
+  -R '^(AndroidContextBridge[.]|ApplicationContext[.])'
