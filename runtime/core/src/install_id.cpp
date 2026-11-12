@@ -6,9 +6,7 @@
 #include <array>
 #include <cerrno>
 #include <cstddef>
-#include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <fcntl.h>
 #include <optional>
 #include <string>
@@ -18,6 +16,7 @@
 #include <utility>
 
 #include "rasp/util/read_file.h"
+#include "rasp/util/uuid.h"
 
 namespace gsl {
 
@@ -31,9 +30,6 @@ using owner = T;
 namespace rasp {
 
 namespace {
-
-/// The number of random bytes of a UUID.
-constexpr std::size_t kUuidBytes = 16;
 
 /// The length of a UUID's text: 32 hex digits and 4 hyphens.
 constexpr std::size_t kUuidLength = 36;
@@ -73,30 +69,6 @@ constexpr std::string_view kHexDigits = "0123456789abcdef";
     }
   }
   return true;
-}
-
-/// Makes a new random UUID, version 4, from `arc4random_buf`, which can't fail.
-///
-/// @return Its text, 36 lowercase characters.
-[[nodiscard]] std::string new_uuid() {
-  constexpr unsigned kVersionMask = 0x0FU;
-  constexpr unsigned kVersion4 = 0x40U;
-  constexpr unsigned kVariantMask = 0x3FU;
-  constexpr unsigned kVariantRfc = 0x80U;
-  std::array<std::uint8_t, kUuidBytes> bytes{};
-  arc4random_buf(bytes.data(), bytes.size());
-  bytes[6] = static_cast<std::uint8_t>((unsigned{bytes[6]} & kVersionMask) | kVersion4);
-  bytes[8] = static_cast<std::uint8_t>((unsigned{bytes[8]} & kVariantMask) | kVariantRfc);
-  std::string text;
-  text.reserve(kUuidLength);
-  for (const std::uint8_t byte : bytes) {
-    if (std::ranges::find(kHyphens, text.size()) != kHyphens.end()) {
-      text.push_back('-');
-    }
-    text.push_back(kHexDigits[byte >> 4U]);
-    text.push_back(kHexDigits[byte & 0x0FU]);
-  }
-  return text;
 }
 
 /// Writes `content` to a new file at `path`.
@@ -185,7 +157,7 @@ std::optional<std::string> load_or_create_install_id(std::string_view directory)
   }
   kept = read_id(path);
   if (!kept.has_value()) {
-    std::string created = new_uuid();
+    std::string created = util::new_uuid();
     if (keep(path, created)) {
       kept = std::move(created);
     }

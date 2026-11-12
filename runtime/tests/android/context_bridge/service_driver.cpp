@@ -1,22 +1,62 @@
 /// Real JVM entry to the production public Android collectors on calling and attached worker threads.
 
+#include <algorithm>
 #include <array>
 #include <jni.h>
 #include <jni_md.h>
+#include <memory>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "builtin.h"
 #include "rasp/config.h"
+#include "rasp/context.h"
+#include "rasp/cycle.h"
 #include "rasp/observation.h"
+#include "rasp/plugin.h"
 #include "util/application_context.h"
 
 namespace {
+/// Retained owner proves the actual legacy callback received the same atomic handoff.
+constexpr rasp::plugins::Key<std::shared_ptr<const rasp::CycleSnapshot>> kRetainedCycle{"test.service.cycle"};
+
+/// Retains metadata and observations together during the synchronous callback.
+void retain_cycle(std::span<const rasp::Observation> observations, rasp::plugins::Context& context) {
+  const auto snapshot = context.get(rasp::plugins::kCycleSnapshot);
+  if (snapshot.has_value() && std::ranges::equal((*snapshot)->observations, observations)) {
+    context.put(kRetainedCycle, *snapshot);
+  }
+}
+
+/// Executes real RT08 collectors through the same finite path as the Android monitor.
+[[nodiscard]] std::string collect_cycle(const rasp::Config& config) {
+  rasp::plugins::Context context;
+  rasp::CycleMonitor monitor;
+  constexpr rasp::plugins::Plugin kPlugin{.init = nullptr, .checks = {}, .on_observations = retain_cycle};
+  const std::array plugins{&kPlugin};
+  const auto snapshot =
+      monitor.run(config, rasp::cycle_catalogue("android"), plugins, context,
+                  [](const rasp::Config& selection, const void*) { return rasp::android::run_checks(selection); });
+  const auto retained = context.get(kRetainedCycle);
+  if (!retained.has_value() || *retained != snapshot || context.get(rasp::plugins::kCycleSnapshot).has_value()) {
+    return "cycle handoff unavailable";
+  }
+  const auto& metadata = snapshot->metadata;
+  return std::string("cycle complete=") + (metadata.complete ? "true" : "false") +
+         " execution_finished=" + (metadata.execution_finished ? "true" : "false") +
+         " dropped=" + std::to_string(metadata.dropped) +
+         " expected=" + (metadata.expected.has_value() ? std::to_string(*metadata.expected) : "unknown") +
+         " seen=" + std::to_string(metadata.seen) + " missing=" + std::to_string(metadata.missing.size()) +
+         " retained=" + std::to_string(snapshot->observations.size());
+}
+
 /// Dispatches only public collectors and serializes their actual observation contracts.
 std::string collect(jint group) {
   rasp::Config config;
-  switch (group) {
+  const bool cycle = group >= 10;
+  switch (cycle ? group - 10 : group) {
     case 0:
       config.checks = {"accessibility"};
       break;
@@ -28,6 +68,9 @@ std::string collect(jint group) {
       break;
     default:
       return {};
+  }
+  if (cycle) {
+    return collect_cycle(config);
   }
   const std::vector<rasp::Observation> observations = rasp::android::run_checks(config);
   std::string result;

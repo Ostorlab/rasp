@@ -19,6 +19,27 @@ public final class ServiceTest {
         String actual = snapshot(group, false);
         if (!actual.equals(expected)) throw new AssertionError("expected=" + expected + " actual=" + actual);
     }
+    private static void expectCycleRetention(Application app) {
+        for (int count : new int[]{64, 128}) {
+            List<AccessibilityServiceInfo> services = new ArrayList<>();
+            for (int index = 0; index < count; ++index) {
+                services.add(new AccessibilityServiceInfo("pkg/.Service" + index, 1, 0));
+            }
+            app.accessibility.enabled = services;
+            String expected = "cycle complete=" + (count == 64 ? "true" : "false")
+                + " execution_finished=true dropped=" + (count == 64 ? "0" : "1")
+                + " expected=1 seen=1 missing=0 retained=" + (count == 64 ? "1" : "0");
+            for (boolean worker : new boolean[]{false, true}) {
+                String actual = snapshot(10, worker);
+                if (!actual.equals(expected)) throw new AssertionError("cycle retention expected=" + expected + " actual=" + actual);
+            }
+            String raw = snapshotNative(0);
+            if (!raw.startsWith(A11Y + "ok [") || !raw.contains("pkg/pkg.Service" + (count - 1))) {
+                throw new AssertionError("raw collector limit changed: " + raw);
+            }
+        }
+        app.accessibility.enabled = new ArrayList<>();
+    }
     private static final String A11Y = "a11y.enabled_services/accessibility_manager ";
     private static final String ENABLED = "ime.enabled_components/input_method_manager ";
     private static final String CURRENT = "ime.current_component/input_method_manager ";
@@ -30,6 +51,7 @@ public final class ServiceTest {
         expect(2, NOTIFY + "error");
         Application app = new Application();
         if (RuntimeBridge.initialize(app) != RuntimeBridge.INITIALIZED) throw new AssertionError();
+        expectCycleRetention(app);
         for (int faultKind = 0; faultKind < 3; ++faultKind) {
             if (!faultySnapshot(faultKind).equals(A11Y + "error")) throw new AssertionError("JNI fault not explicit");
         }

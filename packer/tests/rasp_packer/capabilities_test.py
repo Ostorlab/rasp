@@ -5,6 +5,8 @@ import hashlib
 import json
 import pathlib
 import re
+import runpy
+import sys
 
 import pytest
 
@@ -254,6 +256,75 @@ def testCatalogue_whenReviewedSourceRegistered_preservesTypedErrors(
     assert row["value_kind"] == kind
     assert set(row["statuses"]) == {"ok", "error", "unsupported"}
     assert row["cardinality"] == "one"
+
+
+@pytest.mark.parametrize(
+    "statuses", [["timeout"], ["ok", "unsupported", "error", "timeout"]]
+)
+def testParseCatalogue_whenTimeoutDeclared_roundTripsWithoutChangingProductionCatalogue(
+    statuses: list[str],
+) -> None:
+    current_id = capabilities.catalogue_id()
+    document = capabilities.catalogue()
+    row = document["platforms"]["android"]["groups"][0]["observations"][0]
+    row["statuses"] = statuses
+    encoded = capabilities.canonical(document)
+    parsed = capabilities.parse_catalogue(encoded)
+    assert (
+        parsed["platforms"]["android"]["groups"][0]["observations"][0]["statuses"]
+        == statuses
+    )
+    assert capabilities.canonical(parsed) == encoded
+    assert capabilities.catalogue_id() == current_id
+    assert (
+        current_id == "eaac77e3bdbf7f21af2abfb79a7868ccf516e5c3f758d25c90127550e3e7db7c"
+    )
+    assert all(
+        "timeout" not in output["statuses"]
+        for platform in capabilities.catalogue()["platforms"].values()
+        for group in platform["groups"]
+        for output in group["observations"]
+    )
+
+
+def testCapabilityHeader_whenTimeoutParsed_generatesActualNativeStatusBit(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = capabilities.catalogue()
+    document["platforms"]["android"]["groups"][0]["observations"][0]["statuses"] = [
+        "timeout"
+    ]
+    parsed = capabilities.parse_catalogue(capabilities.canonical(document))
+    monkeypatch.setattr(capabilities, "catalogue", lambda: parsed)
+    header = tmp_path / "expectations.h"
+    monkeypatch.setattr(sys, "argv", ["capability_header.py", str(header), "android"])
+    tool = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "runtime"
+        / "tools"
+        / "capability_header.py"
+    )
+    runpy.run_path(str(tool), run_name="__main__")
+    row = next(
+        line
+        for line in header.read_text().splitlines()
+        if 'signal = "root.fs_paths", .source = "access"' in line
+    )
+    assert ".statuses = 8}" in row
+    assert ".statuses = 7}" in header.read_text()
+
+
+@pytest.mark.parametrize("statuses", [["timeout", "timeout"], ["timedout"], [True]])
+def testParseCatalogue_whenTimeoutVocabularyMalformed_rejects(
+    statuses: list[object],
+) -> None:
+    document = capabilities.catalogue()
+    document["platforms"]["android"]["groups"][0]["observations"][0]["statuses"] = (
+        statuses
+    )
+    with pytest.raises(errors.InvalidRuntimeError):
+        capabilities.parse_catalogue(capabilities.canonical(document))
 
 
 def testCatalogue_whenInlineSourceRegistered_preservesBoundedUnknownContract() -> None:

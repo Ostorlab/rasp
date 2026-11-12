@@ -14,6 +14,9 @@ from typing import Any
 
 from rasp_packer import errors
 
+# Positions match the native Status enum; additions do not change catalogue entries.
+STATUS_NAMES = ("ok", "unsupported", "error", "timeout")
+
 MAX_MANIFEST_BYTES = 131072
 SIDECAR_SUFFIX = ".capabilities.json"
 
@@ -142,10 +145,7 @@ def parse_catalogue(data: bytes) -> dict[str, Any]:
                 if (
                     not isinstance(statuses, list)
                     or len(statuses) == 0
-                    or any(
-                        status not in ("ok", "error", "unsupported")
-                        for status in statuses
-                    )
+                    or any(status not in STATUS_NAMES for status in statuses)
                     or len(set(statuses)) != len(statuses)
                 ):
                     raise errors.InvalidRuntimeError(

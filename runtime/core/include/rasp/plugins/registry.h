@@ -32,6 +32,8 @@ void init_plugins(std::span<const Plugin* const> plugins, const Config& config, 
 /// Then it gives each plugin that has an `on_observations` all the observations, in the order of `plugins`: the
 /// built-in ones and those of the plugins' checks.
 ///
+/// Direct callers have no monitor metadata. Dispatch is serialized on Context and clears any cycle key.
+/// Monitor consumers retain the owning snapshot from rasp/cycle.h during their callback.
 /// @param plugins The plugins, in the order their checks run.
 /// @param observations The observations of the built-in checks.
 /// @param context The values the plugins share, which every check and `on_observations` receives. It must be the one
