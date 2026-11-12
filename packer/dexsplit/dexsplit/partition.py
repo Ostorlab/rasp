@@ -11,6 +11,8 @@ import collections.abc
 import dataclasses
 import heapq
 
+from dexsplit import _dex
+
 
 class AffinityGraph:
     """An undirected, weighted graph of the links between classes.
@@ -25,6 +27,7 @@ class AffinityGraph:
         Args:
             size: The number of classes.
         """
+        _dex.charge(work=size, storage=size * 128)
         self._neighbours: list[dict[int, int]] = [{} for _ in range(size)]
 
     @property
@@ -53,6 +56,7 @@ class AffinityGraph:
             second: The other end of the edge.
             weight: How much to add to the weight of the edge.
         """
+        _dex.charge(work=1, storage=256)
         if first == second:
             return
         self._neighbours[first][second] = (
@@ -75,6 +79,7 @@ def package_of(descriptor: str) -> str:
     Returns:
         The package, in descriptor form.
     """
+    _dex.charge(work=len(descriptor) // 64 + 1, storage=len(descriptor) * 4 + 64)
     slash = descriptor.rfind("/")
     if slash == -1:
         return "L"
@@ -138,6 +143,7 @@ def fill_groups(
     groups: list[list[int]] = []
     current: list[int] = []
     for unit in units:
+        _dex.charge(work=len(unit) + 1, storage=len(unit) * 24 + 128)
         if len(current) > 0 and len(current) + len(unit) > cap:
             groups.append(current)
             current = []
@@ -170,6 +176,7 @@ def _group_by_package(
     classes: list[list[int]] = []
     package_of_class: dict[int, int] = {}
     for class_id in members:
+        _dex.charge(work=1, storage=512)
         package_id = package_ids.setdefault(
             package_of(descriptors[class_id]), len(classes)
         )
@@ -184,10 +191,13 @@ def _package_edges(
     members: collections.abc.Sequence[int], graph: AffinityGraph, packages: _Packages
 ) -> list[dict[int, int]]:
     """Add up the edges between classes of two different packages into package edges."""
+    _dex.charge(work=len(packages.classes), storage=len(packages.classes) * 128)
     edges: list[dict[int, int]] = [{} for _ in packages.classes]
     for class_id in members:
+        _dex.charge(work=1, storage=512)
         package = packages.package_of_class[class_id]
         for neighbour, weight in graph.neighbours(class_id).items():
+            _dex.charge(work=1, storage=128)
             neighbour_package = packages.package_of_class.get(neighbour)
             if neighbour_package is None or neighbour_package == package:
                 continue
@@ -206,6 +216,9 @@ def _order_packages(
     best-first, like Prim's algorithm: it takes the package with the heaviest edge to the
     packages already placed.
     """
+    _dex.charge(
+        work=len(edges) * max(1, len(edges).bit_length()), storage=len(edges) * 192
+    )
     seeds = sorted(
         range(len(edges)), key=lambda package: (-len(edges[package]), package)
     )
@@ -226,8 +239,10 @@ def _walk_from(
     """Place every package reachable from `seed`, heaviest edge first, and append it to `order`."""
     # A max-heap of (edge weight, package id), kept as a min-heap of the negated values: the
     # heaviest edge comes out first, and of equal weights the higher package id.
+    _dex.charge(work=1, storage=128)
     heap = [(0, -seed)]
     while len(heap) > 0:
+        _dex.charge(work=max(1, len(heap).bit_length()))
         _, negated_package = heapq.heappop(heap)
         package = -negated_package
         if placed[package] is True:
@@ -235,5 +250,7 @@ def _walk_from(
         placed[package] = True
         order.append(package)
         for neighbour, weight in edges[package].items():
+            _dex.charge(work=1)
             if placed[neighbour] is False:
+                _dex.charge(work=max(1, len(heap).bit_length()), storage=128)
                 heapq.heappush(heap, (-weight, -neighbour))

@@ -73,17 +73,9 @@ def testSplit_whenEntriesRepeatAClass_keepsItOnceInMultidexOrder() -> None:
     assert total_classes == 12
 
 
-def testCut_whenANamedBlockIsCut_warnsWithItsName(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    with caplog.at_level(logging.WARNING):
-        first, second = splitter._cut([strategy.Block((0, 1, 2, 3), "package Lcom/a")])
-
-    assert first == [strategy.Block((0, 1), "package Lcom/a")]
-    assert second == [strategy.Block((2, 3), "package Lcom/a")]
-    assert [record.getMessage() for record in caplog.records] == [
-        "package Lcom/a goes over a 64K limit of the DEX format, so it is cut into two DEX files"
-    ]
+def testCut_whenANamedPackageCannotFit_rejectsRatherThanBreakingAccess() -> None:
+    with pytest.raises(splitter.SplitError, match="package-private"):
+        splitter._cut([strategy.Block((0, 1, 2, 3), "package Lcom/a")])
 
 
 def testCut_whenAnUnnamedBlockIsCut_doesNotWarn(

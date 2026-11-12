@@ -46,7 +46,7 @@ is `None`). `effective_checks` records config selection, not execution evidence.
 
 For Android the packer protects the app's code:
 
-- it sorts the app's classes with the bundled `split-dex` tool. The classes under the app's package are the app's own code. The other classes, such as libraries, stay in the clear, as `classes.dex`, `classes2.dex`, ...;
+- it sorts the app's classes in process with the bundled native `dexsplit` extension. The classes under the app's package are the app's own code. The other classes, such as libraries, stay in the clear, as `classes.dex`, `classes2.dex`, ...;
 - it encrypts the app's own classes, in dex files of their own, and stores each of these files as the asset `assets/business/<i>.dex`. It also stores the class map as `assets/rasp/map.bin`, encrypted too: the map names the dex file that defines each of these classes. It stores the key as `assets/rasp/key.bin`;
 - it adds a small stub as the last dex file (`classesN.dex`), and sets `<application android:appComponentFactory>` to the stub's class, `co.ostorlab.rasp.RaspStub`, while leaving the app's own `<application android:name>` alone;
 - it adds the native runtime as `lib/<abi>/librasp.so`, for each ABI the app has native libraries for, or for every ABI the runtime is built for when the app has none. Android installs the native libraries of one ABI only, so each of the app's ABIs needs the runtime. An app with native libraries for an ABI the runtime isn't built for is refused with `UnsupportedAbiError`. The packer writes the runtime config, which holds the build id and the checks, into the `.rasp_config` section of each `librasp.so`;
@@ -64,6 +64,62 @@ The stub and the native runtime come from the runtime build. The packer looks fo
 The binary `AndroidManifest.xml` is edited in place by `android/apk/axml.py`, so the packer needs no Android build tool. The protected APK is returned aligned, with native libraries on 16 KB page boundaries and other stored entries on 4-byte boundaries, so it can be signed directly, with no separate `zipalign` step.
 
 The key is stored in the clear, in `assets/rasp/key.bin`. The encryption raises the effort needed to read the app's code, but on its own does not defeat a determined analyst who reads the key from the app. `TODO.md` at the repository root tracks this limit.
+
+## DEX selection and compatibility
+
+The native reader, model, writer and link analysis support standard little-endian DEX
+035, 037, 038, 039 and 040. Inputs must have valid digests, complete maps, typed item
+boundaries and valid pools, instructions, debug records and encoded values. Unsupported
+versions, opcodes, link sections and malformed inputs fail before publication. Every
+rewritten output is read again before encryption. This protects Java/Kotlin DEX code;
+it does not encrypt native libraries, Dart snapshots or Hermes bytecode.
+
+For R8 releases, pass the exact build's mapping with `pack(..., mapping=path)` or
+`rasp pack ... --mapping mapping.txt`. Without it, selection uses the manifest package.
+Mappings are strict UTF-8 (BOM and CRLF accepted); malformed records, conflicting
+originals, invalid names, an empty app selection or no target matching the input DEX
+fail. Identical duplicates are deduplicated; legitimate many-to-one merges are accepted.
+A partial mapping cannot prove that every app class was selected. All classes in each
+selected obfuscated package are protected together, including colocated library classes.
+A business package that cannot fit in one output DEX fails, because separate defining
+loaders would break package-private access. Input definitions under `co.ostorlab.rasp`
+are reserved. Preserve the runtime/bootstrap keep rules in the
+[Android runtime guide](../runtime/android/stub/README.md) in the app's R8 configuration.
+
+Operational limits are 64 MiB per input/rewritten DEX, 256 input and 256 output files,
+256 MiB aggregate input and separately aggregate output, 100,000 unique classes,
+1,048,576 aggregate input string IDs and nesting depth 64. Mapping limits are 64 MiB,
+1,000,000 class records and 65,536 bytes per line. These are compatibility limits,
+not DEX format maxima. A request also has **16,777,216 work units**, **268,435,456
+cumulative logical allocation bytes**, and **268,435,456 cumulative retained native
+backing bytes**. Real apps can exceed these finite limits even below the input size
+cap; the checked-in 6.1 MB InsecureBankv2 DEX currently does. It fails explicitly.
+There is no automatic larger-budget fallback.
+
+Native allocations consume logical allowance before allocation, including pool reuse,
+copies and retries; actual pool growth consumes backing allowance including headers,
+alignment, upstream pool metadata and a fixed bookkeeping allowance. Neither counter
+is refunded. OS/standard-allocator bookkeeping and total process RSS are outside this
+portable byte counter. One request spans analysis, grouping, subdivision and output
+reparsing. Direct bindings use the same defaults. `dexsplit._dex.Request(work=...,
+storage=...)` may only lower them; nested scopes share counters. Models and analysis
+handles retain the original request after scope exit. To combine models, read them
+within one request; copying unrelated requests is rejected. Budget exhaustion never
+triggers subdivision.
+
+Debug locals accept harmless redundant end/restart events, matching ART. Incoming
+parameters initialize metadata only at their first register, including wide arguments.
+Out-of-frame locals and restarts with no known metadata fail; the latter is an explicit
+supported-subset restriction, rather than synthesizing local metadata.
+
+Native model strings preserve UTF-16 units, including supplementary characters.
+The unchanged JNI loader uses modified UTF-8 for class names, so supplementary
+Unicode business class names currently fail explicitly; BMP business names and
+supplementary string literals remain supported.
+
+The [harmless SDK/ART fixture](tests/dexsplit/fixtures/app/README.md) reproduces plain
+and R8 multidex APK/AAB inputs and documents the separate signing/device gate.
+Host parsing and independent SDK format checks do not establish ART execution.
 
 ## Layout
 
@@ -87,10 +143,10 @@ The key is stored in the clear, in `assets/rasp/key.bin`. The encryption raises 
     - `manifest.py`: the layer over `axml.py` for the component factory, the app's package and version, and its minimum API level.
   - `aab/`: reading and editing the AAB, and its manifest, which is in protobuf format.
   - `cipher.py`: the authenticated cipher for the class map and the app's own dex files.
-  - `split.py`: runs the bundled `split-dex` tool, which sorts the app's classes into the app's own and the others.
+  - `split.py`: calls the native `dexsplit` extension in process, which sorts the app's classes into the app's own and the others.
   - `loader_map.py`: the class map, which names the dex file that defines each of the app's own classes.
   - `runtime_library.py`: writes the runtime config into the `.rasp_config` section of `librasp.so`.
-  - `resources.py`: locating the prebuilt stub and native libraries, and the bundled `split-dex` tool.
+  - `resources.py`: locating the prebuilt stub and native libraries, and the native splitter resources.
 - `tests/`: one test file per source file, at the same path, named `<module>_test.py`.
 
 ## Development
@@ -106,7 +162,13 @@ uv run mypy
 uv run pytest
 ```
 
-CI runs the same commands (`.github/workflows/packer.yml`).
+CI runs these commands plus the native core/binding compiler, format, clang-tidy,
+CTest and ASan/UBSan/TSan gates (`.github/workflows/packer.yml`). For local native
+checks use LLVM 23 and CMake 4.4.4: `cmake --preset dexsplit-host`,
+`cmake --build --preset dexsplit-host --parallel 2`, and `ctest --preset dexsplit-host`.
+Use `dexsplit-asan` and `dexsplit-tsan` for the sanitizer presets. The native fixture
+generator and `tests/dexsplit/fixtures/validate.py --dexdump /path/to/dexdump`
+provide independent SDK35 validation for every supported version.
 
 ## Build id
 

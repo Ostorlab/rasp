@@ -1,3 +1,4 @@
+#include "common/budget.hpp"
 #pragma once
 
 /** The editable DEX model: data types (model/types.hpp) and the functions

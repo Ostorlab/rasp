@@ -23,6 +23,30 @@ _AAB = (
 )
 _PACKAGE = "com.android.insecurebankv2"
 
+
+def testSplitFromDexEntries_whenBusinessNameNeedsSupplementaryUnicode_refuses() -> None:
+    fixture = (
+        pathlib.Path(__file__).parents[2] / "dexsplit/fixtures/versions/unicode-039.dex"
+    )
+    with pytest.raises(split.SplitError, match="supplementary Unicode"):
+        split.split_from_dex_entries({"classes.dex": fixture.read_bytes()}, "fixture")
+
+
+def testSplitFromDexEntries_whenFrameworkNameNeedsSupplementaryUnicode_preserves() -> (
+    None
+):
+    fixture = (
+        pathlib.Path(__file__).parents[2] / "dexsplit/fixtures/versions/unicode-039.dex"
+    )
+    result = split.split_from_dex_entries(
+        {"classes.dex": fixture.read_bytes()}, "other"
+    )
+    assert result.business == ()
+    assert _dex.Model.read(result.framework[0]).class_descriptors == [
+        "Lfixture/\U0001d49c;"
+    ]
+
+
 # A class that is in the fixture's dex, directly in the app's package, and one in the same package not
 # named in the mapping below, to show the whole package is protected and not only the named class.
 _NAMED_CLASS = "com.android.insecurebankv2.CryptoClass"
@@ -142,13 +166,10 @@ def testSplitFromDexEntries_whenMapping_protectsTheWholeObfuscatedPackage() -> N
     assert len(result.framework) > 0
 
 
-def testSplitFromDexEntries_whenMappingSelectsNoClasses_producesNoBusiness() -> None:
+def testSplitFromDexEntries_whenMappingSelectsNoClasses_rejectsWrongBuild() -> None:
     class_mapping = mapping.ClassMapping(renames={"myapp.Entry": "not.in.the.Dex"})
-
-    result = split.split_from_dex_entries(_aab_dex_entries(), "myapp", class_mapping)
-
-    assert len(result.business) == 0
-    assert len(result.framework) > 0
+    with pytest.raises(mapping.MappingError, match="exact build"):
+        split.split_from_dex_entries(_aab_dex_entries(), "myapp", class_mapping)
 
 
 def testSplitFromDexEntries_whenNoMappingAndFewClassesUnderPackage_warns(
@@ -171,3 +192,30 @@ def testSplitFromDexEntries_whenNoMappingAndManyClassesUnderPackage_doesNotWarn(
         split.split_from_dex_entries(_aab_dex_entries(), "com.google.android.gms")
 
     assert len(caplog.records) == 0
+
+
+@pytest.mark.parametrize("package", ["x.**", "../x", "a,b"])
+def testSplitFromDexEntries_whenPackageContainsSelectionSyntax_refuses(
+    package: str,
+) -> None:
+    fixture = (
+        pathlib.Path(__file__).parents[2] / "dexsplit/fixtures/versions/feature-035.dex"
+    )
+    with pytest.raises(split.SplitError, match="invalid app package"):
+        split.split_from_dex_entries({"classes.dex": fixture.read_bytes()}, package)
+
+
+def testSplitFromDexEntries_whenDefinitionsHaveDifferentCode_preservesFirstBody() -> (
+    None
+):
+    fixtures = pathlib.Path(__file__).parents[2] / "dexsplit/fixtures/versions"
+    first = (fixtures / "feature-035.dex").read_bytes()
+    later = (fixtures / "feature-039.dex").read_bytes()
+    result = split.split_from_dex_entries(
+        {"classes2.dex": later, "classes.dex": first}, "fixture"
+    )
+    with _dex.Request():
+        expected = _dex.Model(39)
+        expected.copy_class(_dex.Model.read(first), "Lfixture/Example;")
+        assert result.business[0].data == expected.write()
+    assert result.business[0].classes == ("fixture.Example",)

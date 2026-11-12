@@ -1,5 +1,7 @@
 #include "raw/opcodes.hpp"
 
+#include "common/budget.hpp"
+
 namespace dexsplit::raw {
 
 // clang-format off
@@ -265,28 +267,21 @@ constexpr std::array<OpcodeInfo, 256> detail::opcode_table = {{
 
 namespace {
 
-int32_t sext4(uint32_t v)
-{
-    return (v & 0x8) ? static_cast<int32_t>(v | 0xFFFFFFF0u) : static_cast<int32_t>(v);
-}
+int32_t sext4(uint32_t v) { return (v & 0x8) ? static_cast<int32_t>(v | 0xFFFFFFF0u) : static_cast<int32_t>(v); }
 
-ParseError bad_insn(uint32_t pos, const char *what)
-{
-    return ParseError{ParseError::Code::InvalidOpcode, what, pos};
-}
+ParseError bad_insn(uint32_t pos, const char* what) { return ParseError{ParseError::Code::InvalidOpcode, what, pos}; }
 
-} // namespace
+}  // namespace
 
-uint32_t format_units(Format format)
-{
-    switch (format) {
+uint32_t format_units(Format format) {
+  switch (format) {
     case Format::F10x:
     case Format::F12x:
     case Format::F11n:
     case Format::F11x:
     case Format::F10t:
     case Format::Unused:
-        return 1;
+      return 1;
     case Format::F20t:
     case Format::F22x:
     case Format::F21t:
@@ -298,7 +293,7 @@ uint32_t format_units(Format format)
     case Format::F22t:
     case Format::F22s:
     case Format::F22c:
-        return 2;
+      return 2;
     case Format::F32x:
     case Format::F30t:
     case Format::F31t:
@@ -306,352 +301,387 @@ uint32_t format_units(Format format)
     case Format::F31c:
     case Format::F35c:
     case Format::F3rc:
-        return 3;
+      return 3;
     case Format::F45cc:
     case Format::F4rcc:
-        return 4;
+      return 4;
     case Format::F51l:
-        return 5;
-    }
-    return 1;
+      return 5;
+  }
+  return 1;
 }
 
-std::optional<uint64_t> payload_units(std::span<const uint16_t> insns, uint32_t pos)
-{
-    if (pos >= insns.size())
+std::optional<uint64_t> payload_units(std::span<const uint16_t> insns, uint32_t pos) {
+  if (pos >= insns.size()) {
+    return std::nullopt;
+  }
+  switch (insns[pos]) {
+    case PACKED_SWITCH_PAYLOAD:  // ident, size, first_key (2 units), targets (2 units each)
+      if (insns.size() - pos < 2) {
         return std::nullopt;
-    switch (insns[pos]) {
-    case PACKED_SWITCH_PAYLOAD: // ident, size, first_key (2 units), targets (2 units each)
-        if (insns.size() - pos < 2)
-            return std::nullopt;
-        return 4 + uint64_t{insns[pos + 1]} * 2;
-    case SPARSE_SWITCH_PAYLOAD: // ident, size, keys and targets (2 units each)
-        if (insns.size() - pos < 2)
-            return std::nullopt;
-        return 2 + uint64_t{insns[pos + 1]} * 4;
-    case FILL_ARRAY_DATA_PAYLOAD: { // ident, element_width, size (2 units), data
-        if (insns.size() - pos < 4)
-            return std::nullopt;
-        uint64_t width = insns[pos + 1];
-        uint64_t count = insns[pos + 2] | (uint64_t{insns[pos + 3]} << 16);
-        return 4 + (width * count + 1) / 2;
+      }
+      return 4 + uint64_t{insns[pos + 1]} * 2;
+    case SPARSE_SWITCH_PAYLOAD:  // ident, size, keys and targets (2 units each)
+      if (insns.size() - pos < 2) {
+        return std::nullopt;
+      }
+      return 2 + uint64_t{insns[pos + 1]} * 4;
+    case FILL_ARRAY_DATA_PAYLOAD: {  // ident, element_width, size (2 units), data
+      if (insns.size() - pos < 4) {
+        return std::nullopt;
+      }
+      uint64_t width = insns[pos + 1];
+      uint64_t count = insns[pos + 2] | (uint64_t{insns[pos + 3]} << 16);
+      return 4 + (width * count + 1) / 2;
     }
     default:
-        return std::nullopt;
-    }
+      return std::nullopt;
+  }
 }
 
-std::expected<InsnFields, ParseError> decode_insn(std::span<const uint16_t> insns, uint32_t pos)
-{
-    if (pos >= insns.size())
-        return std::unexpected(bad_insn(pos, "instruction starts past the end of the code"));
-    const uint16_t u0 = insns[pos];
-    InsnFields f;
-    f.opcode = static_cast<uint8_t>(u0 & 0xFF);
-    const OpcodeInfo &info = opcode_info(f.opcode);
-    if (info.format == Format::Unused)
-        return std::unexpected(bad_insn(pos, "unused opcode"));
-    if (f.opcode == 0x00 && (u0 >> 8) != 0)
-        return std::unexpected(bad_insn(pos, "payload where an instruction was expected"));
-    const uint32_t units = format_units(info.format);
-    if (insns.size() - pos < units)
-        return std::unexpected(bad_insn(pos, "instruction runs past the end of the code"));
+std::expected<InsnFields, ParseError> decode_insn(std::span<const uint16_t> insns, uint32_t pos) {
+  if (pos >= insns.size()) {
+    return std::unexpected(bad_insn(pos, "instruction starts past the end of the code"));
+  }
+  const uint16_t u0 = insns[pos];
+  InsnFields f;
+  f.opcode = static_cast<uint8_t>(u0 & 0xFF);
+  const OpcodeInfo& info = opcode_info(f.opcode);
+  if (info.format == Format::Unused) {
+    return std::unexpected(bad_insn(pos, "unused opcode"));
+  }
+  if (f.opcode == 0x00 && (u0 >> 8) != 0) {
+    return std::unexpected(bad_insn(pos, "payload where an instruction was expected"));
+  }
+  const uint32_t units = format_units(info.format);
+  if (insns.size() - pos < units) {
+    return std::unexpected(bad_insn(pos, "instruction runs past the end of the code"));
+  }
 
-    auto u = [&](uint32_t i) -> uint32_t { return insns[pos + i]; };
-    const uint32_t aa = u0 >> 8;
-    const uint32_t a4 = (u0 >> 8) & 0xF;
-    const uint32_t b4 = u0 >> 12;
-    switch (info.format) {
+  auto u = [&](uint32_t i) -> uint32_t { return insns[pos + i]; };
+  const uint32_t aa = u0 >> 8;
+  const uint32_t a4 = (u0 >> 8) & 0xF;
+  const uint32_t b4 = u0 >> 12;
+  switch (info.format) {
     case Format::F10x:
     case Format::Unused:
-        break;
+      break;
     case Format::F12x:
-        f.a = a4;
-        f.b = b4;
-        break;
+      f.a = a4;
+      f.b = b4;
+      break;
     case Format::F11n:
-        f.a = a4;
-        f.literal = sext4(b4);
-        break;
+      f.a = a4;
+      f.literal = sext4(b4);
+      break;
     case Format::F11x:
-        f.a = aa;
-        break;
+      f.a = aa;
+      break;
     case Format::F10t:
-        f.offset = static_cast<int8_t>(aa);
-        break;
+      f.offset = static_cast<int32_t>(aa) - (aa >= 128 ? 256 : 0);
+      break;
     case Format::F20t:
-        f.offset = static_cast<int16_t>(u(1));
-        break;
+      f.offset = static_cast<int16_t>(u(1));
+      break;
     case Format::F22x:
-        f.a = aa;
-        f.b = u(1);
-        break;
+      f.a = aa;
+      f.b = u(1);
+      break;
     case Format::F21t:
-        f.a = aa;
-        f.offset = static_cast<int16_t>(u(1));
-        break;
+      f.a = aa;
+      f.offset = static_cast<int16_t>(u(1));
+      break;
     case Format::F21s:
     case Format::F21h:
-        f.a = aa;
-        f.literal = static_cast<int16_t>(u(1));
-        break;
+      f.a = aa;
+      f.literal = static_cast<int16_t>(u(1));
+      break;
     case Format::F21c:
-        f.a = aa;
-        f.index = u(1);
-        break;
+      f.a = aa;
+      f.index = u(1);
+      break;
     case Format::F23x:
-        f.a = aa;
-        f.b = u(1) & 0xFF;
-        f.c = u(1) >> 8;
-        break;
+      f.a = aa;
+      f.b = u(1) & 0xFF;
+      f.c = u(1) >> 8;
+      break;
     case Format::F22b:
-        f.a = aa;
-        f.b = u(1) & 0xFF;
-        f.literal = static_cast<int8_t>(u(1) >> 8);
-        break;
+      f.a = aa;
+      f.b = u(1) & 0xFF;
+      f.literal = static_cast<int64_t>(u(1) >> 8) - ((u(1) >> 8) >= 128 ? 256 : 0);
+      break;
     case Format::F22t:
-        f.a = a4;
-        f.b = b4;
-        f.offset = static_cast<int16_t>(u(1));
-        break;
+      f.a = a4;
+      f.b = b4;
+      f.offset = static_cast<int16_t>(u(1));
+      break;
     case Format::F22s:
-        f.a = a4;
-        f.b = b4;
-        f.literal = static_cast<int16_t>(u(1));
-        break;
+      f.a = a4;
+      f.b = b4;
+      f.literal = static_cast<int16_t>(u(1));
+      break;
     case Format::F22c:
-        f.a = a4;
-        f.b = b4;
-        f.index = u(1);
-        break;
+      f.a = a4;
+      f.b = b4;
+      f.index = u(1);
+      break;
     case Format::F32x:
-        f.a = u(1);
-        f.b = u(2);
-        break;
+      f.a = u(1);
+      f.b = u(2);
+      break;
     case Format::F30t:
-        f.offset = static_cast<int32_t>(u(1) | (u(2) << 16));
-        break;
+      f.offset = static_cast<int32_t>(u(1) | (u(2) << 16));
+      break;
     case Format::F31t:
-        f.a = aa;
-        f.offset = static_cast<int32_t>(u(1) | (u(2) << 16));
-        break;
+      f.a = aa;
+      f.offset = static_cast<int32_t>(u(1) | (u(2) << 16));
+      break;
     case Format::F31i:
-        f.a = aa;
-        f.literal = static_cast<int32_t>(u(1) | (u(2) << 16));
-        break;
+      f.a = aa;
+      f.literal = static_cast<int32_t>(u(1) | (u(2) << 16));
+      break;
     case Format::F31c:
-        f.a = aa;
-        f.index = u(1) | (u(2) << 16);
-        break;
+      f.a = aa;
+      f.index = u(1) | (u(2) << 16);
+      break;
     case Format::F35c:
     case Format::F45cc: {
-        f.a = b4; // argument count
-        if (f.a > 5)
-            return std::unexpected(bad_insn(pos, "more than 5 arguments"));
-        f.index = u(1);
-        const uint16_t regs[5] = {
-            static_cast<uint16_t>(u(2) & 0xF),
-            static_cast<uint16_t>((u(2) >> 4) & 0xF),
-            static_cast<uint16_t>((u(2) >> 8) & 0xF),
-            static_cast<uint16_t>(u(2) >> 12),
-            static_cast<uint16_t>(a4),
-        };
-        for (uint32_t i = 0; i < f.a; ++i)
-            f.args[i] = regs[i];
-        if (info.format == Format::F45cc)
-            f.proto = u(3);
-        break;
+      f.a = b4;  // argument count
+      if (f.a > 5) {
+        return std::unexpected(bad_insn(pos, "more than 5 arguments"));
+      }
+      f.index = u(1);
+      const uint16_t regs[5] = {
+          static_cast<uint16_t>(u(2) & 0xF),
+          static_cast<uint16_t>((u(2) >> 4) & 0xF),
+          static_cast<uint16_t>((u(2) >> 8) & 0xF),
+          static_cast<uint16_t>(u(2) >> 12),
+          static_cast<uint16_t>(a4),
+      };
+      for (uint32_t i = 0; i < f.a; ++i) {
+        dexsplit::budget::visit();
+        f.args[i] = regs[i];
+      }
+      if (info.format == Format::F45cc) {
+        f.proto = u(3);
+      }
+      break;
     }
     case Format::F3rc:
     case Format::F4rcc:
-        f.a = aa; // argument count
-        f.index = u(1);
-        f.c = u(2); // first register
-        if (info.format == Format::F4rcc)
-            f.proto = u(3);
-        break;
+      f.a = aa;  // argument count
+      f.index = u(1);
+      f.c = u(2);  // first register
+      if (info.format == Format::F4rcc) {
+        f.proto = u(3);
+      }
+      break;
     case Format::F51l:
-        f.a = aa;
-        f.literal = static_cast<int64_t>(uint64_t{u(1)} | (uint64_t{u(2)} << 16) |
-                                         (uint64_t{u(3)} << 32) | (uint64_t{u(4)} << 48));
-        break;
-    }
-    return f;
+      f.a = aa;
+      f.literal = static_cast<int64_t>(uint64_t{u(1)} | (uint64_t{u(2)} << 16) | (uint64_t{u(3)} << 32) |
+                                       (uint64_t{u(4)} << 48));
+      break;
+  }
+  return f;
 }
 
-bool encode_insn(const InsnFields &f, std::vector<uint16_t> &out)
-{
-    const OpcodeInfo &info = opcode_info(f.opcode);
-    auto fits_signed = [](int64_t v, int bits) {
-        int64_t lo = -(int64_t{1} << (bits - 1));
-        int64_t hi = (int64_t{1} << (bits - 1)) - 1;
-        return v >= lo && v <= hi;
-    };
-    auto unit0 = [&](uint32_t high) { return static_cast<uint16_t>(f.opcode | (high << 8)); };
-    auto lo16 = [](uint32_t v) { return static_cast<uint16_t>(v & 0xFFFF); };
-    auto hi16 = [](uint32_t v) { return static_cast<uint16_t>(v >> 16); };
+bool encode_insn(const InsnFields& f, budget::Vector<uint16_t>& out) {
+  const OpcodeInfo& info = opcode_info(f.opcode);
+  auto fits_signed = [](int64_t v, int bits) {
+    int64_t lo = -(int64_t{1} << (bits - 1));
+    int64_t hi = (int64_t{1} << (bits - 1)) - 1;
+    return v >= lo && v <= hi;
+  };
+  auto unit0 = [&](uint32_t high) { return static_cast<uint16_t>(f.opcode | (high << 8)); };
+  auto lo16 = [](uint32_t v) { return static_cast<uint16_t>(v & 0xFFFF); };
+  auto hi16 = [](uint32_t v) { return static_cast<uint16_t>(v >> 16); };
 
-    uint16_t w[5] = {};
-    switch (info.format) {
+  uint16_t w[5] = {};
+  switch (info.format) {
     case Format::Unused:
-        return false;
+      return false;
     case Format::F10x:
-        w[0] = unit0(0);
-        break;
+      w[0] = unit0(0);
+      break;
     case Format::F12x:
-        if (f.a > 0xF || f.b > 0xF)
-            return false;
-        w[0] = unit0(f.a | (f.b << 4));
-        break;
+      if (f.a > 0xF || f.b > 0xF) {
+        return false;
+      }
+      w[0] = unit0(f.a | (f.b << 4));
+      break;
     case Format::F11n:
-        if (f.a > 0xF || !fits_signed(f.literal, 4))
-            return false;
-        w[0] = unit0(f.a | ((static_cast<uint32_t>(f.literal) & 0xF) << 4));
-        break;
+      if (f.a > 0xF || !fits_signed(f.literal, 4)) {
+        return false;
+      }
+      w[0] = unit0(f.a | ((static_cast<uint32_t>(f.literal) & 0xF) << 4));
+      break;
     case Format::F11x:
-        if (f.a > 0xFF)
-            return false;
-        w[0] = unit0(f.a);
-        break;
+      if (f.a > 0xFF) {
+        return false;
+      }
+      w[0] = unit0(f.a);
+      break;
     case Format::F10t:
-        if (!fits_signed(f.offset, 8))
-            return false;
-        w[0] = unit0(static_cast<uint32_t>(f.offset) & 0xFF);
-        break;
+      if (!fits_signed(f.offset, 8)) {
+        return false;
+      }
+      w[0] = unit0(static_cast<uint32_t>(f.offset) & 0xFF);
+      break;
     case Format::F20t:
-        if (!fits_signed(f.offset, 16))
-            return false;
-        w[0] = unit0(0);
-        w[1] = lo16(static_cast<uint32_t>(f.offset));
-        break;
+      if (!fits_signed(f.offset, 16)) {
+        return false;
+      }
+      w[0] = unit0(0);
+      w[1] = lo16(static_cast<uint32_t>(f.offset));
+      break;
     case Format::F22x:
-        if (f.a > 0xFF || f.b > 0xFFFF)
-            return false;
-        w[0] = unit0(f.a);
-        w[1] = lo16(f.b);
-        break;
+      if (f.a > 0xFF || f.b > 0xFFFF) {
+        return false;
+      }
+      w[0] = unit0(f.a);
+      w[1] = lo16(f.b);
+      break;
     case Format::F21t:
-        if (f.a > 0xFF || !fits_signed(f.offset, 16))
-            return false;
-        w[0] = unit0(f.a);
-        w[1] = lo16(static_cast<uint32_t>(f.offset));
-        break;
+      if (f.a > 0xFF || !fits_signed(f.offset, 16)) {
+        return false;
+      }
+      w[0] = unit0(f.a);
+      w[1] = lo16(static_cast<uint32_t>(f.offset));
+      break;
     case Format::F21s:
     case Format::F21h:
-        if (f.a > 0xFF || !fits_signed(f.literal, 16))
-            return false;
-        w[0] = unit0(f.a);
-        w[1] = lo16(static_cast<uint32_t>(f.literal));
-        break;
+      if (f.a > 0xFF || !fits_signed(f.literal, 16)) {
+        return false;
+      }
+      w[0] = unit0(f.a);
+      w[1] = lo16(static_cast<uint32_t>(f.literal));
+      break;
     case Format::F21c:
-        if (f.a > 0xFF || f.index > 0xFFFF)
-            return false;
-        w[0] = unit0(f.a);
-        w[1] = lo16(f.index);
-        break;
+      if (f.a > 0xFF || f.index > 0xFFFF) {
+        return false;
+      }
+      w[0] = unit0(f.a);
+      w[1] = lo16(f.index);
+      break;
     case Format::F23x:
-        if (f.a > 0xFF || f.b > 0xFF || f.c > 0xFF)
-            return false;
-        w[0] = unit0(f.a);
-        w[1] = static_cast<uint16_t>(f.b | (f.c << 8));
-        break;
+      if (f.a > 0xFF || f.b > 0xFF || f.c > 0xFF) {
+        return false;
+      }
+      w[0] = unit0(f.a);
+      w[1] = static_cast<uint16_t>(f.b | (f.c << 8));
+      break;
     case Format::F22b:
-        if (f.a > 0xFF || f.b > 0xFF || !fits_signed(f.literal, 8))
-            return false;
-        w[0] = unit0(f.a);
-        w[1] = static_cast<uint16_t>(f.b | ((static_cast<uint32_t>(f.literal) & 0xFF) << 8));
-        break;
+      if (f.a > 0xFF || f.b > 0xFF || !fits_signed(f.literal, 8)) {
+        return false;
+      }
+      w[0] = unit0(f.a);
+      w[1] = static_cast<uint16_t>(f.b | ((static_cast<uint32_t>(f.literal) & 0xFF) << 8));
+      break;
     case Format::F22t:
-        if (f.a > 0xF || f.b > 0xF || !fits_signed(f.offset, 16))
-            return false;
-        w[0] = unit0(f.a | (f.b << 4));
-        w[1] = lo16(static_cast<uint32_t>(f.offset));
-        break;
+      if (f.a > 0xF || f.b > 0xF || !fits_signed(f.offset, 16)) {
+        return false;
+      }
+      w[0] = unit0(f.a | (f.b << 4));
+      w[1] = lo16(static_cast<uint32_t>(f.offset));
+      break;
     case Format::F22s:
-        if (f.a > 0xF || f.b > 0xF || !fits_signed(f.literal, 16))
-            return false;
-        w[0] = unit0(f.a | (f.b << 4));
-        w[1] = lo16(static_cast<uint32_t>(f.literal));
-        break;
+      if (f.a > 0xF || f.b > 0xF || !fits_signed(f.literal, 16)) {
+        return false;
+      }
+      w[0] = unit0(f.a | (f.b << 4));
+      w[1] = lo16(static_cast<uint32_t>(f.literal));
+      break;
     case Format::F22c:
-        if (f.a > 0xF || f.b > 0xF || f.index > 0xFFFF)
-            return false;
-        w[0] = unit0(f.a | (f.b << 4));
-        w[1] = lo16(f.index);
-        break;
+      if (f.a > 0xF || f.b > 0xF || f.index > 0xFFFF) {
+        return false;
+      }
+      w[0] = unit0(f.a | (f.b << 4));
+      w[1] = lo16(f.index);
+      break;
     case Format::F32x:
-        if (f.a > 0xFFFF || f.b > 0xFFFF)
-            return false;
-        w[0] = unit0(0);
-        w[1] = lo16(f.a);
-        w[2] = lo16(f.b);
-        break;
+      if (f.a > 0xFFFF || f.b > 0xFFFF) {
+        return false;
+      }
+      w[0] = unit0(0);
+      w[1] = lo16(f.a);
+      w[2] = lo16(f.b);
+      break;
     case Format::F30t:
-        w[0] = unit0(0);
-        w[1] = lo16(static_cast<uint32_t>(f.offset));
-        w[2] = hi16(static_cast<uint32_t>(f.offset));
-        break;
+      w[0] = unit0(0);
+      w[1] = lo16(static_cast<uint32_t>(f.offset));
+      w[2] = hi16(static_cast<uint32_t>(f.offset));
+      break;
     case Format::F31t:
-        if (f.a > 0xFF)
-            return false;
-        w[0] = unit0(f.a);
-        w[1] = lo16(static_cast<uint32_t>(f.offset));
-        w[2] = hi16(static_cast<uint32_t>(f.offset));
-        break;
+      if (f.a > 0xFF) {
+        return false;
+      }
+      w[0] = unit0(f.a);
+      w[1] = lo16(static_cast<uint32_t>(f.offset));
+      w[2] = hi16(static_cast<uint32_t>(f.offset));
+      break;
     case Format::F31i:
-        if (f.a > 0xFF || !fits_signed(f.literal, 32))
-            return false;
-        w[0] = unit0(f.a);
-        w[1] = lo16(static_cast<uint32_t>(f.literal));
-        w[2] = hi16(static_cast<uint32_t>(f.literal));
-        break;
+      if (f.a > 0xFF || !fits_signed(f.literal, 32)) {
+        return false;
+      }
+      w[0] = unit0(f.a);
+      w[1] = lo16(static_cast<uint32_t>(f.literal));
+      w[2] = hi16(static_cast<uint32_t>(f.literal));
+      break;
     case Format::F31c:
-        if (f.a > 0xFF)
-            return false;
-        w[0] = unit0(f.a);
-        w[1] = lo16(f.index);
-        w[2] = hi16(f.index);
-        break;
+      if (f.a > 0xFF) {
+        return false;
+      }
+      w[0] = unit0(f.a);
+      w[1] = lo16(f.index);
+      w[2] = hi16(f.index);
+      break;
     case Format::F35c:
     case Format::F45cc: {
-        if (f.a > 5 || f.index > 0xFFFF || f.proto > 0xFFFF)
-            return false;
-        uint16_t regs[5] = {};
-        for (uint32_t i = 0; i < f.a; ++i) {
-            if (f.args[i] > 0xF)
-                return false;
-            regs[i] = f.args[i];
+      if (f.a > 5 || f.index > 0xFFFF || f.proto > 0xFFFF) {
+        return false;
+      }
+      uint16_t regs[5] = {};
+      for (uint32_t i = 0; i < f.a; ++i) {
+        dexsplit::budget::visit();
+        if (f.args[i] > 0xF) {
+          return false;
         }
-        w[0] = unit0(regs[4] | (f.a << 4));
-        w[1] = lo16(f.index);
-        w[2] = static_cast<uint16_t>(regs[0] | (regs[1] << 4) | (regs[2] << 8) | (regs[3] << 12));
-        w[3] = lo16(f.proto);
-        break;
+        regs[i] = f.args[i];
+      }
+      w[0] = unit0(regs[4] | (f.a << 4));
+      w[1] = lo16(f.index);
+      w[2] = static_cast<uint16_t>(regs[0] | (regs[1] << 4) | (regs[2] << 8) | (regs[3] << 12));
+      w[3] = lo16(f.proto);
+      break;
     }
     case Format::F3rc:
     case Format::F4rcc:
-        if (f.a > 0xFF || f.index > 0xFFFF || f.proto > 0xFFFF || f.c > 0xFFFF ||
-            f.c + f.a > 0x10000)
-            return false;
-        w[0] = unit0(f.a);
-        w[1] = lo16(f.index);
-        w[2] = lo16(f.c);
-        w[3] = lo16(f.proto);
-        break;
-    case Format::F51l: {
-        if (f.a > 0xFF)
-            return false;
-        uint64_t v = static_cast<uint64_t>(f.literal);
-        w[0] = unit0(f.a);
-        for (int i = 0; i < 4; ++i)
-            w[1 + i] = static_cast<uint16_t>(v >> (16 * i));
-        break;
-    }
-    }
-    if (f.opcode == 0x00 && w[0] != 0)
+      if (f.a > 0xFF || f.index > 0xFFFF || f.proto > 0xFFFF || f.c > 0xFFFF || f.c + f.a > 0x10000) {
         return false;
-    out.insert(out.end(), w, w + format_units(info.format));
-    return true;
+      }
+      w[0] = unit0(f.a);
+      w[1] = lo16(f.index);
+      w[2] = lo16(f.c);
+      w[3] = lo16(f.proto);
+      break;
+    case Format::F51l: {
+      if (f.a > 0xFF) {
+        return false;
+      }
+      uint64_t v = static_cast<uint64_t>(f.literal);
+      w[0] = unit0(f.a);
+      for (int i = 0; i < 4; ++i) {
+        dexsplit::budget::visit();
+        w[1 + i] = static_cast<uint16_t>(v >> (16 * i));
+      }
+      break;
+    }
+  }
+  if (f.opcode == 0x00 && w[0] != 0) {
+    return false;
+  }
+  out.insert(out.end(), w, w + format_units(info.format));
+  return true;
 }
 
-} // namespace dexsplit::raw
+}  // namespace dexsplit::raw

@@ -79,10 +79,11 @@ def _make_apk(
 
 
 def _recorded_split(
-    captured: list[tuple[pathlib.Path, str, mapping.ClassMapping | None]] | None = None,
+    captured: list[tuple[dict[str, bytes], str, mapping.ClassMapping | None]]
+    | None = None,
 ) -> packer.Splitter:
     def splitter(
-        app: pathlib.Path,
+        app: dict[str, bytes],
         package: str,
         class_mapping: mapping.ClassMapping | None = None,
     ) -> split.Split:
@@ -115,7 +116,7 @@ def _pack(
 def testPack_whenValidApk_splitsOnTheManifestPackage(tmp_path: pathlib.Path) -> None:
     app = tmp_path / "app.apk"
     _make_apk(app)
-    captured: list[tuple[pathlib.Path, str, mapping.ClassMapping | None]] = []
+    captured: list[tuple[dict[str, bytes], str, mapping.ClassMapping | None]] = []
     packer.pack(
         app=app,
         output=tmp_path / "out.apk",
@@ -123,7 +124,13 @@ def testPack_whenValidApk_splitsOnTheManifestPackage(tmp_path: pathlib.Path) -> 
         artifacts=_artifacts(),
         splitter=_recorded_split(captured),
     )
-    assert captured == [(app, _PACKAGE, None)]
+    assert captured == [
+        (
+            {"classes.dex": b"app primary", "classes2.dex": b"app secondary"},
+            _PACKAGE,
+            None,
+        )
+    ]
 
 
 def testPack_whenMappingGiven_parsesItAndPassesItToTheSplitter(
@@ -133,7 +140,7 @@ def testPack_whenMappingGiven_parsesItAndPassesItToTheSplitter(
     _make_apk(app)
     mapping_file = tmp_path / "mapping.txt"
     mapping_file.write_text(f"myapp.Entry -> {_PACKAGE}.a:\n", encoding="utf-8")
-    captured: list[tuple[pathlib.Path, str, mapping.ClassMapping | None]] = []
+    captured: list[tuple[dict[str, bytes], str, mapping.ClassMapping | None]] = []
 
     packer.pack(
         app=app,
@@ -519,7 +526,11 @@ def testPack_whenPayloadExceedsRuntimeLimit_rejectsBeforePublication(
         ),
     )
 
-    def splitter(app_data: object, package: str) -> split.Split:
+    def splitter(
+        app_data: object,
+        package: str,
+        class_mapping: mapping.ClassMapping | None = None,
+    ) -> split.Split:
         return split.Split(framework=_FRAMEWORK, business=(business,))
 
     with pytest.raises(errors.InvalidAppError, match="runtime payload limit"):

@@ -1,3 +1,4 @@
+#include "common/budget.hpp"
 #ifndef DEX_CONSTANTS_H
 #define DEX_CONSTANTS_H
 
@@ -33,6 +34,6 @@ constexpr std::uint16_t TYPE_ENCODED_ARRAY_ITEM = 0x2005;
 constexpr std::uint16_t TYPE_ANNOTATIONS_DIRECTORY_ITEM = 0x2006;
 constexpr std::uint16_t TYPE_HIDDENAPI_CLASS_DATA_ITEM = 0xF000;
 
-} // namespace dexsplit::raw
+}  // namespace dexsplit::raw
 
-#endif // DEX_CONSTANTS_H
+#endif  // DEX_CONSTANTS_H

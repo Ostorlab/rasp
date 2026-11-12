@@ -28,8 +28,14 @@ therefore protected as a whole, which encrypts the library classes in it too (se
 
 import collections.abc
 import dataclasses
+import io
+import os
+import pathlib
 import re
+import stat
+import types
 
+from dexsplit import _dex
 from rasp_packer import errors
 
 # A class line: ``original -> obfuscated:``. Member lines are indented, so they do not match.
@@ -55,6 +61,23 @@ class ClassMapping:
 
     renames: collections.abc.Mapping[str, str]
 
+    def __post_init__(self) -> None:
+        if len(self.renames) > _MAX_RECORDS:
+            raise MappingError("mapping exceeds 1000000 class records")
+        total = 0
+        for source, target in self.renames.items():
+            try:
+                total += len(source.encode("utf-8")) + len(target.encode("utf-8")) + 6
+            except UnicodeError as error:
+                raise MappingError("mapping class name is not UTF-8") from error
+            if (
+                total > _MAX_BYTES
+                or _dex.valid_class_name(source) is False
+                or _dex.valid_class_name(target) is False
+            ):
+                raise MappingError("invalid or oversized mapping class names")
+        object.__setattr__(self, "renames", types.MappingProxyType(dict(self.renames)))
+
     def business_packages(self, package: str) -> frozenset[str]:
         """The obfuscated packages that hold at least one class under the app's package.
 
@@ -70,6 +93,7 @@ class ClassMapping:
             default (unnamed) package is the empty string. Empty when no kept class is under
             ``package``.
         """
+        _dex.charge(work=len(self.renames), storage=len(self.renames) * 48)
         prefix = f"{package}."
         return frozenset(
             _package(obfuscated)
@@ -78,27 +102,79 @@ class ClassMapping:
         )
 
 
+_MAX_BYTES = 64 * 1024 * 1024
+_MAX_LINE_BYTES = 65536
+_MAX_RECORDS = 1000000
+
+
+def read(path: pathlib.Path) -> ClassMapping:
+    """Read a regular mapping file with bounds before reads and strict UTF-8 decoding."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+        with os.fdopen(descriptor, "rb") as source:
+            metadata = os.fstat(source.fileno())
+            if stat.S_ISREG(metadata.st_mode) is False or metadata.st_size > _MAX_BYTES:
+                raise MappingError("mapping must be a regular file of at most 64 MiB")
+
+            def lines() -> collections.abc.Iterator[str]:
+                total = 0
+                while True:
+                    line = source.readline(_MAX_LINE_BYTES + 1)
+                    if len(line) == 0:
+                        return
+                    total += len(line)
+                    if total > _MAX_BYTES or len(line) > _MAX_LINE_BYTES:
+                        raise MappingError(
+                            "mapping byte/line compatibility limit exceeded"
+                        )
+                    yield line.decode("utf-8")
+
+            return _parse_lines(lines())
+    except (OSError, UnicodeError) as error:
+        raise MappingError(f"cannot read mapping {path}: {error}") from error
+
+
 def parse(text: str) -> ClassMapping:
-    """Reads the class renames from the text of an R8/ProGuard mapping file.
+    """Parse bounded class records; malformed supplied mappings never silently weaken selection."""
+    try:
+        if len(text) > _MAX_BYTES or len(text.encode("utf-8")) > _MAX_BYTES:
+            raise MappingError("mapping exceeds 64 MiB compatibility limit")
+        return _parse_lines(io.StringIO(text))
+    except UnicodeError as error:
+        raise MappingError(f"mapping is not valid UTF-8: {error}") from error
 
-    It reads every class line and ignores comment lines, blank lines, the indented member lines, and
-    classes R8 removed. A non-comment, non-indented line that is not a class line is skipped: an app
-    class dropped this way ships in the clear, which is safe, rather than breaking the pack.
 
-    Args:
-        text: The contents of the mapping file.
-
-    Returns:
-        The class renames.
-    """
+def _parse_lines(lines: collections.abc.Iterable[str]) -> ClassMapping:
     renames: dict[str, str] = {}
-    for line in text.splitlines():
+    records = 0
+    for number, raw_line in enumerate(lines, 1):
+        if len(raw_line.encode("utf-8")) > _MAX_LINE_BYTES:
+            raise MappingError(f"mapping line {number} exceeds 65536 bytes")
+        line = raw_line.rstrip("\r\n")
+        if number == 1:
+            line = line.removeprefix("\ufeff")
+        if any(ord(character) < 32 and character != "\t" for character in line):
+            raise MappingError(f"mapping line {number} has control characters")
         if len(line) == 0 or line[0].isspace() is True or line[0] == "#":
             continue
         match = _CLASS_LINE.fullmatch(line)
-        if match is None or _REMOVED.fullmatch(match["obfuscated"]) is not None:
+        if match is None:
+            raise MappingError(f"malformed mapping class record at line {number}")
+        _dex.charge(work=1, storage=len(raw_line.encode("utf-8")) * 2 + 128)
+        records += 1
+        if records > _MAX_RECORDS:
+            raise MappingError("mapping exceeds 1000000 class records")
+        original, target = match["original"], match["obfuscated"]
+        if _dex.valid_class_name(original) is False:
+            raise MappingError(f"invalid original class name at mapping line {number}")
+        if _REMOVED.fullmatch(target) is not None:
             continue
-        renames[match["original"]] = match["obfuscated"]
+        if _dex.valid_class_name(target) is False:
+            raise MappingError(f"invalid target class name at mapping line {number}")
+        previous = renames.get(original)
+        if previous is not None and previous != target:
+            raise MappingError(f"conflicting mapping for {original}")
+        renames[original] = target
     return ClassMapping(renames=renames)
 
 

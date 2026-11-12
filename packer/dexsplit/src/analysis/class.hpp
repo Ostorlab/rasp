@@ -1,3 +1,5 @@
+#include "common/budget.hpp"
+#include "dex_index.hpp"
 #pragma once
 
 #include <cstdint>
@@ -13,7 +15,7 @@ namespace dexsplit {
 
 namespace detail {
 struct AnalysisContextImpl;
-} // namespace detail
+}  // namespace detail
 
 /** A lightweight, non-owning handle to a single DEX class definition.
  *
@@ -23,36 +25,34 @@ struct AnalysisContextImpl;
  *
  *  A default-constructed Class has is_valid() == false and must not have any
  *  other method called on it. */
-class Class
-{
-  public:
-    /** Construct a handle to class_defs[@p class_def_idx] of DEX file @p dex_idx. */
-    Class(std::shared_ptr<const detail::AnalysisContextImpl> impl, std::size_t dex_idx,
-          uint32_t class_def_idx);
+class Class {
+ public:
+  /** Construct a handle to class_defs[@p class_def_idx] of DEX file @p dex_idx. */
+  Class(std::shared_ptr<const detail::AnalysisContextImpl> impl, DexIndex dex_idx, uint32_t class_def_idx);
 
-    /** The 'L...;' type descriptor that names this class (e.g. "LTestDex;"). */
-    std::string_view name() const;
+  /** The 'L...;' type descriptor that names this class (e.g. "LTestDex;"). */
+  std::string_view name() const;
 
-    /** A ClassRef for the direct superclass, or std::nullopt for java.lang.Object
-     *  itself (its superclass index is NO_INDEX). */
-    std::optional<ClassRef> superclass() const;
+  /** A ClassRef for the direct superclass, or std::nullopt for java.lang.Object
+   *  itself (its superclass index is NO_INDEX). */
+  std::optional<ClassRef> superclass() const;
 
-    /** The interfaces implemented by this class, in declaration order. */
-    std::vector<ClassRef> interfaces() const;
+  /** The interfaces implemented by this class, in declaration order. */
+  budget::Vector<ClassRef> interfaces() const;
 
-    /** All direct and virtual methods defined in this class, in that order. */
-    std::vector<Method> methods() const;
+  /** All direct and virtual methods defined in this class, in that order. */
+  budget::Vector<Method> methods() const;
 
-    /** Returns false for a default-constructed "null" Class handle. */
-    bool is_valid() const { return impl_ != nullptr; }
+  /** Returns false for a default-constructed "null" Class handle. */
+  bool is_valid() const { return impl_ != nullptr; }
 
-    /** Default constructor produces an invalid handle (is_valid() == false). */
-    Class() : impl_(nullptr), dex_idx_(0), class_def_idx_(0) {}
+  /** Default constructor produces an invalid handle (is_valid() == false). */
+  Class() : impl_(nullptr), dex_idx_({0}), class_def_idx_(0) {}
 
-  private:
-    std::shared_ptr<const detail::AnalysisContextImpl> impl_;
-    std::size_t dex_idx_;
-    uint32_t class_def_idx_;
+ private:
+  std::shared_ptr<const detail::AnalysisContextImpl> impl_;
+  DexIndex dex_idx_;
+  uint32_t class_def_idx_;
 };
 
-} // namespace dexsplit
+}  // namespace dexsplit

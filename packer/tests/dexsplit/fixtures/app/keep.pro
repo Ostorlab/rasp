@@ -1,0 +1,12 @@
+-keepattributes RuntimeVisibleAnnotations,AnnotationDefault,SourceFile,LineNumberTable
+-keep class fixture.protectedapp.MainActivity { *; }
+-keep class fixture.protectedapp.HostApplication { *; }
+-keep,allowobfuscation class fixture.protectedapp.Business { *; }
+-keep,allowobfuscation class fixture.protectedapp.Helper { *; }
+-keep,allowobfuscation class fixture.protectedapp.Worker { *; }
+-keep,allowobfuscation class fixture.protectedapp.Marker { *; }
+-keep,allowobfuscation class fixture.library.Library { *; }
+-keep class co.ostorlab.rasp.RuntimeBridge { *; }
+-keep class co.ostorlab.rasp.RuntimeBridge$* { *; }
+-keep class co.ostorlab.rasp.RaspStub { *; }
+-repackageclasses x

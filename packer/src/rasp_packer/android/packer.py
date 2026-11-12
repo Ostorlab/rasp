@@ -31,6 +31,7 @@ import dataclasses
 import pathlib
 import zipfile
 
+from dexsplit import _dex
 from rasp_packer import archive_validation
 from rasp_packer import errors
 from rasp_packer import identity
@@ -68,12 +69,11 @@ _MAX_MAP_BYTES = 8 * 1024 * 1024
 _MAX_DEX_BYTES = 64 * 1024 * 1024
 
 type Splitter = collections.abc.Callable[
-    [pathlib.Path, str, mapping_module.ClassMapping | None], split_module.Split
+    [dict[str, bytes], str, mapping_module.ClassMapping | None], split_module.Split
 ]
 type AabSplitter = collections.abc.Callable[
     [dict[str, bytes], str, mapping_module.ClassMapping | None], split_module.Split
 ]
-
 
 
 def pack(
@@ -83,7 +83,7 @@ def pack(
     config: runtime_config.RuntimeConfig,
     mapping: pathlib.Path | None = None,
     artifacts: resources_module.Artifacts | None = None,
-    splitter: Splitter = split_module.split,
+    splitter: Splitter = split_module.split_from_dex_entries,
     aab_splitter: AabSplitter = split_module.split_from_dex_entries,
 ) -> identity.AppIdentity:
     """Packs an Android app (APK or AAB), writing the protected output.
@@ -116,39 +116,39 @@ def pack(
     """
     if artifacts is None:
         artifacts = resources_module.load()
-    class_mapping = _load_mapping(mapping) if mapping is not None else None
-    with verification.staged_output(output) as staged:
-        if _is_aab(app):
-            app_identity = _pack_aab(
-                app=app,
-                output=staged,
-                config=config,
-                mapping=class_mapping,
-                artifacts=artifacts,
-                splitter=aab_splitter,
-            )
-        else:
-            app_identity = _pack_apk(
-                app=app,
-                output=staged,
-                config=config,
-                mapping=class_mapping,
-                artifacts=artifacts,
-                splitter=splitter,
-            )
-    return app_identity
+    try:
+        with _dex.Request():
+            class_mapping = _load_mapping(mapping) if mapping is not None else None
+            with verification.staged_output(output) as staged:
+                if _is_aab(app):
+                    app_identity = _pack_aab(
+                        app=app,
+                        output=staged,
+                        config=config,
+                        mapping=class_mapping,
+                        artifacts=artifacts,
+                        splitter=aab_splitter,
+                    )
+                else:
+                    app_identity = _pack_apk(
+                        app=app,
+                        output=staged,
+                        config=config,
+                        mapping=class_mapping,
+                        artifacts=artifacts,
+                        splitter=splitter,
+                    )
+            return app_identity
 
+    except _dex.BudgetError as error:
+        raise errors.InvalidAppError(
+            f"DEX protection resource limit: {error}"
+        ) from error
 
 
 def _load_mapping(mapping: pathlib.Path) -> mapping_module.ClassMapping:
     """Read and parse an R8/ProGuard mapping file."""
-    try:
-        text = mapping.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as error:
-        raise mapping_module.MappingError(
-            f"cannot read mapping {mapping}: {error}"
-        ) from error
-    return mapping_module.parse(text)
+    return mapping_module.read(mapping)
 
 
 def _is_aab(app: pathlib.Path) -> bool:
@@ -187,7 +187,7 @@ def _pack_apk(
 ) -> identity.AppIdentity:
     """Packs an APK."""
     apk = apk_archive.Apk.read(app)
-    dex_names = apk.dex_names()
+    dex_names = split_module.dex_entry_names(apk.names())
     if PRIMARY_DEX not in dex_names:
         raise errors.InvalidApkError(f"APK has no {PRIMARY_DEX} to protect")
     manifest = apk.manifest()
@@ -199,7 +199,11 @@ def _pack_apk(
     ):
         raise errors.AlreadyProtectedError("the app is already protected")
 
-    result = splitter(app, app_identity.package_name, mapping)
+    result = splitter(
+        {name: injection.entry(apk, name) for name in dex_names},
+        app_identity.package_name,
+        mapping,
+    )
 
     patched_manifest = apk_manifest_module.set_app_component_factory(
         apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
@@ -258,7 +262,7 @@ def _pack_aab(
 ) -> identity.AppIdentity:
     """Packs an AAB."""
     aab = aab_archive.Aab.read(app)
-    dex_names = aab.dex_names()
+    dex_names = split_module.dex_entry_names(aab.names(), _AAB_DEX_PREFIX)
     aab_primary_dex = f"{_AAB_DEX_PREFIX}{PRIMARY_DEX}"
     if aab_primary_dex not in dex_names:
         raise errors.InvalidAabError(f"AAB has no {aab_primary_dex} to protect")

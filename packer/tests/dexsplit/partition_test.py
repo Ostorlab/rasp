@@ -2,7 +2,22 @@
 
 import collections.abc
 
+import pytest
+
+from dexsplit import _dex
 from dexsplit import partition
+
+
+def testAddEdge_whenRequestIsExhausted_refusesBeforeGraphGrowth() -> None:
+    with _dex.Request(storage=1024) as request:
+        graph = partition.AffinityGraph(2)
+        graph.add_edge(0, 1)
+        before = dict(graph.neighbours(0))
+        request.charge(storage=1024 - request.storage)
+        with pytest.raises(_dex.BudgetError):
+            graph.add_edge(0, 1)
+        assert dict(graph.neighbours(0)) == before
+    assert request.storage == 1024
 
 
 def _all_ids(count: int) -> list[int]:

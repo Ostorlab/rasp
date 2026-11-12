@@ -13,6 +13,7 @@ import collections.abc
 import dataclasses
 import logging
 import re
+import struct
 
 import dexsplit
 from dexsplit import _dex
@@ -89,11 +90,44 @@ def split(
         dexsplit.class_sets.AssignmentError: The classes cannot be sorted into the sets.
         dexsplit.strategy.StrategyError: A strategy returns groups that break the rules.
     """
+    try:
+        with _dex.Request() as request:
+            return _split_request(dex_entries, sets, assignments, request)
+    except (ValueError, OverflowError) as error:
+        raise SplitError(f"DEX split failed: {error}") from error
+
+
+def _split_request(
+    dex_entries: collections.abc.Mapping[str, bytes],
+    sets: collections.abc.Sequence[class_sets.ClassSet],
+    assignments: collections.abc.Sequence[class_sets.Assignment],
+    request: _dex.Request,
+) -> Result:
+    if len(dex_entries) > 256:
+        raise SplitError("DEX entry count exceeds 256")
+    total = 0
+    strings = 0
+    for data in dex_entries.values():
+        if len(data) > 64 * 1024 * 1024:
+            raise SplitError("DEX exceeds 64 MiB compatibility limit")
+        if len(data) >= 112:
+            strings += struct.unpack_from("<I", data, 56)[0]
+            if strings > 1048576:
+                raise SplitError("aggregate DEX string identifiers exceed 1048576")
+        total += len(data)
+        if total > 256 * 1024 * 1024:
+            raise SplitError("aggregate DEX input exceeds 256 MiB")
+    request.charge(work=len(dex_entries), storage=len(dex_entries) * 256)
     ordered = _ordered_names(dex_entries)
     if len(ordered) == 0:
         raise SplitError("no classes*.dex entries to split")
+    request.charge(work=len(ordered), storage=len(ordered) * 16)
     buffers = [dex_entries[name] for name in ordered]
     classes = _read_classes(buffers)
+    request.charge(
+        work=len(classes.descriptors) * max(1, len(assignments)),
+        storage=len(classes.descriptors) * 128,
+    )
     members = class_sets.assign(classes.descriptors, sets, assignments)
     app = _App(buffers, classes)
     plans = [_plan(class_set, members[class_set.name], app) for class_set in sets]
@@ -124,19 +158,24 @@ def _ordered_names(dex_entries: collections.abc.Mapping[str, bytes]) -> list[str
     numbers: dict[str, int] = {}
     for name in dex_entries:
         number = _multidex_number(name)
-        if number is not None:
-            numbers[name] = number
+        if number is None:
+            raise SplitError(f"noncanonical multidex entry: {name!r}")
+        numbers[name] = number
     return sorted(numbers, key=lambda name: (numbers[name], name))
 
 
 def _multidex_number(name: str) -> int | None:
     """The multidex order of a DEX entry: 1 for classes.dex, N for classesN.dex (N >= 2)."""
+    if len(name) > 21:
+        return None
     match = _DEX_ENTRY.fullmatch(name)
     if match is None:
         return None
     digits = match.group(1)
     if digits == "":
         return 1
+    if len(digits) > 10 or digits.startswith("0"):
+        return None
     number = int(digits)
     if number < 2 or number > _MAX_DEX_ENTRY_NUMBER:
         return None
@@ -156,9 +195,17 @@ def _read_classes(buffers: collections.abc.Sequence[bytes]) -> _Classes:
     for source, data in enumerate(buffers):
         model = _read_model(data, source)
         models.append(model)
-        for descriptor in model.class_descriptors:
+        names = model.class_descriptors
+        _dex.charge(work=len(names), storage=len(names) * 96)
+        for descriptor in names:
             if descriptor in index_of:
                 continue
+            if len(descriptors) >= 100000:
+                raise SplitError("unique class count exceeds 100000")
+            if descriptor.startswith("Lco/ostorlab/rasp/"):
+                raise SplitError(
+                    f"input class collides with reserved runtime namespace: {descriptor}"
+                )
             index_of[descriptor] = len(descriptors)
             descriptors.append(descriptor)
             sources.append(source)
@@ -205,11 +252,17 @@ class _App:
 
         Only the code of the given classes is read, so the cost follows the size of the set.
         """
+        _dex.charge(work=len(class_ids), storage=len(class_ids) * 128)
         members = set(class_ids)
         index_of = self._classes.index_of
         graph = partition.AffinityGraph(len(self._classes.descriptors))
+        seen: set[str] = set()
         for cls in self._analysis.classes:
+            _dex.charge(work=1, storage=128)
             class_id = index_of.get(cls.name)
+            if cls.name in seen:
+                continue
+            seen.add(cls.name)
             if class_id is None or class_id not in members:
                 continue
             for descriptor, weight in _weighted_links(cls, weights):
@@ -222,7 +275,7 @@ class _App:
     def _analysis(self) -> _dex.AnalysisContext:
         """The analysis of the app's code, built on first use."""
         if self._context is None:
-            self._context = _dex.AnalysisContext.from_dex_buffers(list(self._buffers))
+            self._context = _dex.AnalysisContext.from_models(self._classes.models)
         return self._context
 
 
@@ -276,6 +329,7 @@ def _plan(
     app: _App,
 ) -> list[strategy.Group]:
     """Ask the set's strategy for its groups, and check them."""
+    _dex.charge(work=len(class_ids), storage=len(class_ids) * 256)
     groups = list(class_set.strategy.plan(strategy.Classes(class_ids, app)))
     _check_groups(class_set.name, groups, class_ids, app.descriptors)
     return groups
@@ -288,6 +342,7 @@ def _check_groups(
     descriptors: collections.abc.Sequence[str],
 ) -> None:
     """Check that a strategy put every class of its set in exactly one non-empty block."""
+    _dex.charge(work=len(class_ids), storage=len(class_ids) * 256)
     expected = set(class_ids)
     seen: set[int] = set()
     for group in groups:
@@ -301,6 +356,7 @@ def _check_groups(
                     f"set {set_name}: the strategy returned an empty block"
                 )
             for class_id in block.class_ids:
+                _dex.charge(work=1)
                 if class_id not in expected:
                     raise strategy.StrategyError(
                         f"set {set_name}: the strategy returned class id {class_id}, which is "
@@ -328,9 +384,15 @@ def _build_outputs(
 ) -> list[OutputDex]:
     """Encode the groups of every set as DEX files, set by set, in write order."""
     outputs: list[OutputDex] = []
+    total = 0
     for class_set, groups in zip(sets, plans, strict=True):
         for group in groups:
+            before = len(outputs)
             _write_group(outputs, class_set.name, group, classes)
+            for output in outputs[before:]:
+                total += len(output.data)
+                if total > 256 * 1024 * 1024 or len(outputs) > 256:
+                    raise SplitError("rewritten DEX aggregate byte/file limit exceeded")
     return outputs
 
 
@@ -345,9 +407,14 @@ def _write_group(
     A group that goes over a limit is cut in two (see `_cut`), and each part is encoded again, the
     first part first.
     """
+    _dex.charge(work=len(group.blocks), storage=len(group.blocks) * 64)
     pending = [list(group.blocks)]
     while len(pending) > 0:
+        if len(outputs) >= 256:
+            raise SplitError("rewritten DEX file limit exceeded")
         blocks = pending.pop()
+        count = sum(len(block.class_ids) for block in blocks)
+        _dex.charge(work=count + len(blocks), storage=count * 48 + len(blocks) * 64)
         class_ids = [class_id for block in blocks for class_id in block.class_ids]
         data = _encode(classes, class_ids)
         if data is None:
@@ -355,6 +422,11 @@ def _write_group(
             pending.append(second)
             pending.append(first)
         else:
+            if len(data) > 256 * 1024 * 1024 - sum(
+                len(output.data) for output in outputs
+            ):
+                raise SplitError("rewritten DEX aggregate byte limit exceeded")
+            _dex.charge(work=len(class_ids), storage=len(class_ids) * 16 + 256)
             descriptors = tuple(classes.descriptors[class_id] for class_id in class_ids)
             outputs.append(OutputDex(set_name=set_name, classes=descriptors, data=data))
 
@@ -364,14 +436,28 @@ def _encode(
 ) -> bytes | None:
     """The classes as DEX bytes, or None if they go over a 64K limit and can be cut."""
     model = _dex.Model(classes.version)
+    _dex.charge(work=len(class_ids), storage=len(class_ids) * 32)
+    by_source: dict[int, list[str]] = {}
     for class_id in class_ids:
-        source = classes.models[classes.sources[class_id]]
-        model.copy_class(source, classes.descriptors[class_id])
+        by_source.setdefault(classes.sources[class_id], []).append(
+            classes.descriptors[class_id]
+        )
+    for source, descriptors in by_source.items():
+        model.copy_classes(classes.models[source], descriptors)
     try:
-        return model.write()
-    except ValueError as error:
-        if len(class_ids) > 1 and _overflows(model.pool_stats) is True:
+        data = model.write()
+        if set(_dex.Model.read(data).class_descriptors) != {
+            classes.descriptors[index] for index in class_ids
+        }:
+            raise SplitError("rewritten DEX class definitions disagree with split plan")
+        return data
+    except (_dex.OutputLimit, OverflowError) as error:
+        if len(class_ids) > 1:
             return None
+        raise SplitError(
+            f"indivisible class exceeds DEX pool/byte limits: {error}"
+        ) from error
+    except ValueError as error:
         raise SplitError(f"write failed: {error}") from error
 
 
@@ -381,15 +467,15 @@ def _cut(
     """Cut blocks that go over a 64K limit in two.
 
     The cut falls at the block boundary nearest the middle (the first one on a tie). A single block
-    is cut in its middle, with a warning that names it when it has a name.
+    is cut in its middle only when unnamed; named package blocks fail.
     """
+    _dex.charge(work=len(blocks), storage=len(blocks) * 128)
     half = sum(len(block.class_ids) for block in blocks) // 2
     if len(blocks) == 1:
         block = blocks[0]
         if block.name is not None:
-            _LOGGER.warning(
-                "%s goes over a 64K limit of the DEX format, so it is cut into two DEX files",
-                block.name,
+            raise SplitError(
+                f"{block.name} cannot fit one DEX; package-private access forbids splitting it"
             )
         return (
             [strategy.Block(block.class_ids[:half], block.name)],

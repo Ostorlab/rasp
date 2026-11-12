@@ -1,3 +1,4 @@
+#include "common/budget.hpp"
 #ifndef PARSING_UTILS_H
 #define PARSING_UTILS_H
 
@@ -19,8 +20,7 @@ namespace dexsplit::raw::parse_utils {
  * @param offset The offset to start reading from; will be advanced by 4 bytes on success
  * @return The 32-bit unsigned integer value, or ParseError on failure
  */
-std::expected<std::uint32_t, ParseError> read_uint32(std::span<const std::uint8_t> buf,
-                                                     std::uint32_t &offset);
+std::expected<std::uint32_t, ParseError> read_uint32(std::span<const std::uint8_t> buf, std::uint32_t& offset);
 
 /**
  * Reads a 16-bit unsigned integer from the buffer at the given offset.
@@ -31,8 +31,7 @@ std::expected<std::uint32_t, ParseError> read_uint32(std::span<const std::uint8_
  * @param offset The offset to start reading from; will be advanced by 2 bytes on success
  * @return The 16-bit unsigned integer value, or ParseError on failure
  */
-std::expected<std::uint16_t, ParseError> read_uint16(std::span<const std::uint8_t> buf,
-                                                     std::uint32_t &offset);
+std::expected<std::uint16_t, ParseError> read_uint16(std::span<const std::uint8_t> buf, std::uint32_t& offset);
 
 /**
  * Reads an unsigned LEB128 (Little Endian Base 128) value from the buffer.
@@ -43,8 +42,7 @@ std::expected<std::uint16_t, ParseError> read_uint16(std::span<const std::uint8_
  * @param offset The offset to start reading from; will be advanced past the encoded value
  * @return The decoded 32-bit unsigned integer value, or ParseError on failure
  */
-std::expected<std::uint32_t, ParseError> read_uleb128(std::span<const std::uint8_t> buf,
-                                                      std::uint32_t &offset);
+std::expected<std::uint32_t, ParseError> read_uleb128(std::span<const std::uint8_t> buf, std::uint32_t& offset);
 
 /**
  * Reads a signed LEB128 (Little Endian Base 128) value from the buffer.
@@ -55,8 +53,7 @@ std::expected<std::uint32_t, ParseError> read_uleb128(std::span<const std::uint8
  * @param offset The offset to start reading from; will be advanced past the encoded value
  * @return The decoded 32-bit signed integer value, or ParseError on failure
  */
-std::expected<std::int32_t, ParseError> read_sleb128(std::span<const std::uint8_t> buf,
-                                                     std::uint32_t &offset);
+std::expected<std::int32_t, ParseError> read_sleb128(std::span<const std::uint8_t> buf, std::uint32_t& offset);
 
 /**
  * Decodes a MUTF-8 (Modified UTF-8) string from the buffer.
@@ -71,9 +68,8 @@ std::expected<std::int32_t, ParseError> read_sleb128(std::span<const std::uint8_
  * @param offset The offset to start reading from; will be advanced past the null terminator
  * @return The decoded UTF-8 string, or ParseError on failure
  */
-std::expected<std::string, ParseError> decode_mutf8(std::span<const std::uint8_t> buf,
-                                                    std::uint32_t &offset);
+std::expected<budget::String, ParseError> decode_mutf8(std::span<const std::uint8_t> buf, std::uint32_t& offset);
 
-} // namespace dexsplit::raw::parse_utils
+}  // namespace dexsplit::raw::parse_utils
 
 #endif

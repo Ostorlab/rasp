@@ -83,15 +83,8 @@ def testMethods_whenTheyHaveBodies_exposeCallsFieldsAndTypes() -> None:
         b"\xed\xa0\x80\xed\xb0\x41",
     ],
 )
-def testClasses_whenAClassNameIsMalformed_namesThatClassWithAnEmptyString(
-    replacement: bytes,
-) -> None:
-    context = _dex.AnalysisContext.from_dex_buffers(
-        [_with_bytes_in_a_class_name(replacement)]
-    )
-
-    names = [cls.name for cls in context.classes]
-
-    assert len(names) == 12
-    assert "" in names
-    assert _CHANGE_PASSWORD not in names
+def testClasses_whenAClassNameIsMalformed_rejectsContext(replacement: bytes) -> None:
+    with pytest.raises(ValueError, match=r"(?i)(string|mutf|utf|byte|sequence)"):
+        _dex.AnalysisContext.from_dex_buffers(
+            [_with_bytes_in_a_class_name(replacement)]
+        )

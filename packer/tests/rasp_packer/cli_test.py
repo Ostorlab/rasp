@@ -362,4 +362,3 @@ def testMain_whenNoMapping_passesNoneAsTheMapping(
     cli.main(_pack_arguments(tmp_path))
 
     assert captured["mapping"] is None
-

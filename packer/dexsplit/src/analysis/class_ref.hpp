@@ -1,3 +1,4 @@
+#include "common/budget.hpp"
 #pragma once
 
 #include <string>
@@ -9,17 +10,16 @@ namespace dexsplit {
  *
  *  Returned by Class::superclass() and Class::interfaces().  The descriptor is
  *  owned (copied in), so the reference is safe to keep and compare on its own. */
-class ClassRef
-{
-  public:
-    /** Construct a reference from a class type descriptor ("Ljava/lang/Object;"). */
-    explicit ClassRef(std::string_view descriptor) : descriptor_(descriptor) {}
+class ClassRef {
+ public:
+  /** Construct a reference from a class type descriptor ("Ljava/lang/Object;"). */
+  explicit ClassRef(std::string_view descriptor) : descriptor_(descriptor) {}
 
-    /** The 'L...;' type descriptor this reference names. */
-    std::string_view descriptor() const { return descriptor_; }
+  /** The 'L...;' type descriptor this reference names. */
+  std::string_view descriptor() const { return descriptor_; }
 
-  private:
-    std::string descriptor_;
+ private:
+  budget::String descriptor_;
 };
 
-} // namespace dexsplit
+}  // namespace dexsplit

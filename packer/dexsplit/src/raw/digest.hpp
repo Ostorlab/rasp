@@ -1,3 +1,4 @@
+#include "common/budget.hpp"
 #pragma once
 
 #include <array>
@@ -13,4 +14,4 @@ namespace dexsplit::raw {
 std::array<uint8_t, 20> sha1(std::span<const uint8_t> data);
 std::array<uint8_t, 32> sha256(std::span<const uint8_t> data);
 
-} // namespace dexsplit::raw
+}  // namespace dexsplit::raw

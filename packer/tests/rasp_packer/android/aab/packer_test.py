@@ -328,7 +328,11 @@ def testPack_whenPayloadExceedsRuntimeLimit_rejectsBeforePublication(
         ),
     )
 
-    def splitter(app_data: object, package: str) -> split.Split:
+    def splitter(
+        app_data: object,
+        package: str,
+        class_mapping: mapping.ClassMapping | None = None,
+    ) -> split.Split:
         return split.Split(framework=_FRAMEWORK, business=(business,))
 
     with pytest.raises(errors.InvalidAppError, match="runtime payload limit"):

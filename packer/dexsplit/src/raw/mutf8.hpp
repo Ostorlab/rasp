@@ -1,3 +1,4 @@
+#include "common/budget.hpp"
 #pragma once
 
 #include <cstdint>
@@ -32,8 +33,7 @@ namespace dexsplit::raw::mutf8 {
  *  4-byte sequences or stray continuation bytes, no overlong forms other than
  *  C0 80, correct continuation bytes, and exactly the declared number of
  *  UTF-16 code units before the terminator.  Returns canonical WTF-8. */
-std::expected<std::string, ParseError> decode_string_data(std::span<const uint8_t> buf,
-                                                          uint32_t offset);
+std::expected<budget::String, ParseError> decode_string_data(std::span<const uint8_t> buf, uint32_t offset);
 
 /** True if @p s is well-formed WTF-8: valid UTF-8 sequences (shortest form, at
  *  most U+10FFFF), where the surrogate code points U+D800..U+DFFF are allowed
@@ -43,7 +43,7 @@ bool is_valid_wtf8(std::string_view s);
 /** The canonical form of valid WTF-8 @p s: a surrogate pair written as two
  *  3-byte sequences becomes one 4-byte sequence.  Two strings are the same DEX
  *  string exactly when their canonical forms are equal. */
-std::string canonical(std::string_view s);
+budget::String canonical(std::string_view s);
 
 /** True if valid WTF-8 @p s is already canonical: it has no surrogate pair
  *  written as two 3-byte sequences. */
@@ -54,7 +54,7 @@ bool is_canonical(std::string_view s);
 uint32_t utf16_length(std::string_view s);
 
 /** Append the MUTF-8 bytes of valid WTF-8 @p s to @p out, without a terminator. */
-void append_mutf8(std::string_view s, std::vector<uint8_t> &out);
+void append_mutf8(std::string_view s, budget::Vector<uint8_t>& out);
 
 /** Compare two valid WTF-8 strings by their UTF-16 code units — the order the
  *  DEX format requires for string_ids.  It differs from byte order: U+E000 ..
@@ -64,6 +64,6 @@ int compare_utf16(std::string_view a, std::string_view b);
 
 /** Decode one code point (or lone surrogate) from valid WTF-8 at @p pos and
  *  advance @p pos past it.  Precondition: pos < s.size() and s is valid. */
-uint32_t next_code_point(std::string_view s, std::size_t &pos);
+uint32_t next_code_point(std::string_view s, std::size_t& pos);
 
-} // namespace dexsplit::raw::mutf8
+}  // namespace dexsplit::raw::mutf8

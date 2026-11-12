@@ -35,17 +35,17 @@ import dataclasses
 import logging
 import pathlib
 import re
-import zipfile
-import zlib
 
 from dexsplit.strategies import original
 from dexsplit.strategies import package_affinity
 
 import dexsplit
+from dexsplit import _dex
 from dexsplit import class_sets
 from dexsplit import splitter
 from rasp_packer import errors
 from rasp_packer.android import mapping as mapping_module
+from rasp_packer.android.apk import archive as apk_archive
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,16 +55,6 @@ _FRAMEWORK_SET = "framework"
 
 # The asset subfolder, under assets/, that each encrypted business dex lives in.
 BUSINESS_DIRECTORY = "business"
-
-# What reading a corrupt, truncated or encrypted APK entry can raise.
-_ZIP_READ_ERRORS = (
-    OSError,
-    zipfile.BadZipFile,
-    RuntimeError,
-    NotImplementedError,
-    zlib.error,
-    EOFError,
-)
 
 # A top-level ``classes*.dex`` entry of an APK.
 _ROOT_DEX = re.compile(r"classes[0-9]*\.dex")
@@ -178,6 +168,20 @@ def _split(
     label: str,
 ) -> Split:
     """Run the splitter with the packer's rules and shape its output into a Split."""
+    try:
+        with _dex.Request():
+            return _split_checked(dex_entries, package, mapping=mapping, label=label)
+    except ValueError as error:
+        raise SplitError(f"splitting {label} failed: {error}") from error
+
+
+def _split_checked(
+    dex_entries: collections.abc.Mapping[str, bytes],
+    package: str,
+    *,
+    mapping: mapping_module.ClassMapping | None,
+    label: str,
+) -> Split:
     sets, assignments = _sets_and_assignments(package, mapping)
     try:
         result = splitter.split(dex_entries, sets, assignments)
@@ -185,6 +189,21 @@ def _split(
         raise SplitError(f"splitting {label} failed: {error}") from error
     if mapping is None:
         _warn_if_repackaged(result, package)
+    else:
+        targets = {
+            target
+            for source, target in mapping.renames.items()
+            if source.startswith(f"{package}.")
+        }
+        actual = {
+            descriptor[1:-1].replace("/", ".")
+            for output in result.files
+            for descriptor in output.classes
+        }
+        if len(targets) == 0 or targets.isdisjoint(actual):
+            raise mapping_module.MappingError(
+                "supplied mapping has no matching app classes; use the exact build mapping"
+            )
     return _to_split(result)
 
 
@@ -198,6 +217,8 @@ def _sets_and_assignments(
     business set, so each such package is protected whole. A final ``**`` rule sends everything else
     to the framework set.
     """
+    if _dex.valid_class_name(f"{package}.Placeholder") is False:
+        raise SplitError("invalid app package for DEX selection")
     sets = (
         class_sets.ClassSet(_BUSINESS_SET, package_affinity.PackageAffinity()),
         class_sets.ClassSet(_FRAMEWORK_SET, original.Original()),
@@ -206,9 +227,14 @@ def _sets_and_assignments(
     if mapping is None:
         business = (class_sets.Assignment(f"{package}.**", _BUSINESS_SET),)
     else:
+        packages = mapping.business_packages(package)
+        if len(packages) == 0:
+            raise mapping_module.MappingError(
+                "supplied mapping has no app class records"
+            )
         business = tuple(
             class_sets.Assignment(_package_pattern(business_package), _BUSINESS_SET)
-            for business_package in sorted(mapping.business_packages(package))
+            for business_package in sorted(packages)
         )
     assignments = (*business, class_sets.Assignment("**", _FRAMEWORK_SET))
     return sets, assignments
@@ -268,16 +294,29 @@ def _to_split(result: splitter.Result) -> Split:
     return Split(framework=framework, business=business)
 
 
+def dex_entry_names(
+    names: collections.abc.Iterable[str], prefix: str = ""
+) -> tuple[str, ...]:
+    """Select every candidate DEX name without numeric conversion; splitting validates canonical numbers."""
+    return tuple(
+        name
+        for name in names
+        if name.startswith(prefix)
+        and _ROOT_DEX.fullmatch(name.removeprefix(prefix)) is not None
+    )
+
+
 def _read_apk_dex_entries(app: pathlib.Path) -> dict[str, bytes]:
     """Read every top-level ``classes*.dex`` entry of an APK into a name-to-bytes mapping."""
     try:
-        with zipfile.ZipFile(app) as archive:
-            return {
-                name: archive.read(name)
-                for name in archive.namelist()
-                if "/" not in name and _ROOT_DEX.fullmatch(name) is not None
-            }
-    except _ZIP_READ_ERRORS as error:
+        apk = apk_archive.Apk.read(app)
+        entries: dict[str, bytes] = {}
+        for name in dex_entry_names(apk.names()):
+            data = apk.get(name)
+            if data is not None:
+                entries[name] = data
+        return entries
+    except (errors.InvalidAppError, errors.InvalidApkError) as error:
         raise SplitError(f"cannot read {app}: {error}") from error
 
 
@@ -285,4 +324,9 @@ def _binary_name(descriptor: str) -> str:
     """Converts a type descriptor to a binary class name: ``Lcom/a/B$C;`` gives ``com.a.B$C``."""
     if len(descriptor) < 2 or descriptor[0] != "L" or descriptor[-1] != ";":
         raise SplitError(f"not a class descriptor: {descriptor!r}")
-    return descriptor[1:-1].replace("/", ".")
+    name = descriptor[1:-1].replace("/", ".")
+    if any(ord(character) > 0xFFFF for character in name):
+        raise SplitError(
+            "business class name needs supplementary Unicode; current JNI loader requires BMP names"
+        )
+    return name

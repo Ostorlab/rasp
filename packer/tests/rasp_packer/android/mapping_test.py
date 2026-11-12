@@ -1,5 +1,7 @@
 """Tests of the R8/ProGuard mapping reader."""
 
+import pytest
+
 from rasp_packer.android import mapping
 
 
@@ -64,16 +66,9 @@ def testParse_whenClassWasRemovedByR8_skipsIt() -> None:
     assert dict(result.renames) == {"app.alkahf.MainActivity": "W2.m"}
 
 
-def testParse_whenMalformedLine_skipsItAndKeepsTheRest() -> None:
-    text = (
-        "this line has no arrow and no colon\n"
-        "app.alkahf.MainActivity -> W2.m:\n"
-        "also -> malformed without trailing colon\n"
-    )
-
-    result = mapping.parse(text)
-
-    assert dict(result.renames) == {"app.alkahf.MainActivity": "W2.m"}
+def testParse_whenMalformedLine_rejectsSuppliedMapping() -> None:
+    with pytest.raises(mapping.MappingError, match="malformed"):
+        mapping.parse("this line has no arrow and no colon\napp.Main -> x.A:\n")
 
 
 def testParse_whenEmpty_hasNoRenames() -> None:
@@ -122,3 +117,25 @@ def testBusinessPackages_whenNoClassUnderPackage_isEmpty() -> None:
     result = mapping.parse("androidx.core.Foo -> a.b:\n")
 
     assert result.business_packages("app.alkahf") == frozenset()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "broken record\n",
+        "app.Main -> x*.A:\n",
+        "app.Main -> x/A:\n",
+        "app.Main -> x.A:\napp.Main -> y.B:\n",
+        "app.Main -> x.A,evil:\n",
+        "app.Main -> x.A:\x00\n",
+    ],
+)
+def testParse_whenSuppliedRecordIsInvalid_raisesMappingError(text: str) -> None:
+    with pytest.raises(mapping.MappingError):
+        mapping.parse(text)
+
+
+def testParse_whenR8MergesClasses_unionsOriginalProvenance() -> None:
+    result = mapping.parse("app.Main -> x.A:\nlib.Other -> x.A:\napp.Main -> x.A:\n")
+    assert result.business_packages("app") == frozenset({"x"})
+    assert len(result.renames) == 2
