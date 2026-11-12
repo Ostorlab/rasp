@@ -54,3 +54,26 @@ for the supplied Application. Repeat on a minified host variant with the documen
 Physical-device execution is **not run** by the host script or by compilation; report it separately. This fixture
 also requires development runtime artifacts, a test signing key and adb access. It asserts integration, not device
 integrity or cryptographic attestation.
+
+## Service metadata checks
+
+To exercise the production public service collectors, pack this same attached host with
+`--checks identity,accessibility,input_method,notification_access`, sign the development artifact with a local test
+key as above, and run:
+
+```sh
+runtime/tests/android/context_bridge/device/check.sh /tmp/rt08-device/protected.apk --services
+```
+
+The optional check requires every selected service output after the delayed supported initialization. On API31/33
+the current IME output must be unsupported. On API34/35 it should report the user's selected component, or explicit
+error when unavailable. An error is surfaced as unknown and is never proof of an empty device state. Compare output
+against the dedicated test device's enabled-service settings yourself: valid empty lists, TalkBack/password manager,
+custom assistive keyboard and legitimate support notification listener. Enable/disable or select these controls
+manually with the device owner's consent; the fixture does not change service settings, request permissions or
+read content. Repeat a run after changing a control and compare the next monitor snapshot. No production native
+entry or service content probe is added.
+
+[Exact output names, flag semantics, public API references and visibility limits](../../../../../docs/android-service-observations.md)
+apply. This optional fixture was compiled locally; device execution, vendor/profile coverage and minified-host
+behavior remain separate validation and must be reported as such.

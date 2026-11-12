@@ -145,14 +145,25 @@ def testCatalogue_whenSourceInventoryCompared_coversEveryBuiltinSignal() -> None
     runtime = pathlib.Path(__file__).resolve().parents[3] / "runtime"
     for platform, document in capabilities.catalogue()["platforms"].items():
         for group in document["groups"]:
-            source = (
-                runtime / platform / "src" / "checks" / f"{group['name']}.cpp"
-            ).read_text()
-            signals = set(
-                re.findall(
-                    r'constexpr std::string_view k\w*Signal = "([^"]+)";', source
-                )
+            service_group = platform == "android" and group["name"] in (
+                "accessibility",
+                "input_method",
+                "notification_access",
             )
+            filename = "service_exposure" if service_group is True else group["name"]
+            source = (
+                runtime / platform / "src" / "checks" / f"{filename}.cpp"
+            ).read_text()
+            if service_group is True:
+                source = source.split(
+                    f"std::vector<Observation> {group['name']}() {{", 1
+                )[1].split("\n}\n", 1)[0]
+            pattern = (
+                r'constexpr std::string_view k(?:Signal|Enabled|Current) = "([^"]+)";'
+                if service_group is True
+                else r'constexpr std::string_view k\w*Signal = "([^"]+)";'
+            )
+            signals = set(re.findall(pattern, source))
             assert signals == {row["signal"] for row in group["observations"]}
 
 
@@ -268,3 +279,94 @@ def testCatalogue_whenInlineSourceRegistered_preservesBoundedUnknownContract() -
         for group in platforms_document["ios"]["groups"]
         for entry in group["observations"]
     )
+
+
+def testCatalogue_whenAndroidServiceMetadataRegistered_preservesVersionedContext() -> (
+    None
+):
+    document = capabilities.catalogue()
+    android = document["platforms"]["android"]
+    groups = {group["name"]: group for group in android["groups"]}
+    assert document["schema_version"] == 1
+    assert document["revision"] == 4
+    assert sum(len(group["observations"]) for group in android["groups"]) == 32
+    assert (
+        sum(
+            len(group["observations"])
+            for group in document["platforms"]["ios"]["groups"]
+        )
+        == 26
+    )
+    contracts = (
+        (
+            "accessibility",
+            "a11y.enabled_services",
+            "accessibility_manager",
+            "string_list",
+        ),
+        (
+            "input_method",
+            "ime.enabled_components",
+            "input_method_manager",
+            "string_list",
+        ),
+        ("input_method", "ime.current_component", "input_method_manager", "string"),
+        (
+            "notification_access",
+            "notification.enabled_listeners",
+            "settings_secure",
+            "string_list",
+        ),
+    )
+    for group, signal, source, kind in contracts:
+        assert groups[group]["required"] is False
+        row = next(
+            row for row in groups[group]["observations"] if row["signal"] == signal
+        )
+        assert row["source"] == source
+        assert row["value_kind"] == kind
+        assert row["cardinality"] == "one"
+        assert row["value_cardinality"] == (
+            "scalar" if kind == "string" else "variable"
+        )
+        assert set(row["statuses"]) == {"ok", "error", "unsupported"}
+        assert row["supported_on"] == "android"
+        assert "Context" in row["behavior"]
+        assert all(
+            entry["name"] != group for entry in document["platforms"]["ios"]["groups"]
+        )
+    current = groups["input_method"]["observations"][1]
+    assert "API31-33" in current["behavior"]
+    assert "API34+" in current["behavior"]
+    assert "null" in current["behavior"]
+    assert "selected" in current["behavior"]
+
+
+def testServiceContractFixtures_whenComparedWithCatalogue_preserveTypesAndUnknownValues() -> (
+    None
+):
+    fixture = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "docs/fixtures/android-service-observations-v1.json"
+    )
+    document = json.loads(fixture.read_bytes())
+    identities = {
+        (row["signal"], row["source"]): row
+        for group in capabilities.catalogue()["platforms"]["android"]["groups"]
+        for row in group["observations"]
+    }
+    for case in document["cases"]:
+        for observation in case["observations"]:
+            row = identities[(observation["signal"], observation["source"])]
+            assert observation["status"] in row["statuses"]
+            if observation["status"] == "ok":
+                value = observation["value"]
+                if row["value_kind"] == "string_list":
+                    assert isinstance(value, list)
+                    assert value == sorted(set(value))
+                    assert all(isinstance(component, str) for component in value)
+                else:
+                    assert row["value_kind"] == "string"
+                    assert isinstance(value, str)
+            else:
+                assert "value" not in observation

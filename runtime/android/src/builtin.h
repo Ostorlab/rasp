@@ -1,4 +1,4 @@
-/// The Android built-in check dispatch.
+/// Selection and dispatch of Android built-in check groups.
 
 #pragma once
 
@@ -8,10 +8,8 @@
 #include "rasp/observation.h"
 
 namespace rasp::android {
-
-/// Runs enabled built-in groups, preserving their observation identities and statuses.
-/// @param config The config whose checks select groups; absent groups do not run.
-/// @return The observations from the selected groups, before plugin processing.
+/// Runs each explicitly selected built-in group once in catalogue order.
+/// @param config Embedded check selection; an absent or empty list runs no groups.
+/// @return Typed observations, including unknown, error and unsupported results.
 [[nodiscard]] std::vector<Observation> run_checks(const Config& config);
-
 }  // namespace rasp::android
