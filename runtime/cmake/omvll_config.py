@@ -95,6 +95,8 @@ DATA_READ_LITERALS = re.compile(
     rb"|TracerPid:"
     rb"|__rasp_config"
     rb"|__DATA"
+    # Integrity's section and source names are also read through constexpr string_view data pointers.
+    rb"|__text|file|memory|integ\.text_sha256"
     rb"|__TEXT"
     rb"|\.init"
     rb"|\.text"

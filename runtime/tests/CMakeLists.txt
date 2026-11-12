@@ -36,7 +36,7 @@ target_link_libraries(rasp_plugins_example_test PRIVATE rasp_test_plugins rasp_c
   GTest::gtest_main)
 gtest_discover_tests(rasp_plugins_example_test)
 
-foreach(check debugger emulator hooks identity jailbreak mitm virtualizer)
+foreach(check debugger emulator hooks identity integrity jailbreak mitm virtualizer)
   add_executable(rasp_ios_${check}_test ios/checks/${check}_test.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/checks/${check}.cpp)
   target_include_directories(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src
@@ -45,7 +45,7 @@ foreach(check debugger emulator hooks identity jailbreak mitm virtualizer)
   gtest_discover_tests(rasp_ios_${check}_test)
 endforeach()
 
-foreach(check identity)
+foreach(check identity integrity)
   target_sources(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/macho.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/util/sha256.cpp)
   target_link_libraries(rasp_ios_${check}_test PRIVATE rasp_tfpsacrypto)
@@ -144,3 +144,21 @@ target_link_libraries(rasp_android_cipher_test PRIVATE rasp_core rasp_tfpsacrypt
   GTest::gtest_main)
 gtest_discover_tests(rasp_android_cipher_test)
 
+target_compile_definitions(rasp_ios_integrity_test PRIVATE
+  RASP_TEST_EXECUTABLE_PATH="${PROJECT_SOURCE_DIR}/../packer/tests/rasp_packer/ios/data/arm64_app"
+  RASP_TEST_SIGNED_EXECUTABLE_PATH="${PROJECT_SOURCE_DIR}/../packer/tests/rasp_packer/ios/data/arm64_app_signed")
+
+add_executable(rasp_ios_builtin_test ios/builtin_test.cpp ${PROJECT_SOURCE_DIR}/ios/src/builtin.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/debugger.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/emulator.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/hooks.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/identity.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/jailbreak.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/mitm.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/virtualizer.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/util/macho.cpp ${PROJECT_SOURCE_DIR}/ios/src/util/sha256.cpp)
+target_include_directories(rasp_ios_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_builtin_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
+  GTest::gtest_main)
+if(APPLE)
+  target_link_libraries(rasp_ios_builtin_test PRIVATE
+    "$<LINK_LIBRARY:FRAMEWORK,CFNetwork>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
+endif()
+gtest_discover_tests(rasp_ios_builtin_test)
