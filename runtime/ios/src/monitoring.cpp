@@ -27,20 +27,21 @@
 #include "checks/jailbreak.h"
 #include "checks/mitm.h"
 #include "checks/virtualizer.h"
+#include "panic/end_process.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/embedded_config.h"
 #include "rasp/install_id.h"
+#include "rasp/heartbeat.h"
 #include "rasp/observation.h"
+#include "rasp/panic.h"
+#include "rasp/schedule.h"
 #include "rasp/plugins/registry.h"
 #include "rasp/util/logging.h"
 
 namespace rasp::ios {
 
 namespace {
-
-/// How long the thread waits between two runs of the checks.
-constexpr std::chrono::seconds kCheckInterval{60};
 
 /// The folder of the app's sandbox that keeps the install id, under its home folder: Library/Application Support,
 /// which iOS never deletes to free space, unlike Library/Caches. The id's file is excluded from backups, so an id
@@ -118,6 +119,8 @@ struct Environment {
 /// `new` that the thread takes and keeps until the process exits.
 /// @return Never returns.
 void* monitor(void* argument) {
+  Heartbeat& heartbeat = monitor_heartbeat();
+  heartbeat.beat(std::chrono::steady_clock::now());
   const std::unique_ptr<const Environment> environment(static_cast<Environment*>(argument));
   const Config config = read_config(environment->install_id_directory);
   rasp::plugins::Context context;
@@ -145,6 +148,10 @@ void* monitor(void* argument) {
     if (is_check_enabled(config, "mitm")) {
       std::ranges::move(checks::mitm(), std::back_inserter(builtin));
     }
+    Observation alive = heartbeat.observe(std::chrono::steady_clock::now());
+    heartbeat.beat(std::chrono::steady_clock::now());
+    builtin.push_back(std::move(alive));
+    static_cast<void>(panic_on_detection(builtin, end_process));
     const std::vector<Observation> observations =
         rasp::plugins::run_plugins(rasp::plugins::compiled_in(), std::move(builtin), context);
     if constexpr (kLoggingEnabled) {
@@ -152,7 +159,12 @@ void* monitor(void* argument) {
         rasp::log(describe(observation));
       }
     }
-    std::this_thread::sleep_for(kCheckInterval);
+    heartbeat.beat(std::chrono::steady_clock::now());
+    const std::chrono::milliseconds interval = check_interval();
+    if constexpr (rasp::kLoggingEnabled) {
+      rasp::log("next run in " + std::to_string(interval.count()) + " ms");
+    }
+    std::this_thread::sleep_for(interval);
   }
 }
 

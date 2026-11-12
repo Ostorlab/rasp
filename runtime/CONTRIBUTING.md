@@ -55,6 +55,8 @@ Fix clang-tidy findings instead of silencing them with `NOLINT`. If a check is w
 
 ## Never crash the app
 
+Detections are the one exception, and they end the app on purpose: when a built-in check detects something, `panic_on_detection` (`core/include/rasp/panic.h`) ends it a few seconds later, through a direct system call. The checks run at start-up, on our thread, and on Android at checkpoints of the on-demand loader, when it serves a class. A stopped monitoring thread is a detection too: the thread beats a heartbeat (`core/include/rasp/heartbeat.h`), and a heartbeat seen stale twice, while the app keeps running, reports `integ.monitor_alive` false. A development build only logs what would have ended it. No other code ends the app.
+
 ### Errors are values, never exceptions
 
 The runtime is built without exceptions and without RTTI. An exception that escapes our code ends the app, and we can't guarantee that every path catches it. So a function that can fail returns `std::expected`, `std::optional` or a status, marked `[[nodiscard]]` so the caller can't ignore it.
@@ -69,7 +71,7 @@ When a choice exists, use the function that can't fail.
 
 ### Load time and the main thread
 
-The runtime starts from a function that runs while the app loads, on the app's main thread, before the app's own code. Anything slow there delays the app's launch, and if launch takes too long, the system kills the app. That function only starts work: the checks and the waiting happen on our own thread. On Android, the stub then asks the library for the on-demand loader on the main thread, before the app's own code, so that must stay fast too.
+The runtime starts from a function that runs while the app loads, on the app's main thread, before the app's own code. Anything slow there delays the app's launch, and if launch takes too long, the system kills the app. That function runs only the start-up checks, the few that take a few milliseconds together, use no network and never call `fork`, then starts our own thread, which runs every other check and does the waiting. Measure a check on a device before you add it to the start-up checks. On Android, the stub then asks the library for the on-demand loader on the main thread, before the app's own code, so that must stay fast too. The checkpoints the loader runs when it serves a class are rate-limited, so most class loads only pay for a clock read and an atomic read.
 
 For the same reason, CI enforces three rules on the code that ships:
 
@@ -83,7 +85,7 @@ Some state is shared by the whole process: signal handlers, the signal mask, env
 
 | Functions | Why |
 |---|---|
-| `exit`, `_Exit`, `quick_exit`, `abort`, `std::terminate` | They end the process, which is the customer's app. A check that fails reports an error status and returns. |
+| `exit`, `_Exit`, `quick_exit`, `abort`, `std::terminate` | They end the process, which is the customer's app. A check that fails reports an error status and returns. `panic_on_detection` is the only way the runtime ends the app, and it doesn't call these. |
 | `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask` | Our handler would replace the app's, or its crash reporter's. On Android, the runtime itself handles `SIGSEGV` to turn null pointers into Java exceptions; taking it over turns those into crashes. |
 | `setenv`, `putenv`, `unsetenv`, `setlocale` | They aren't thread-safe. An app thread reading the environment or the locale at the same moment can crash. |
 | `setrlimit` | A lower limit makes the app's own calls fail. |
@@ -96,7 +98,7 @@ A check that calls `fork` creates a copy of the app's process. The copy has a si
 
 ### Threads and exit
 
-The app can exit at any moment, and our thread may be in the middle of its work when it does. Our thread never ends on its own: it runs the checks again every minute until the process exits, so the app always exits while it runs. The thread must not hold anything that breaks if the process ends there, and the app must never wait for our thread in order to exit.
+The app can exit at any moment, and our thread may be in the middle of its work when it does. Our thread never ends on its own: it runs the checks again after a random wait of 30 to 90 seconds, until the process exits, so the app always exits while it runs. The thread must not hold anything that breaks if the process ends there, and the app must never wait for our thread in order to exit.
 
 ### System calls
 
@@ -126,7 +128,7 @@ During development, write log lines only with `rasp::log`, and only inside `if c
 
 ## Android
 
-The packer sets the app's manifest `android:appComponentFactory` to `co.ostorlab.rasp.RaspStub`, the component factory in `android/stub/`. When the app starts, Android loads that factory, which loads `librasp.so`. A load-time constructor in the library starts the thread that runs the checks, the way iOS starts from a constructor, so there is no exported entry point to run them. A minimal `JNI_OnLoad`, which the platform calls moments later, binds the stub's native `install` with RegisterNatives, and `install` returns the on-demand loader, so the library exports no `Java_...` symbol either. Decryption happens in native code, never in Java, and the decrypted dex files are never written to disk.
+The packer sets the app's manifest `android:appComponentFactory` to `co.ostorlab.rasp.RaspStub`, the component factory in `android/stub/`. When the app starts, Android loads that factory, which loads `librasp.so`. A load-time constructor in the library runs the start-up checks and starts the thread that runs the checks from then on, the way iOS starts from a constructor, so there is no exported entry point to run them. A minimal `JNI_OnLoad`, which the platform calls moments later, binds the stub's native `install` with RegisterNatives, and `install` returns the on-demand loader, so the library exports no `Java_...` symbol either. Decryption happens in native code, never in Java, and the decrypted dex files are never written to disk.
 
 - **`librasp.so` has no exported entry point.** A load-time constructor starts the checks, and the stub's native method is bound with RegisterNatives, so no `Java_...` symbol is exported (see No exported symbols above). Everything, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. A release build is stripped (`-Wl,--strip-all`), so it keeps no symbol table and no debug sections. The only exported symbol is the JVM's `JNI_OnLoad` hook, whose fixed name `android/.clang-tidy` lets break the naming rule.
 - **The payload is decrypted with ChaCha20-Poly1305 from TF-PSA-Crypto, never with crypto code of our own.** The packer encrypts it with ChaCha20-Poly1305 too, from the `cryptography` package, so both sides use a standard algorithm through a reviewed library. TF-PSA-Crypto is vendored in `third_party/tf-psa-crypto/` (see the README there). The tests decrypt a frame and a payload that the packer made, and a Project Wycheproof test vector, which the packer's tests check too. If you change the frame on either side, change the other side and these tests with it.

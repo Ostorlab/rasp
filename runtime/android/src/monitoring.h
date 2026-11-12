@@ -1,4 +1,5 @@
-/// start_monitoring: runs the checks and the plugins every minute, on the runtime's own thread.
+/// start_monitoring: runs the checks and the plugins again and again, at random intervals, on the runtime's own
+/// thread.
 
 #pragma once
 
@@ -11,6 +12,10 @@ namespace rasp::android {
 /// Then it runs the built-in checks of the groups the config enables, and the plugins, and runs them again every 60
 /// seconds. No group runs when the config has no `checks` list or the list is empty. A development build logs each
 /// observation.
+///
+/// When the built-in checks detect something, a release build ends the process a few seconds later, through
+/// panic_on_detection. The plugins still receive that run's observations in the meantime, but the end doesn't wait for
+/// them. A development build never ends the process: it logs what would have ended it.
 ///
 /// Nothing is checked when the thread can't be started. Otherwise the thread never ends: it runs until the process
 /// exits. The thread is detached: the app never waits for it, and the app may exit at any moment while it runs.
