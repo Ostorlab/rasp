@@ -460,6 +460,8 @@ target_link_libraries(rasp_private_storage_probe PRIVATE rasp_core rasp_warnings
 add_executable(rasp_core_private_storage_test core/private_storage_test.cpp)
 target_compile_definitions(rasp_core_private_storage_test PRIVATE RASP_STORAGE_PROBE="$<TARGET_FILE:rasp_private_storage_probe>")
 add_dependencies(rasp_core_private_storage_test rasp_private_storage_probe)
+add_dependencies(rasp_core_install_id_test rasp_private_storage_probe)
+target_compile_definitions(rasp_core_install_id_test PRIVATE RASP_STORAGE_PROBE="$<TARGET_FILE:rasp_private_storage_probe>")
 target_include_directories(rasp_core_private_storage_test PRIVATE ${PROJECT_SOURCE_DIR}/posix/include ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_core_private_storage_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_core_private_storage_test PROPERTIES TIMEOUT 30)

@@ -12,7 +12,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
   - `include/rasp/config.h`: `Config`, the runtime's config that the packer writes into the app (the build id and the ids of the check groups to run), and `is_check_enabled`. Without a list of groups, no group runs.
   - `include/rasp/parse_config.h`: `parse_config`, which reads the config from the JSON the packer writes. Members it doesn't know are ignored.
   - `include/rasp/cycle.h`: the finite monitor-cycle path and immutable owned metadata/observation snapshot. See the [consumer contract](../docs/measurement-cycle-contract.md) for callback ownership, coverage, bounds and rollout.
-  - `include/rasp/private_storage.h`: a worker-only owned private directory and matching local identity, queried independently after late Application attachment. See the [storage consumer contract](../docs/private-storage-contract.md).
+  - `include/rasp/private_storage.h`: `acquire_private_storage`, the worker-thread-only call that returns an owned private directory and matching stable install identity, queried independently after late Application attachment. See the [storage consumer contract](../docs/private-storage-contract.md).
   - `include/rasp/observation.h`: `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`), and `observed`, `unsupported` and `failed`, which build one.
   - `include/rasp/util/`: generic helpers.
     - `logging.h`: `rasp::log` and `kLoggingEnabled`, the development logging that release builds leave out.
@@ -92,7 +92,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
         A third-party virtualizer (such as Parallel Space or VirtualApp) runs the guest app inside its own process and redirects its files, so the library loads from the host app's data directory instead, such as `/data/data/com.parallel.intl/.../com.example/lib/<abi>/librasp.so`. That path still contains the guest package as a subdirectory, so the tell is the owning directory, not a substring: `/data/app/.../<package>-<suffix>` on a genuine install, or the host's `/data/data/...` directory on a virtualized one.
 
         `id.uid` can't surface this because the process runs under the host's normal uid. A sophisticated virtualizer can fake the path, so this is a signal, not proof.
-      - Versioned complete current signer sets, ordered single-signer rotation history, and supported Application package identity are documented in [Android signer observations](../docs/android-signer-observations.md). Legacy scalar outputs below retain first-signer semantics. Schema1 revision5 introduced all nine identity outputs, preserved exactly in revision7; generated cycle coverage retains errors as present observations.
+      - Versioned complete current signer sets, ordered single-signer rotation history, and supported Application package identity are documented in [Android signer observations](../docs/android-signer-observations.md). Legacy scalar outputs below retain first-signer semantics. schema 1, revision 5 introduced all nine identity outputs, preserved exactly in revision 7; generated cycle coverage retains errors as present observations.
       - `sig.cert_sha256`: the SHA-256 of the certificate of the key that signed the APK the app runs from, read two ways so the server can check they agree. The `apk_signing_block` source reads it from the APK file's own APK Signing Block, in native code a Java hook can't reach: the first certificate of the signer Android uses on the device, read as Android verifies the blocks, newest first. That is the first v3.1 or v3 signer whose range of API levels contains the device's API level, so after a key rotation it is the new key on the Android versions the v3.1 block covers and the old key on the versions below that range, or v2's first signer when no v3 signer applies.
 
         It is the digest `apksigner verify --print-certs` prints, the one Play Console shows for the app signing key, and the one Play Integrity returns in its `appIntegrity` verdict as `certificateSha256Digest` — an array of base64-encoded URL-safe digests, where this signal reports one hex digest. A repackaged app must be signed again, and the signing key never travels inside the APK, so in practice the re-signing key differs and the certificate changes even when nothing in it is hooked; a separate trusted backend/customer signing registry could compare the digest after that integration exists. Like the other identity probes, this is a signal, not proof: whoever holds the original signing key can reproduce the digest.
@@ -243,16 +243,16 @@ The style is in `.clang-format` and the checks are in `.clang-tidy`.
 
 ```
 cd runtime
-git ls-files -z -- '*.h' '*.cpp' '*.h.in' | xargs -0 clang-format -i
+git ls-files -z -- '*.h' '*.cpp' '*.mm' '*.h.in' | xargs -0 clang-format -i
 cmake --preset host
 run-clang-tidy -quiet -p build/host "^$PWD/(?!build/).*\.cpp$"
 ```
 
-The host build doesn't compile the iOS code, so on a Mac, check it with the development build too:
+The host build does not compile the iOS adapters. On a Mac, check the development build too, including Objective-C++ `.mm` sources:
 
 ```
 cmake --preset ios-dev
-run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.cpp$"
+run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.(cpp|mm)$"
 ```
 
 The Android code, from an Android build, with `ANDROID_NDK_HOME` set:

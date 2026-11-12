@@ -8,14 +8,14 @@ because different source, compiler or plugin builds can share it.
 `packer/src/rasp_packer/checks_manifest.json` is the versioned source of truth for built-in
 group, signal and source identities. Its entries come from the platform check implementations
 and production `builtin.cpp` dispatchers. The catalogue describes possible outputs, not
-execution evidence or device attestation. Schema 1, revision 7 declares 52 Android and 26 iOS
+execution evidence or device attestation. The schema 1, revision 7 catalogue declares 52 Android and 26 iOS
 built-in signal/source identities.
 
-The current canonical catalogue ID is `c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`. Revision6
+The current canonical catalogue ID is `c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`. The earlier revision 5 catalogue
 `c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5` remains
-foreign to this revision7 consumer even with matching pristine bytes and sidecar.
+foreign to this revision 7 consumer even with matching pristine bytes and sidecar.
 
-Revision5 adds four [Android identity observations](android-signer-observations.md): actual
+Catalogue revision 5 adds four [Android identity observations](android-signer-observations.md): actual
 Application package, complete current signer sets from APK and PackageManager, and ordered
 single-signer rotation history. The two legacy certificate outputs remain first-signer
 strings. Identity has nine expected outputs; error/unsupported sources are present coverage,
@@ -55,7 +55,7 @@ Android's opt-in `accessibility`, `input_method` and `notification_access` group
 fixed output identities. The accessibility collector emits enabled accessibility component/capability/flag records;
 IME emits an enabled-component list plus the API34+ selected component; notification access
 emits enabled-listener components through the AndroidX-compatible secure setting. API31–33
-selected IME is explicitly unsupported, never inferred from the enabled list. The schema1
+selected IME is explicitly unsupported, never inferred from the enabled list. The schema 1
 `android` support condition names the platform; each row's `behavior` supplies its API gates,
 Context requirements, limits and null/error contract. Read [exact contracts and primary API
 provenance](android-service-observations.md) and the [portable benign/positive/unknown fixtures](fixtures/android-service-observations-v1.json).
@@ -162,8 +162,8 @@ metadata and fixture expectations. This repository's local wheel tests do not es
 another publisher preserves the association; verify that release path independently.
 
 
-Revision6 adds the opt-in Android `overlay` group's ten [window observation outputs](android-window-observations.md),
+Catalogue revision 6 adds the opt-in Android `overlay` group's ten [window observation outputs](android-window-observations.md),
 source `window_callback`: two finite availability/coverage strings and eight bounded integer snapshots/deltas.
-All revision5 signer/current/history, service context, inline-hook and iOS rows are preserved exactly. Each selected
+The current signer sets and ordered rotation history introduced in revision 5, along with earlier service-context, inline-hook and iOS outputs, are preserved exactly. Each selected
 actual measurement cycle drains window events once and hands the same immutable metadata/observations to both
 plugin callbacks. Complete source coverage is not continuous window ownership or evidence of overlay absence.

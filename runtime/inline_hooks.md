@@ -4,7 +4,7 @@
 
 ## What `hook.inline` compares
 
-Selecting the existing `hooks` check adds one `hook.inline` / `prologue` observation after the existing map and thread observations. The output is registered in schema 1, catalogue revision 4 (32 Android and 26 iOS identities); see [capability binding](../docs/check-capabilities.md). No new configuration key, packer format, API field, plugin interface or enforcement action is introduced. The existing map sources remain independent, including disagreements and one-sided failures.
+Selecting the existing `hooks` check adds one `hook.inline` / `prologue` observation after the existing map and thread observations. The output is registered in schema 1, revision 7 (52 Android and 26 iOS identities); see [capability binding](../docs/check-capabilities.md). No new configuration key, packer format, API field, plugin interface or enforcement action is introduced. The existing map sources remain independent, including disagreements and one-sided failures.
 
 The Android dispatcher resolves 27 libc names and five libdl names through already-loaded library handles (`RTLD_NOLOAD`). Lookup follows the handle's dynamic-linker scope rather than the global default scope; this avoids treating ordinary global interposition as an entry-byte change. A definition resolved from a dependency is checked against the file actually mapped at its address.
 

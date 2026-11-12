@@ -19,10 +19,12 @@ inline constexpr std::string_view kInstallIdFileName = "rasp_install_id";
 /// installed again. A corrupt, noncanonical or zero kept identity returns unavailable without rotation.
 ///
 /// The processes of an app share the folder, and several may start at once. A process that finds no id takes the
-/// nonblocking exclusive lock of `rasp_install_id.lock`, next to the id's file. Contention returns unavailable for
-/// retry. It reads under lock and creates only when absent, so processes share the same id. The new id is fsynced in an
-/// exclusive temporary file and atomically linked without replacing any competing identity. Only the owned temporary is
-/// removed; file metadata and parent directory are synced before success.
+/// nonblocking exclusive lock of `rasp_install_id.lock`, next to the id's file. Only busy contention is retried:
+/// at most 11 attempts with ten 5 ms sleeps (at most 50 ms of requested retry delay). Scheduler and filesystem I/O
+/// can take longer; persistent contention still returns unavailable. Other errors fail without retry. It reads under
+/// lock and creates only when absent, so processes share the same id. The new id is fsynced in an exclusive temporary
+/// file and atomically linked without replacing any competing identity. Only the owned temporary is removed; file
+/// metadata and parent directory are synced before success.
 ///
 /// Valid same-parent, same-UID, single-link regular legacy 0644 identities are hardened in place to 0600 only after
 /// validating their contents and inode stability, with metadata fsync before success. No guessed path is migrated.
