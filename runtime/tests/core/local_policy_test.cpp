@@ -142,12 +142,23 @@ TEST(LocalPolicy, gate_whenClockFails_cannotRevivePriorPublication) {
   EXPECT_EQ(book.size(), 1U);
 }
 TEST(LocalPolicy, gate_whenReportOnly_doesNotClaimDenial) {
+  fixture_tick() = 1000000000;
   const auto config = configuration("report_only");
   rasp::LocalPolicyState state(config, "android", clock_tick);
   auto output = std::make_unique<struct RaspLocalGateResultV1>();
   EXPECT_EQ(state.gate(request(config), *output), RASP_LOCAL_OK);
   EXPECT_EQ(output->action, RASP_LOCAL_REPORT);
   EXPECT_EQ(output->candidate_action, RASP_LOCAL_DENY);
+  std::vector<int> book;
+  append_receipt(book, state, request(config));
+  EXPECT_TRUE(book.empty());
+  state.begin_cycle();
+  state.finish_cycle(cycle(config, observations(0)));
+  ASSERT_EQ(state.gate(request(config), *output), RASP_LOCAL_OK);
+  EXPECT_EQ(output->action, RASP_LOCAL_REPORT);
+  EXPECT_EQ(output->candidate_action, RASP_LOCAL_ALLOW);
+  append_receipt(book, state, request(config));
+  EXPECT_TRUE(book.empty());
 }
 /// The callback proves actual publication happened before callbacks under Context's dispatch lock.
 constexpr rasp::plugins::Key<rasp::LocalPolicyState*> kPolicyState{"test.policy.state"};
