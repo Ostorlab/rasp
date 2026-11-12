@@ -144,6 +144,25 @@ target_link_libraries(rasp_android_cipher_test PRIVATE rasp_core rasp_tfpsacrypt
   GTest::gtest_main)
 gtest_discover_tests(rasp_android_cipher_test)
 
+target_compile_definitions(rasp_ios_integrity_test PRIVATE
+  RASP_TEST_EXECUTABLE_PATH="${PROJECT_SOURCE_DIR}/../packer/tests/rasp_packer/ios/data/arm64_app"
+  RASP_TEST_SIGNED_EXECUTABLE_PATH="${PROJECT_SOURCE_DIR}/../packer/tests/rasp_packer/ios/data/arm64_app_signed")
+
+add_executable(rasp_ios_builtin_test ios/builtin_test.cpp ${PROJECT_SOURCE_DIR}/ios/src/builtin.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/debugger.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/emulator.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/hooks.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/identity.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/jailbreak.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/mitm.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/virtualizer.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/util/macho.cpp ${PROJECT_SOURCE_DIR}/ios/src/util/sha256.cpp)
+target_include_directories(rasp_ios_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_builtin_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
+  GTest::gtest_main)
+if(APPLE)
+  target_link_libraries(rasp_ios_builtin_test PRIVATE
+    "$<LINK_LIBRARY:FRAMEWORK,CFNetwork>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
+endif()
+gtest_discover_tests(rasp_ios_builtin_test)
+
 # Run the shipped Java bridge and JNI consumer on a real JVM, with Android services replaced at the Java boundary.
 find_package(Java QUIET COMPONENTS Runtime Development)
 find_package(JNI QUIET COMPONENTS JVM)
@@ -186,21 +205,17 @@ else()
   message(STATUS "Android bridge JVM integration tests unavailable: install a JDK and set JAVA_HOME")
 endif()
 
-target_compile_definitions(rasp_ios_integrity_test PRIVATE
-  RASP_TEST_EXECUTABLE_PATH="${PROJECT_SOURCE_DIR}/../packer/tests/rasp_packer/ios/data/arm64_app"
-  RASP_TEST_SIGNED_EXECUTABLE_PATH="${PROJECT_SOURCE_DIR}/../packer/tests/rasp_packer/ios/data/arm64_app_signed")
-
-add_executable(rasp_ios_builtin_test ios/builtin_test.cpp ${PROJECT_SOURCE_DIR}/ios/src/builtin.cpp
-  ${PROJECT_SOURCE_DIR}/ios/src/checks/debugger.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/emulator.cpp
-  ${PROJECT_SOURCE_DIR}/ios/src/checks/hooks.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/identity.cpp
-  ${PROJECT_SOURCE_DIR}/ios/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/jailbreak.cpp
-  ${PROJECT_SOURCE_DIR}/ios/src/checks/mitm.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/virtualizer.cpp
-  ${PROJECT_SOURCE_DIR}/ios/src/util/macho.cpp ${PROJECT_SOURCE_DIR}/ios/src/util/sha256.cpp)
-target_include_directories(rasp_ios_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
-target_link_libraries(rasp_ios_builtin_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
-  GTest::gtest_main)
-if(APPLE)
-  target_link_libraries(rasp_ios_builtin_test PRIVATE
-    "$<LINK_LIBRARY:FRAMEWORK,CFNetwork>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
+# Exercise hooks()' Android dispatch against Linux's real own-process procfs, without an Android device claim.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_library(rasp_android_hooks_dispatch OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp)
+  target_compile_definitions(rasp_android_hooks_dispatch PRIVATE __ANDROID__)
+  target_include_directories(rasp_android_hooks_dispatch PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+  target_link_libraries(rasp_android_hooks_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
+  add_executable(rasp_android_hooks_dispatch_test android/checks/hooks_test.cpp
+    $<TARGET_OBJECTS:rasp_android_hooks_dispatch>)
+  target_compile_definitions(rasp_android_hooks_dispatch_test PRIVATE RASP_TEST_ANDROID_HOOKS)
+  target_include_directories(rasp_android_hooks_dispatch_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_android_hooks_dispatch_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_android_hooks_dispatch_test TEST_PREFIX "AndroidDispatch.")
 endif()
-gtest_discover_tests(rasp_ios_builtin_test)
