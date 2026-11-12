@@ -55,7 +55,7 @@ def _parser() -> argparse.ArgumentParser:
         "--checks",
         type=_split_checks,
         help="the check groups the app runs, comma-separated, such as debugger,hooks; "
-        f"{_required_checks()} always runs (default: only {_required_checks()})",
+        "the platform's required groups always run (default: only required groups)",
     )
     return parser
 
@@ -77,9 +77,10 @@ def _split_checks(value: str) -> list[str]:
     return checks
 
 
-def _required_checks() -> str:
+def _required_checks(platform: platforms.Platform) -> str:
     """Returns the ids of the check groups every protected app runs, sorted and comma-separated."""
-    return ",".join(sorted(check_groups.REQUIRED_CHECKS))
+    required = check_groups.REQUIRED_CHECKS_BY_PLATFORM[platform]
+    return ",".join(sorted(required))
 
 
 def _pack(arguments: argparse.Namespace) -> int:
@@ -92,7 +93,7 @@ def _pack(arguments: argparse.Namespace) -> int:
     if checks is None:
         print(
             "rasp pack: warning: no --checks given, so the app runs only the required checks: "
-            f"{_required_checks()}. Pass --checks, such as --checks debugger,hooks, to choose "
+            f"{_required_checks(arguments.platform)}. Pass --checks, such as --checks debugger,hooks, to choose "
             "the checks it runs.",
             file=sys.stderr,
         )
@@ -113,9 +114,16 @@ def _pack(arguments: argparse.Namespace) -> int:
             f"rasp pack: warning: {check!r} is not a check of {arguments.platform}, skipped",
             file=sys.stderr,
         )
+    capability_status = "unknown (legacy runtime artifacts)"
+    if result.capability_bindings is not None:
+        capability_status = ",".join(
+            sorted({binding.catalogue_id for binding in result.capability_bindings})
+        )
     print(
         f"packed {arguments.platform} app: {result.output} "
-        f"(package {result.package_name}, version {result.version}, build {result.build_id})"
+        f"(package {result.package_name}, version {result.version}, build {result.build_id}; "
+        "unsigned, structurally verified)"
+        f"\ncapabilities {capability_status}; effective checks {','.join(result.effective_checks)}"
     )
     return EXIT_OK
 

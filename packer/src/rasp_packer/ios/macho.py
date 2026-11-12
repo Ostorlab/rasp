@@ -18,6 +18,8 @@ from rasp_packer import errors
 
 RUNTIME_FRAMEWORK = "RaspRuntime.framework"
 RUNTIME_BINARY = "RaspRuntime"
+RUNTIME_ABI = "arm64"
+"""Expected runtime ABI: add_runtime instruments only ARM64 slices, independently of sidecar claims."""
 RUNTIME_INSTALL_NAME = f"@rpath/{RUNTIME_FRAMEWORK}/{RUNTIME_BINARY}"
 FRAMEWORKS_RPATH = "@executable_path/Frameworks"
 

@@ -3,12 +3,14 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/omvll_ios.cmake)
 
 add_library(RaspRuntime SHARED
+  src/builtin.cpp
   src/entry.cpp
   src/monitoring.cpp
   src/checks/debugger.cpp
   src/checks/emulator.cpp
   src/checks/hooks.cpp
   src/checks/identity.cpp
+  src/checks/integrity.cpp
   src/checks/jailbreak.cpp
   src/checks/mitm.cpp
   src/checks/virtualizer.cpp
@@ -38,3 +40,6 @@ set_target_properties(RaspRuntime PROPERTIES
   MACOSX_FRAMEWORK_SHORT_VERSION_STRING ${PROJECT_VERSION}
   MACOSX_FRAMEWORK_BUNDLE_VERSION ${PROJECT_VERSION}
   MACOSX_FRAMEWORK_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in)
+
+include(${PROJECT_SOURCE_DIR}/cmake/capabilities.cmake)
+rasp_capabilities(RaspRuntime ios "${CMAKE_OSX_ARCHITECTURES}" ${CMAKE_OSX_DEPLOYMENT_TARGET})

@@ -170,6 +170,16 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/build-tools"
           "$RUNNER_TEMP/build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
           echo "$RUNNER_TEMP/build-tools/bin" >> "$GITHUB_PATH"
+      - name: Set up Java for the macOS host runner
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Check Context bridge with macOS system Bash
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          /bin/bash --version
+          /bin/bash ./tests/android/context_bridge/run.sh
       - name: Configure
         # pipefail so a cmake failure fails this step with its own error, rather than tee masking it as exit 0
         # and the failure resurfacing later in Build or the canary with a misleading message.
@@ -222,6 +232,13 @@ jobs:
           binary=build/ios/ios/RaspRuntime.framework/RaspRuntime
           test -z "$(nm -u "$binary" | grep _os_log)"
           test -z "$(strings -a "$binary" | grep -F "{public}")"
+      - name: Stage and validate capability-bound release
+        run: |
+          cmake --install build/ios --prefix "$RUNNER_TEMP/runtime-release" --component runtime
+          binary="$RUNNER_TEMP/runtime-release/rasp_packer/ios/resources/RaspRuntime.framework/RaspRuntime"
+          python3 tools/capabilities.py verify "$binary" ios arm64 12.0
+          "$RUNNER_TEMP/build-tools/bin/pip" install 'lief==1.0.0'
+          "$RUNNER_TEMP/build-tools/bin/python" tools/verify_packaging.py "$binary" ios arm64
       - name: Configure the development build
         run: cmake --preset ios-dev
       - name: Build the development build
@@ -311,6 +328,13 @@ jobs:
           lib=build/android/android/librasp.so
           test -z "$("$nm" -D -u "$lib" | grep __android_log)"
           test -z "$(strings -a "$lib" | grep -F RaspRuntime)"
+      - name: Stage and validate capability-bound release
+        run: |
+          cmake --install build/android --prefix "$RUNNER_TEMP/runtime-release" --component runtime
+          binary="$RUNNER_TEMP/runtime-release/rasp_packer/android/resources/lib/${{ matrix.abi }}/librasp.so"
+          python3 tools/capabilities.py verify "$binary" android '${{ matrix.abi }}' 31
+          "$RUNNER_TEMP/build-tools/bin/pip" install 'lief==1.0.0'
+          "$RUNNER_TEMP/build-tools/bin/python" tools/verify_packaging.py "$binary" android '${{ matrix.abi }}'
       - name: Configure the development build
         run: cmake --preset android-dev -DANDROID_ABI=${{ matrix.abi }}
       - name: Build the development build

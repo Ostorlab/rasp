@@ -11,3 +11,9 @@ the repository. The packer looks for it in this folder:
   `RaspRuntime` binary.
 
 Without it, `resources.framework()` raises `InvalidRuntimeError`.
+
+Ship `RaspRuntime.framework/RaspRuntime.capabilities.json` with the pristine framework, as
+staged by `cmake --install ... --component runtime`. The packer validates its byte digest
+before inserting config. It removes the pristine sidecar from the copied, modified framework
+and returns source-artifact provenance to the caller. Invalid present metadata raises
+`InvalidRuntimeError`; missing metadata permits legacy packing with unknown capabilities.

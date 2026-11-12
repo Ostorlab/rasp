@@ -6,27 +6,19 @@
 #include <CoreFoundation/CFNumber.h>
 #include <CoreFoundation/CFString.h>
 #include <CoreFoundation/CFURL.h>
-#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
-#include <iterator>
 #include <memory>
 #include <pthread.h>
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
 #include <thread>
-#include <utility>
 #include <vector>
 
-#include "checks/debugger.h"
-#include "checks/emulator.h"
+#include "builtin.h"
 #include "checks/hooks.h"
-#include "checks/identity.h"
-#include "checks/jailbreak.h"
-#include "checks/mitm.h"
-#include "checks/virtualizer.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/embedded_config.h"
@@ -123,30 +115,8 @@ void* monitor(void* argument) {
   rasp::plugins::Context context;
   rasp::plugins::init_plugins(rasp::plugins::compiled_in(), config, context);
   while (true) {
-    std::vector<Observation> builtin;
-    if (is_check_enabled(config, "jailbreak")) {
-      std::ranges::move(checks::jailbreak(), std::back_inserter(builtin));
-    }
-    if (is_check_enabled(config, "debugger")) {
-      std::ranges::move(checks::debugger(), std::back_inserter(builtin));
-    }
-    if (is_check_enabled(config, "hooks")) {
-      std::ranges::move(checks::hooks(environment->inserted_libraries), std::back_inserter(builtin));
-    }
-    if (is_check_enabled(config, "identity")) {
-      std::ranges::move(checks::identity(), std::back_inserter(builtin));
-    }
-    if (is_check_enabled(config, "emulator")) {
-      std::ranges::move(checks::emulator(), std::back_inserter(builtin));
-    }
-    if (is_check_enabled(config, "virtualizer")) {
-      std::ranges::move(checks::virtualizer(), std::back_inserter(builtin));
-    }
-    if (is_check_enabled(config, "mitm")) {
-      std::ranges::move(checks::mitm(), std::back_inserter(builtin));
-    }
-    const std::vector<Observation> observations =
-        rasp::plugins::run_plugins(rasp::plugins::compiled_in(), std::move(builtin), context);
+    const std::vector<Observation> observations = rasp::plugins::run_plugins(
+        rasp::plugins::compiled_in(), run_checks(config, environment->inserted_libraries), context);
     if constexpr (kLoggingEnabled) {
       for (const Observation& observation : observations) {
         rasp::log(describe(observation));

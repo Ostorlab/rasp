@@ -36,7 +36,7 @@ target_link_libraries(rasp_plugins_example_test PRIVATE rasp_test_plugins rasp_c
   GTest::gtest_main)
 gtest_discover_tests(rasp_plugins_example_test)
 
-foreach(check debugger emulator hooks identity jailbreak mitm virtualizer)
+foreach(check debugger emulator hooks identity integrity jailbreak mitm virtualizer)
   add_executable(rasp_ios_${check}_test ios/checks/${check}_test.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/checks/${check}.cpp)
   target_include_directories(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src
@@ -45,7 +45,7 @@ foreach(check debugger emulator hooks identity jailbreak mitm virtualizer)
   gtest_discover_tests(rasp_ios_${check}_test)
 endforeach()
 
-foreach(check identity)
+foreach(check identity integrity)
   target_sources(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/macho.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/util/sha256.cpp)
   target_link_libraries(rasp_ios_${check}_test PRIVATE rasp_tfpsacrypto)
@@ -166,6 +166,109 @@ target_link_libraries(rasp_android_cipher_test PRIVATE rasp_core rasp_tfpsacrypt
   GTest::gtest_main)
 gtest_discover_tests(rasp_android_cipher_test)
 
+target_compile_definitions(rasp_ios_integrity_test PRIVATE
+  RASP_TEST_EXECUTABLE_PATH="${PROJECT_SOURCE_DIR}/../packer/tests/rasp_packer/ios/data/arm64_app"
+  RASP_TEST_SIGNED_EXECUTABLE_PATH="${PROJECT_SOURCE_DIR}/../packer/tests/rasp_packer/ios/data/arm64_app_signed")
+
+add_executable(rasp_ios_builtin_test ios/builtin_test.cpp ${PROJECT_SOURCE_DIR}/ios/src/builtin.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/debugger.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/emulator.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/hooks.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/identity.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/jailbreak.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/mitm.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/virtualizer.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/util/macho.cpp ${PROJECT_SOURCE_DIR}/ios/src/util/sha256.cpp)
+target_include_directories(rasp_ios_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_builtin_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
+  GTest::gtest_main)
+if(APPLE)
+  target_link_libraries(rasp_ios_builtin_test PRIVATE
+    "$<LINK_LIBRARY:FRAMEWORK,CFNetwork>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
+endif()
+gtest_discover_tests(rasp_ios_builtin_test)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+# Tidy consumes the compilation database after configure, without building any targets.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  ${PROJECT_SOURCE_DIR}/tools/capability_header.py
+  ${PROJECT_SOURCE_DIR}/../packer/src/rasp_packer/capabilities.py
+  ${PROJECT_SOURCE_DIR}/../packer/src/rasp_packer/checks_manifest.json)
+foreach(platform android ios)
+  set(expectations_dir ${CMAKE_CURRENT_BINARY_DIR}/capabilities/${platform})
+  file(MAKE_DIRECTORY ${expectations_dir})
+  execute_process(
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/capability_header.py
+      ${expectations_dir}/capability_expectations.h ${platform}
+    COMMAND_ERROR_IS_FATAL ANY)
+  if(platform STREQUAL "android")
+    set(capability_checks debugger emulator hooks identity integrity mitm root)
+    set(capability_util util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp)
+  else()
+    set(capability_checks debugger emulator hooks identity integrity jailbreak mitm virtualizer)
+    set(capability_util util/macho.cpp util/sha256.cpp util/process_query.cpp)
+  endif()
+  set(capability_sources ${PROJECT_SOURCE_DIR}/${platform}/src/builtin.cpp)
+  foreach(check IN LISTS capability_checks)
+    list(APPEND capability_sources ${PROJECT_SOURCE_DIR}/${platform}/src/checks/${check}.cpp)
+  endforeach()
+  foreach(source IN LISTS capability_util)
+    list(APPEND capability_sources ${PROJECT_SOURCE_DIR}/${platform}/src/${source})
+  endforeach()
+  add_executable(rasp_${platform}_capabilities_test capabilities_test.cpp ${capability_sources}
+    ${expectations_dir}/capability_expectations.h)
+  target_include_directories(rasp_${platform}_capabilities_test PRIVATE ${PROJECT_SOURCE_DIR}/${platform}/src
+    ${expectations_dir})
+  target_link_libraries(rasp_${platform}_capabilities_test PRIVATE rasp_core rasp_tfpsacrypto
+    rasp_warnings rasp_language GTest::gtest_main)
+  if(platform STREQUAL "android")
+    target_compile_definitions(rasp_${platform}_capabilities_test PRIVATE RASP_CAPABILITY_ANDROID)
+  elseif(APPLE)
+    target_link_libraries(rasp_ios_capabilities_test PRIVATE
+      "$<LINK_LIBRARY:FRAMEWORK,CFNetwork>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
+  endif()
+  gtest_discover_tests(rasp_${platform}_capabilities_test TEST_PREFIX "${platform}.")
+endforeach()
+
+# Run the shipped Java bridge and JNI consumer on a real JVM, with Android services replaced at the Java boundary.
+find_package(Java QUIET COMPONENTS Runtime Development)
+find_package(JNI QUIET COMPONENTS JVM)
+if(Java_FOUND AND JNI_FOUND)
+  find_package(Threads REQUIRED)
+  add_executable(rasp_android_application_context_test android/util/application_context_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
+  target_include_directories(rasp_android_application_context_test PRIVATE ${JNI_INCLUDE_DIRS}
+    ${PROJECT_SOURCE_DIR}/android/src)
+  target_link_libraries(rasp_android_application_context_test PRIVATE rasp_warnings rasp_language
+    JNI::JVM Threads::Threads GTest::gtest_main)
+  gtest_discover_tests(rasp_android_application_context_test)
+  if(CMAKE_CXX_FLAGS MATCHES "fsanitize=")
+    message(STATUS "Real-JVM integration runs in the host preset; native Application Context tests run with sanitizers")
+  else()
+    add_library(rasp_android_context_bridge_jni SHARED android/context_bridge/driver.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/package_manager.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
+    target_include_directories(rasp_android_context_bridge_jni PRIVATE ${JNI_INCLUDE_DIRS}
+      ${PROJECT_SOURCE_DIR}/android/src)
+    target_link_libraries(rasp_android_context_bridge_jni PRIVATE rasp_warnings rasp_language JNI::JVM Threads::Threads)
+    file(GLOB_RECURSE bridge_test_java CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/java/*.java)
+    set(bridge_java ${PROJECT_SOURCE_DIR}/android/stub/co/ostorlab/rasp/RuntimeBridge.java)
+    set(bridge_test_classes ${CMAKE_CURRENT_BINARY_DIR}/context-bridge-classes)
+    add_custom_command(OUTPUT ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class
+      COMMAND ${Java_JAVAC_EXECUTABLE} -d ${bridge_test_classes} ${bridge_java} ${bridge_test_java}
+      DEPENDS ${bridge_java} ${bridge_test_java} VERBATIM)
+    add_custom_target(rasp_android_context_bridge_java ALL
+      DEPENDS ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class)
+    foreach(mode late early concurrent lifetime unavailable)
+      add_test(NAME AndroidContextBridge.${mode}
+        COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.BridgeTest
+          $<TARGET_FILE:rasp_android_context_bridge_jni> ${mode})
+      set_tests_properties(AndroidContextBridge.${mode} PROPERTIES TIMEOUT 30)
+    endforeach()
+  endif()
+else()
+  message(STATUS "Android bridge JVM integration tests unavailable: install a JDK and set JAVA_HOME")
+endif()
+
 # Exercise hooks()' Android dispatch against Linux's real own-process procfs, without an Android device claim.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   foreach(library libc libdl)
@@ -203,6 +306,7 @@ target_link_libraries(rasp_android_direct_syscall_test PRIVATE rasp_core rasp_wa
 gtest_discover_tests(rasp_android_direct_syscall_test)
 
 target_sources(rasp_ios_debugger_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
+target_sources(rasp_ios_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
 add_executable(rasp_ios_process_query_test ios/util/process_query_test.cpp
   ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
 target_include_directories(rasp_ios_process_query_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)

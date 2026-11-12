@@ -29,6 +29,13 @@ rasp pack app.ipa --platform ios --build-id e6a8373149e83d008a5212b34bdd23bf637a
 
 The packer adds a prebuilt runtime, which comes from the runtime build and is not in the repository. The packer looks for it in its package resources: see the README in `src/rasp_packer/android/resources/` and the one in `src/rasp_packer/ios/resources/`.
 
+Ship each native build's `.capabilities.json` sidecar beside its binary in package resources,
+as `cmake --install ... --component runtime` stages it. The packer verifies the pristine byte
+digest before config insertion. Invalid present metadata raises `InvalidRuntimeError`;
+missing sidecars pack as legacy with unknown capabilities (`PackResult.capability_bindings`
+is `None`). `effective_checks` records config selection, not execution evidence. See
+[the capability contract](../docs/check-capabilities.md) and [runtime build guide](../runtime/README.md#build).
+
 ## Android
 
 For Android the packer protects the app's code:
@@ -55,6 +62,7 @@ The key is stored in the clear, in `assets/rasp/key.bin`. The encryption raises 
 ## Layout
 
 - `src/rasp_packer/packer.py`: `pack`, the entry point.
+- `src/rasp_packer/verification.py`: `verify`, the read-only post-pack verifier and its `VerificationResult`.
 - `src/rasp_packer/platforms.py`: the platforms, Android and iOS.
 - `src/rasp_packer/identity.py`: `AppIdentity`, the package name and version read from the app.
 - `src/rasp_packer/checks.py`: the check groups of each platform, in the order the runtime runs them, and the ones every protected app runs. The packer skips an id that isn't one of them and reports it, so that a caller still packs when it passes a check group that was renamed or removed, and adds the ones every protected app runs.
@@ -100,10 +108,52 @@ Every protected build has a build id, which the packer writes into the app. The 
 
 ## Checks
 
-The runtime runs its checks in groups, such as `debugger` or `hooks`. `src/rasp_packer/checks.py` lists the groups of each platform in `CHECKS`, and those every protected app runs in `REQUIRED_CHECKS` (`identity`). The caller chooses the groups a protected app runs and passes their ids to `pack` (or to `rasp pack --checks`, comma-separated). The packer:
+The runtime runs its checks in groups, such as `debugger` or `hooks`. `src/rasp_packer/checks.py` lists the groups of each platform in `CHECKS`, and each platform's required groups in `REQUIRED_CHECKS_BY_PLATFORM` (currently `identity` on both). `REQUIRED_CHECKS` remains the compatibility view of groups required on every platform. The caller chooses the groups a protected app runs and passes their ids to `pack` (or to `rasp pack --checks`, comma-separated). The packer:
 
 - skips an id that is not one of the platform's groups and reports it in `PackResult.skipped_checks`, so that a caller, such as a CI job, still packs when it passes a group that was renamed or removed. The command line warns about each skipped id on stderr, such as `rasp pack: warning: 'oldcheck' is not a check of android, skipped`, and packs the app;
 - adds the required groups, so `checks=["debugger", "hooks", "jailbreak"]` on iOS also runs `identity`;
 - writes the ids sorted into the runtime config.
 
 An empty choice, such as `checks=[]`, runs only the required groups. Without `--checks`, the command line warns and packs the app with only the required groups.
+
+## Post-pack verification
+
+Before creating the requested output file, `packer.pack` and `rasp pack` verify the staged archive. The platform packers use the same verification path when called directly. Packing writes to a temporary directory beside the destination, verifies that archive, then atomically creates the destination without overwriting an existing file. Failed packing or verification removes the staging files. The destination filesystem must support hard links.
+
+The CLI reports `unsigned, structurally verified` on success. A verification failure raises `errors.VerificationError` in the library and exits with status 1 and a diagnostic on stderr in the CLI.
+
+Unknown requested checks keep the existing skip-and-report behavior. `pack` resolves the configured checks to the required checks plus every supported requested check, sorted and de-duplicated. Verification requires the embedded configuration to match the declared build id and that exact resolved check sequence.
+
+`rasp_packer.verification.verify(app=..., platform=..., config=..., expected_entries=...)` is the reusable read-only API:
+
+- `config` declares the build id and the canonical check sequence: supported checks only, sorted and de-duplicated, including all required checks.
+- `expected_entries` maps ZIP paths to the **trusted bytes prepared for injection**, including every injected/replaced manifest, loader, runtime and payload entry. Keep those bytes from the packing step; deriving them from an untrusted output would defeat replacement detection. The platform packers construct this contract automatically.
+
+The API returns `VerificationResult` with the artifact format (`apk`, `aab`, `ipa`), app identity, declared config and verified runtime paths, or raises `VerificationError`. There is no separate standalone CLI verifier because verifying replacement requires this trusted injection contract.
+
+The checks are deliberately structural:
+
+| Artifact | Verified contract |
+| --- | --- |
+| All formats | Unique canonical ZIP member paths; no traversal, file/directory aliases, symlinks, encryption or unsupported compression; injected bytes present at their exact paths; embedded config exactly matches the canonical declared config. |
+| APK | Binary manifest identity, RASP component factory and minimum API 31; base DEX entries; runtime for every native ABI; runtime ELF machine, bitness, little-endian encoding and shared-library type match its ABI directory; authenticated key/map/business payload coherence; stored payload members; actual local ZIP data alignment (16 KiB for stored `.so`, 4 bytes for other stored files). |
+| AAB | Protobuf base manifest, `base/dex`, `base/lib` and `base/assets` paths; the same runtime ELF/config and authenticated payload checks for the base module. Feature modules and unrelated assets are preserved, without imposing base-module ABI coverage or APK alignment on feature delivery. |
+| IPA | Exactly one main app bundle; its executable retains execute permission; main executable and embedded runtime are unencrypted arm64 Mach-O files of executable/dylib type respectively; the executable strongly loads `@rpath/RaspRuntime.framework/RaspRuntime` with `@executable_path/Frameworks`; the framework plist names `RaspRuntime`; every runtime slice contains the declared config. Other architectures and encrypted App Store executables are rejected. |
+
+Read limits:
+
+- ZIP: at most 4 GiB on disk, 100,000 members and 4 GiB total uncompressed. Individual members cannot exceed the archive limit; APK/AAB readers retain their stricter 1 GiB total.
+- Manifests/plists: at most 4 MiB; runtime binaries: at most 256 MiB.
+- Embedded config sections: entirely inside the binary, at most 64 KiB and zero-terminated.
+- Encrypted Android class map: at most 16 MiB.
+
+Empty business-code sets are valid and need no encrypted business DEX.
+
+`assets/rasp/` and numbered `assets/business/<i>.dex` entries are reserved for packer output.
+
+Verification limitations:
+
+- Output remains **unsigned**. Structural verification is not proof of installation, successful device execution, attack resistance or runtime provenance.
+- The verifier trusts the runtime build and upstream DEX splitter, and compares loader/payload bytes without adding another DEX parser.
+- It does not run checks on a device or validate store signatures. AAB `native.pb`/`BundleConfig.pb`, delivery configuration, generated split APKs and their final alignment are not certified here. Google Play/bundletool generate those APKs; validate, sign and test the generated artifacts with the target platform tools before shipping.
+- Fixture-sized runtime binaries exercise the archive/config contract in tests; real Android and iOS builds and devices remain separate platform validation.

@@ -1,5 +1,6 @@
 """Tests of the `rasp` command line."""
 
+import contextlib
 import pathlib
 from importlib import metadata
 
@@ -10,6 +11,7 @@ from rasp_packer import identity
 from rasp_packer import packer
 from rasp_packer import runtime_config
 from rasp_packer.android import packer as android_packer
+from rasp_packer.ios import resources as ios_resources
 
 _BUILD_ID = "a" * 64
 _USAGE_ERROR = 2
@@ -190,7 +192,11 @@ def testMain_whenACheckIsUnknown_warnsAndPacksWithTheOtherChecks(
         *, config: runtime_config.RuntimeConfig, **_: object
     ) -> identity.AppIdentity:
         configs.append(config)
-        return identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
+        return identity.AppIdentity(
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            effective_checks=config.checks,
+        )
 
     monkeypatch.setattr(android_packer, "pack", fake_pack)
 
@@ -227,5 +233,52 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     assert exit_code == cli.EXIT_OK
     assert capsys.readouterr().out.strip() == (
         f"packed ios app: {tmp_path / 'out.ipa'} "
-        f"(package dev.ostorlab.demo, version 1.2.3, build {_BUILD_ID})"
+        f"(package dev.ostorlab.demo, version 1.2.3, build {_BUILD_ID}; unsigned, structurally verified)"
+        "\ncapabilities unknown (legacy runtime artifacts); effective checks"
     )
+
+
+def testPack_whenLegacyRuntime_reportsUnknownCapabilities(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        packer,
+        "pack",
+        lambda **_: packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="demo",
+            version="1",
+            build_id="build",
+            skipped_checks=(),
+            effective_checks=("identity",),
+        ),
+    )
+    assert cli.main([*_pack_arguments(tmp_path), "--checks", "identity"]) == cli.EXIT_OK
+    assert "capabilities unknown" in capsys.readouterr().out
+
+
+def testMain_whenPackedRuntimeHasWrongArchitecture_failsWithoutSuccessfulOutput(
+    ipa_file: pathlib.Path,
+    runtime: pathlib.Path,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    library = runtime / "RaspRuntime"
+    data = bytearray(library.read_bytes())
+    data[4:8] = (0x01000007).to_bytes(4, "little")
+    library.write_bytes(data)
+    monkeypatch.setattr(
+        ios_resources, "framework", lambda _: contextlib.nullcontext(runtime)
+    )
+    arguments = _pack_arguments(tmp_path)
+    arguments[1] = str(ipa_file)
+
+    assert cli.main(arguments) == cli.EXIT_FAILED
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unsupported Mach-O architecture" in captured.err
+    assert (tmp_path / "out.ipa").exists() is False
+    assert list(tmp_path.glob(".rasp-*")) == []
