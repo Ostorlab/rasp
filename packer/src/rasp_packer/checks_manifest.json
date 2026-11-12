@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 2,
+  "revision": 5,
   "plugins": "unmodelled",
   "platforms": {
     "android": {
@@ -264,6 +264,20 @@
               ],
               "supported_on": "android",
               "behavior": "Own /proc/self/task comm names only: at most 4096 entries; complete names of 1-15 non-control bytes plus newline. Up to 32 sorted/deduplicated matching names retained while continuing validation. Denial, disappearance, malformed/oversized name or incomplete enumeration makes the entire source error, with no partial list. Generic gmain is not a marker; renamed/hidden threads evade."
+            },
+            {
+              "signal": "hook.inline",
+              "source": "prologue",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Fixed libc/libdl entry comparison: at most 32 distinct changed function names in fixed resolution order; empty only after all 32 comparisons succeed. Compare min(16, nonzero symbol size) bytes from immutable executable ELF code with actual RX non-writable mapped addresses via checked own-process reads. Maps limited to 4 MiB/8192-byte lines, library 32 MiB; native ARM/Thumb, AArch64, x86 and x86_64 only. Missing/duplicate/reserved/IFUNC symbols, malformed metadata, text relocations, unavailable resolution, denied/short/stale reads or incomplete coverage produce error with no value and no partial list; unsupported off Android or for an unimplemented build architecture. Raw differences can include authorized instrumentation; matching disk/memory, unlisted/renamed targets, other inline sites, hidden modules and hookable APIs remain limitations, not malware or clean-device verdicts."
             }
           ]
         },
@@ -407,6 +421,62 @@
               ],
               "supported_on": "android",
               "behavior": "First current signer through supported app Context, with optional RuntimeBridge.initialize(Context) cache and best-effort framework fallback. Context/VM/JNI/certificate unavailability or digest failure is error; API28+ SigningInfo is used at the API31+ runtime floor. No signature verification or hardware attestation."
+            },
+            {
+              "signal": "id.package.v1",
+              "source": "application_context",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Actual retained Application.getPackageName via supported Context only, independent of global process aliases; no ActivityThread fallback. API31+. Missing Context/JNI/permission or null/empty/malformed/over-255-character package is error without a value. Public owned package metadata only, not attestation."
+            },
+            {
+              "signal": "sig.current_sha256.v1",
+              "source": "apk_signing_block",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Complete sorted unique lowercase SHA256 digests of current signer leaves for exactly one applicable v2/v3/v3.1 scheme; chain entries and rotation history are not concurrent signers. API31+, v3.1 from API33; at most ten v2 signers, one applicable v3/v3.1 signer. Bounded ZIP32 region reads; missing/malformed/empty/over-limit input is error, unsupported scheme selection is unsupported, never OK empty. Untrusted file hashes, not signature or lineage verification."
+            },
+            {
+              "signal": "sig.current_sha256.v1",
+              "source": "package_manager",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Complete current getApkContentsSigners digests for the retained Application owned package using GET_SIGNING_CERTIFICATES, sorted unique lowercase SHA256. Supported Context only, API31+. At most32 raw certificates,64KiB each and256KiB aggregate before deduplication. Missing Context/JNI/permission, null/empty/malformed/over-limit array is error without a partial or empty clean set. History is separate; no signature/attestation proof."
+            },
+            {
+              "signal": "sig.history_sha256.v1",
+              "source": "package_manager",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Public SigningInfo.getSigningCertificateHistory digests in oldest-to-current order including current; singleton without rotation, unsupported for validated parallel signing and never treated as concurrent current signers. Supported retained Context, owned package and API31+. At most32 certificates,64KiB each and256KiB aggregate. Missing/null/empty/malformed/over-limit history or terminal mismatch is error without a value. No local lineage verification or signing-registry trust claim."
             }
           ]
         },
@@ -426,6 +496,80 @@
               ],
               "supported_on": "android",
               "behavior": "Only readable matching properties; missing properties omitted from the value."
+            }
+          ]
+        },
+        {
+          "name": "accessibility",
+          "required": false,
+          "observations": [
+            {
+              "signal": "a11y.enabled_services",
+              "source": "accessibility_manager",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "API31+ public enabled AccessibilityServiceInfo list through the explicitly retained Application Context, not a private fallback. Sorted unique records package/full.Class capabilities=uint32 flags=uint32 preserve complete capability/request masks and distinct mask variants. At most 128 raw entries before deduplication, 1024 ASCII bytes per raw/normalized component and 131072 complete record bytes. Non-null empty list is OK empty; absent Context/service, denied/JNI/null/malformed/changing-size/over-limit reads are error with no partial list. Flags do not prove active control; legitimate assistive services are context, not malware. Off Android/below API31 unsupported."
+            }
+          ]
+        },
+        {
+          "name": "input_method",
+          "required": false,
+          "observations": [
+            {
+              "signal": "ime.enabled_components",
+              "source": "input_method_manager",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "API31+ public enabled IME list through the explicitly retained Application Context. Sorted unique canonical components, at most 128 raw entries before deduplication, 1024 ASCII bytes per raw/normalized component and 131072 complete bytes. Non-null empty list is OK empty; absent Context/service, denied/JNI/null/malformed/changing-size/over-limit reads are error with no partial list. This is enabled-list fallback context on API31-33, never a current-IME assertion. Independent of the selected component result; legitimate third-party/assistive keyboards are not malware. Off Android/below API31 unsupported."
+            },
+            {
+              "signal": "ime.current_component",
+              "source": "input_method_manager",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "API34+ public getCurrentInputMethodInfo reports the selected IME for the process user through the explicitly retained Application Context, not proof of a visible keyboard or processing text. API31-33 unsupported without newer-method lookup; no enabled-list substitution. One canonical component string, at most 1024 raw/normalized ASCII bytes. A null selected IME, absent Context/service, denied/JNI/malformed/over-limit read is error with no value, never empty-clean. Independent of enabled-list failures. Off Android/below API31 unsupported."
+            }
+          ]
+        },
+        {
+          "name": "notification_access",
+          "required": false,
+          "observations": [
+            {
+              "signal": "notification.enabled_listeners",
+              "source": "settings_secure",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "API31+ public Settings.Secure.getString of enabled_notification_listeners via the explicitly retained Application Context, following the AndroidX-compatible colon-separated component pattern; no hidden-field lookup or invented manager API. Sorted unique canonical components: at most 128 raw entries before deduplication, 1024 raw/normalized ASCII bytes per component and 131072 raw setting/complete output bytes. Only an explicit empty string is OK empty; null, absent Context/resolver, denied/JNI/malformed/over-limit reads are error with no partial list or stale cache. Current-user/vendor visibility limits apply; enabled access is not notification interception or malware proof. Off Android/below API31 unsupported."
             }
           ]
         }

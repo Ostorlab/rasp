@@ -133,6 +133,10 @@ public final class IdentityTest {
             currentError();
         }
         reset(oldKey);
+        SigningInfo.current = new Signature[] {new Signature(new byte[] {1, 2, 3})};
+        currentError();
+        check(threadReads());
+        reset(oldKey);
         Signature huge = new Signature(largeEnvelope());
         SigningInfo.multiple = true;
         SigningInfo.current = new Signature[] {huge, huge, huge, huge};

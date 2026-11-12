@@ -8,8 +8,20 @@ because different source, compiler or plugin builds can share it.
 `packer/src/rasp_packer/checks_manifest.json` is the versioned source of truth for built-in
 group, signal and source identities. Its entries come from the platform check implementations
 and production `builtin.cpp` dispatchers. The catalogue describes possible outputs, not
-execution evidence or device attestation. Schema 1, revision 2 declares 27 Android and 26 iOS
+execution evidence or device attestation. Schema 1, revision 5 declares 36 Android and 26 iOS
 built-in signal/source identities.
+
+The current canonical catalogue ID is `c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5`. Revision4
+`eaac77e3bdbf7f21af2abfb79a7868ccf516e5c3f758d25c90127550e3e7db7c` remains
+foreign to this revision5 consumer even with matching pristine bytes and sidecar.
+
+Revision5 adds four [Android identity observations](android-signer-observations.md): actual
+Application package, complete current signer sets from APK and PackageManager, and ordered
+single-signer rotation history. The two legacy certificate outputs remain first-signer
+strings. Identity has nine expected outputs; error/unsupported sources are present coverage,
+not missing or benign. Native cycle identities and typed test expectations generate from
+the canonical manifest without a draft overlay; RT07's immutable metadata/observation handoff
+and all RT06/RT08 collectors remain intact.
 
 ## Group selection and output semantics
 
@@ -26,6 +38,31 @@ conditions. `string_list` values may contain zero or more members; those members
 not additional observation identities. An always-unsupported source declares value kind
 `none`. Non-OK observations have no value. Read each entry's `behavior` for partial-data,
 read-error and truncation limits.
+
+Android `hook.inline/prologue` emits one observation with a variable string list of at most
+32 distinct changed libc/libdl names in fixed resolution order. An empty OK list requires all
+32 comparisons to succeed. Unavailable symbols/libraries, invalid ELF/maps, incomparable
+relocations and denied/short/stale memory reads are error results with no value or partial
+list. Off Android or on an unimplemented Android build architecture it is unsupported.
+Authorized instrumentation can change these bytes; this is not a malware verdict. The fixed
+list cannot cover other inline sites, renamed/unlisted targets, hidden modules or matching
+modified disk/memory; its APIs remain hookable. See [the mechanism and limits](../runtime/inline_hooks.md).
+The schema's `value_cardinality` remains `variable`; its bound is specified in `behavior`,
+as for the existing map/thread list outputs. Revision 2 and 3 artifacts remain foreign to this
+consumer even when their sidecars match their own pristine bytes.
+
+Android's opt-in `accessibility`, `input_method` and `notification_access` groups add four
+fixed output identities. Accessibility emits enabled component/capability/request-mask records;
+IME emits an enabled-component list plus the API34+ selected component; notification access
+emits enabled-listener components through the AndroidX-compatible secure setting. API31–33
+selected IME is explicitly unsupported, never inferred from the enabled list. The schema1
+`android` support condition names the platform; each row's `behavior` supplies its API gates,
+Context requirements, limits and null/error contract. Read [exact contracts and primary API
+provenance](android-service-observations.md) and the [portable benign/positive/unknown fixtures](fixtures/android-service-observations-v1.json).
+Null/denied/malformed/over-limit values are unknown/error; only complete explicit empty lists
+or settings strings can be empty OK. Assistive services/keyboards and authorized support tools
+are legitimate context. Neither enabled access nor capability flags establish malware or
+active control. Existing groups, identity-only defaults and all iOS outputs are preserved.
 
 Android's supported release presets target API31+ and the four listed ABIs. The iOS release
 preset and consumer support arm64/iOS12+. `ios_device` probes emit unsupported on simulators

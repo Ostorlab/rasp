@@ -1,18 +1,24 @@
 /// Real-JVM integration of the shipped bridge and PackageManager consumer, with JNI allocation/lookup fault injection.
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <jni.h>
 #include <jni_md.h>
+#include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "builtin.h"
 #include "rasp/config.h"
+#include "rasp/context.h"
+#include "rasp/cycle.h"
 #include "rasp/observation.h"
+#include "rasp/plugin.h"
 #include "util/application_context.h"
 #include "util/jni.h"
 #include "util/package_identity.h"
@@ -123,10 +129,64 @@ jboolean native_thread_read(JNIEnv* env, jclass /*test*/) {
   return success ? JNI_TRUE : JNI_FALSE;
 }
 
+/// Owning callback retention verifies that observations and metadata remain one immutable handoff.
+constexpr rasp::plugins::Key<std::shared_ptr<const rasp::CycleSnapshot>> kRetainedIdentityCycle{"test.identity.cycle"};
+/// Confirms both callback forms received the same snapshot object.
+constexpr rasp::plugins::Key<bool> kIdentityCyclePaired{"test.identity.paired"};
+
+/// Retains the snapshot only while the production callback span matches its owned observations.
+void retain_identity_cycle(std::span<const rasp::Observation> observations, rasp::plugins::Context& context) {
+  const auto snapshot = context.get(rasp::plugins::kCycleSnapshot);
+  if (snapshot.has_value() && std::ranges::equal((*snapshot)->observations, observations)) {
+    context.put(kRetainedIdentityCycle, *snapshot);
+  }
+}
+
+/// Verifies the additive callback receives the same object already retained by the legacy callback.
+void confirm_identity_cycle(const std::shared_ptr<const rasp::CycleSnapshot>& snapshot,
+                            rasp::plugins::Context& context) {
+  const auto retained = context.get(kRetainedIdentityCycle);
+  context.put(kIdentityCyclePaired, retained.has_value() && *retained == snapshot);
+}
+
+/// Executes actual identity dispatch through the same finite snapshot/callback path as production monitoring.
+[[nodiscard]] std::shared_ptr<const rasp::CycleSnapshot> identity_cycle() {
+  const rasp::Config config{.build_id = "identity-fixture", .checks = std::vector<std::string>{"identity"}};
+  rasp::CycleMonitor monitor;
+  rasp::plugins::Context context;
+  constexpr rasp::plugins::Plugin kPlugin{
+      .init = nullptr,
+      .checks = {},
+      .on_observations = retain_identity_cycle,
+      .on_cycle = confirm_identity_cycle,
+  };
+  const std::array plugins{&kPlugin};
+  const auto catalogue = rasp::cycle_catalogue("android");
+  auto snapshot = monitor.run(config, catalogue, plugins, context, [](const rasp::Config& selection, const void*) {
+    return rasp::android::run_checks(selection);
+  });
+  const auto retained = context.get(kRetainedIdentityCycle);
+  if (!retained.has_value() || *retained != snapshot || context.get(rasp::plugins::kCycleSnapshot).has_value() ||
+      context.get(kIdentityCyclePaired) != true) {
+    return nullptr;
+  }
+  const auto& metadata = snapshot->metadata;
+  if (!metadata.complete || !metadata.execution_finished || metadata.expected != 9U || metadata.seen != 9U ||
+      !metadata.missing.empty() || metadata.extra != 0 || metadata.dropped != 0 || snapshot->observations.size() != 9 ||
+      metadata.catalogue_id != catalogue.catalogue_id) {
+    return nullptr;
+  }
+  return snapshot;
+}
+
 /// Calls the actual production group dispatcher and transfers only its serialized observations to Java assertions.
 jobjectArray identity_rows(JNIEnv* env, jclass /*test*/) {
-  const rasp::Config config{.build_id = "identity-fixture", .checks = std::vector<std::string>{"identity"}};
-  const auto observations = rasp::android::run_checks(config);
+  const auto snapshot = identity_cycle();
+  if (snapshot == nullptr) {
+    check(env, false);
+    return nullptr;
+  }
+  const auto& observations = snapshot->observations;
   jclass string_class = env->FindClass("java/lang/String");
   if (rasp::android::util::threw(env) || string_class == nullptr) {
     return nullptr;
@@ -213,16 +273,20 @@ jboolean identity_thread_reads(JNIEnv* env, jclass /*test*/) {
   if (env->GetJavaVM(&vm) != JNI_OK) {
     return JNI_FALSE;
   }
+  const auto expected = identity_cycle();
+  if (expected == nullptr) {
+    return JNI_FALSE;
+  }
   bool success = true;
-  std::thread reader([&success, vm] {
+  std::thread reader([&success, vm, expected] {
     JNIEnv* thread_env = rasp::android::util::attached_env();
     if (thread_env == nullptr) {
       success = false;
       return;
     }
     for (std::size_t pass = 0; pass < 1000; ++pass) {
-      const auto identity = rasp::android::util::read_package_identity(thread_env);
-      if (!identity.package_name.has_value() || !identity.current.has_value() || !identity.history.has_value() ||
+      const auto snapshot = identity_cycle();
+      if (snapshot == nullptr || snapshot->observations != expected->observations ||
           thread_env->ExceptionCheck() != JNI_FALSE) {
         success = false;
         break;

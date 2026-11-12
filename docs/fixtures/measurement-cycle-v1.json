@@ -1,0 +1,117 @@
+{
+  "contract_version": 1,
+  "representation": "semantic fixture; native optional fields use null; not a wire payload",
+  "identity": {
+    "session_id": "e690f6cc-e9ad-43cd-b15a-d47a3fbaaa36",
+    "run_id": "a02d567e-c23e-40b4-8302-a84e9a009fdc",
+    "sequence": 1
+  },
+  "cases": [
+    {
+      "name": "unsupported_present",
+      "execution_finished": true,
+      "config_known": true,
+      "expected": 1,
+      "seen": 1,
+      "missing": [],
+      "extra": 0,
+      "dropped": 0,
+      "unsupported": 1,
+      "complete": true
+    },
+    {
+      "name": "disabled",
+      "enabled": false,
+      "expected": 0,
+      "seen": 0,
+      "complete": true
+    },
+    {
+      "name": "config_unavailable",
+      "enabled": null,
+      "expected": null,
+      "complete": false
+    },
+    {
+      "name": "plugin_does_not_fill_missing_builtin",
+      "expected": 1,
+      "seen": 0,
+      "missing": [
+        {
+          "signal": "dbg.traced",
+          "source": "sysctl"
+        }
+      ],
+      "plugin_observations": 1,
+      "complete": false
+    },
+    {
+      "name": "dropped",
+      "execution_finished": true,
+      "dropped": 1,
+      "complete": false
+    },
+    {
+      "name": "sequence_exhausted",
+      "sequence": null,
+      "overflow": true,
+      "complete": false
+    },
+    {
+      "name": "equal_monotonic_ticks",
+      "duration_ns": 0,
+      "duration_available": true,
+      "complete": true
+    },
+    {
+      "name": "clock_failure",
+      "duration_ns": null,
+      "complete": false
+    },
+    {
+      "name": "legacy_direct_dispatch",
+      "snapshot": null
+    },
+    {
+      "name": "stalled_check",
+      "finished_snapshot_emitted": false
+    },
+    {
+      "name": "identity_malformed_source_is_present_error",
+      "execution_finished": true,
+      "config_known": true,
+      "expected": 9,
+      "seen": 9,
+      "missing": [],
+      "extra": 0,
+      "dropped": 0,
+      "complete": true,
+      "present_observation": {
+        "signal": "sig.current_sha256.v1",
+        "source": "package_manager",
+        "status": "error",
+        "value": null
+      }
+    }
+  ],
+  "delivery": {
+    "batch_id_owner": "serializer",
+    "retry": "same immutable bytes and batchId",
+    "wire_fields_allowed_after_backend_rollout": [
+      "sessionId",
+      "runId",
+      "batchId",
+      "observedAt"
+    ]
+  },
+  "catalogue": {
+    "schema_version": 1,
+    "revision": 5,
+    "catalogue_id": "c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5",
+    "observation_counts": {
+      "android": 36,
+      "ios": 26
+    },
+    "android_identity_outputs": 9
+  }
+}

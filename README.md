@@ -38,7 +38,7 @@ on the device                  the runtime runs the chosen checks and hands the 
                                to its plugins; a development build also logs them
 ```
 
-A plugin is code compiled into the runtime ([API](runtime/core/include/rasp/plugin.h), [example](runtime/plugins/example/)). It can add its own checks, and it receives the observations of each run, for example to send them somewhere. A runtime built without plugins keeps the observations to itself, and a release build doesn't log them.
+A plugin is code compiled into the runtime ([API](runtime/core/include/rasp/plugin.h), [example](runtime/plugins/example/)). It can add its own checks, and it receives the observations of each run, for example to send them somewhere. A runtime built without plugins keeps the observations to itself, and a release build doesn't log them. Each actual monitor cycle also exposes an immutable owned snapshot with unverified process/run identity, timing and bounded builtin coverage. Plugins must retain that snapshot during the callback for asynchronous use; see the [cycle consumer contract](docs/measurement-cycle-contract.md). Wire metadata requires a separate backend/transport rollout.
 
 - **The packer** (`packer/`, Python) adds the runtime to the app and returns it unsigned.
 - **The runtime** (`runtime/`, C++) runs inside the protected app and runs the checks.
@@ -96,7 +96,7 @@ result = packer.pack(
 | `root` | ✓ | | Root files, writable system partitions, SELinux and build properties |
 | `jailbreak` | | ✓ | Jailbreak files, sandbox escape and process spawning |
 | `debugger` | ✓ | ✓ | A debugger attached to the app |
-| `hooks` | ✓ | ✓ | Frida and other libraries injected into the app |
+| `hooks` | ✓ | ✓ | Framework-map/thread heuristics; Android selected entry-byte differences ([limits](runtime/inline_hooks.md)) |
 | `integrity` | ✓ | ✓ | File/memory SHA-256 observations of the runtime's own code; no local comparison or tampering verdict |
 | `mitm` | ✓ | ✓ | VPN tunnels, and proxies on iOS |
 | `identity` | ✓ | ✓ | A repackaged copy of the app (always on) |

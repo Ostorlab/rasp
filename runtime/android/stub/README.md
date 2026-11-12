@@ -1,7 +1,7 @@
 # Optional Application Context integration
 
 **`RuntimeBridge.initialize(Context)` supplies the process's attached Application Context to the native
-PackageManager signer reader.** This source integration is optional. Binary-only packing still works and does not
+PackageManager signer reader and the opt-in public service metadata collectors.** This source integration is optional. Binary-only packing still works and does not
 automatically provide a supported Application Context.
 
 Without integration, the signer reader retains the existing best-effort, private ActivityThread lookup (at most
@@ -99,8 +99,10 @@ delete their candidate global references. The winning Application reference live
 there is deliberately no reset/shutdown race. See [Android JNI ownership/thread guidance](https://developer.android.com/ndk/guides/jni-tips).
 
 Each Android process has its own VM, Application, native state and monitor. Call from Application.onCreate in every
-process needing this capability; a main-process call does not initialize a remote service process. This API supplies
-Context only to the existing signer reader; other capabilities are not automatically implemented by initialization.
+process needing this capability; a main-process call does not initialize a remote service process. The opt-in `accessibility`, `input_method` and `notification_access` groups also consume this Context; unlike the
+legacy signer path, they report error until explicit initialization and never look up ActivityThread. See
+[service contracts and privacy/version limits](../../../docs/android-service-observations.md). Initialization supplies
+Context; the embedded check selection still determines which collectors run.
 
 ## Verification
 

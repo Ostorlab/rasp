@@ -25,7 +25,7 @@ def main() -> None:
                 observation["value_kind"]
             )
             mask = sum(
-                1 << ("ok", "unsupported", "error").index(status)
+                1 << capabilities.STATUS_NAMES.index(status)
                 for status in observation["statuses"]
             )
             values = [*fields, str(kind), str(mask)]
@@ -38,10 +38,16 @@ def main() -> None:
                 )
                 + "}"
             )
+    status_masks = ", ".join(
+        str(1 << capabilities.STATUS_NAMES.index(status))
+        for status in capabilities.STATUS_NAMES
+    )
     pathlib.Path(sys.argv[1]).write_text(
         "/// Generated catalogue expectations for compiled dispatch.\nconstexpr auto kExpected = std::to_array<Expected>({\n"
         + ",\n".join(records)
         + "\n});\n"
+        + f"constexpr std::string_view kExpectedCatalogueId = {json.dumps(capabilities.catalogue_id())};\n"
+        + f"constexpr auto kStatusMasks = std::to_array<unsigned>({{{status_masks}}});\n"
     )
 
 
