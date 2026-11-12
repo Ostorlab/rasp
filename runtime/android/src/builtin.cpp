@@ -6,13 +6,16 @@
 #include <iterator>
 #include <vector>
 
+#include "checks/context_exposure.h"
 #include "checks/debugger.h"
 #include "checks/emulator.h"
 #include "checks/hooks.h"
 #include "checks/identity.h"
 #include "checks/integrity.h"
 #include "checks/mitm.h"
+#include "checks/overlay.h"
 #include "checks/root.h"
+#include "checks/root_namespace.h"
 #include "checks/service_exposure.h"
 #include "rasp/config.h"
 #include "rasp/observation.h"
@@ -54,6 +57,21 @@ std::vector<Observation> run_checks(const Config& config) {
   }
   if (is_check_enabled(config, "notification_access")) {
     std::ranges::move(checks::notification_access(), std::back_inserter(observations));
+  }
+  if (is_check_enabled(config, "overlay")) {
+    std::ranges::move(checks::overlay(), std::back_inserter(observations));
+  }
+  if (is_check_enabled(config, "root_packages")) {
+    std::ranges::move(checks::root_packages(), std::back_inserter(observations));
+  }
+  if (is_check_enabled(config, "root_context")) {
+    std::ranges::move(checks::root_context(), std::back_inserter(observations));
+  }
+  if (is_check_enabled(config, "proxy")) {
+    std::ranges::move(checks::proxy(), std::back_inserter(observations));
+  }
+  if (is_check_enabled(config, "developer_settings")) {
+    std::ranges::move(checks::developer_settings(), std::back_inserter(observations));
   }
   return observations;
 }

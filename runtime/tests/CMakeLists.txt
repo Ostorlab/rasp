@@ -241,8 +241,8 @@ foreach(platform android ios)
       ${expectations_dir}/capability_expectations.h ${platform}
     COMMAND_ERROR_IS_FATAL ANY)
   if(platform STREQUAL "android")
-    set(capability_checks debugger emulator hooks identity integrity mitm root service_exposure)
-    set(capability_util util/signing_certificates.cpp util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp
+    set(capability_checks debugger emulator hooks identity integrity mitm root service_exposure overlay context_exposure root_namespace)
+    set(capability_util events/window_events.cpp util/signing_certificates.cpp util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp
       util/elf.cpp util/service_components.cpp)
   else()
     set(capability_checks debugger emulator hooks identity integrity jailbreak mitm virtualizer)
@@ -283,6 +283,14 @@ if(Java_FOUND AND JNI_FOUND)
   target_link_libraries(rasp_android_application_context_test PRIVATE rasp_warnings rasp_language
     JNI::JVM Threads::Threads GTest::gtest_main)
   gtest_discover_tests(rasp_android_application_context_test)
+  add_executable(rasp_android_private_storage_test android/util/private_storage_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/private_storage.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
+  target_include_directories(rasp_android_private_storage_test PRIVATE ${JNI_INCLUDE_DIRS}
+    ${PROJECT_SOURCE_DIR}/android/src ${PROJECT_SOURCE_DIR}/posix/include)
+  target_link_libraries(rasp_android_private_storage_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_android_private_storage_test PROPERTIES TIMEOUT 30)
   if(CMAKE_CXX_FLAGS MATCHES "fsanitize=")
     message(STATUS "Real-JVM integration runs in the host preset; native Application Context tests run with sanitizers")
   else()
@@ -291,7 +299,9 @@ if(Java_FOUND AND JNI_FOUND)
     target_include_directories(rasp_android_identity_dispatch PRIVATE ${JNI_INCLUDE_DIRS}
       ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/include ${PROJECT_SOURCE_DIR}/android/src)
     target_link_libraries(rasp_android_identity_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
-    add_library(rasp_android_context_bridge_jni SHARED android/context_bridge/driver.cpp
+    add_library(rasp_android_context_bridge_jni SHARED android/context_bridge/driver.cpp android/events/driver.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/events/window_bridge.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/events/window_events.cpp
       ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
       ${PROJECT_SOURCE_DIR}/android/src/util/package_manager.cpp
       ${PROJECT_SOURCE_DIR}/android/src/util/package_identity.cpp
@@ -299,6 +309,8 @@ if(Java_FOUND AND JNI_FOUND)
       ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp ${PROJECT_SOURCE_DIR}/android/src/apk/location.cpp
       ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp
       ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/checks/context_exposure.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/checks/root_namespace.cpp
       ${PROJECT_SOURCE_DIR}/android/src/util/service_components.cpp
       ${PROJECT_SOURCE_DIR}/android/src/builtin.cpp
       ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/emulator.cpp
@@ -309,8 +321,16 @@ if(Java_FOUND AND JNI_FOUND)
       $<TARGET_OBJECTS:rasp_android_identity_dispatch>
       ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
     target_include_directories(rasp_android_context_bridge_jni PRIVATE ${JNI_INCLUDE_DIRS}
-      ${PROJECT_SOURCE_DIR}/android/src)
+      ${PROJECT_SOURCE_DIR}/android/src ${CMAKE_CURRENT_SOURCE_DIR})
+    add_library(rasp_android_overlay_dispatch OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/overlay.cpp)
+    target_compile_definitions(rasp_android_overlay_dispatch PRIVATE __ANDROID__)
+    target_include_directories(rasp_android_overlay_dispatch PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+    target_link_libraries(rasp_android_overlay_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
+    target_sources(rasp_android_context_bridge_jni PRIVATE $<TARGET_OBJECTS:rasp_android_overlay_dispatch>)
     target_link_libraries(rasp_android_context_bridge_jni PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language JNI::JVM Threads::Threads ${CMAKE_DL_LIBS})
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      target_link_options(rasp_android_context_bridge_jni PRIVATE -Wl,--no-undefined)
+    endif()
     file(GLOB_RECURSE bridge_test_java CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/java/*.java)
     set(bridge_java ${PROJECT_SOURCE_DIR}/android/stub/co/ostorlab/rasp/RuntimeBridge.java)
     set(bridge_test_classes ${CMAKE_CURRENT_BINARY_DIR}/context-bridge-classes)
@@ -319,6 +339,10 @@ if(Java_FOUND AND JNI_FOUND)
       DEPENDS ${bridge_java} ${bridge_test_java} VERBATIM)
     add_custom_target(rasp_android_context_bridge_java ALL
       DEPENDS ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class)
+    add_test(NAME AndroidWindowBridge.lifecycle
+      COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.WindowTest
+        $<TARGET_FILE:rasp_android_context_bridge_jni>)
+    set_tests_properties(AndroidWindowBridge.lifecycle PROPERTIES TIMEOUT 30)
     set(identity_java_command ${Java_JAVA_EXECUTABLE})
     set(identity_process_alias "")
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -336,7 +360,9 @@ if(Java_FOUND AND JNI_FOUND)
           $<TARGET_FILE:rasp_android_context_bridge_jni>)
       set_tests_properties(AndroidIdentity.legacyArchiveFileTypes PROPERTIES TIMEOUT 30)
     endif()
-    add_library(rasp_android_service_collectors OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp)
+    add_library(rasp_android_service_collectors OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/checks/context_exposure.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/checks/root_namespace.cpp)
     target_compile_definitions(rasp_android_service_collectors PRIVATE __ANDROID__)
     target_include_directories(rasp_android_service_collectors PRIVATE ${JNI_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/android/src)
     target_link_libraries(rasp_android_service_collectors PRIVATE rasp_core rasp_warnings rasp_language)
@@ -352,6 +378,23 @@ if(Java_FOUND AND JNI_FOUND)
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.ServiceTest
         $<TARGET_FILE:rasp_android_service_jni>)
     set_tests_properties(AndroidServiceExposure.publicMetadata PROPERTIES TIMEOUT 60)
+    add_library(rasp_android_storage_jni SHARED android/context_bridge/storage_driver.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/private_storage.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
+    target_include_directories(rasp_android_storage_jni PRIVATE ${JNI_INCLUDE_DIRS}
+      ${PROJECT_SOURCE_DIR}/android/src ${PROJECT_SOURCE_DIR}/posix/include)
+    target_link_libraries(rasp_android_storage_jni PRIVATE rasp_core rasp_warnings rasp_language JNI::JVM Threads::Threads)
+    add_test(NAME AndroidPrivateStorage.publicApplication
+      COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.StorageTest
+        $<TARGET_FILE:rasp_android_storage_jni>)
+    set_tests_properties(AndroidPrivateStorage.publicApplication PROPERTIES TIMEOUT 60)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      add_test(NAME AndroidPrivateStorage.globalProcessAlias
+        COMMAND bash -c "exec -a unrelated.global.process \"$@\"" storage-alias ${Java_JAVA_EXECUTABLE}
+          -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.StorageTest $<TARGET_FILE:rasp_android_storage_jni> global-alias)
+      set_tests_properties(AndroidPrivateStorage.globalProcessAlias PROPERTIES TIMEOUT 60)
+    endif()
     foreach(mode late early concurrent lifetime unavailable)
       add_test(NAME AndroidContextBridge.${mode}
         COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.BridgeTest
@@ -419,6 +462,7 @@ target_link_libraries(rasp_android_service_components_test PRIVATE rasp_core ras
 gtest_discover_tests(rasp_android_service_components_test)
 
 add_library(rasp_android_builtin_support OBJECT ${PROJECT_SOURCE_DIR}/android/src/builtin.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/overlay.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/emulator.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/mitm.cpp
@@ -429,11 +473,69 @@ add_library(rasp_android_builtin_support OBJECT ${PROJECT_SOURCE_DIR}/android/sr
 target_include_directories(rasp_android_builtin_support PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
 target_link_libraries(rasp_android_builtin_support PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language)
 add_executable(rasp_android_builtin_test android/builtin_test.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp $<TARGET_OBJECTS:rasp_android_builtin_support>)
+  ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/context_exposure.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/root_namespace.cpp $<TARGET_OBJECTS:rasp_android_builtin_support>)
 target_include_directories(rasp_android_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
 target_link_libraries(rasp_android_builtin_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_builtin_test TEST_PREFIX "android.")
 if(TARGET rasp_android_service_jni)
   target_sources(rasp_android_service_jni PRIVATE $<TARGET_OBJECTS:rasp_android_builtin_support>)
   target_link_libraries(rasp_android_service_jni PRIVATE rasp_tfpsacrypto)
+endif()
+
+add_executable(rasp_private_storage_probe core/private_storage_probe.cpp)
+target_include_directories(rasp_private_storage_probe PRIVATE ${PROJECT_SOURCE_DIR}/posix/include)
+target_link_libraries(rasp_private_storage_probe PRIVATE rasp_core rasp_warnings rasp_language)
+add_executable(rasp_core_private_storage_test core/private_storage_test.cpp)
+target_compile_definitions(rasp_core_private_storage_test PRIVATE RASP_STORAGE_PROBE="$<TARGET_FILE:rasp_private_storage_probe>")
+add_dependencies(rasp_core_private_storage_test rasp_private_storage_probe)
+add_dependencies(rasp_core_install_id_test rasp_private_storage_probe)
+target_compile_definitions(rasp_core_install_id_test PRIVATE RASP_STORAGE_PROBE="$<TARGET_FILE:rasp_private_storage_probe>")
+target_include_directories(rasp_core_private_storage_test PRIVATE ${PROJECT_SOURCE_DIR}/posix/include ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_core_private_storage_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_core_private_storage_test PROPERTIES TIMEOUT 30)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(rasp_core_private_storage_fault_test core/private_storage_fault_test.cpp)
+  target_include_directories(rasp_core_private_storage_fault_test PRIVATE ${PROJECT_SOURCE_DIR}/posix/include ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_core_private_storage_fault_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  foreach(storage_call getentropy write read fsync linkat close fstat fstatat flock unlinkat)
+    target_link_options(rasp_core_private_storage_fault_test PRIVATE "-Wl,--wrap=${storage_call}")
+  endforeach()
+  gtest_discover_tests(rasp_core_private_storage_fault_test PROPERTIES TIMEOUT 30)
+endif()
+if(APPLE)
+  enable_language(OBJCXX)
+  set(CMAKE_OBJCXX_STANDARD 23)
+  set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+  set(CMAKE_OBJCXX_EXTENSIONS OFF)
+  add_executable(rasp_ios_private_storage_test ios/util/private_storage_test.mm
+    ${PROJECT_SOURCE_DIR}/ios/src/util/private_storage.mm)
+  target_include_directories(rasp_ios_private_storage_test PRIVATE ${PROJECT_SOURCE_DIR}/posix/include ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_options(rasp_ios_private_storage_test PRIVATE -fobjc-arc -fno-objc-exceptions)
+  target_link_libraries(rasp_ios_private_storage_test PRIVATE rasp_core rasp_warnings rasp_language
+    GTest::gtest_main "$<LINK_LIBRARY:FRAMEWORK,Foundation>")
+  gtest_discover_tests(rasp_ios_private_storage_test PROPERTIES TIMEOUT 30)
+  add_executable(rasp_ios_private_entropy_test ios/util/private_entropy_test.cpp)
+  target_include_directories(rasp_ios_private_entropy_test PRIVATE ${PROJECT_SOURCE_DIR}/posix/include
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_ios_private_entropy_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_ios_private_entropy_test PROPERTIES TIMEOUT 30)
+endif()
+
+add_executable(rasp_android_window_events_test android/events/window_events_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/events/window_events.cpp)
+target_include_directories(rasp_android_window_events_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_window_events_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_window_events_test)
+
+add_executable(rasp_android_root_namespace_test android/checks/root_namespace_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/root_namespace.cpp)
+target_include_directories(rasp_android_root_namespace_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_android_root_namespace_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_root_namespace_test)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(rasp_android_root_namespace_test PRIVATE RASP_TEST_WRAP_FSTAT)
+  target_link_options(rasp_android_root_namespace_test PRIVATE -Wl,--wrap=fstat)
 endif()

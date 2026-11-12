@@ -72,6 +72,66 @@
         "input_method",
         "notification_access"
       ]
+    },
+    {
+      "platform": "android",
+      "requested": [
+        "overlay",
+        "overlay"
+      ],
+      "effective_checks": [
+        "identity",
+        "overlay"
+      ],
+      "skipped": []
+    },
+    {
+      "platform": "ios",
+      "requested": [
+        "overlay"
+      ],
+      "effective_checks": [
+        "identity"
+      ],
+      "skipped": [
+        "overlay"
+      ]
+    },
+    {
+      "platform": "android",
+      "requested": [
+        "root_packages",
+        "root_context",
+        "proxy",
+        "developer_settings",
+        "root_packages"
+      ],
+      "effective_checks": [
+        "developer_settings",
+        "identity",
+        "proxy",
+        "root_context",
+        "root_packages"
+      ],
+      "skipped": []
+    },
+    {
+      "platform": "ios",
+      "requested": [
+        "root_packages",
+        "root_context",
+        "proxy",
+        "developer_settings"
+      ],
+      "effective_checks": [
+        "identity"
+      ],
+      "skipped": [
+        "root_packages",
+        "root_context",
+        "proxy",
+        "developer_settings"
+      ]
     }
   ],
   "unknown_release": {
@@ -187,10 +247,10 @@
   ],
   "catalogue": {
     "schema_version": 1,
-    "revision": 5,
-    "catalogue_id": "c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5",
+    "revision": 7,
+    "catalogue_id": "c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf",
     "observation_counts": {
-      "android": 36,
+      "android": 52,
       "ios": 26
     }
   },
@@ -206,6 +266,11 @@
   },
   "unmatched_revision4_release": {
     "catalogue_id": "eaac77e3bdbf7f21af2abfb79a7868ccf516e5c3f758d25c90127550e3e7db7c",
+    "expected_outputs": null,
+    "health": "unsupported"
+  },
+  "unmatched_revision5_release": {
+    "catalogue_id": "c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5",
     "expected_outputs": null,
     "health": "unsupported"
   }

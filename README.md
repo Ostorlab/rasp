@@ -17,7 +17,7 @@ https://github.com/user-attachments/assets/a43d48ed-75ec-43b1-ad76-77fc08826493
 - **No source code changes:** protect the build you already ship.
 - **Choose the checks:** turn on only the check groups that fit your users.
 - **Detects:** root and jailbreak, debuggers, Frida and other hooking, emulators, app virtualizers, network
-  interception (VPN tunnels and proxies), tampering with the runtime's code, and repackaged copies.
+  interception (VPN tunnels and proxies), changes to the runtime's own code (reported for server-side comparison), and repackaged copies.
 - **Runs all the time:** the checks run when the app starts, then every 60 seconds.
 - **Events on the Ostorlab platform:** protect apps and see their events in
   [Mobile ADR](#use-adr-on-the-ostorlab-platform) (Mobile Application Detection & Response).
@@ -38,7 +38,9 @@ on the device                  the runtime runs the chosen checks and hands the 
                                to its plugins; a development build also logs them
 ```
 
-A plugin is code compiled into the runtime ([API](runtime/core/include/rasp/plugin.h), [example](runtime/plugins/example/)). It can add its own checks, and it receives the observations of each run, for example to send them somewhere. A runtime built without plugins keeps the observations to itself, and a release build doesn't log them. Each actual monitor cycle also exposes an immutable owned snapshot with unverified process/run identity, timing and bounded builtin coverage. Plugins must retain that snapshot during the callback for asynchronous use; see the [cycle consumer contract](docs/measurement-cycle-contract.md). Wire metadata requires a separate backend/transport rollout.
+A plugin is code compiled into the runtime ([API](runtime/core/include/rasp/plugin.h), [example](runtime/plugins/example/)). It can add its own checks, and it receives the observations of each run, for example to send them somewhere. A runtime built without plugins keeps the observations to itself, and a release build doesn't log them.
+
+Each completed monitor cycle also publishes an immutable owned snapshot with unverified process/run identity, timing and bounded builtin coverage. Plugins needing observations after the callback must retain that snapshot during it; the legacy span expires at callback return. Prefer `on_cycle` to retain both bounded observations and their drop/coverage accounting; see the [cycle consumer contract](docs/measurement-cycle-contract.md). Wire metadata requires a separate backend/transport rollout.
 
 - **The packer** (`packer/`, Python) adds the runtime to the app and returns it unsigned.
 - **The runtime** (`runtime/`, C++) runs inside the protected app and runs the checks.
@@ -96,7 +98,7 @@ result = packer.pack(
 | `root` | ✓ | | Root files, writable system partitions, SELinux and build properties |
 | `jailbreak` | | ✓ | Jailbreak files, sandbox escape and process spawning |
 | `debugger` | ✓ | ✓ | A debugger attached to the app |
-| `hooks` | ✓ | ✓ | Framework-map/thread heuristics; Android selected entry-byte differences ([limits](runtime/inline_hooks.md)) |
+| `hooks` | ✓ | ✓ | Frida and other hooking frameworks; on Android, changed libc/libdl entry bytes ([limits](runtime/inline_hooks.md)) |
 | `integrity` | ✓ | ✓ | File/memory SHA-256 observations of the runtime's own code; no local comparison or tampering verdict |
 | `mitm` | ✓ | ✓ | VPN tunnels, and proxies on iOS |
 | `identity` | ✓ | ✓ | A repackaged copy of the app (always on) |
@@ -160,3 +162,5 @@ Please don't report a vulnerability in a public issue. See [`SECURITY.md`](SECUR
 ## License
 
 [Apache-2.0](LICENSE)
+
+See [opt-in Android root and environment context](docs/android-root-context.md) for fixed manager visibility queries, own mount context, public proxy metadata and unsupported developer-settings truth. Existing root/jailbreak refusal observations do not prove an intact stock platform.

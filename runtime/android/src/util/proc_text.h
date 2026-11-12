@@ -12,6 +12,14 @@
 
 namespace rasp::android::util {
 
+/// Whether a procfs task entry names a thread: a nonempty sequence of ASCII digits.
+/// @param name The directory entry's file name.
+/// @return True only for numeric thread names, before counting or reading their comm files.
+[[nodiscard]] inline bool is_thread_id(std::string_view name) {
+  return !name.empty() &&
+         std::ranges::all_of(name, [](char character) { return character >= '0' && character <= '9'; });
+}
+
 /// Removes one space/tab-separated field and any following whitespace.
 /// @param rest The remaining record, advanced past the returned field.
 /// @return The next field, empty if the record has no field left.
@@ -46,7 +54,8 @@ namespace rasp::android::util {
 /// @param table Bounded text read to EOF.
 /// @param valid_line The record validator.
 /// @return False for empty, truncated, control-byte, oversized-line or malformed data.
-[[nodiscard]] inline bool valid_proc_table(std::string_view table, bool (*valid_line)(std::string_view)) {
+template <typename Validator>
+[[nodiscard]] bool valid_proc_table(std::string_view table, Validator valid_line) {
   if (table.size() < 2 || !table.ends_with('\n')) {
     return false;
   }

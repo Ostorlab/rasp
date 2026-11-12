@@ -92,6 +92,36 @@
         "status": "error",
         "value": null
       }
+    },
+    {
+      "name": "window_events_atomic_drain",
+      "expected": 10,
+      "seen": 10,
+      "missing": [],
+      "complete": true,
+      "next_cycle_touch_events": 0,
+      "retained_prior_cycle_unchanged": true,
+      "observer_state": "active",
+      "coverage": "best_effort",
+      "touch_events": 1
+    },
+    {
+      "name": "window_adapter_error_metadata_present",
+      "expected": 10,
+      "seen": 10,
+      "missing": [],
+      "complete": true,
+      "observer_state": "error",
+      "coverage": "unknown",
+      "touch_events": 0
+    },
+    {
+      "name": "window_disabled_does_not_drain",
+      "expected": 0,
+      "seen": 0,
+      "complete": true,
+      "pending_event_consumed": false,
+      "next_enabled_touch_events": 1
     }
   ],
   "delivery": {
@@ -106,12 +136,13 @@
   },
   "catalogue": {
     "schema_version": 1,
-    "revision": 5,
-    "catalogue_id": "c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5",
+    "revision": 7,
+    "catalogue_id": "c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf",
     "observation_counts": {
-      "android": 36,
+      "android": 52,
       "ios": 26
     },
-    "android_identity_outputs": 9
+    "android_identity_outputs": 9,
+    "android_window_outputs": 10
   }
 }

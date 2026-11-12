@@ -108,3 +108,11 @@ def raise_min_sdk_version(manifest: bytes, minimum: int) -> bytes:
         return proto_manifest.set_min_sdk_version(manifest, minimum)
     except proto_manifest.ProtoManifestError as error:
         raise errors.ManifestError(str(error)) from error
+
+
+def add_package_queries(manifest: bytes, packages: tuple[str, ...]) -> bytes:
+    """Add only selected exact queries while preserving all host manifest declarations."""
+    try:
+        return proto_manifest.add_package_queries(manifest, packages)
+    except proto_manifest.ProtoManifestError as error:
+        raise errors.ManifestError(str(error)) from error

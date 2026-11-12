@@ -57,10 +57,15 @@ constexpr std::uint64_t kTextOffset = 0x4000;
 /// Reads the executable at `path` in `packer/tests/rasp_packer/ios/data/`.
 ///
 /// @param path The fixture's path.
-/// @return The file's bytes, or empty when it couldn't be read, which makes the test that uses it fail.
+/// @return The nonempty file bytes; records a fixture-specific test failure if unavailable.
 [[nodiscard]] std::vector<std::uint8_t> fixture(const std::string& path) {
-  const std::string content = read_file(path).value_or(std::string());
-  return {content.begin(), content.end()};
+  const auto content = read_file(path);
+  EXPECT_TRUE(content.has_value()) << "fixture not found or unreadable: " << path;
+  if (!content.has_value()) {
+    return {};
+  }
+  EXPECT_FALSE(content->empty()) << "fixture is empty: " << path;
+  return {content->begin(), content->end()};
 }
 
 /// Returns the bytes of the unsigned fixture, `arm64_app`.

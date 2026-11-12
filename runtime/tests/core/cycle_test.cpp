@@ -314,6 +314,22 @@ TEST(Cycle, run_whenPayloadLimitsHit_dropsWholeObservationsAndBoundsText) {
   EXPECT_FALSE(bytes->metadata.complete);
 }
 
+TEST(Cycle, run_whenCatalogueHasDuplicateIdentities_keepsCoverageUnknownWithoutClaimingTruncation) {
+  const std::array outputs{kOutputs[0], kOutputs[0]};
+  const rasp::CycleCatalogue catalogue{.platform = "ios", .catalogue_id = "test", .outputs = outputs};
+  rasp::plugins::Context context;
+  rasp::CycleMonitor monitor;
+  const auto snapshot = monitor.run({.build_id = "test", .checks = std::vector<std::string>{"debugger"}}, catalogue,
+                                    kNoPlugins, context, builtins);
+  EXPECT_TRUE(snapshot->metadata.execution_finished);
+  EXPECT_FALSE(snapshot->metadata.catalogue_known);
+  EXPECT_FALSE(snapshot->metadata.catalogue_truncated);
+  EXPECT_FALSE(snapshot->metadata.complete);
+  EXPECT_FALSE(snapshot->metadata.expected.has_value());
+  EXPECT_TRUE(snapshot->metadata.missing.empty());
+  EXPECT_EQ(snapshot->metadata.dropped, 0U);
+}
+
 TEST(Cycle, run_whenConfigOrCatalogueExceedsBounds_reportsTruncationAndUnknownCoverage) {
   rasp::plugins::Context context;
   rasp::CycleMonitor monitor;

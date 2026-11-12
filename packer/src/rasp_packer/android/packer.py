@@ -178,6 +178,10 @@ def _pack_apk(
         apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
         resources_module.STUB_FACTORY_CLASS,
     )
+    if "root_packages" in config.checks:
+        patched_manifest = apk_manifest_module.add_package_queries(
+            patched_manifest, resources_module.ROOT_MANAGER_PACKAGES_V1
+        )
     key = cipher.new_key()
     map_frame = cipher.encrypt(key, _payload_map(result.business))
     business_entries = {
@@ -250,6 +254,10 @@ def _pack_aab(
         aab_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
         resources_module.STUB_FACTORY_CLASS,
     )
+    if "root_packages" in config.checks:
+        patched_manifest = aab_manifest_module.add_package_queries(
+            patched_manifest, resources_module.ROOT_MANAGER_PACKAGES_V1
+        )
     key = cipher.new_key()
     map_frame = cipher.encrypt(key, _payload_map(result.business))
     business_entries = {

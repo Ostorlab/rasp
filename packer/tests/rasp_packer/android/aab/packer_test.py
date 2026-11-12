@@ -277,6 +277,32 @@ def testPackAab_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     assert app_identity.version == "1.0"
 
 
+@pytest.mark.parametrize("selected", [True, False])
+def testPack_whenRootPackagesSelected_addsOnlyExactOptInQueries(
+    tmp_path: pathlib.Path, selected: bool
+) -> None:
+    app = tmp_path / "app.aab"
+    output = tmp_path / "protected.aab"
+    _make_aab(app)
+    config = runtime_config.RuntimeConfig(
+        build_id=_BUILD_ID,
+        checks=("identity", "root_packages") if selected else ("identity",),
+    )
+    packer.pack(
+        app=app,
+        output=output,
+        config=config,
+        artifacts=_artifacts(),
+        aab_splitter=_recorded_aab_split(),
+    )
+    with zipfile.ZipFile(output) as archive:
+        manifest = archive.read("base/manifest/AndroidManifest.xml")
+    assert proto_manifest.read_package_queries(manifest) == (
+        resources.ROOT_MANAGER_PACKAGES_V1 if selected else ()
+    )
+    assert b"QUERY_ALL_PACKAGES" not in manifest
+
+
 @pytest.mark.parametrize("oversize", ["map", "map_utf8", "dex"])
 def testPack_whenPayloadExceedsRuntimeLimit_rejectsBeforePublication(
     tmp_path: pathlib.Path, oversize: str

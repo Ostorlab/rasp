@@ -1,7 +1,7 @@
 # Optional Application Context integration
 
-**`RuntimeBridge.initialize(Context)` supplies the process's attached Application Context to the native
-PackageManager signer reader and the opt-in public service metadata collectors.** This source integration is optional. Binary-only packing still works and does not
+**`RuntimeBridge.initialize(Context)`** is the optional API that supplies the process's attached Application Context
+to the native PackageManager signer reader and the opt-in public service metadata collectors. Binary-only packing still works and does not
 automatically provide a supported Application Context.
 
 Without integration, the signer reader retains the existing best-effort, private ActivityThread lookup (at most
@@ -26,7 +26,7 @@ dependencies {
 }
 ```
 
-The JAR contains only RuntimeBridge. **Never use `implementation`, `api`, or bundle its source/class in the host
+The JAR contains RuntimeBridge and its nested implementation classes. **Never use `implementation`, `api`, or bundle its source/class in the host
 APK/AAB.** The packer keeps framework DEX classes and appends stub.dex; bundling another bridge would create
 competing definitions, possibly in the on-demand loader. Its sole runtime definition must come from stub.dex,
 visible through the base loader to decrypted host code. The compile-only JAR is not a standalone runtime SDK.
@@ -38,6 +38,7 @@ Do not run R8 on the shipped stub without these rules:
 
 ```proguard
 -keep class co.ostorlab.rasp.RuntimeBridge { *; }
+-keep class co.ostorlab.rasp.RuntimeBridge$* { *; }
 -keep class co.ostorlab.rasp.RaspStub { *; }
 ```
 
@@ -64,7 +65,7 @@ Call after Application attachment, normally in the existing Application's `onCre
 }
 ```
 
-No call is made from `instantiateApplication`, before attachment, or through ActivityThread by this public API.
+Call the public API only after Application attachment. It never calls `instantiateApplication` or goes through ActivityThread.
 [Application.onCreate](https://developer.android.com/reference/android/app/Application#onCreate()) is an appropriate
 post-attachment callback and should remain quick. A Context/Activity/wrapper input is normalized using public
 [Context.getApplicationContext](https://developer.android.com/reference/android/content/Context#getApplicationContext());
@@ -73,7 +74,7 @@ returns no usable application Context and must be retried after attachment.
 
 ## Initialization results
 
-`RuntimeBridge.initialize` returns one of these result codes:
+**`RuntimeBridge.initialize` returns one of these result codes:**
 
 | Result | Meaning |
 |---|---|
@@ -115,7 +116,7 @@ arguments are passed to CMake configuration, for example `-DCMAKE_CXX_COMPILER=/
 The runner accepts Linux and macOS hosts; other hosts, including Windows, are explicitly unsupported. Linux execution
 is validated locally. Actual macOS runner execution remains a CI gate; Linux validation does not establish a macOS
 pass. The Runtime workflow's macOS iOS job runs this same runner under `/bin/bash`, with Java set up explicitly and
-the existing CMake installation; its result must be checked after publication. The script uses CMake's host discovery rather than hardcoding Linux JNI includes or using GNU path resolution
+the existing CMake installation; that job's result establishes a macOS pass. The script uses CMake's host discovery rather than hardcoding Linux JNI includes or using GNU path resolution
 and Bash 4 builtins. Missing Java/JNI targets or an empty test selection fail the runner.
 
 The ordinary host preset and manual runner execute all five real-JVM modes (late, early, concurrent, lifetime and
@@ -128,3 +129,12 @@ retained VM allocations are not sanitizer-compatible. No sanitizer reports are s
 
 Android lifecycle and ART behavior require the [device fixture](../../tests/android/context_bridge/device/README.md).
 Host tests and fixture compilation do not establish actual device or minified-host behavior.
+
+## Optional Activity/window observation
+
+After successful initialization, `startWindowObservation(Application)` opts in to the public API31+ main-thread
+lifecycle adapter. Select the separate `overlay` builtin to drain its bounded received-touch counters. See the
+[complete setup, teardown, exact output and coverage contract](../../../docs/android-window-observations.md).
+The compile-only JAR includes RuntimeBridge and its nested classes; none may be bundled in the host's DEX. The
+shipped stub includes those classes exactly once. Context initialization, window attachment and check selection
+are separate steps. No touch filtering or capture callbacks are enabled by this API.

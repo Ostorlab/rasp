@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 5,
+  "revision": 7,
   "plugins": "unmodelled",
   "platforms": {
     "android": {
@@ -570,6 +570,246 @@
               ],
               "supported_on": "android",
               "behavior": "API31+ public Settings.Secure.getString of enabled_notification_listeners via the explicitly retained Application Context, following the AndroidX-compatible colon-separated component pattern; no hidden-field lookup or invented manager API. Sorted unique canonical components: at most 128 raw entries before deduplication, 1024 raw/normalized ASCII bytes per component and 131072 raw setting/complete output bytes. Only an explicit empty string is OK empty; null, absent Context/resolver, denied/JNI/malformed/over-limit reads are error with no partial list or stale cache. Current-user/vendor visibility limits apply; enabled access is not notification interception or malware proof. Off Android/below API31 unsupported."
+            }
+          ]
+        },
+        {
+          "name": "overlay",
+          "required": false,
+          "observations": [
+            {
+              "signal": "overlay.observer_state",
+              "source": "window_callback",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Snapshot of adapter state: never_started, active, deactivated, error, or unsupported. Registration/JNI/teardown failure is explicit error state, never a clean verdict. Active does not prove uninterrupted callback ownership; no adapter or no touches cannot establish overlay absence."
+            },
+            {
+              "signal": "overlay.coverage",
+              "source": "window_callback",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Interval loss_detected when records were dropped, windows/adapter coverage lost, or JNI inputs rejected. Otherwise best_effort only with an active adapter and at least one current window; unknown otherwise. Callback replacement/restoration between probes is unobservable: this is never continuous coverage or overlay-absence evidence."
+            },
+            {
+              "signal": "overlay.active_windows",
+              "source": "window_callback",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Current snapshot of registered window tokens, 0 through 32. Tokens are opaque ephemeral in-process integers and are not exported. Activity pause/stop/destroy, manual detach, detected replacement and adapter teardown remove windows. Snapshot availability must accompany interval touch deltas."
+            },
+            {
+              "signal": "overlay.touch_events",
+              "source": "window_callback",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Retained dispatchTouchEvent records since the previous selected drain, including normal touches and all actions, not unique gestures. Fixed 128-record FIFO also contains lifecycle records. Overflow drops newest records; counts are lower bounds with explicit dropped/lost/invalid metadata. No touches cannot establish overlay absence."
+            },
+            {
+              "signal": "overlay.obscured_touch_events",
+              "source": "window_callback",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Retained received touches with public MotionEvent FLAG_WINDOW_IS_OBSCURED bit 1, which passed through an obscured area. Counts since the previous selected drain, bounded by retained touches. Legitimate overlays/system windows are context, not malware; no package attribution. OS-blocked or undelivered touches are unobserved."
+            },
+            {
+              "signal": "overlay.partially_obscured_touch_events",
+              "source": "window_callback",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Retained received touches with public MotionEvent FLAG_WINDOW_IS_PARTIALLY_OBSCURED bit 2, obscured elsewhere in the receiving window. Counts since the previous selected drain; both bits increment both flag counters. No coordinates, content, package attribution or malware verdict. Zero cannot establish absence."
+            },
+            {
+              "signal": "overlay.dropped_events",
+              "source": "window_callback",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Interval newest-record drops when the fixed 128-record FIFO is full. Saturates at INT64_MAX. Current window state and loss metadata still update outside the FIFO. Retained touch counters are lower bounds after drops; selection disabled does not drain and cannot imply clean coverage."
+            },
+            {
+              "signal": "overlay.lost_windows",
+              "source": "window_callback",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Interval detected callback ownership/collection loss and adapter/slot failures, saturating at INT64_MAX. Not a unique-window count: repeated failures can increment it. Probe checks are nominally once per second on the main thread and before received touches, with no guarantee during a stalled looper or between probes."
+            },
+            {
+              "signal": "overlay.invalid_events",
+              "source": "window_callback",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Interval rejected malformed, stale-session or unknown-window JNI event inputs, saturating at INT64_MAX. Native ingress accepts only a session token, opaque positive window token, finite event kind and the two obscuration bits. Rejection remains explicit unknown/lost coverage, never a successful absence observation."
+            },
+            {
+              "signal": "overlay.interval_ms",
+              "source": "window_callback",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Monotonic milliseconds since the previous selected atomic drain. First drain is -1 because no previous boundary exists; subsequent zero is a measured short interval. Deltas include all sessions since the boundary, while state/window counts describe the final snapshot. Start/stop never erase pending evidence."
+            }
+          ]
+        },
+        {
+          "name": "root_packages",
+          "required": false,
+          "observations": [
+            {
+              "signal": "root.manager_packages_v1",
+              "source": "package_manager",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Opt-in list-v1 exact three manager queries from retained public Application, getPackageInfo(name,0). Each record is PACKAGE visible or PACKAGE not_visible; negative is visibility-limited and does not prove nonexistence. Any non-NameNotFound exception/null/JNI failure makes whole list error. No installed-package inventory, installation/activity/root verdict, labels or versions. Narrow manifest queries only, no permission."
+            }
+          ]
+        },
+        {
+          "name": "root_context",
+          "required": false,
+          "observations": [
+            {
+              "signal": "root.mountinfo_context_v1",
+              "source": "proc_self_mountinfo",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Opt-in own mountinfo aggregate five records: mounts=N, overlay=N, shared=N, master=N, root_rw=true/false. Bounded descriptor read <=1MiB,4096 rows,8192 bytes/row,128 fields/row; complete grammar with octal decoding and benign nsfs roots. Malformed/denied/FIFO/final symlink/changed/over-limit input is error, no partial result. Stock namespaces/containers/overlayfs are context, no root verdict; paths/source/options never exported."
+            },
+            {
+              "signal": "root.mount_namespace_v1",
+              "source": "proc_self_ns_mnt",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Opt-in bounded <=64-byte own readlink mnt:[nonzero decimal]. Ephemeral processnamespace context only, no other-process comparison, cross-device identifier or root/kernel-worker verdict. Unavailable/malformed/truncated link is error."
+            }
+          ]
+        },
+        {
+          "name": "proxy",
+          "required": false,
+          "observations": [
+            {
+              "signal": "net.default_proxy_v1",
+              "source": "connectivity_manager",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Opt-in public getDefaultProxy through retained Application API31+. Fixed mode=none for exposed null; mode=pac without copying/fetching PAC URI; or mode=manual,host=HOST,port=N (separate list strings), ASCII DNS/IPv6 host<=253 and port1..65535. Errors/denials/missing Context/service/invalid metadata remain unknown. No new manifest permission. Caller network access/visibility limits apply; proxy/VPN/CA presence is environmental context, never MITM verdict."
+            }
+          ]
+        },
+        {
+          "name": "developer_settings",
+          "required": false,
+          "observations": [
+            {
+              "signal": "debug.adb_enabled_v1",
+              "source": "settings_global",
+              "value_kind": "none",
+              "cardinality": "one",
+              "value_cardinality": "none",
+              "statuses": [
+                "unsupported"
+              ],
+              "supported_on": "never",
+              "behavior": "Always unsupported with no value: current public ADB_ENABLED contract sanitizes third-party reads tozero. No settings lookup/zero default or ADB-disabled inference. Actual JDWP/property signals remain separate."
+            },
+            {
+              "signal": "debug.developer_options_enabled_v1",
+              "source": "settings_global",
+              "value_kind": "none",
+              "cardinality": "one",
+              "value_cardinality": "none",
+              "statuses": [
+                "unsupported"
+              ],
+              "supported_on": "never",
+              "behavior": "Always unsupported with no value: current public DEVELOPMENT_SETTINGS_ENABLED contract sanitizes third-party reads tozero. No settings lookup/zero default or disabled inference; no historical OS truth guarantee."
             }
           ]
         }

@@ -125,13 +125,27 @@ constexpr auto kThreadMarkers = std::to_array<std::string_view>({
     "frida",
 });
 
-/// Whether a maps record has a valid address range, permissions and numeric kernel fields.
-[[nodiscard]] bool valid_map_line(std::string_view line) {
+/// Validated kernel map fields, borrowed only while parsing the caller's snapshot.
+struct MapFields {
+  /// The first address, before checking this process's address width.
+  std::uint64_t start;
+  /// The address past the mapping.
+  std::uint64_t end;
+  /// The mapping's file offset.
+  std::uint64_t file_offset;
+  /// The validated permissions field.
+  std::string_view permissions;
+  /// The path after the numeric fields.
+  std::string_view path;
+};
+
+/// Parses the address range, permissions and numeric kernel fields of one maps record.
+[[nodiscard]] std::optional<MapFields> parse_map_fields(std::string_view line) {
   std::string_view rest = line;
   const std::string_view range = util::take_proc_field(rest);
   const std::size_t dash = range.find('-');
   if (dash == std::string_view::npos) {
-    return false;
+    return std::nullopt;
   }
   const auto start = util::proc_number(range.substr(0, dash), 16);
   const auto end = util::proc_number(range.substr(dash + 1), 16);
@@ -140,16 +154,23 @@ constexpr auto kThreadMarkers = std::to_array<std::string_view>({
   const std::string_view device = util::take_proc_field(rest);
   const std::size_t colon = device.find(':');
   if (colon == std::string_view::npos) {
-    return false;
+    return std::nullopt;
   }
   const auto major = util::proc_number(device.substr(0, colon), 16);
   const auto minor = util::proc_number(device.substr(colon + 1), 16);
   const auto inode = util::proc_number(util::take_proc_field(rest), 10);
-  return start.has_value() && end.has_value() && *start < *end && perms.size() == 4 &&
-         (perms[0] == 'r' || perms[0] == '-') && (perms[1] == 'w' || perms[1] == '-') &&
-         (perms[2] == 'x' || perms[2] == '-') && (perms[3] == 'p' || perms[3] == 's') && offset.has_value() &&
-         major.has_value() && minor.has_value() && inode.has_value();
+  const bool valid = start.has_value() && end.has_value() && *start < *end && perms.size() == 4 &&
+                     (perms[0] == 'r' || perms[0] == '-') && (perms[1] == 'w' || perms[1] == '-') &&
+                     (perms[2] == 'x' || perms[2] == '-') && (perms[3] == 'p' || perms[3] == 's') &&
+                     offset.has_value() && major.has_value() && minor.has_value() && inode.has_value();
+  if (!valid) {
+    return std::nullopt;
+  }
+  return MapFields{.start = *start, .end = *end, .file_offset = *offset, .permissions = perms, .path = rest};
 }
+
+/// Whether a maps record has a valid address range, permissions and numeric kernel fields.
+[[nodiscard]] bool valid_map_line(std::string_view line) { return parse_map_fields(line).has_value(); }
 
 /// The permissions field of an already validated memory-map line.
 [[nodiscard]] std::string_view permissions_of(std::string_view line) {
@@ -225,48 +246,43 @@ struct Mapping {
   std::string path;
 };
 
-/// The mapping a validated memory-map record describes, with addresses representable in this process.
-[[nodiscard]] std::optional<Mapping> parse_mapping(std::string_view line) {
-  const std::string_view range = util::take_proc_field(line);
-  const std::string_view perms = util::take_proc_field(line);
-  const auto offset = util::proc_number(util::take_proc_field(line), 16);
-  static_cast<void>(util::take_proc_field(line));
-  static_cast<void>(util::take_proc_field(line));
-  const std::size_t dash = range.find('-');
-  const auto start = util::proc_number(range.substr(0, dash), 16);
-  const auto end = util::proc_number(range.substr(dash + 1), 16);
-  if (!start.has_value() || !end.has_value() || !offset.has_value() || !std::in_range<std::uintptr_t>(*end)) {
+/// Parses every bounded record once, owns its paths, and rejects all overlapping ranges before comparisons.
+[[nodiscard]] std::optional<std::vector<Mapping>> parse_mappings(std::string_view maps) {
+  std::vector<Mapping> mappings;
+  const bool valid = util::valid_proc_table(maps, [&mappings](std::string_view line) {
+    const auto fields = parse_map_fields(line);
+    if (!fields.has_value() || !std::in_range<std::uintptr_t>(fields->end)) {
+      return false;
+    }
+    mappings.push_back({
+        .start = static_cast<std::uintptr_t>(fields->start),
+        .end = static_cast<std::uintptr_t>(fields->end),
+        .file_offset = fields->file_offset,
+        .readable_executable = fields->permissions == "r-xp" || fields->permissions == "r-xs",
+        .path = std::string(fields->path),
+    });
+    return true;
+  });
+  if (!valid) {
     return std::nullopt;
   }
-  return Mapping{
-      .start = static_cast<std::uintptr_t>(*start),
-      .end = static_cast<std::uintptr_t>(*end),
-      .file_offset = *offset,
-      .readable_executable = perms == "r-xp" || perms == "r-xs",
-      .path = std::string(line),
-  };
-}
-
-/// The unique mapping containing address, rejecting overlapping candidate records.
-[[nodiscard]] std::optional<Mapping> mapping_holding(std::string_view maps, std::uintptr_t address) {
-  std::optional<Mapping> found;
-  for (const auto piece : std::views::split(maps, '\n')) {
-    const std::string_view line(piece.begin(), piece.end());
-    if (line.empty()) {
-      continue;
-    }
-    const auto mapping = parse_mapping(line);
-    if (!mapping.has_value()) {
+  std::ranges::sort(mappings, {}, &Mapping::start);
+  for (std::size_t index = 1; index < mappings.size(); ++index) {
+    if (mappings[index].start < mappings[index - 1].end) {
       return std::nullopt;
     }
-    if (mapping->start <= address && address < mapping->end) {
-      if (found.has_value()) {
-        return std::nullopt;
-      }
-      found = mapping;
-    }
   }
-  return found;
+  return mappings;
+}
+
+/// The mapping containing address in an already validated, sorted, nonoverlapping snapshot, or null if absent.
+[[nodiscard]] const Mapping* mapping_holding(std::span<const Mapping> mappings, std::uintptr_t address) {
+  const auto after = std::ranges::upper_bound(mappings, address, {}, &Mapping::start);
+  if (after == mappings.begin()) {
+    return nullptr;
+  }
+  const Mapping& mapping = *std::prev(after);
+  return address < mapping.end ? &mapping : nullptr;
 }
 
 /// Reads exactly the requested own-process bytes through the OS; stale maps, denial and short reads fail safely.
@@ -361,11 +377,11 @@ struct LibraryFile {
 }
 
 /// Compares one resolved function, reusing the most recently read library without retaining caller-owned views.
-[[nodiscard]] std::optional<bool> compare_function(std::string_view maps, const ResolvedFunction& function,
+[[nodiscard]] std::optional<bool> compare_function(std::span<const Mapping> mappings, const ResolvedFunction& function,
                                                    std::optional<LibraryFile>& library) {
   const ResolvedFunction untagged{.name = function.name, .address = function.address & kAddressMask};
-  const std::optional<Mapping> mapping = mapping_holding(maps, untagged.address);
-  if (!mapping || !mapping->readable_executable || !mapping->path.starts_with('/')) {
+  const Mapping* const mapping = mapping_holding(mappings, untagged.address);
+  if (mapping == nullptr || !mapping->readable_executable || !mapping->path.starts_with('/')) {
     return std::nullopt;
   }
   if (!library || library->path != mapping->path) {
@@ -411,7 +427,10 @@ Observation observe_threads(std::string_view task_path) {
   const std::filesystem::directory_iterator end;
   std::set<std::string> names;
   std::size_t threads = 0;
-  while (iterator != end) {
+  for (; iterator != end && !error; iterator.increment(error)) {
+    if (!util::is_thread_id(iterator->path().filename().string())) {
+      continue;
+    }
     if (threads == kMaxThreads) {
       return failed(kThreadsSignal, kTaskSource);
     }
@@ -426,10 +445,9 @@ Observation observe_threads(std::string_view task_path) {
         names.erase(std::prev(names.end()));
       }
     }
-    iterator.increment(error);
-    if (error) {
-      return failed(kThreadsSignal, kTaskSource);
-    }
+  }
+  if (error) {
+    return failed(kThreadsSignal, kTaskSource);
   }
   return observed(kThreadsSignal, kTaskSource, std::vector<std::string>{names.begin(), names.end()});
 }
@@ -439,7 +457,11 @@ Observation observe_inline_hooks(std::string_view maps_path, std::span<const Res
     return failed(kInlineSignal, kPrologueSource);
   }
   const std::optional<std::string> maps = read_file(maps_path, kMaxMapsSize);
-  if (!maps.has_value() || !util::valid_proc_table(*maps, valid_map_line)) {
+  if (!maps.has_value()) {
+    return failed(kInlineSignal, kPrologueSource);
+  }
+  const auto mappings = parse_mappings(*maps);
+  if (!mappings.has_value()) {
     return failed(kInlineSignal, kPrologueSource);
   }
   std::optional<LibraryFile> library;
@@ -450,7 +472,7 @@ Observation observe_inline_hooks(std::string_view maps_path, std::span<const Res
         !names.insert(function.name).second) {
       return failed(kInlineSignal, kPrologueSource);
     }
-    const std::optional<bool> differs = compare_function(*maps, function, library);
+    const std::optional<bool> differs = compare_function(*mappings, function, library);
     if (!differs) {
       return failed(kInlineSignal, kPrologueSource);
     }
