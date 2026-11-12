@@ -5,7 +5,9 @@
 #include <atomic>
 #include <cstdint>
 #include <jni.h>
+#ifndef __ANDROID__
 #include <jni_md.h>
+#endif
 
 #include "events/capture_events.h"
 #include "util/application_context.h"
