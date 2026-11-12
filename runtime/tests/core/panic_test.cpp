@@ -1,11 +1,15 @@
-/// Tests for detect.
+/// Tests for detect, panic_delay, arm_panic and panic_on_detection, as a release build compiles them, with a stand-in
+/// for the end of the process that records the call instead.
 
 #include "rasp/panic.h"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -15,7 +19,39 @@
 namespace rasp {
 namespace {
 
+using std::chrono::milliseconds;
+using std::chrono::steady_clock;
 using Strings = std::vector<std::string>;
+
+/// How long a test waits for an armed panic beyond its longest delay.
+constexpr milliseconds kWaitMargin{2000};
+
+/// How many times the stand-in ended the process.
+///
+/// @return The counter, which lives as long as the test process.
+[[nodiscard]] std::atomic<int>& end_calls() {
+  static std::atomic<int> calls{0};
+  return calls;
+}
+
+/// The stand-in for the end of the process: counts the call and returns.
+void record_end() noexcept { end_calls().fetch_add(1); }
+
+/// Waits until the stand-in has been called `count` times, for at most `limit`.
+///
+/// @param count The number of calls to wait for.
+/// @param limit The longest time to wait.
+/// @return Whether the stand-in was called `count` times in time.
+[[nodiscard]] bool wait_for_end_calls(int count, milliseconds limit) {
+  const steady_clock::time_point deadline = steady_clock::now() + limit;
+  while (end_calls().load() < count) {
+    if (steady_clock::now() >= deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(milliseconds{10});
+  }
+  return true;
+}
 
 /// What detect returns for one `kOk` observation of `signal` with `value`.
 ///
@@ -222,6 +258,52 @@ TEST(Panic, detect_whenObservationsOfDifferentSignalsDiffer_detectsNothing) {
   };
 
   EXPECT_TRUE(detect(observations).empty());
+}
+
+TEST(Panic, panicDelay_whenCalled_isWithinTheBounds) {
+  for (int round = 0; round < 1000; ++round) {
+    const milliseconds delay = panic_delay();
+
+    EXPECT_GE(delay, kMinPanicDelay);
+    EXPECT_LE(delay, kMaxPanicDelay);
+  }
+}
+
+TEST(Panic, armPanic_whenArmed_endsTheProcessOnAnotherThreadAfterTheDelay) {
+  const int before = end_calls().load();
+  const steady_clock::time_point start = steady_clock::now();
+
+  ASSERT_TRUE(arm_panic(record_end, milliseconds{50}));
+
+  EXPECT_EQ(end_calls().load(), before);
+  ASSERT_TRUE(wait_for_end_calls(before + 1, milliseconds{50} + kWaitMargin));
+  EXPECT_GE(steady_clock::now() - start, milliseconds{50});
+}
+
+TEST(Panic, panicOnDetection_whenSomethingIsDetected_armsAPanicThatEndsTheProcessLater) {
+  const int before = end_calls().load();
+  const std::vector<Observation> observations = {
+      observed("id.package", "proc_cmdline", std::string("com.example")),
+      observed("dbg.tracer_pid", "proc_status", std::int64_t{4242}),
+  };
+  const steady_clock::time_point start = steady_clock::now();
+
+  ASSERT_TRUE(panic_on_detection(observations, record_end));
+
+  EXPECT_EQ(end_calls().load(), before);
+  ASSERT_TRUE(wait_for_end_calls(before + 1, kMaxPanicDelay + kWaitMargin));
+  EXPECT_GE(steady_clock::now() - start, kMinPanicDelay);
+}
+
+TEST(Panic, panicOnDetection_whenNothingIsDetected_armsNothing) {
+  const std::vector<Observation> observations = {
+      observed("id.package", "proc_cmdline", std::string("com.example")),
+      observed("dbg.tracer_pid", "proc_status", std::int64_t{0}),
+      unsupported("jb.fork_ok", "fork"),
+      failed("root.fs_paths", "stat"),
+  };
+
+  EXPECT_FALSE(panic_on_detection(observations, record_end));
 }
 
 }  // namespace

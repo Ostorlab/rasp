@@ -22,6 +22,15 @@ foreach(test config context embedded_config install_id observation panic parse_c
   target_link_libraries(rasp_core_${name}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
   gtest_discover_tests(rasp_core_${name}_test)
 endforeach()
+# The development build of panic_on_detection logs instead of ending the process. This test compiles it as a
+# development build does, with its own log function, so it doesn't link rasp_core, which is built without logs.
+add_executable(rasp_core_panic_development_test core/panic_development_test.cpp
+  ${PROJECT_SOURCE_DIR}/core/src/observation.cpp
+  ${PROJECT_SOURCE_DIR}/core/src/panic.cpp)
+target_include_directories(rasp_core_panic_development_test PRIVATE ${PROJECT_SOURCE_DIR}/core/include)
+target_compile_definitions(rasp_core_panic_development_test PRIVATE RASP_LOGGING_ENABLED=true)
+target_link_libraries(rasp_core_panic_development_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_core_panic_development_test)
 target_include_directories(rasp_core_install_id_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 list(LENGTH rasp_compiled_plugins rasp_expected_plugin_count)
 target_link_libraries(rasp_core_registry_test PRIVATE rasp_plugins)
