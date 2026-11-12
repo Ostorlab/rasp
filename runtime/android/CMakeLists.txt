@@ -2,6 +2,9 @@ add_library(rasp SHARED
   src/builtin.cpp
   src/events/window_bridge.cpp
   src/events/window_events.cpp
+  src/events/capture_bridge.cpp
+  src/events/capture_events.cpp
+  src/checks/capture.cpp
   src/checks/overlay.cpp
   src/entry.cpp
   src/monitoring.cpp

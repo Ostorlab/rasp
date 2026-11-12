@@ -175,7 +175,10 @@ def _pack_apk(
     result = splitter(app, app_identity.package_name)
 
     patched_manifest = apk_manifest_module.set_app_component_factory(
-        apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
+        apk_manifest_module.ensure_capture_permissions(
+            apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
+            config.checks,
+        ),
         resources_module.STUB_FACTORY_CLASS,
     )
     if "root_packages" in config.checks:
@@ -251,7 +254,10 @@ def _pack_aab(
     result = splitter(dex_entries, app_identity.package_name)
 
     patched_manifest = aab_manifest_module.set_app_component_factory(
-        aab_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
+        aab_manifest_module.ensure_capture_permissions(
+            aab_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
+            config.checks,
+        ),
         resources_module.STUB_FACTORY_CLASS,
     )
     if "root_packages" in config.checks:

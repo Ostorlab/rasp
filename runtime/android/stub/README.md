@@ -138,3 +138,12 @@ lifecycle adapter. Select the separate `overlay` builtin to drain its bounded re
 The compile-only JAR includes RuntimeBridge and its nested classes; none may be bundled in the host's DEX. The
 shipped stub includes those classes exactly once. Context initialization, window attachment and check selection
 are separate steps. No touch filtering or capture callbacks are enabled by this API.
+
+## Optional capture observation
+
+The independent `startCaptureObservation(Application, boolean, boolean)` API opts in to
+API34 screenshot notifications and API35 recording visibility on registered resumed Activities.
+Compile the stub with SDK35 or newer, with d8 minimum API31; preserve every nested bridge class.
+The existing window observer remains independent. See the [capture API and exact scalar interval
+contract](../../../docs/android-capture-observations.md) for permissions, source scope, ownership,
+partial failures and version limits. Selecting a group does not install a listener.

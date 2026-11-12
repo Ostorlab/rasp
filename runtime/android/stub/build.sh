@@ -3,7 +3,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 out="${1:-$here}"
-android_jar="${ANDROID_JAR:?set ANDROID_JAR to a platform android.jar (API 31 or newer)}"
+android_jar="${ANDROID_JAR:?set ANDROID_JAR to a public platform android.jar (API 35 or newer; runtime minimum is 31)}"
 d8="${D8:-d8}"
 
 work="$(mktemp -d)"

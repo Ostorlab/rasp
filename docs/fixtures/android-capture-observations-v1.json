@@ -1,0 +1,458 @@
+{
+  "version": 1,
+  "description": "Synthetic native observation semantics; no device execution or OS efficacy is asserted.",
+  "examples": [
+    {
+      "name": "unsupported_api33",
+      "observations": [
+        {
+          "signal": "capture.screenshot.observer_state",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": "unsupported"
+        },
+        {
+          "signal": "capture.screenshot.permission",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": "not_applicable"
+        },
+        {
+          "signal": "capture.screenshot.coverage",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": "unknown"
+        },
+        {
+          "signal": "capture.screenshot.active_activities",
+          "source": "activity_screen_capture",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.screenshot.callback_events",
+          "source": "activity_screen_capture",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.screenshot.lost_registrations",
+          "source": "activity_screen_capture",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.screenshot.invalid_events",
+          "source": "activity_screen_capture",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.screenshot.counter_overflow",
+          "source": "activity_screen_capture",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.screenshot.interval_ms",
+          "source": "activity_screen_capture",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.recording.observer_state",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": "unsupported"
+        },
+        {
+          "signal": "capture.recording.permission",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": "not_applicable"
+        },
+        {
+          "signal": "capture.recording.coverage",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": "unknown"
+        },
+        {
+          "signal": "capture.recording.active_activities",
+          "source": "window_manager_recording",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.recording.visibility",
+          "source": "window_manager_recording",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.recording.initial_samples",
+          "source": "window_manager_recording",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.recording.callback_events",
+          "source": "window_manager_recording",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.recording.visibility_changes",
+          "source": "window_manager_recording",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.recording.lost_registrations",
+          "source": "window_manager_recording",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.recording.invalid_events",
+          "source": "window_manager_recording",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.recording.counter_overflow",
+          "source": "window_manager_recording",
+          "status": "unsupported",
+          "value": null
+        },
+        {
+          "signal": "capture.recording.interval_ms",
+          "source": "window_manager_recording",
+          "status": "unsupported",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "registered_sdk35",
+      "observations": [
+        {
+          "signal": "capture.screenshot.observer_state",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": "active"
+        },
+        {
+          "signal": "capture.screenshot.permission",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": "granted"
+        },
+        {
+          "signal": "capture.screenshot.coverage",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": "best_effort"
+        },
+        {
+          "signal": "capture.screenshot.active_activities",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": 1
+        },
+        {
+          "signal": "capture.screenshot.callback_events",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": 2
+        },
+        {
+          "signal": "capture.screenshot.lost_registrations",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.screenshot.invalid_events",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.screenshot.counter_overflow",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": false
+        },
+        {
+          "signal": "capture.screenshot.interval_ms",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": -1
+        },
+        {
+          "signal": "capture.recording.observer_state",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": "active"
+        },
+        {
+          "signal": "capture.recording.permission",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": "granted"
+        },
+        {
+          "signal": "capture.recording.coverage",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": "best_effort"
+        },
+        {
+          "signal": "capture.recording.active_activities",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": 1
+        },
+        {
+          "signal": "capture.recording.visibility",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": "visible"
+        },
+        {
+          "signal": "capture.recording.initial_samples",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": 1
+        },
+        {
+          "signal": "capture.recording.callback_events",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.recording.visibility_changes",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.recording.lost_registrations",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.recording.invalid_events",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.recording.counter_overflow",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": false
+        },
+        {
+          "signal": "capture.recording.interval_ms",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": -1
+        }
+      ]
+    },
+    {
+      "name": "stopped_next_interval_sdk35",
+      "observations": [
+        {
+          "signal": "capture.screenshot.observer_state",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": "deactivated"
+        },
+        {
+          "signal": "capture.screenshot.permission",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": "granted"
+        },
+        {
+          "signal": "capture.screenshot.coverage",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": "unknown"
+        },
+        {
+          "signal": "capture.screenshot.active_activities",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.screenshot.callback_events",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.screenshot.lost_registrations",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.screenshot.invalid_events",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.screenshot.counter_overflow",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": false
+        },
+        {
+          "signal": "capture.screenshot.interval_ms",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": 20
+        },
+        {
+          "signal": "capture.recording.observer_state",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": "deactivated"
+        },
+        {
+          "signal": "capture.recording.permission",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": "granted"
+        },
+        {
+          "signal": "capture.recording.coverage",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": "unknown"
+        },
+        {
+          "signal": "capture.recording.active_activities",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.recording.visibility",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": "unknown"
+        },
+        {
+          "signal": "capture.recording.initial_samples",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.recording.callback_events",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.recording.visibility_changes",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.recording.lost_registrations",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.recording.invalid_events",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.recording.counter_overflow",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": false
+        },
+        {
+          "signal": "capture.recording.interval_ms",
+          "source": "window_manager_recording",
+          "status": "ok",
+          "value": 20
+        }
+      ]
+    },
+    {
+      "name": "screenshot_activity_local_teardown_failure",
+      "observations": [
+        {
+          "signal": "capture.screenshot.observer_state",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": "partial"
+        },
+        {
+          "signal": "capture.screenshot.permission",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": "granted"
+        },
+        {
+          "signal": "capture.screenshot.coverage",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": "loss_detected"
+        },
+        {
+          "signal": "capture.screenshot.active_activities",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": 1
+        },
+        {
+          "signal": "capture.screenshot.callback_events",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": 1
+        },
+        {
+          "signal": "capture.screenshot.lost_registrations",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": 1
+        },
+        {
+          "signal": "capture.screenshot.invalid_events",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": 0
+        },
+        {
+          "signal": "capture.screenshot.counter_overflow",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": false
+        },
+        {
+          "signal": "capture.screenshot.interval_ms",
+          "source": "activity_screen_capture",
+          "status": "ok",
+          "value": -1
+        }
+      ]
+    }
+  ]
+}

@@ -12,7 +12,7 @@ public final class MainActivity extends android.app.Activity {
     @Override public void onCreate(android.os.Bundle state) {
         super.onCreate(state);
         TextView view = new TextView(this);
-        view.setText("Window observation fixture: tap, rotate, pause/resume. No input content is collected.");
+        view.setText("Observation fixture: tap, rotate, pause/resume. Screenshot observation shows an Android notice. Use only neutral screen content for screenshot/recording tests. No input or captured content is collected.");
         setContentView(view);
     }
     @Override public void onResume() {
@@ -26,6 +26,12 @@ public final class MainActivity extends android.app.Activity {
                     throw new AssertionError("window attach result " + attached);
                 }
                 Log.i("WindowBridgeFixture", "active window attached");
+                int capture = RuntimeBridge.attachCaptureActivity(MainActivity.this);
+                if (capture != RuntimeBridge.INITIALIZED && capture != RuntimeBridge.ALREADY_INITIALIZED
+                        && capture != RuntimeBridge.PARTIAL && capture != RuntimeBridge.UNSUPPORTED
+                        && capture != RuntimeBridge.PERMISSION_REQUIRED) {
+                    throw new AssertionError("capture attach result " + capture);
+                }
             }
         }, 11000);
     }
