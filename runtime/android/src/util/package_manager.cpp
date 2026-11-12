@@ -144,7 +144,7 @@ constexpr int kApplicationWaitAttempts = 100;
     return std::nullopt;
   }
   const jsize length = env->GetArrayLength(bytes);
-  if (length < 1) {
+  if (threw(env) || length < 1 || length > 65536) {
     return std::nullopt;
   }
   std::vector<jbyte> raw(static_cast<std::size_t>(length));

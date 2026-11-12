@@ -33,7 +33,7 @@ jobs:
       - name: Check the formatting
         run: |
           clang-format --version
-          git ls-files -z -- '*.h' '*.cpp' '*.h.in' | xargs -0 clang-format --dry-run --Werror
+          git ls-files -z -- '*.h' '*.cpp' '*.mm' '*.h.in' | xargs -0 clang-format --dry-run --Werror
 
   tidy:
     runs-on: ubuntu-24.04
@@ -239,8 +239,8 @@ jobs:
           python3 tools/capabilities.py verify "$binary" ios arm64 12.0
           "$RUNNER_TEMP/build-tools/bin/pip" install 'lief==1.0.0'
           "$RUNNER_TEMP/build-tools/bin/python" tools/verify_packaging.py "$binary" ios arm64
-      - name: Configure the development build
-        run: cmake --preset ios-dev
+      - name: Configure the development build with the private storage plugin consumer
+        run: cmake --preset ios-dev -DRASP_PLUGINS=tests/plugins/private_storage
       - name: Build the development build
         run: cmake --build --preset ios-dev --parallel
       - name: Install clang-tidy
@@ -260,7 +260,7 @@ jobs:
       - name: Check the iOS code
         run: |
           clang-tidy --version
-          run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.cpp$"
+          run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.(cpp|mm)$"
       - name: Check the development build writes logs
         run: nm -u build/ios-dev/ios/RaspRuntime.framework/RaspRuntime | grep -q _os_log
 

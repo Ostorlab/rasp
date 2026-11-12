@@ -13,11 +13,13 @@
 
 #ifdef __ANDROID__
 #include <android/api-level.h>
+#include <expected>
 #include <unistd.h>
 
 #include "apk/archive.h"
 #include "apk/location.h"
 #include "util/jni.h"
+#include "util/package_identity.h"
 #include "util/package_manager.h"
 #endif
 
@@ -25,6 +27,7 @@
 #include "rasp/observation.h"
 #include "rasp/util/read_file.h"
 #include "util/app_storage.h"
+#include "util/signing_certificates.h"
 
 namespace rasp::android::checks {
 
@@ -47,6 +50,12 @@ constexpr std::string_view kCodePathSource = "dladdr";
 
 /// The signal of the signer probes.
 constexpr std::string_view kSignerSignal = "sig.cert_sha256";
+/// Versioned actual Application package identity, distinct from the legacy process-derived scalar.
+constexpr std::string_view kApplicationPackageSignal = "id.package.v1";
+/// Complete concurrent current signer fingerprints, never history or certificate-chain entries.
+constexpr std::string_view kCurrentSignersSignal = "sig.current_sha256.v1";
+/// Public oldest-to-current signing history, separate from concurrent signers.
+constexpr std::string_view kSignerHistorySignal = "sig.history_sha256.v1";
 /// The source that reads the signer from the APK Signing Block of the APK the app runs from.
 constexpr std::string_view kApkSigningBlockSource = "apk_signing_block";
 /// The source that reads the signer from the package manager, through the app's own Context.
@@ -111,11 +120,37 @@ Observation observe_package_manager_signer(const std::optional<std::vector<std::
   return signer_digest(kPackageManagerSource, certificate);
 }
 
+Observation observe_current_signers(std::string_view source, const std::optional<util::Certificates>& certificates) {
+  const auto digests = util::certificate_digests(certificates);
+  return digests.has_value() ? observed(kCurrentSignersSignal, source, *digests)
+                             : failed(kCurrentSignersSignal, source);
+}
+
+Observation observe_signing_history(const std::optional<util::Certificates>& certificates) {
+  const auto digests = util::certificate_digests(certificates, true);
+  return digests.has_value() ? observed(kSignerHistorySignal, kPackageManagerSource, *digests)
+                             : failed(kSignerHistorySignal, kPackageManagerSource);
+}
+
 std::vector<Observation> identity() {
 #ifdef __ANDROID__
   const std::optional<std::string> code_path = apk::self_library_path();
   const std::optional<std::string> apk_path = apk::self_apk_path();
   const int api_level = android_get_device_api_level();
+  const auto package_identity =
+      api_level >= 31 ? util::read_package_identity(util::attached_env()) : util::PackageIdentity{};
+  const auto current = apk_path.has_value() && api_level > 0
+                           ? apk::read_signing_certificates(*apk_path, static_cast<std::uint32_t>(api_level))
+                           : std::unexpected(apk::SignerReadError::kError);
+  const bool supported = api_level >= 31;
+  Observation application_package = failed(kApplicationPackageSignal, "application_context");
+  if (!supported && api_level > 0) {
+    application_package = unsupported(kApplicationPackageSignal, "application_context");
+  } else if (package_identity.package_name.has_value()) {
+    application_package = observed(kApplicationPackageSignal, "application_context", *package_identity.package_name);
+  }
+  const bool native_unsupported =
+      (!supported && api_level > 0) || (!current.has_value() && current.error() == apk::SignerReadError::kUnsupported);
   return {
       observe_package(kCmdlinePath),
       observe_uid(static_cast<std::int64_t>(getuid())),
@@ -124,12 +159,27 @@ std::vector<Observation> identity() {
                          ? apk::read_signing_certificate(*apk_path, static_cast<std::uint32_t>(api_level))
                          : std::nullopt),
       observe_package_manager_signer(util::read_package_manager_certificate(util::attached_env())),
+      application_package,
+      native_unsupported ? unsupported(kCurrentSignersSignal, kApkSigningBlockSource)
+                         : observe_current_signers(kApkSigningBlockSource,
+                                                   current.has_value() ? std::optional(*current) : std::nullopt),
+      !supported && api_level > 0 ? unsupported(kCurrentSignersSignal, kPackageManagerSource)
+                                  : observe_current_signers(kPackageManagerSource, package_identity.current),
+      (!supported && api_level > 0) || package_identity.history_unsupported
+          ? unsupported(kSignerHistorySignal, kPackageManagerSource)
+          : observe_signing_history(package_identity.history),
   };
 #else
   return {
-      unsupported(kPackageSignal, kPackageSource),       unsupported(kUidSignal, kUidSource),
-      unsupported(kCodePathSignal, kCodePathSource),     unsupported(kSignerSignal, kApkSigningBlockSource),
+      unsupported(kPackageSignal, kPackageSource),
+      unsupported(kUidSignal, kUidSource),
+      unsupported(kCodePathSignal, kCodePathSource),
+      unsupported(kSignerSignal, kApkSigningBlockSource),
       unsupported(kSignerSignal, kPackageManagerSource),
+      unsupported(kApplicationPackageSignal, "application_context"),
+      unsupported(kCurrentSignersSignal, kApkSigningBlockSource),
+      unsupported(kCurrentSignersSignal, kPackageManagerSource),
+      unsupported(kSignerHistorySignal, kPackageManagerSource),
   };
 #endif
 }

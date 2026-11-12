@@ -4,11 +4,14 @@
 #pragma once
 
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "util/signing_certificates.h"
 
 namespace rasp::android::apk {
 
@@ -33,8 +36,8 @@ namespace rasp::android::apk {
 /// read only on Android 13 and up, where the platform honors it, then the v3 entry, then the v2 entry. A v3 or v3.1
 /// signer applies to a range of API levels, and the first one whose range holds `api_level` is used; v2's first signer
 /// applies to every level. This returns that signer's first certificate, the X.509 certificate in DER whose digest
-/// `apksigner verify --print-certs` prints. It doesn't check the signature: Android checked it when the app was
-/// installed.
+/// `apksigner verify --print-certs` prints. It does not verify signatures or current file integrity: installation-time
+/// platform verification does not establish trust in bytes read now from an attacker-controlled device.
 ///
 /// @param apk The bytes of the APK.
 /// @param api_level The API level of the device.
@@ -52,5 +55,28 @@ namespace rasp::android::apk {
 /// @return The certificate's DER bytes. Nothing when the file can't be mapped, or find_signing_certificate finds none.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_signing_certificate(const std::string& apk_path,
                                                                                 std::uint32_t api_level);
+
+/// Why a complete signer set could not be collected; absence is never an empty successful set.
+enum class SignerReadError : std::uint8_t {
+  /// Missing, malformed, inconsistent or over-limit input.
+  kError,
+  /// Scheme selection requires unsupported developer-release metadata or a device below API31.
+  kUnsupported,
+};
+
+/// Complete current signer leaves for the selected platform scheme, without cryptographic verification.
+using SignerCertificates = std::expected<util::Certificates, SignerReadError>;
+
+/// Parses one complete current set, keeping certificate-chain entries distinct from concurrent signers.
+/// @param apk Untrusted bounded APK bytes; ZIP64, multi-disk and blocks over 1MiB are refused.
+/// @param api_level Device API, minimum 31. v3.1 is considered only from API33.
+/// @return v2 leaves (at most ten), or exactly one applicable v3/v3.1 leaf. Never combines schemes or emits history.
+[[nodiscard]] SignerCertificates find_signing_certificates(std::span<const std::uint8_t> apk, std::uint32_t api_level);
+
+/// Reads only the bounded ZIP tail and signing block, avoiding a mapping of the untrusted archive.
+/// @param apk_path APK path, up to 2GiB minus one byte; regular files only.
+/// @param api_level Device API, minimum 31.
+/// @return Complete observed current certificates, or explicit error/unsupported; no signature or lineage proof.
+[[nodiscard]] SignerCertificates read_signing_certificates(const std::string& apk_path, std::uint32_t api_level);
 
 }  // namespace rasp::android::apk

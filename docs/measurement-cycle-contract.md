@@ -102,11 +102,24 @@ data, not a GraphQL input. BE03 accepts only optional `sessionId`, `runId`,
 fields. Sequence, duration, catalogue/config and health require an explicit
 additive backend schema and transport rollout before transmission. Network/DNS
 plugin implementation is coordinated separately; native availability may precede
-it. Legacy metadata remains unavailable. The compiled catalogue includes the inline-hook observations (RT06) and accessibility, input-method and notification service outputs (RT08). It preserves schema 1/revision 4, 32 Android/26 iOS rows,
-and catalogue ID `eaac77e3bdbf7f21af2abfb79a7868ccf516e5c3f758d25c90127550e3e7db7c`.
+it. Legacy metadata remains unavailable. The compiled catalogue includes inline-hook observations, service
+metadata, signer current sets and rotation history, window observations, and root/context observations.
+Canonical schema 1, revision 7 declares 52 Android and 26 iOS identities, with catalogue ID
+`c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`.
+Identity has nine expected outputs; malformed signer sources remain present error observations. Real-JVM caller
+and attached-worker fixtures exercise the actual identity dispatcher through this immutable cycle handoff.
 Cycle metadata adds no observation rows or catalogue revision. Every later builtin
 source change still requires an exact catalogue update.
 
 Real device execution, suspension, storage failures, iOS toolchain/obfuscation and
 supported compiler CI remain necessary validation; host execution is no device
 health evidence. Session/run generation does not depend on installation storage.
+
+
+The combined runtime preserves RT10's ordinary merge of the exact approved RT09 parent. Canonical schema1/revision7 declares **52 Android/26 iOS**
+identities, catalogue `c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`. The ten opt-in window outputs consume one bounded FIFO drain per selected actual
+measurement cycle through the same production builtin dispatcher; disabled selection does not drain. Legacy and
+additive callbacks retain the same immutable snapshot, including interval/loss metadata and observations, across
+later drains and Context destruction. Real-JVM caller and attached-native-worker tests exercise that handoff.
+`complete` means all expected metadata/count rows are present, including observer error or unknown coverage; it
+does not certify an active observer, uninterrupted ownership, delivered touches or overlay absence.

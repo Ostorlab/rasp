@@ -1,7 +1,7 @@
 /// The Android app-identity self-check: whether the app still has the identity it shipped with, which a repackaged or
 /// cloned build changes. It reports the running package name, the process's own user id, the path the runtime's code
 /// loads from, and the certificate of the key that signed the APK read two ways; the server compares them against the
-/// values the packer recorded and the customer registered, and decides.
+/// trusted final signing identities, when supplied by separate backend integration. These are untrusted observations.
 
 #pragma once
 
@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "util/signing_certificates.h"
 
 namespace rasp::android::checks {
 
@@ -21,8 +22,9 @@ namespace rasp::android::checks {
 /// the app runs from, read two ways, from its APK Signing Block natively and from the package manager through JNI.
 /// Anywhere else every observation is unsupported instead, so the server still sees that the check ran.
 ///
-/// @return Five observations: id.package through proc_cmdline, id.uid through getuid, id.code_path through dladdr,
-/// then sig.cert_sha256 through apk_signing_block and through package_manager.
+/// @return The five legacy scalar observations (package, uid, code path and two first-signer digests), followed by
+/// id.package.v1/application_context, sig.current_sha256.v1 from each signer source, and ordered
+/// sig.history_sha256.v1/package_manager.
 [[nodiscard]] std::vector<Observation> identity();
 
 /// Reports the running package name, read from the command line at `cmdline_path`.
@@ -98,5 +100,17 @@ namespace rasp::android::checks {
 /// @return One sig.cert_sha256 observation through package_manager: the lowercase hex SHA-256 of the certificate. It
 /// has an error status when `certificate` is nothing or the digest can't be computed.
 [[nodiscard]] Observation observe_package_manager_signer(const std::optional<std::vector<std::uint8_t>>& certificate);
+
+/// Reports a complete sorted unique current signer digest set; legacy scalar outputs remain separate.
+/// @param source Independent collection source, apk_signing_block or package_manager.
+/// @param certificates Complete bounded current signer leaves, or unavailable.
+/// @return sig.current_sha256.v1 string list, or error without a value; never OK empty.
+[[nodiscard]] Observation observe_current_signers(std::string_view source,
+                                                  const std::optional<util::Certificates>& certificates);
+
+/// Reports rotation history in the public oldest-to-current order, never as concurrent signers.
+/// @param certificates Complete bounded public SigningInfo history including current, or unavailable.
+/// @return sig.history_sha256.v1/package_manager string list, or error without a value.
+[[nodiscard]] Observation observe_signing_history(const std::optional<util::Certificates>& certificates);
 
 }  // namespace rasp::android::checks

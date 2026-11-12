@@ -407,3 +407,30 @@ def testPack_whenInputOversized_rejectsBeforeFormatProbeReadsZip(
         packer.pack(
             app=app, output=tmp_path / "out.apk", config=_CONFIG, artifacts=_artifacts()
         )
+
+
+@pytest.mark.parametrize("selected", [True, False])
+def testPack_whenRootPackagesSelected_addsOnlyExactOptInQueries(
+    tmp_path: pathlib.Path, selected: bool
+) -> None:
+    app = tmp_path / "app.apk"
+    output = tmp_path / "protected.apk"
+    _make_apk(app, manifest_fixture="manifest_with_queries.bin")
+    config = runtime_config.RuntimeConfig(
+        build_id=_CONFIG.build_id,
+        checks=("identity", "root_packages") if selected else ("identity",),
+    )
+    packer.pack(
+        app=app,
+        output=output,
+        config=config,
+        artifacts=_artifacts(),
+        splitter=_recorded_split(),
+    )
+    with zipfile.ZipFile(output) as archive:
+        manifest = archive.read("AndroidManifest.xml")
+    expected: tuple[str, ...] = ("org.example.partner", "com.topjohnwu.magisk")
+    if selected:
+        expected += ("me.weishu.kernelsu", "me.bmax.apatch")
+    assert axml.read_package_queries(manifest) == expected
+    assert b"QUERY_ALL_PACKAGES" not in manifest

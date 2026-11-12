@@ -45,10 +45,10 @@ namespace rasp::android::checks {
 ///
 /// Magisk, KernelSU and APatch mount their files over the system to add `su` and their modules, and those mounts show
 /// in the app's mount table: Magisk's carry its name or its folders, and KernelSU and APatch name their mounts' source
-/// `KSU` and `APatch`. A system folder (`/`, `/system`, `/vendor`, `/sbin`, `/etc`, and the `bin` folders of
-/// `/system` and `/vendor`) is read-only on a stock device, so one mounted with the `rw` option was remounted, which
-/// takes root. The line holds the filesystem type too, so the server can tell the read-write rootfs that devices
-/// without system-as-root mount at `/`. Each read takes the table whole, up to 1 MiB, and each list holds at most its
+/// `KSU` and `APatch`. The writable-folder probe retains its historical selected mountpoints and raw lines;
+/// writable rootfs, stock namespaces, containers and overlayfs can be benign context, so a matching line does not
+/// establish root. The line holds the filesystem type too, including the read-write rootfs that devices without
+/// system-as-root can mount at `/`. Each read takes the table whole, up to 1 MiB, and each list holds at most its
 /// first 32 lines. The table is read twice, once through the libc file functions and once through libc's hookable
 /// syscall entry. Both values are retained independently; shared kernel compromise can forge agreement.
 ///
