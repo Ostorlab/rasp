@@ -39,7 +39,8 @@ expected hash for any changed policy. Packing does not add operation call sites.
 
 Signing/installing/device execution is a separate action, not a local build claim.
 Record any real iPhone/iPad startup, stale/suspend/resume and receipt-count outcomes
-separately. The fixture returns before its in-memory mutation on denial/error. Its
-explicit REPORT branch is advisory and makes no enforced-admission claim. Packing or
+separately. This fixture appends only for status OK and final ALLOW. REPORT, DENY,
+unknown actions and errors return without changing receipts. REPORT remains advisory;
+the fixture's choice not to append is not a runtime-enforced denial. Packing or
 an equality hash cannot prove adaptation or grant server authority. No capture observer
 is registered by this fixture.

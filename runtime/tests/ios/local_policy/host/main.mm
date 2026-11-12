@@ -37,7 +37,7 @@
   [self.window makeKeyAndVisible];
   return YES;
 }
-/// The actual adapted operation returns before mutating receipts on every denial/error.
+/// Append only after a successful gate returns final ALLOW.
 - (void)appendReceipt {
   struct RaspLocalGateRequestV1 request{};
   request.abi_version = 1;
@@ -46,17 +46,15 @@
   memcpy(request.expected_policy_sha256, POLICY_EXPECTED_SHA256, 65);
   struct RaspLocalGateResultV1 decision{};
   const int32_t status = rasp_local_policy_gate_v1(&request, sizeof(request), &decision, sizeof(decision));
-  if (status != RASP_LOCAL_OK || (decision.action != RASP_LOCAL_ALLOW && decision.action != RASP_LOCAL_REPORT)) {
+  if (status != RASP_LOCAL_OK || decision.action != RASP_LOCAL_ALLOW) {
     self.statusLabel.text =
-        [NSString stringWithFormat:@"Denied/unavailable before append. Receipts: %lu; status %d; reason %u",
-                                   static_cast<unsigned long>(self.receipts), status, decision.reason];
+        [NSString stringWithFormat:@"Not appended. Receipts: %lu; status %d; action %u; reason %u",
+                                   static_cast<unsigned long>(self.receipts), status, decision.action, decision.reason];
     return;
   }
   ++self.receipts;
-  self.statusLabel.text =
-      [NSString stringWithFormat:@"Receipts: %lu; %@", static_cast<unsigned long>(self.receipts),
-                                 decision.action == RASP_LOCAL_REPORT ? @"explicit report-only branch, not enforced"
-                                                                      : @"adapted local gate allowed"];
+  self.statusLabel.text = [NSString
+      stringWithFormat:@"Receipts: %lu; adapted local gate allowed", static_cast<unsigned long>(self.receipts)];
 }
 @end
 
