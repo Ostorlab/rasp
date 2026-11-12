@@ -14,12 +14,13 @@ namespace rasp::android::checks {
 
 /// Runs the network-interception checks and returns what they observed.
 ///
-/// On Android it reads the process's own network interfaces through getifaddrs and reports the tunnels among them.
-/// Anywhere else, such as on a Linux host, the observation is unsupported instead, so the server still sees that the
-/// check ran. The user-authority probe reports unsupported on a device from this path: the trust store directory is
-/// labeled system_data_file under SELinux, so it can't be listed, and the runtime's native thread has no JNIEnv or
-/// Context to reach the Java APIs that do expose user CAs (such as the `AndroidCAStore` KeyStore). A later JNI-aware
-/// path can enumerate them; observe_user_cas stays the tested listing helper for a readable directory.
+/// On Android it reads the process's own network interfaces through getifaddrs and reports the tunnels among them, and
+/// reads the aliases of the `AndroidCAStore` KeyStore through JNI and reports the user-installed authorities among
+/// them. An app can't list the user trust store's folder, which SELinux labels system_data_file, but the KeyStore is
+/// public API. To call it, the calling thread is attached to the app's Java VM the first time and stays attached, so
+/// it must be the runtime's own thread, which never ends. Any exception a call throws is cleared, and the observation
+/// then has an error status, as it has when the thread can't reach the VM. Anywhere else, such as on a Linux host,
+/// every observation is unsupported instead, so the server still sees that the check ran.
 ///
 /// @return One observation per signal and source, in this order: mitm.tunnels through getifaddrs, then mitm.user_cas
 /// through user_cacerts.
@@ -39,20 +40,19 @@ namespace rasp::android::checks {
 /// smallest when there are more. It never has an error status; `mitm` reports the error when getifaddrs itself fails.
 [[nodiscard]] Observation observe_tunnels(const std::vector<std::string>& interface_names);
 
-/// Reports the user-installed certificate authorities in the trust store directory `cacerts_dir`.
+/// Reports the user-installed certificate authorities among `aliases`, the aliases of the `AndroidCAStore` KeyStore.
 ///
 /// To decrypt traffic without certificate warnings, an interception proxy must install its root certificate where the
 /// app validates it, and on Android a certificate the user installs lands in the user trust store, apart from the
 /// system authorities the device ships with. So a user-installed authority is a signal a decrypting proxy left behind,
-/// not proof of one. Each authority is a file named after the hash of its subject; the probe reports those file names,
-/// which name the authorities without reading their bytes. On a production device that store is unreadable by an app
-/// process, so `mitm` reports mitm.user_cas as unsupported and doesn't call this probe; it exists so the listing logic
-/// stays covered by tests, which pass a readable directory.
+/// not proof of one. The KeyStore names each user authority `user:` followed by its file name in the user trust store,
+/// named after the hash of its subject, and each system one `system:` followed by its file name. The probe reports the
+/// user authorities' file names, which name them without reading their bytes. On a device `mitm` reads the aliases
+/// through JNI; a test passes them directly.
 ///
-/// @param cacerts_dir The user trust store directory to list.
-/// @return One mitm.user_cas observation through user_cacerts: every certificate file name, sorted and without
-/// duplicates, since the user decides which to trust. It has an error status when the directory can't be listed or an
-/// entry can't be read. An empty list means no authority is installed.
-[[nodiscard]] Observation observe_user_cas(std::string_view cacerts_dir);
+/// @param aliases The aliases of the `AndroidCAStore` KeyStore, with or without duplicates.
+/// @return One mitm.user_cas observation through user_cacerts: the file name of every user authority, sorted and
+/// without duplicates, since the user decides which to trust. An empty list means no authority is installed.
+[[nodiscard]] Observation observe_user_cas(const std::vector<std::string>& aliases);
 
 }  // namespace rasp::android::checks

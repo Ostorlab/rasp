@@ -52,7 +52,7 @@ class InitPluginsTest : public testing::Test {
 TEST_F(InitPluginsTest, initPlugins_whenThereIsNoPlugin_callsNothing) {
   Context context;
 
-  init_plugins({}, {.build_id = "build-7"}, context);
+  init_plugins({}, {.build_id = "build-7", .checks = {}}, context);
 
   EXPECT_TRUE(received().empty());
 }
@@ -61,7 +61,7 @@ TEST_F(InitPluginsTest, initPlugins_whenThereArePlugins_givesEachInitTheConfigAn
   const std::array<const Plugin*, 2> plugins{&kBeta, &kAlpha};
   Context context;
 
-  init_plugins(plugins, {.build_id = "build-7"}, context);
+  init_plugins(plugins, {.build_id = "build-7", .checks = {}}, context);
 
   EXPECT_EQ(received(), (Received{{"beta", "build-7", &context}, {"alpha", "build-7", &context}}));
 }

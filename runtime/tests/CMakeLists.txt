@@ -16,7 +16,7 @@ target_link_libraries(rasp_core_test PRIVATE rasp_core rasp_warnings rasp_langua
 target_compile_definitions(rasp_core_test PRIVATE RASP_EXPECTED_VERSION="${PROJECT_VERSION}")
 gtest_discover_tests(rasp_core_test)
 
-foreach(test context embedded_config heartbeat observation panic parse_config plugins/init_plugins plugins/plugin plugins/registry
+foreach(test config context embedded_config heartbeat install_id observation panic parse_config plugins/init_plugins plugins/plugin plugins/registry
     plugins/run_plugins schedule)
   cmake_path(GET test FILENAME name)
   add_executable(rasp_core_${name}_test core/${test}_test.cpp)
@@ -32,7 +32,7 @@ target_include_directories(rasp_core_panic_development_test PRIVATE ${PROJECT_SO
 target_compile_definitions(rasp_core_panic_development_test PRIVATE RASP_LOGGING_ENABLED=true)
 target_link_libraries(rasp_core_panic_development_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_core_panic_development_test)
-
+target_include_directories(rasp_core_install_id_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 list(LENGTH rasp_compiled_plugins rasp_expected_plugin_count)
 target_link_libraries(rasp_core_registry_test PRIVATE rasp_plugins)
 target_compile_definitions(rasp_core_registry_test PRIVATE RASP_EXPECTED_PLUGIN_COUNT=${rasp_expected_plugin_count})
@@ -101,7 +101,7 @@ target_link_libraries(rasp_android_integrity_test PRIVATE rasp_core rasp_tfpsacr
 gtest_discover_tests(rasp_android_integrity_test)
 
 add_executable(rasp_android_identity_test android/checks/identity_test.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp)
 target_include_directories(rasp_android_identity_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_identity_test PRIVATE rasp_core rasp_warnings rasp_language
@@ -116,6 +116,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_libraries(rasp_android_end_process_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
   gtest_discover_tests(rasp_android_end_process_test)
 endif()
+
+add_executable(rasp_android_app_storage_test android/util/app_storage_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp)
+target_include_directories(rasp_android_app_storage_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_app_storage_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_app_storage_test)
 
 add_executable(rasp_android_apk_file_test android/util/apk_file_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)

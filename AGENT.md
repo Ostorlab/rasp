@@ -27,7 +27,6 @@ uv run pytest
 
 - mypy runs in strict mode over `src` and `tests`.
 - Tests: one file per source file, at the same path under `tests/`, named `<module>_test.py`. Test functions are named `test<Action>_when<Condition>_<result>`, for example `testPack_whenOutputExists_raisesOutputExistsError`.
-- Bump a platform's number in `protection_versions.py` only when a change alters what protected apps do on that platform. It is part of every build id.
 - The packer looks for the prebuilt runtime in its package resources: `rasp_packer/ios/resources/RaspRuntime.framework`, and `rasp_packer/android/resources/stub.dex` with `rasp_packer/android/resources/lib/<abi>/librasp.so`. They come from the runtime build and are not in the repository. Without them, packing an IPA raises `InvalidRuntimeError`, and packing an APK or an AAB raises `MissingRuntimeArtifactError`. Tests use fixtures instead.
 
 ## Runtime
