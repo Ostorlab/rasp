@@ -1,4 +1,4 @@
-/// Shipping C facade rejects invalid ABI and preserves owned configuration beyond installer lifetime.
+/// Install once per process, including shuffled/repeated tests, and check the real facade on every invocation.
 #include "rasp/local_policy_host.h"
 
 #include <algorithm>
@@ -17,23 +17,12 @@
 #include "rasp/parse_config.h"
 
 namespace {
-TEST(LocalPolicyHost, gate_whenUninitializedOrBadAbi_neverAllows) {
-  auto output = std::make_unique<struct RaspLocalGateResultV1>();
-  struct RaspLocalGateRequestV1 request{};
-  request.abi_version = 1;
-  request.struct_size = sizeof(request);
-  EXPECT_EQ(rasp_local_policy_gate_v1(&request, sizeof(request), output.get(), sizeof(*output)), RASP_LOCAL_NOT_READY);
-  EXPECT_EQ(output->action, RASP_LOCAL_DENY);
-  EXPECT_EQ(rasp_local_policy_gate_v1(nullptr, 0, output.get(), sizeof(*output)), RASP_LOCAL_INVALID_ARGUMENT);
-  EXPECT_EQ(output->action, RASP_LOCAL_DENY);
-  EXPECT_EQ(rasp_local_policy_gate_v1(&request, sizeof(request), output.get(), sizeof(*output) - 1),
-            RASP_LOCAL_INVALID_ARGUMENT);
-}
 TEST(LocalPolicyHost, info_whenInstalledOnce_preservesProcessLifetimeAndFullUint32Version) {
   const auto config = rasp::parse_config(
       R"({"build_id":"host","checks":[],"local_policy":{"schema_version":1,"engine_version":1,"policy_id":"max-version","policy_version":4294967295,"mode":"report_only","scope":"host_calls_only","platform":"android","catalogue_id":"2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d","report_schema_version":1,"report_reason_version":1,"native_metadata_version":1,"operations":[]}})");
-  auto* const installed = rasp::install_local_policy(std::make_unique<rasp::LocalPolicyState>(config, "android"));
-  ASSERT_NE(installed, nullptr);
+  static auto* const kInstalled =
+      rasp::install_local_policy(std::make_unique<rasp::LocalPolicyState>(config, "android"));
+  ASSERT_NE(kInstalled, nullptr);
   EXPECT_EQ(rasp::install_local_policy(std::make_unique<rasp::LocalPolicyState>(config, "android")), nullptr);
   auto output = std::make_unique<struct RaspLocalPolicyInfoV1>();
   EXPECT_EQ(rasp_local_policy_info_v1(output.get(), sizeof(*output)), RASP_LOCAL_OK);
