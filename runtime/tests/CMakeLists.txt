@@ -109,6 +109,15 @@ target_link_libraries(rasp_android_identity_test PRIVATE rasp_core rasp_tfpsacry
   GTest::gtest_main)
 gtest_discover_tests(rasp_android_identity_test)
 
+# end_process makes the Linux exit_group system call directly, so its test runs only on a Linux host.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(rasp_android_end_process_test android/panic/end_process_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/panic/end_process.cpp)
+  target_include_directories(rasp_android_end_process_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+  target_link_libraries(rasp_android_end_process_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_android_end_process_test)
+endif()
+
 add_executable(rasp_android_app_storage_test android/util/app_storage_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp)
 target_include_directories(rasp_android_app_storage_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
