@@ -281,9 +281,6 @@ std::int32_t evaluate_publication(const CycleSnapshot& snapshot, const LocalPoli
   if (output.cycle_duration_ns > static_cast<std::uint64_t>(operation.max_cycle_duration_ms) * 1000000) {
     return candidate(output, RASP_LOCAL_SLOW_CYCLE, report_only);
   }
-  if (operation.rules.size() > 8) {
-    return fail(output, GateFailure{.status = RASP_LOCAL_INVALID_POLICY, .reason = RASP_LOCAL_POLICY_INVALID});
-  }
   output.reason = row_reason;
   output.candidate_action = output.reason == RASP_LOCAL_ALL_ABSENT ? RASP_LOCAL_ALLOW : RASP_LOCAL_DENY;
   output.action = report_only ? RASP_LOCAL_REPORT : output.candidate_action;

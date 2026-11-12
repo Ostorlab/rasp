@@ -270,16 +270,20 @@ TEST(LocalPolicy, gate_whenSlowCycleAtBoundary_checksNanosecondsWithoutFlooring)
   }
 }
 TEST(LocalPolicy, gate_whenReportBindingChanges_doesNotInheritSemantics) {
-  const auto config = configuration();
-  const auto snapshot = std::make_shared<rasp::CycleSnapshot>(*cycle(config, observations(0)));
-  snapshot->local_decisions.schema_version = 2;
-  rasp::LocalPolicyState state(config, "android", clock_tick);
-  state.begin_cycle();
-  state.finish_cycle(snapshot);
-  auto output = std::make_unique<struct RaspLocalGateResultV1>();
-  EXPECT_EQ(state.gate(request(config), *output), RASP_LOCAL_OK);
-  EXPECT_EQ(output->action, RASP_LOCAL_DENY);
-  EXPECT_EQ(output->reason, RASP_LOCAL_BINDING_MISMATCH);
+  for (const auto* const mode : {"gate", "report_only"}) {
+    const auto config = configuration(mode);
+    const auto snapshot = std::make_shared<rasp::CycleSnapshot>(*cycle(config, observations(0)));
+    snapshot->local_decisions.schema_version = 2;
+    rasp::LocalPolicyState state(config, "android", clock_tick);
+    state.begin_cycle();
+    state.finish_cycle(snapshot);
+    auto output = std::make_unique<struct RaspLocalGateResultV1>();
+    EXPECT_EQ(state.gate(request(config), *output), RASP_LOCAL_OK);
+    EXPECT_EQ(output->action, config.local_policy.state == rasp::LocalPolicyStateKind::kReportOnly ? RASP_LOCAL_REPORT
+                                                                                                   : RASP_LOCAL_DENY);
+    EXPECT_EQ(output->candidate_action, RASP_LOCAL_DENY);
+    EXPECT_EQ(output->reason, RASP_LOCAL_BINDING_MISMATCH);
+  }
 }
 TEST(LocalPolicy, selectors_whenComparedToActualRegistry_excludeEveryUnknownOrContextPredicate) {
   ASSERT_EQ(rasp::policy_internal::kSelectors.size(), 20U);

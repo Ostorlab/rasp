@@ -1,6 +1,8 @@
 # Embedded local policy and adapted host operations
 
-Local policy is optional and works offline. Without `local_policy`, the packer
+**Embedded local policy** is an optional, offline, bounded set of rules embedded
+in a build. It lets the host gate a named operation on the runtime's own typed
+measurements immediately before that operation. Without `local_policy`, the packer
 writes the same legacy config bytes and the runtime remains report-only. Check
 selection, required identity checks and capture opt-in keep their existing behavior.
 
@@ -14,12 +16,13 @@ native cycle. It does not accept a caller report, score, time, policy replacemen
 or reusable permit. Every result remains unverified client evidence. A matching
 policy/config hash establishes equality, not authenticity, a trusted baseline,
 device health, malware classification or server authorization. An attacker who
-controls the app can patch its gate and caller. Backend permissions remain
-backend-owned. Signed remote policy and hardware-key operations are separate work.
+controls the app can patch its gate and caller. The backend authorizes server
+operations; this gate cannot grant that authority. Signed remote policy and hardware-key operations are separate work.
 
 ## Configure explicitly
 
-The platform examples are [Android](fixtures/local-policy-android-v1.json) and
+Run the commands below from the repository root with a packer installation containing
+the matching native artifacts. The platform examples are [Android](fixtures/local-policy-android-v1.json) and
 [iOS](fixtures/local-policy-ios-v1.json). Each selects a versioned debugger predicate
 for the harmless `append_demo_receipt` host operation. They are examples, not a
 default policy or recommendation to reject authorized debugging.
@@ -29,8 +32,16 @@ rasp pack demo.apk --platform android --build-id demo-1 --checks debugger \
   --local-policy docs/fixtures/local-policy-android-v1.json --output protected.apk
 ```
 
+For an unprotected iOS IPA, the matching CLI form is:
+
+```sh
+rasp pack demo.ipa --platform ios --build-id demo-1 --checks debugger \
+  --local-policy docs/fixtures/local-policy-ios-v1.json --output protected.ipa
+```
+
 The output is unsigned. Host adaptation must exist in the source that produced
-`demo.apk`; injection does not add business-operation call sites.
+the input app; injection does not add business-operation call sites. An app that
+already loads or embeds the runtime is rejected as already protected.
 
 ```python
 import pathlib
@@ -87,18 +98,33 @@ For a successful call, action is DENY=0, REPORT=1 or ALLOW=2. Zero/error output 
 REPORT is an explicit advisory path and never means clean, allowed by enforcement,
 or safe. An application that chooses report-only must handle that branch explicitly.
 
+Caller/request failures and invalid or unsupported configured policy pins fail closed
+before report-only selection. An expected-policy-hash mismatch is also strict in both
+modes: status OK, final DENY, candidate DENY, reason HASH_MISMATCH. In contrast, a
+completed publication whose report schema/reason/native metadata version, catalogue,
+platform or evidence-trust binding is incompatible is an evidence limitation: it
+returns OK with final DENY in gate mode or REPORT in valid report-only mode, candidate
+DENY and reason BINDING_MISMATCH. Pack-time native support bindings are validated
+separately and cannot be converted into advisory runtime results.
+
+In this table, candidate means the numeric candidate action (DENY or ALLOW), not a
+second authorization. The separate primary reason describes missing publication,
+binding, coverage, freshness or clock limitations. Call status OK alone never admits.
+
 | Condition | Gate mode | Valid report-only mode |
 |---|---|---|
-| All selected typed predicates absent, coherent complete cycle, valid age | ALLOW | REPORT with candidate ALLOW |
-| Any selected supported indicator present | DENY; reported indicator only | REPORT with candidate DENY |
-| Missing/duplicate/malformed/disabled/unsupported/error/timeout selected input | DENY; exact row reason/status retained | REPORT with unavailable candidate |
-| Empty gate operations/rules or unsupported mandatory selector/action | Packing error; runtime invalid/unsupported policy | Explicit invalid policy is still an error |
-| Initialization has not completed | NOT_READY, DENY without waiting | NOT_READY while policy itself is unknown |
-| Valid policy but no completed cycle | NOT_READY, DENY | REPORT with no-publication candidate |
-| Unknown operation | DENY | REPORT with no-selection/unknown-operation candidate |
-| Binding/version/hash mismatch | DENY; no fallback to another policy | Expected hash mismatch also DENYs |
-| Lost/incomplete coverage, stale or slow cycle, invalid clock | DENY | REPORT with the actual limitation |
-| Store contention or more than eight concurrent evaluations | BUSY, DENY | BUSY, DENY |
+| All selected typed predicates absent, coherent complete cycle, valid age | OK, ALLOW; candidate ALLOW | OK, REPORT; candidate ALLOW |
+| Any selected supported indicator present | OK, DENY; candidate DENY | OK, REPORT; candidate DENY |
+| Missing/duplicate/malformed/disabled/unsupported/error/timeout selected input | OK, DENY; candidate DENY; exact row diagnostics retained | OK, REPORT; candidate DENY; exact row diagnostics retained |
+| Invalid/unsupported configured policy, empty gate operations/rules or unsupported mandatory selector/action | Packing error; runtime non-OK, DENY | Invalid explicit policy remains non-OK, DENY |
+| Bad request/ABI or internal API failure | Non-OK, DENY; candidate DENY | Non-OK, DENY; candidate DENY |
+| Initialization has not completed | NOT_READY, DENY; candidate DENY | NOT_READY, DENY while policy itself is unknown |
+| Valid policy but no completed cycle | NOT_READY, DENY; candidate DENY; reason NO_PUBLICATION | OK, REPORT; candidate DENY; reason NO_PUBLICATION |
+| Unknown operation | OK, DENY; candidate DENY; reason OPERATION_UNKNOWN | OK, REPORT; candidate DENY; reason NO_SELECTION or OPERATION_UNKNOWN |
+| Expected policy hash mismatch | OK, DENY; candidate DENY; reason HASH_MISMATCH | OK, DENY; candidate DENY; reason HASH_MISMATCH |
+| Publication report-binding mismatch | OK, DENY; candidate DENY; reason BINDING_MISMATCH | OK, REPORT; candidate DENY; reason BINDING_MISMATCH |
+| Lost/incomplete coverage, stale or slow cycle, invalid clock | OK, DENY; candidate DENY; actual limitation reason | OK, REPORT; candidate DENY; actual limitation reason |
+| Store contention or more than eight concurrent evaluations | BUSY, DENY; candidate DENY | BUSY, DENY; candidate DENY |
 
 ALLOW requires every selected exact row to have OK collection status, an evaluated
 predicate, limited confidence, the expected rule version and benign/indicator_absent.
@@ -182,7 +208,10 @@ action before its adapted operation. Info reports config and support, never perm
 Android Java/Kotlin callers use RuntimeBridge.localPolicyInfo() and
 RuntimeBridge.gateLocalOperation(operation, expectedPolicySha256). Results and detail
 arrays are immutable owned copies. Null/linkage/JNI failure is unavailable, never
-ALLOW. The actual compile-only jar comes from `runtime/android/stub/build.sh`:
+ALLOW. Use `decision != null && decision.allows()` for status OK plus final ALLOW;
+REPORT and candidate ALLOW never satisfy this accessor. It reads the owned historical
+decision and does not revalidate freshness; call the gate again at actual execution.
+The actual compile-only jar comes from `runtime/android/stub/build.sh`:
 use it as compileOnly, and do not put a duplicate RuntimeBridge class in the host APK.
 The actual packed stub provides that class. Source/header copies are staged with
 native resources; API jar and stub.dex must come from the matching source build.
