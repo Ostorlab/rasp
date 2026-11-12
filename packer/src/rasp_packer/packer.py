@@ -5,6 +5,7 @@ import dataclasses
 import pathlib
 import re
 
+from rasp_packer import archive_safety
 from rasp_packer import checks as check_groups
 from rasp_packer import errors
 from rasp_packer import identity
@@ -77,6 +78,7 @@ def pack(
     Raises:
         InvalidBuildIdError: The build id is empty or has control characters.
         OutputExistsError: `output` already exists.
+        DangerousAppError: The app archive holds an entry that escapes its root, or a symlink.
         InvalidAppError: The app file cannot be read.
         Error: The app cannot be packed; see the platform's packer.
     """
@@ -84,6 +86,10 @@ def pack(
     resolved_checks = check_groups.resolve_checks(platform, checks)
     if output.exists() is True:
         raise errors.OutputExistsError(f"{output} already exists")
+    if archive_safety.is_dangerous(app) is True:
+        raise errors.DangerousAppError(
+            f"{app} holds an entry that escapes the archive root or is a symbolic link"
+        )
     config = runtime_config.RuntimeConfig(
         build_id=build_id, checks=resolved_checks.checks
     )
