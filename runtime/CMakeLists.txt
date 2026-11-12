@@ -34,6 +34,7 @@ add_library(rasp_language INTERFACE)
 target_compile_options(rasp_language INTERFACE -fno-exceptions -fno-rtti)
 
 option(RASP_BUILD_TESTS "Build the tests that run on a development machine" OFF)
+option(RASP_BUILD_KEY_COMPANION "Build the separately linked opt-in scoped key companion" OFF)
 option(RASP_LOGGING "Write development logs" OFF)
 set(RASP_PLUGINS "" CACHE STRING
   "The directories of the plugins to compile into the runtime, in order; a relative one is relative to runtime/")
@@ -74,6 +75,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   add_subdirectory(ios)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
   add_subdirectory(android)
+endif()
+
+if(RASP_BUILD_TESTS OR RASP_BUILD_KEY_COMPANION)
+  add_subdirectory(companion)
 endif()
 
 if(RASP_BUILD_TESTS)
