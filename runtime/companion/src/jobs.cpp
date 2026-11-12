@@ -327,6 +327,39 @@ std::uint32_t Service::describe(Job& job) {
              ? RASP_SK_OP_OK
              : RASP_SK_OP_PLATFORM_ERROR;
 }
+std::uint32_t Service::prepare_auth(Job& job) {
+  auto& request = std::span{requests_}[job.request];
+  if (!refresh_clock()) {
+    return RASP_SK_OP_BUSY;
+  }
+  {
+    const std::scoped_lock lock(mutex_);
+    std::uint64_t now = 0;
+    const auto status = sample(now) ? eligible(request, now) : RASP_SK_OP_CLOCK_UNAVAILABLE;
+    if (status != RASP_SK_OP_OK) {
+      return status;
+    }
+  }
+  auto& decision = job_gate(job);
+  const bool allowed = gate(request, decision);
+  const bool refreshed = refresh_clock();
+  const std::scoped_lock lock(mutex_);
+  request.result.gate = decision;
+  request.result.gate_present = 1;
+  std::uint64_t now = 0;
+  if (!refreshed) {
+    return RASP_SK_OP_BUSY;
+  }
+  const auto status = sample(now) ? eligible(request, now) : RASP_SK_OP_CLOCK_UNAVAILABLE;
+  if (status != RASP_SK_OP_OK) {
+    return status;
+  }
+  if (!allowed) {
+    return RASP_SK_OP_GATE_REJECTED;
+  }
+  job.auth_pending = true;
+  return RASP_SK_OP_OK;
+}
 std::uint32_t Service::sign(Job& job) {
   auto& request = std::span{requests_}[job.request];
   if (!job.authenticated) {
@@ -338,16 +371,9 @@ std::uint32_t Service::sign(Job& job) {
       if (request.input.input.sign.interaction == RASP_SK_FORBID) {
         return RASP_SK_OP_AUTH_REQUIRED;
       }
-      auto& decision = job_gate(job);
-      const bool allowed = gate(request, decision);
-      {
-        const std::scoped_lock lock(mutex_);
-        request.result.gate = decision;
-        request.result.gate_present = 1;
-        if (!allowed) {
-          return RASP_SK_OP_GATE_REJECTED;
-        }
-        job.auth_pending = true;
+      const auto checked = prepare_auth(job);
+      if (checked != RASP_SK_OP_OK) {
+        return checked;
       }
       const auto auth = outcome(platform_->authenticate(job.token, job.reference, context(job)));
       if (auth != RASP_SK_OP_OK) {
@@ -624,14 +650,14 @@ void Service::auth(const RaspScopedKeyTokenV1& value, std::uint32_t status) {
   post(posts);
 }
 void run_job(const RaspScopedKeyTokenV1& job) {
-  EntryLease entry;
+  EntryLease entry(EntryAccess::kWorkerWait);
   Service* owner = entry.get();
   if (owner != nullptr) {
     owner->run(job, entry);
   }
 }
 void authenticated(const RaspScopedKeyTokenV1& job, std::uint32_t status) {
-  EntryLease const entry;
+  EntryLease const entry(EntryAccess::kWorkerWait);
   Service* owner = entry.get();
   if (owner != nullptr) {
     owner->auth(job, status);

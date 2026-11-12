@@ -2,8 +2,10 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <future>
 #include <gtest/gtest.h>
 #include <limits>
 #include <memory>
@@ -12,6 +14,7 @@
 #include <vector>
 
 #include "encoding.h"
+#include "entry.h"
 #include "platform.h"
 #include "rasp/local_policy_host.h"
 #include "rasp/scoped_key.h"
@@ -410,8 +413,17 @@ TEST_F(ScopedKeys, provider_whenTwoPhysicalSignsHang_closeRetainsExclusiveOwnerA
   const auto second_key = create();
   std::atomic<std::size_t> entered{0};
   std::atomic<bool> release{false};
+  std::promise<void> first_entered;
+  std::promise<void> second_entered;
+  const auto first_signal = first_entered.get_future();
+  const auto second_signal = second_entered.get_future();
   state().provider.state().during_sign = [&] {
-    entered.fetch_add(1);
+    const auto order = entered.fetch_add(1);
+    if (order == 0) {
+      first_entered.set_value();
+    } else if (order == 1) {
+      second_entered.set_value();
+    }
     while (!release.load()) {
       std::this_thread::yield();
     }
@@ -425,9 +437,14 @@ TEST_F(ScopedKeys, provider_whenTwoPhysicalSignsHang_closeRetainsExclusiveOwnerA
   static_cast<void>(first_request);
   static_cast<void>(second_request);
   std::thread first([&] { state().provider.step(); });
+  const auto first_status = first_signal.wait_for(std::chrono::seconds(2));
   std::thread second([&] { state().provider.step(); });
-  while (entered.load() != 2) {
-    std::this_thread::yield();
+  const auto second_status = second_signal.wait_for(std::chrono::seconds(2));
+  if (first_status != std::future_status::ready || second_status != std::future_status::ready) {
+    release.store(true);
+    first.join();
+    second.join();
+    FAIL() << "fixture could not enter both physical primitives";
   }
   const auto closing = control(RASP_SK_CLOSE_CLIENT);
   EXPECT_EQ(closing.outcome, RASP_SK_DRAINING);
@@ -882,5 +899,141 @@ TEST_F(ScopedKeys, clock_whenRegressionOrLeaseOverflow_latchesAllUsesUntilReopen
     static_cast<void>(control(RASP_SK_CLOSE_CLIENT));
     state().provider.drain();
     open();
+  }
+}
+
+TEST_F(ScopedKeys, entry_whenRealQueuedJobArrivesDuringRegistryWriter_workerEventuallyRunsExactlyOnce) {
+  request(RASP_SK_CREATE);
+  const auto admission = admit();
+  ASSERT_EQ(state().provider.state().queue.size(), 1U);
+  const auto job = state().provider.state().queue.front();
+  state().provider.state().queue.pop_front();
+  std::future<void> worker;
+  {
+    rasp::keys::EntryLease writer;
+    ASSERT_TRUE(writer.try_exclusive());
+    worker = std::async(std::launch::async, [job] { rasp::keys::run_job(job); });
+    EXPECT_EQ(worker.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
+    EXPECT_EQ(state().provider.state().generates, 0U);
+  }
+  worker.get();
+  EXPECT_EQ(state().provider.state().generates, 1U);
+  take(admission.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_COMPLETED);
+  EXPECT_EQ(state().result->completion.operation_status, RASP_SK_OP_OK);
+  rasp::keys::run_job(job);
+  EXPECT_EQ(state().provider.state().generates, 1U);
+  fixture::Provider replacement;
+  EXPECT_FALSE(rasp::keys::attach_platform(replacement));
+  EXPECT_FALSE(rasp::keys::detach_platform(state().provider));
+}
+TEST_F(ScopedKeys, entry_whenRealAuthAckArrivesDuringRegistryWriter_workerEventuallyAcknowledgesOnce) {
+  reopen(true);
+  const auto key = create();
+  request(RASP_SK_SIGN);
+  state().input->input.sign.key = key.key_handle;
+  const auto admission = admit();
+  state().provider.drain();
+  ASSERT_EQ(state().provider.state().auth_jobs.size(), 1U);
+  const auto job = state().provider.state().auth_jobs.front();
+  std::future<void> worker;
+  {
+    rasp::keys::EntryLease writer;
+    ASSERT_TRUE(writer.try_exclusive());
+    worker = std::async(std::launch::async, [job] { rasp::keys::authenticated(job, RASP_SK_OP_OK); });
+    EXPECT_EQ(worker.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
+  }
+  worker.get();
+  state().provider.drain();
+  take(admission.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_COMPLETED);
+  EXPECT_EQ(state().result->completion.operation_status, RASP_SK_OP_OK);
+  EXPECT_EQ(state().provider.state().signs, 1U);
+  rasp::keys::authenticated(job, RASP_SK_OP_CANCELLED);
+  rasp::keys::authenticated(job, RASP_SK_OP_OK);
+  state().provider.drain();
+  EXPECT_EQ(state().provider.state().signs, 1U);
+  request(RASP_SK_SIGN);
+  state().input->input.sign.key = key.key_handle;
+  const auto next = admit();
+  state().provider.drain();
+  const auto next_job = state().provider.state().auth_jobs.back();
+  fixture::Provider replacement;
+  auto next_worker = std::async(std::launch::async, [next_job] { rasp::keys::authenticated(next_job, RASP_SK_OP_OK); });
+  for (std::size_t attempt = 0; attempt < 64; ++attempt) {
+    EXPECT_FALSE(rasp::keys::attach_platform(replacement));
+  }
+  next_worker.get();
+  state().provider.drain();
+  take(next.request);
+  EXPECT_EQ(state().result->completion.operation_status, RASP_SK_OP_OK);
+  EXPECT_EQ(state().provider.state().signs, 2U);
+}
+TEST_F(ScopedKeys, entry_whenRealDeliveryAckArrivesDuringRegistryWriter_releasesWithoutBlockingUiOrAnotherAck) {
+  const auto key = create();
+  for (std::size_t index = 0; index < 8; ++index) {
+    request(RASP_SK_DESCRIBE);
+    state().input->input.key_handle = key.key_handle;
+    const auto admission = admit();
+    state().provider.drain();
+    ASSERT_TRUE(rasp::keys::begin_delivery(admission.request));
+    state().deliveries.push_back(admission.request);
+    take(admission.request);
+  }
+  EXPECT_EQ(control(RASP_SK_CLOSE_CLIENT).retained_callbacks, 8U);
+  std::future<void> ui;
+  {
+    rasp::keys::EntryLease writer;
+    ASSERT_TRUE(writer.try_exclusive());
+    ui = std::async(std::launch::async, [&] {
+      for (const auto& request : state().deliveries) {
+        rasp::keys::end_delivery(request);
+      }
+    });
+    EXPECT_EQ(ui.wait_for(std::chrono::milliseconds(100)), std::future_status::ready);
+    EXPECT_TRUE(state().provider.state().storage_owned);
+  }
+  ui.get();
+  EXPECT_EQ(state().provider.state().queue.size(), 1U);
+  state().provider.drain();
+  EXPECT_EQ(control(RASP_SK_CLOSE_CLIENT).outcome, RASP_SK_ALREADY_CLOSED);
+}
+TEST_F(ScopedKeys, authentication_whenDescribeCancelsClosesOrExpiresUse_neverStartsAPrompt) {
+  for (const auto scenario : {0U, 1U, 2U, 3U}) {
+    reopen(true);
+    const auto key = create();
+    if (scenario == 3) {
+      fixture::ticks().fetch_add(UINT64_C(299999000000));
+      fixture::publish();
+    }
+    request(RASP_SK_SIGN);
+    state().input->input.sign.key = key.key_handle;
+    const auto admission = admit();
+    const auto prompts = state().provider.state().prompts.load();
+    state().provider.state().during_describe = [&] {
+      if (scenario == 0) {
+        static_cast<void>(control(RASP_SK_CANCEL, admission.request));
+      } else if (scenario == 1) {
+        static_cast<void>(control(RASP_SK_CLOSE_CLIENT));
+      } else {
+        fixture::ticks().fetch_add(scenario == 2 ? UINT64_C(60000000000) : UINT64_C(1000000));
+        fixture::publish();
+      }
+    };
+    state().provider.drain();
+    state().provider.state().during_describe = {};
+    EXPECT_EQ(state().provider.state().prompts.load(), prompts) << scenario;
+    EXPECT_EQ(state().provider.state().signs.load(), 0U) << scenario;
+    if (!state().provider.state().auth_jobs.empty()) {
+      rasp::keys::authenticated(state().provider.state().auth_jobs.back(), RASP_SK_OP_CANCELLED);
+      state().provider.drain();
+    }
+    if (scenario != 1) {
+      take(admission.request);
+      EXPECT_EQ(state().result->take_state, RASP_SK_COMPLETED);
+      EXPECT_EQ(state().result->completion.operation_status, scenario == 0 ? RASP_SK_OP_CANCELLED : RASP_SK_OP_EXPIRED);
+    } else {
+      EXPECT_EQ(control(RASP_SK_CLOSE_CLIENT).outcome, RASP_SK_ALREADY_CLOSED);
+    }
   }
 }

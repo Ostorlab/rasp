@@ -64,6 +64,7 @@ class Platform {
 /// Detach only after fully closed/quiescent; never frees an in-flight callback owner.
 [[nodiscard]] bool detach_platform(Platform& platform);
 /// Executor entry for a previously reserved job, from one of two fixed child workers.
+/// Worker read leases wait through registry writers; do not invoke from an OS/UI callback queue.
 void run_job(const RaspScopedKeyTokenV1& job);
 /// Worker-side auth acknowledgment; OS/UI callbacks post only copied IDs to the two fixed workers.
 /// Stale/full-token mismatch never resumes crypto; adapter release drains every context borrower.
@@ -71,5 +72,6 @@ void authenticated(const RaspScopedKeyTokenV1& job, std::uint32_t status);
 /// Trusted wrapper must reserve its original request slot before take/delivery.
 [[nodiscard]] bool begin_delivery(const RaspScopedKeyTokenV1& request);
 /// Release the exact committed wrapper lease after its callback has returned.
+/// This UI-safe entry durably acknowledges through permanent atomic slots, even during registry writes.
 void end_delivery(const RaspScopedKeyTokenV1& request);
 }  // namespace rasp::keys

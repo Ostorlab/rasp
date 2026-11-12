@@ -58,6 +58,7 @@ struct ProviderState {
   std::vector<std::string> deleted;
   std::function<void()> during_sign;
   std::function<void()> during_create;
+  std::function<void()> during_describe;
   std::function<void()> during_persist;
   std::function<void()> during_main;
   std::function<void()> during_clock;

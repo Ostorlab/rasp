@@ -1,13 +1,16 @@
 /// Whole-entry lifetime leases; publication cannot race a raw pointer load or provider replacement.
 #pragma once
+#include <cstdint>
 
 namespace rasp::keys {
 class Service;
+/// Public/UI calls never wait; the two existing executor workers retain their callback on contention.
+enum class EntryAccess : std::uint8_t { kTry, kWorkerWait };
 /// Fixed-size process registry lease covering the entire public/private native entry.
 class EntryLease {
  public:
-  /// Acquire a native read lease before loading the active owner; contention returns immediately.
-  EntryLease();
+  /// Acquire before loading the active owner; public/default mode tries, executor mode waits.
+  explicit EntryLease(EntryAccess access = EntryAccess::kTry);
   /// Drop the full-entry read/write lease; no UI entry waits for a writer.
   ~EntryLease();
   EntryLease(const EntryLease&) = delete;

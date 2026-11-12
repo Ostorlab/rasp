@@ -107,8 +107,14 @@ class Service {
   void run(const RaspScopedKeyTokenV1& value, EntryLease& entry);
   /// Request-local callback cannot grant authority to another job or key.
   void auth(const RaspScopedKeyTokenV1& value, std::uint32_t status);
-  /// Reserve/release the original request slot while an owned wrapper callback runs.
-  [[nodiscard]] bool delivery(const RaspScopedKeyTokenV1& value, bool begin);
+  /// Reserve the original request slot while an owned wrapper callback runs.
+  [[nodiscard]] bool reserve_delivery(const RaspScopedKeyTokenV1& value);
+  /// Only never-destroyed atomic slots/counters are accessed; no platform, mutex or descriptor access.
+  [[nodiscard]] bool acknowledge_delivery(const RaspScopedKeyTokenV1& value);
+  /// Atomic-only notification check, safe through the permanently published stable owner.
+  [[nodiscard]] bool delivery_pending() const;
+  /// Nonblocking bounded fold/post, called only while a native read lease pins the installed platform.
+  void drain_delivery();
   /// Attachment cannot be replaced until every old borrower is quiescent.
   [[nodiscard]] bool detach(Platform& platform, EntryLease& entry);
   /// Reattach the same process-stable owner only under an exclusive registry lease.
@@ -174,6 +180,8 @@ class Service {
   [[nodiscard]] std::uint32_t eligible(Request& request, std::uint64_t now) const;
   /// Persistent public identity uses full128-bit CSPRNG output, with at most four collision attempts.
   [[nodiscard]] std::uint32_t fresh_key_id(RaspScopedKeyTokenV1& output);
+  /// Recheck lookup/lifetime and actual gate immediately before committing an auth prompt.
+  [[nodiscard]] std::uint32_t prepare_auth(Job& job);
   /// Complete worker phases through actual adapter operations.
   [[nodiscard]] std::uint32_t create(Job& job);
   [[nodiscard]] std::uint32_t describe(Job& job);
@@ -206,6 +214,8 @@ class Service {
   RaspScopedKeyTokenV1 last_closed_{};
   std::uint64_t last_tick_ = 0;
   std::atomic<std::uint32_t> native_borrowers_{0};
+  std::atomic<std::uint64_t> delivery_released_{0};
+  std::atomic<std::uint64_t> delivery_drained_{0};
   std::atomic<std::uint64_t> sampled_tick_{0};
   std::atomic<bool> sampled_valid_{false};
   std::atomic<bool> sampled_fault_{false};

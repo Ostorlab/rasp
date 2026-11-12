@@ -245,6 +245,9 @@ std::uint32_t Provider::create(const rasp::keys::KeyReference& key, RaspScopedKe
   return describe(key, measured);
 }
 std::uint32_t Provider::describe(const rasp::keys::KeyReference& key, RaspScopedKeyInfoV1& measured) {
+  if (state_.during_describe) {
+    state_.during_describe();
+  }
   state_.calls.fetch_add(1);
   if (state_.describe_status != RASP_SK_OP_OK) {
     return state_.describe_status;

@@ -31,6 +31,7 @@ struct Registry {
   std::optional<Service> owner;
   alignas(std::max_align_t) std::array<std::byte, 4096> adapter_state{};
   std::atomic<Service*> installed{nullptr};
+  std::atomic<Service*> stable{nullptr};
   pthread_rwlock_t entries = PTHREAD_RWLOCK_INITIALIZER;
   std::atomic<std::uint64_t> ordinal{0};
 };
@@ -41,6 +42,20 @@ Registry& registry() {
   [[clang::no_destroy]] static constinit Registry state{};
   return state;
 }
+/// No recursion/extra jobs: pin a native read lease before a bounded atomic-release fold/post.
+void drain_delivery_acknowledgments() {
+  const Service* stable = registry().stable.load(std::memory_order_acquire);
+  if (stable == nullptr || !stable->delivery_pending() || pthread_rwlock_tryrdlock(&registry().entries) != 0) {
+    return;
+  }
+  Service* owner = registry().installed.load(std::memory_order_acquire);
+  if (owner != nullptr) {
+    owner->drain_delivery();
+  }
+  static_cast<void>(pthread_rwlock_unlock(&registry().entries));
+}
+/// Client+namespace allocation precede every request, so request ordinal1 is permanently unissued.
+constexpr std::uint64_t kDeliveryCommitting = 1;
 /// Volatile stores prevent elision after a request slot becomes logically unreachable.
 template <typename Value>
 void wipe_object(Value& value) {
@@ -59,8 +74,10 @@ void result_header(Request& request) {
 /// Bounded bitmask over the manifest's32 owned slots.
 std::uint32_t bit(std::size_t index) { return UINT32_C(1) << index; }
 }  // namespace
-EntryLease::EntryLease() {
-  if (pthread_rwlock_tryrdlock(&registry().entries) != 0) {
+EntryLease::EntryLease(EntryAccess access) {
+  const auto status = access == EntryAccess::kWorkerWait ? pthread_rwlock_rdlock(&registry().entries)
+                                                         : pthread_rwlock_tryrdlock(&registry().entries);
+  if (status != 0) {
     return;
   }
   held_ = true;
@@ -69,6 +86,7 @@ EntryLease::EntryLease() {
 EntryLease::~EntryLease() {
   if (held_ || writer_) {
     static_cast<void>(pthread_rwlock_unlock(&registry().entries));
+    drain_delivery_acknowledgments();
   }
 }
 Service* EntryLease::get() const { return owner_; }
@@ -101,6 +119,7 @@ bool attach_platform(Platform& platform) {
     auto& slot = registry().owner;
     if (!slot.has_value()) {
       owner = &slot.emplace(platform);
+      registry().stable.store(owner, std::memory_order_release);
       ready = true;
     } else {
       owner = &*slot;
@@ -111,6 +130,7 @@ bool attach_platform(Platform& platform) {
     }
   }
   static_cast<void>(pthread_rwlock_unlock(&registry().entries));
+  drain_delivery_acknowledgments();
   return ready;
 }
 bool detach_platform(Platform& platform) {
@@ -264,12 +284,19 @@ void Service::retire(std::size_t index) {
   request.used = false;
 }
 void Service::drain_releases() {
+  const auto observed = delivery_released_.load();
+  bool committing = false;
   for (std::size_t index = 0; index < requests_.size(); ++index) {
     auto& request = std::span{requests_}[index];
-    if (request.delivery && request.delivery_ordinal.load(std::memory_order_acquire) == 0) {
+    const auto allocation = request.delivery_ordinal.load(std::memory_order_acquire);
+    committing = committing || (request.delivery && allocation == kDeliveryCommitting);
+    if (request.delivery && allocation == 0) {
       request.delivery = false;
       retire(index);
     }
+  }
+  if (!committing) {
+    delivery_drained_.store(observed);
   }
 }
 std::uint32_t Service::load() {
@@ -862,51 +889,65 @@ void Service::apply_control(const RaspScopedKeyControlV1& input, RaspScopedKeyCo
     output.outcome = RASP_SK_DRAINING;
   }
 }
-bool Service::delivery(const RaspScopedKeyTokenV1& value, bool begin) {
-  Posts posts;
+bool Service::acknowledge_delivery(const RaspScopedKeyTokenV1& value) {
   std::uint64_t prefix = 0;
   std::uint64_t allocation = 0;
   std::memcpy(&prefix, std::span(value.bytes).data(), 8);
   std::memcpy(&allocation, std::span(value.bytes).subspan(8).data(), 8);
-  if (!begin) {
-    bool released = false;
-    for (auto& request : requests_) {
-      if (request.delivery_prefix.load(std::memory_order_relaxed) == prefix) {
-        auto expected = allocation;
-        if (allocation != 0 &&
-            request.delivery_ordinal.compare_exchange_strong(expected, 0, std::memory_order_acq_rel)) {
-          released = true;
-          break;
-        }
+  if (allocation <= kDeliveryCommitting) {
+    return false;
+  }
+  for (auto& request : requests_) {
+    if (allocation != 0 && request.delivery_ordinal.load(std::memory_order_acquire) == allocation &&
+        request.delivery_prefix.load(std::memory_order_relaxed) == prefix) {
+      auto expected = allocation;
+      if (request.delivery_ordinal.compare_exchange_strong(expected, kDeliveryCommitting, std::memory_order_acq_rel)) {
+        delivery_released_.fetch_add(1);
+        request.delivery_ordinal.store(0, std::memory_order_release);
+        return true;
       }
     }
-    if (!released) {
-      return false;
-    }
-    const std::unique_lock lock(mutex_, std::try_to_lock);
-    if (!lock.owns_lock()) {
-      return true;
-    }
-    drain_releases();
-    dispatch(posts);
-  } else {
+  }
+  return false;
+}
+bool Service::delivery_pending() const { return delivery_released_.load() != delivery_drained_.load(); }
+/// Closing forbids new leases: at most eight commits can need folding; epoch snapshots precede each scan.
+void Service::drain_delivery() {
+  for (std::size_t attempt = 0; attempt < requests_.size(); ++attempt) {
+    Posts posts;
     {
       const std::unique_lock lock(mutex_, std::try_to_lock);
-      if (!lock.owns_lock()) {
-        return false;
+      if (!lock.owns_lock() || !delivery_pending()) {
+        return;
       }
-      auto* found = std::ranges::find_if(
-          requests_, [&](const auto& request) { return request.used && same(request.token, value); });
-      if (found == requests_.end() ||
-          (begin && (found->taken || found->delivery || !found->terminal || state_ != State::kReady))) {
-        return false;
-      }
-      found->delivery = begin;
-      found->delivery_prefix.store(prefix, std::memory_order_relaxed);
-      found->delivery_ordinal.store(allocation, std::memory_order_release);
-      retire(static_cast<std::size_t>(found - requests_.begin()));
       dispatch(posts);
     }
+    post(posts);
+    if (!delivery_pending()) {
+      return;
+    }
+  }
+}
+bool Service::reserve_delivery(const RaspScopedKeyTokenV1& value) {
+  Posts posts;
+  {
+    const std::unique_lock lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+      return false;
+    }
+    auto* found = std::ranges::find_if(requests_,
+                                       [&](const auto& request) { return request.used && same(request.token, value); });
+    if (found == requests_.end() || found->taken || found->delivery || !found->terminal || state_ != State::kReady) {
+      return false;
+    }
+    std::uint64_t prefix = 0;
+    std::uint64_t allocation = 0;
+    std::memcpy(&prefix, std::span(value.bytes).data(), 8);
+    std::memcpy(&allocation, std::span(value.bytes).subspan(8).data(), 8);
+    found->delivery = true;
+    found->delivery_prefix.store(prefix, std::memory_order_relaxed);
+    found->delivery_ordinal.store(allocation, std::memory_order_release);
+    dispatch(posts);
   }
   post(posts);
   return true;
@@ -914,13 +955,13 @@ bool Service::delivery(const RaspScopedKeyTokenV1& value, bool begin) {
 bool begin_delivery(const RaspScopedKeyTokenV1& request) {
   EntryLease const entry;
   Service* owner = entry.get();
-  return owner != nullptr && owner->delivery(request, true);
+  return owner != nullptr && owner->reserve_delivery(request);
 }
 void end_delivery(const RaspScopedKeyTokenV1& request) {
-  EntryLease const entry;
-  Service* owner = entry.get();
-  if (owner != nullptr) {
-    static_cast<void>(owner->delivery(request, false));
+  Service* stable = registry().stable.load(std::memory_order_acquire);
+  if (stable != nullptr && stable->acknowledge_delivery(request)) {
+    drain_delivery_acknowledgments();
   }
 }
+
 }  // namespace rasp::keys

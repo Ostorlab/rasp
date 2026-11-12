@@ -178,3 +178,11 @@ properties are simulated contract inputs, not Android Keystore, Apple Keychain,
 hardware, lock, biometric, restore or physical-device evidence. Actual child
 platform implementations, Apple SDK/Swift/NDK consumers and supported physical
 device outcomes must be recorded independently before claiming platform support.
+
+## Callback contention and prompt revalidation
+
+Private `run_job` and `authenticated` run on the two existing executor workers and wait for a native read lease before loading the installed owner. Public C calls continue to try the lease and return BUSY without waiting. A failed attachment writer therefore cannot consume a valid worker callback.
+
+`end_delivery` never waits for a registry writer or service mutex. Its stable pointer is published once, never reset, and permits only an atomic full-token acknowledgment in never-destroyed request slots and monotonic release counters. It cannot access a platform, descriptor or releasable mutex through that pointer. Every fold/post first acquires a native read pin; entry/writer exits kick a bounded eight-pass drain. Counters are never reset on close/reopen, so a late or duplicate token cannot release a replacement lease. The same two job arenas and bounded scheduler remain in use.
+
+SIGN rechecks the actual request, handle, clock, deadline and cancellation state after provider lookup, then obtains the real gate, samples again and rechecks before committing authentication. Cancellation, close, request expiry or handle expiry during lookup cannot start a prompt. The existing early-auth handshake and post-yield/preprimitive/take gates remain required.
