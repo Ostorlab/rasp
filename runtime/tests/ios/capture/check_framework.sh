@@ -22,11 +22,11 @@ xcrun vtool -show-build "$binary" | grep -qxE ' *minos 12\.0'
 xcodebuild -version
 xcrun --sdk iphoneos --show-sdk-version
 for language in c objective-c c++ objective-c++; do
-  flags=()
+  flags=(-Wall -Wextra -Werror -Wunguarded-availability)
   if [[ "$language" == c++ || "$language" == objective-c++ ]]; then flags+=(-std=c++23); fi
   if [[ "$language" == objective-c || "$language" == objective-c++ ]]; then flags+=(-fobjc-arc); fi
   xcrun --sdk iphoneos clang -x "$language" -target arm64-apple-ios12.0 \
-    -isysroot "$(xcrun --sdk iphoneos --show-sdk-path)" -Wall -Wextra -Werror -Wunguarded-availability \
+    -isysroot "$(xcrun --sdk iphoneos --show-sdk-path)" \
     "${flags[@]}" -F "$(dirname "$framework")" "$root/tests/ios/capture/host_link.c" \
     -framework RaspRuntime -o "$work/host-${language//+/p}"
 done
