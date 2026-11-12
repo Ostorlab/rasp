@@ -314,3 +314,13 @@ See [opt-in Android root and environment context](../docs/android-root-context.m
 Android API31+ hosts can opt in to [bounded Activity/window touch observations](../docs/android-window-observations.md) through RuntimeBridge after supported Context initialization.
 
 Optional iOS `screenshot` and `screen_recording` groups require the matching public C host API and explicit main-thread opt-in. See [UIKit capture observations](../docs/ios-capture-observations.md) and the [harmless host fixture](tests/ios/capture/README.md). Packing alone does not create scene ownership or a healthy observer.
+
+
+## Explicit entry-point source integration
+
+Hosts can opt in to [bounded entry-point validation](../docs/entrypoint-validation.md)
+for concrete Android Activity/Binder/provider and UIKit URL/scene handlers.
+Each adapted handler validates its route/caller boundary and invokes the existing
+local gate immediately before its closed effect. MATCH/domain verification is
+not caller authorization or replay protection; direct sensitive mutations refuse.
+The host-only source adds no injected runtime API, catalogue or telemetry producer.

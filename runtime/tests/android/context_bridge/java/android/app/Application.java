@@ -15,6 +15,8 @@ public class Application extends android.content.Context {
         if (failPermission) throw new IllegalStateException("permission boundary failure");
         return deniedPermissions.contains(permission) ? -1 : 0;
     }
+    public boolean denyCallerPermission;
+    @Override public int checkCallingPermission(String permission){return denyCallerPermission ? -1 : 0;}
     public boolean forbidPackageName;
     public android.net.ConnectivityManager connectivity = new android.net.ConnectivityManager();
     public android.content.pm.PackageManager packages = new android.content.pm.PackageManager();

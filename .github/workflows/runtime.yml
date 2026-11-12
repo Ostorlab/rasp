@@ -36,7 +36,7 @@ jobs:
         run: |
           clang-format --version
           git ls-files -z -- '*.h' '*.cpp' '*.mm' '*.h.in' | xargs -0 clang-format --dry-run --Werror
-          git ls-files -z -- 'host_context/*.c' 'tests/host_context/*.c' | xargs -0 -r clang-format --dry-run --Werror
+          git ls-files -z -- 'host_context/*.c' 'tests/host_context/*.c' 'entrypoint_validation/*.c' 'tests/entrypoint_validation/*.c' | xargs -0 -r clang-format --dry-run --Werror
 
   tidy:
     runs-on: ubuntu-24.04
@@ -66,7 +66,7 @@ jobs:
         run: |
           clang-tidy --version
           run-clang-tidy -quiet -p build/host "^$PWD/(?!build/).*\.cpp$"
-          run-clang-tidy -quiet -p build/host "^$PWD/host_context/src/.*\.c$"
+          run-clang-tidy -quiet -p build/host "^$PWD/(host_context|entrypoint_validation)/src/.*\.c$"
 
   host:
     runs-on: ubuntu-24.04
@@ -224,6 +224,7 @@ jobs:
           test "$(otool -D "$binary" | tail -n 1)" = "@rpath/RaspRuntime.framework/RaspRuntime"
           ./tests/ios/capture/check_framework.sh build/ios/ios/RaspRuntime.framework "$RUNNER_TEMP/ios-capture-release"
           bash tests/host_context/check_apple.sh "$PWD/build/ios/ios/RaspRuntime.framework" "$RUNNER_TEMP/ios-context-release"
+          bash tests/entrypoint_validation/check_apple.sh "$PWD/build/ios/ios/RaspRuntime.framework" "$RUNNER_TEMP/ios-entry-release"
           xcrun vtool -show-build "$binary" | grep -qxE ' *minos 12\.0'
           test -z "$(otool -L "$binary" | grep 'libc++')"
       - name: Check the framework calls no forbidden function
@@ -267,11 +268,14 @@ jobs:
           clang-tidy --version
           run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.(cpp|mm)$"
           run-clang-tidy -quiet -p "$RUNNER_TEMP/ios-context-release/analysis" "^$PWD/host_context/.*\.c$"
+          run-clang-tidy -quiet -p "$RUNNER_TEMP/ios-entry-release/analysis" "^$PWD/entrypoint_validation/.*\.c$"
       - name: Check development capture ABI and build the actual UIKit host
         run: |
           ./tests/ios/capture/check_framework.sh build/ios-dev/ios/RaspRuntime.framework "$RUNNER_TEMP/ios-capture-debug"
           bash tests/host_context/check_apple.sh "$PWD/build/ios-dev/ios/RaspRuntime.framework" "$RUNNER_TEMP/ios-context-debug"
+          bash tests/entrypoint_validation/check_apple.sh "$PWD/build/ios-dev/ios/RaspRuntime.framework" "$RUNNER_TEMP/ios-entry-debug"
           run-clang-tidy -quiet -p "$RUNNER_TEMP/ios-context-debug/analysis" "^$PWD/host_context/.*\.c$"
+          run-clang-tidy -quiet -p "$RUNNER_TEMP/ios-entry-debug/analysis" "^$PWD/entrypoint_validation/.*\.c$"
           cmake -S tests/ios/capture/host -B "$RUNNER_TEMP/ios-capture-host" -G "Unix Makefiles" \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
@@ -370,7 +374,9 @@ jobs:
       - name: Compile and link local host context release consumers
         run: |
           bash tests/host_context/check_android.sh "$RUNNER_TEMP/runtime-release" '${{ matrix.abi }}' "$RUNNER_TEMP/context-release" Release
+          bash tests/entrypoint_validation/check_android.sh "$RUNNER_TEMP/runtime-release" '${{ matrix.abi }}' "$RUNNER_TEMP/entry-release" Release
           run-clang-tidy -quiet -p "$RUNNER_TEMP/context-release" "^$PWD/host_context/.*\.c$"
+          run-clang-tidy -quiet -p "$RUNNER_TEMP/entry-release" "^$PWD/entrypoint_validation/.*\.c$"
       - name: Configure the development build with the private storage plugin consumer
         run: cmake --preset android-dev -DANDROID_ABI=${{ matrix.abi }} -DRASP_PLUGINS=tests/plugins/private_storage
       - name: Build the development build
@@ -386,7 +392,9 @@ jobs:
           cmake --install build/android-dev --prefix "$RUNNER_TEMP/runtime-debug" --component runtime
           bash tests/android/local_policy/check_library.sh "$RUNNER_TEMP/runtime-debug" '${{ matrix.abi }}' "$RUNNER_TEMP/policy-debug"
           bash tests/host_context/check_android.sh "$RUNNER_TEMP/runtime-debug" '${{ matrix.abi }}' "$RUNNER_TEMP/context-debug" Debug
+          bash tests/entrypoint_validation/check_android.sh "$RUNNER_TEMP/runtime-debug" '${{ matrix.abi }}' "$RUNNER_TEMP/entry-debug" Debug
           run-clang-tidy -quiet -p "$RUNNER_TEMP/context-debug" "^$PWD/host_context/.*\.c$"
+          run-clang-tidy -quiet -p "$RUNNER_TEMP/entry-debug" "^$PWD/entrypoint_validation/.*\.c$"
       - name: Build the stub
         run: |
           jar="$(ls -d "$ANDROID_HOME"/platforms/android-*/android.jar | sort -V | tail -1)"
@@ -395,3 +403,6 @@ jobs:
           test -s "$RUNNER_TEMP/stub.dex"
           ANDROID_JAR="$jar" ANDROID_BUILD_TOOLS="$(dirname "$d8")" bash tests/android/local_policy/device/build.sh "$RUNNER_TEMP/policy-host" "$RUNNER_TEMP/runtime-bridge-compile-only.jar"
           ANDROID_JAR="$jar" ANDROID_BUILD_TOOLS="$(dirname "$d8")" bash tests/host_context/android/device/build.sh "$RUNNER_TEMP/context-host" "$RUNNER_TEMP/runtime-bridge-compile-only.jar"
+          ANDROID_JAR="$jar" ANDROID_BUILD_TOOLS="$(dirname "$d8")" bash tests/entrypoint_validation/android/device/build.sh "$RUNNER_TEMP/entry-host" "$RUNNER_TEMP/runtime-bridge-compile-only.jar"
+          ANDROID_JAR="$jar" ANDROID_BUILD_TOOLS="$(dirname "$d8")" bash tests/entrypoint_validation/android/caller/build.sh "$RUNNER_TEMP/entry-caller"
+          R8_JAR="$(dirname "$d8")/lib/d8.jar" ANDROID_JAR="$jar" ANDROID_BUILD_TOOLS="$(dirname "$d8")" bash tests/entrypoint_validation/android/device/build.sh "$RUNNER_TEMP/entry-host-r8" "$RUNNER_TEMP/runtime-bridge-compile-only.jar"
