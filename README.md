@@ -16,6 +16,9 @@ https://github.com/user-attachments/assets/a43d48ed-75ec-43b1-ad76-77fc08826493
 - **Android and iOS:** APK, AAB and IPA.
 - **No source code changes:** protect the build you already ship.
 - **Choose the checks:** turn on only the check groups that fit your users.
+- **Optional operation gating:** use a bounded [embedded local policy](docs/local-policy-contract.md)
+  to gate a named host operation on the runtime's own typed measurements. This requires
+  an explicit host source call immediately before the operation.
 - **Detects:** root and jailbreak, debuggers, Frida and other hooking, emulators, app virtualizers, network
   interception (VPN tunnels and proxies), raw runtime-code hashes with report-only comparison evidence, and repackaged copies.
 - **Runs all the time:** the checks run when the app starts, then every 60 seconds.

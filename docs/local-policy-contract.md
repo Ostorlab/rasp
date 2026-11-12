@@ -198,7 +198,11 @@ The public header and every target assert layout; callers provide valid aligned
 memory and exact sizes. Arbitrary invalid pointers cannot be contained by a C ABI.
 Policy version remains uint32 in C, UInt32 in Swift (widen with UInt64 for display),
 and Java `long` (zero-extended with Integer.toUnsignedLong).
-Sequence's Java getter explicitly returns raw uint64 bits as `sequenceBits()`.
+
+The gate decision's `sequence` field is a process-local cycle ordinal.
+Java `PolicyDecision.sequenceBits()` preserves its raw uint64 bit pattern in a
+Java `long`.
+
 Swift uses the header's typed `kRaspLocal*` constants; C callers retain the
 `RASP_LOCAL_*` macros. The header-only `int32_t` constants have internal linkage
 and preserve the same values without adding framework exports.
