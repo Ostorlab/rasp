@@ -12,6 +12,8 @@
 
 #include "builtin.h"
 #include "rasp/config.h"
+#include "rasp/context.h"
+#include "rasp/cycle.h"
 #include "rasp/observation.h"
 
 namespace {
@@ -57,13 +59,39 @@ void check_observation(std::string_view group, const rasp::Observation& observat
 /// Checks a selected production group has each catalogue observation exactly once.
 void check_group(const std::string& group) {
   const rasp::Config config{.build_id = "catalogue-test", .checks = std::vector<std::string>{group}};
-  const std::vector<rasp::Observation> observations = dispatch(config);
+  rasp::CycleMonitor monitor;
+  rasp::plugins::Context context;
+#ifdef RASP_CAPABILITY_ANDROID
+  const auto catalogue = rasp::cycle_catalogue("android");
+#else
+  const auto catalogue = rasp::cycle_catalogue("ios");
+#endif
+  const auto snapshot = monitor.run(config, catalogue, {}, context,
+                                    [](const rasp::Config& selection, const void*) { return dispatch(selection); });
+  ASSERT_TRUE(snapshot->metadata.complete);
+  ASSERT_TRUE(snapshot->metadata.missing.empty());
+  EXPECT_EQ(snapshot->metadata.catalogue_id.size(), 64U);
+  const auto& observations = snapshot->observations;
   const auto expected_count = std::ranges::count(kExpected, group, &Expected::group);
   ASSERT_EQ(observations.size(), static_cast<std::size_t>(expected_count)) << group;
   std::set<std::pair<std::string, std::string>> identities;
   for (const rasp::Observation& observation : observations) {
     ASSERT_TRUE(identities.emplace(observation.signal, observation.source).second);
     check_observation(group, observation);
+  }
+}
+
+TEST(Capabilities, statusVocabulary_whenGenerated_matchesNativeEnumsIncludingTimeout) {
+  ASSERT_EQ(kStatusMasks.size(), 4U);
+  EXPECT_EQ(kStatusMasks[0], 1U << static_cast<unsigned>(rasp::Status::kOk));
+  EXPECT_EQ(kStatusMasks[1], 1U << static_cast<unsigned>(rasp::Status::kUnsupported));
+  EXPECT_EQ(kStatusMasks[2], 1U << static_cast<unsigned>(rasp::Status::kError));
+  EXPECT_EQ(kStatusMasks[3], 1U << static_cast<unsigned>(rasp::Status::kTimeout));
+}
+
+TEST(Capabilities, statusVocabulary_whenCurrentBuiltinsHaveNoTimeout_doesNotInventDeclarations) {
+  for (const Expected& expected : kExpected) {
+    EXPECT_EQ(expected.statuses & kStatusMasks[static_cast<std::size_t>(rasp::Status::kTimeout)], 0U);
   }
 }
 

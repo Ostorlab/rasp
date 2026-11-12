@@ -15,12 +15,12 @@
 #include <string_view>
 #include <sys/stat.h>
 #include <thread>
-#include <vector>
 
 #include "builtin.h"
 #include "checks/hooks.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
+#include "rasp/cycle.h"
 #include "rasp/embedded_config.h"
 #include "rasp/install_id.h"
 #include "rasp/observation.h"
@@ -112,13 +112,18 @@ struct Environment {
 void* monitor(void* argument) {
   const std::unique_ptr<const Environment> environment(static_cast<Environment*>(argument));
   const Config config = read_config(environment->install_id_directory);
+  CycleMonitor cycle_monitor;
   rasp::plugins::Context context;
   rasp::plugins::init_plugins(rasp::plugins::compiled_in(), config, context);
   while (true) {
-    const std::vector<Observation> observations = rasp::plugins::run_plugins(
-        rasp::plugins::compiled_in(), run_checks(config, environment->inserted_libraries), context);
+    const auto snapshot = cycle_monitor.run(
+        config, cycle_catalogue("ios"), rasp::plugins::compiled_in(), context,
+        [](const Config& selection, const void* state) {
+          return run_checks(selection, static_cast<const Environment*>(state)->inserted_libraries);
+        },
+        environment.get());
     if constexpr (kLoggingEnabled) {
-      for (const Observation& observation : observations) {
+      for (const Observation& observation : snapshot->observations) {
         rasp::log(describe(observation));
       }
     }

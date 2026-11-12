@@ -26,6 +26,10 @@ struct Key {
 /// The values the plugins share, each under its own name. Its methods are safe to call from any thread.
 class Context {
  public:
+  /// Serializes complete plugin dispatches; callbacks must not recursively dispatch on this Context.
+  /// @return A guard held until the dispatch and its snapshot cleanup finish.
+  [[nodiscard]] std::unique_lock<std::mutex> lock_dispatch() { return std::unique_lock(dispatch_mutex_); }
+
   /// Puts a value, in place of the value that has the same name.
   ///
   /// @tparam T The type of the value, which the key gives.
@@ -78,6 +82,8 @@ class Context {
   }
 
  private:
+  /// Guards dispatch lifetime, independently from ordinary Context get/put.
+  std::mutex dispatch_mutex_;
   /// Guards `values_`.
   mutable std::mutex mutex_;
   /// The values, by name.

@@ -16,7 +16,7 @@ target_link_libraries(rasp_core_test PRIVATE rasp_core rasp_warnings rasp_langua
 target_compile_definitions(rasp_core_test PRIVATE RASP_EXPECTED_VERSION="${PROJECT_VERSION}")
 gtest_discover_tests(rasp_core_test)
 
-foreach(test config context embedded_config install_id observation parse_config plugins/init_plugins plugins/plugin plugins/registry plugins/run_plugins)
+foreach(test config context cycle embedded_config install_id observation parse_config plugins/init_plugins plugins/plugin plugins/registry plugins/run_plugins)
   cmake_path(GET test FILENAME name)
   add_executable(rasp_core_${name}_test core/${test}_test.cpp)
   target_link_libraries(rasp_core_${name}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
@@ -283,3 +283,9 @@ add_executable(rasp_ios_process_query_test ios/util/process_query_test.cpp
 target_include_directories(rasp_ios_process_query_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
 target_link_libraries(rasp_ios_process_query_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_ios_process_query_test)
+
+# Both platform adapters use this checked POSIX implementation, with failures injected at the syscall boundary.
+add_executable(rasp_posix_cycle_clock_test posix/cycle_clock_test.cpp)
+target_include_directories(rasp_posix_cycle_clock_test PRIVATE ${PROJECT_SOURCE_DIR}/posix/include)
+target_link_libraries(rasp_posix_cycle_clock_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_posix_cycle_clock_test)
