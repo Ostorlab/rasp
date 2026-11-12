@@ -79,5 +79,10 @@ TEST(ParseConfig, parseConfig_whenTheJsonIsMalformed_leavesTheChecksEmpty) {
   EXPECT_FALSE(parse_config(R"({"checks":["debugger"])").checks.has_value());
 }
 
+TEST(ParseConfig, parseConfig_whenInputExceedsEmbeddedLimit_refusesSelection) {
+  const std::string oversized = std::string(4096, ' ') + R"({"checks":["debugger"]})";
+  EXPECT_FALSE(parse_config(oversized).checks.has_value());
+}
+
 }  // namespace
 }  // namespace rasp

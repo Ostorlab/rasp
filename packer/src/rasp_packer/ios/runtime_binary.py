@@ -15,6 +15,33 @@ MACHO_SEGMENT = "__DATA"
 MACHO_SECTION = "__rasp_config"
 
 
+def verify_policy_exports(binary: bytes) -> None:
+    """Require the six preserved capture functions and two policy functions in every slice."""
+    fat = lief.MachO.parse(io.BytesIO(binary))
+    expected = {"_rasp_local_policy_gate_v1", "_rasp_local_policy_info_v1"} | {
+        "_rasp_ios_capture_" + suffix
+        for suffix in (
+            "start",
+            "stop",
+            "refresh",
+            "select_scene",
+            "select_legacy_window",
+            "clear_selection",
+        )
+    }
+    if (
+        fat is None
+        or len(fat) == 0
+        or any(
+            {symbol.name for symbol in macho.exported_symbols} != expected
+            for macho in fat
+        )
+    ):
+        raise errors.InvalidRuntimeError(
+            "runtime local policy/capture exports do not match the supported ABI"
+        )
+
+
 def write_config(binary: bytes, config: runtime_config.RuntimeConfig) -> bytes:
     """Writes the config into the runtime binary, in every slice of a universal binary.
 

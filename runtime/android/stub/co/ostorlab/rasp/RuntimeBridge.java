@@ -11,9 +11,144 @@ import android.view.*;
 import android.view.accessibility.AccessibilityEvent;
 import java.lang.ref.WeakReference;
 import java.util.List;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
 
 /** Optional source integration, called after Application attachment, normally from Application.onCreate(). */
 public final class RuntimeBridge {
+    public static final int POLICY_OK = 0;
+    public static final int POLICY_DENY = 0;
+    public static final int POLICY_REPORT = 1;
+    public static final int POLICY_ALLOW = 2;
+
+    /** Owned immutable config copy. Null means unavailable; not proof of host adaptation. */
+    public static PolicyInfo localPolicyInfo() {
+        try {
+            byte[] bytes = localPolicyInfoNative();
+            return bytes == null ? null : new PolicyInfo(bytes);
+        } catch (RuntimeException | LinkageError error) { return null; }
+    }
+
+    /** Call again immediately before each actual adapted operation, on its execution thread.
+     * Non-OK/null/unknown action never permits an operation. REPORT is advisory only.
+     * Compile the expected policy hash into the host; do not obtain its expectation from this runtime.
+     */
+    public static PolicyDecision gateLocalOperation(String operation, String expectedPolicySha256) {
+        try {
+            if (operation == null || expectedPolicySha256 == null || operation.length() < 1
+                    || operation.length() > 32 || expectedPolicySha256.length() != 64) return null;
+            byte[] bytes = gateLocalOperationNative(operation, expectedPolicySha256);
+            return bytes == null ? null : new PolicyDecision(bytes);
+        } catch (RuntimeException | LinkageError error) { return null; }
+    }
+
+    private static native byte[] localPolicyInfoNative();
+    private static native byte[] gateLocalOperationNative(String operation, String expectedPolicySha256);
+
+    private static int policyInt(byte[] bytes, int offset) {
+        return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getInt(offset);
+    }
+    private static long policyLong(byte[] bytes, int offset) {
+        return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getLong(offset);
+    }
+    private static String policyText(byte[] bytes, int offset, int capacity) {
+        int length = 0;
+        while (length < capacity && bytes[offset + length] != 0) length++;
+        if (length == capacity) throw new IllegalArgumentException("unterminated policy field");
+        return new String(bytes, offset, length, StandardCharsets.US_ASCII);
+    }
+    private static byte[] policyCopy(byte[] bytes, int expectedSize) {
+        if (bytes.length != expectedSize || policyInt(bytes, 0) != 1 || policyInt(bytes, 4) != expectedSize)
+            throw new IllegalArgumentException("unsupported policy ABI");
+        return bytes.clone();
+    }
+
+    /** Fixed primitive ABI projection. No raw C++ object, pointer or native lifetime escapes. */
+    public static final class PolicyInfo {
+        private final byte[] bytes;
+        private PolicyInfo(byte[] input) {
+            bytes = policyCopy(input, 6532);
+            if (checkCount() < 0 || checkCount() > 64) throw new IllegalArgumentException("policy check bound");
+        }
+        public int status() { return policyInt(bytes, 8); }
+        public int configState() { return policyInt(bytes, 12); }
+        public long policyVersion() { return Integer.toUnsignedLong(policyInt(bytes, 16)); }
+        public String policyId() { return policyText(bytes, 52, 65); }
+        public String policySha256() { return policyText(bytes, 117, 65); }
+        public String effectiveConfigSha256() { return policyText(bytes, 182, 65); }
+        public String catalogueId() { return policyText(bytes, 247, 65); }
+        public String platform() { return policyText(bytes, 312, 8); }
+        public boolean checksKnown() { return policyInt(bytes, 48) == 1; }
+        private int checkCount() { return policyInt(bytes, 44); }
+        public List<String> effectiveChecks() {
+            List<String> checks = new ArrayList<>();
+            for (int index = 0; index < checkCount(); index++) checks.add(policyText(bytes, 320 + index * 97, 97));
+            return Collections.unmodifiableList(checks);
+        }
+    }
+
+    /** Historical local decision, never a reusable permit, server credential or malware verdict. */
+    public static final class PolicyDecision {
+        private final byte[] bytes;
+        private PolicyDecision(byte[] input) {
+            bytes = policyCopy(input, 2104);
+            if (detailCount() < 0 || detailCount() > 8) throw new IllegalArgumentException("policy detail bound");
+        }
+        public int status() { return policyInt(bytes, 8); }
+        public int action() { return policyInt(bytes, 12); }
+        public int candidateAction() { return policyInt(bytes, 16); }
+        public int reason() { return policyInt(bytes, 20); }
+        public int configState() { return policyInt(bytes, 24); }
+        public long policyVersion() { return Integer.toUnsignedLong(policyInt(bytes, 28)); }
+        public int reportSchemaVersion() { return policyInt(bytes, 32); }
+        public int reportReasonVersion() { return policyInt(bytes, 36); }
+        public int nativeMetadataVersion() { return policyInt(bytes, 40); }
+        public int gateReasonVersion() { return policyInt(bytes, 44); }
+        public int coverage() { return policyInt(bytes, 48); }
+        public int evaluated() { return policyInt(bytes, 52); }
+        private int detailCount() { return policyInt(bytes, 56); }
+        public boolean sequencePresent() { return policyInt(bytes, 60) == 1; }
+        public boolean timingPresent() { return policyInt(bytes, 64) == 1; }
+        public int evidenceTrust() { return policyInt(bytes, 68); }
+        public long sequenceBits() { return policyLong(bytes, 72); }
+        public long evidenceAgeNanos() { return policyLong(bytes, 80); }
+        public long cycleDurationNanos() { return policyLong(bytes, 88); }
+        public String policyId() { return policyText(bytes, 96, 65); }
+        public String policySha256() { return policyText(bytes, 161, 65); }
+        public String effectiveConfigSha256() { return policyText(bytes, 226, 65); }
+        public String catalogueId() { return policyText(bytes, 291, 65); }
+        public String platform() { return policyText(bytes, 356, 8); }
+        public String operation() { return policyText(bytes, 364, 33); }
+        public String sessionId() { return policyText(bytes, 397, 37); }
+        public String runId() { return policyText(bytes, 434, 37); }
+        public List<PolicyDetail> details() {
+            List<PolicyDetail> rows = new ArrayList<>();
+            for (int index = 0; index < detailCount(); index++) rows.add(new PolicyDetail(bytes, 472 + index * 204));
+            return Collections.unmodifiableList(rows);
+        }
+    }
+
+    public static final class PolicyDetail {
+        public final String ruleId;
+        public final int ruleVersion, verdict, reason, statusPresent, status, confidence, predicateEvaluated;
+        private final int[] evidence;
+        private PolicyDetail(byte[] bytes, int offset) {
+            ruleVersion = policyInt(bytes, offset); verdict = policyInt(bytes, offset + 4);
+            reason = policyInt(bytes, offset + 8); statusPresent = policyInt(bytes, offset + 12);
+            status = policyInt(bytes, offset + 16); confidence = policyInt(bytes, offset + 20);
+            predicateEvaluated = policyInt(bytes, offset + 24);
+            int count = policyInt(bytes, offset + 28);
+            if (count < 0 || count > 10) throw new IllegalArgumentException("policy evidence bound");
+            evidence = new int[count];
+            for (int index = 0; index < count; index++) evidence[index] = policyInt(bytes, offset + 32 + index * 4);
+            ruleId = policyText(bytes, offset + 72, 129);
+        }
+        public int[] evidenceIndices() { return evidence.clone(); }
+    }
+
     public static final int INITIALIZED = 0;
     public static final int ALREADY_INITIALIZED = 1;
     public static final int INVALID_CONTEXT = 2;

@@ -1,5 +1,11 @@
 # Runtime
 
+The optional [local policy host gate](../docs/local-policy-contract.md) reads the
+actual owned typed report before an explicitly adapted operation. It is offline,
+report-only by default, and never terminates the app or establishes server authority.
+The primitive C host API preserves the six iOS capture exports and adds exactly two
+versioned policy exports; Android retains JNI_OnLoad and those same two policy exports.
+
 The C++ runtime libraries that the packer adds to a protected app. They run the checks inside the app.
 
 Owned monitor snapshots include [typed local decision evidence](../docs/local-decisions-contract.md).

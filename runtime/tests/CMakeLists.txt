@@ -16,13 +16,27 @@ target_link_libraries(rasp_core_test PRIVATE rasp_core rasp_warnings rasp_langua
 target_compile_definitions(rasp_core_test PRIVATE RASP_EXPECTED_VERSION="${PROJECT_VERSION}")
 gtest_discover_tests(rasp_core_test)
 
-foreach(test config context cycle decision embedded_config install_id observation parse_config plugins/init_plugins plugins/plugin plugins/registry plugins/run_plugins)
+foreach(test config context cycle decision embedded_config install_id observation parse_config local_policy plugins/init_plugins plugins/plugin plugins/registry plugins/run_plugins)
   cmake_path(GET test FILENAME name)
   add_executable(rasp_core_${name}_test core/${test}_test.cpp)
   target_link_libraries(rasp_core_${name}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
   gtest_discover_tests(rasp_core_${name}_test)
 endforeach()
 target_include_directories(rasp_core_install_id_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(rasp_core_local_policy_test PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
+add_executable(rasp_local_policy_host_test core/local_policy_host_test.cpp ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp)
+target_include_directories(rasp_local_policy_host_test PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
+target_link_libraries(rasp_local_policy_host_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_local_policy_host_test)
+add_executable(rasp_local_policy_c_host host/local_policy_host.c ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp)
+set_property(TARGET rasp_local_policy_c_host PROPERTY C_STANDARD 17)
+target_include_directories(rasp_local_policy_c_host PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
+target_link_libraries(rasp_local_policy_c_host PRIVATE rasp_core rasp_language)
+target_compile_options(rasp_local_policy_c_host PRIVATE -Wall -Wextra -Werror)
+add_test(NAME LocalPolicyHost.actualCConsumer COMMAND rasp_local_policy_c_host)
+add_executable(rasp_local_policy_probe core/local_policy_probe.cpp)
+target_include_directories(rasp_local_policy_probe PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
+target_link_libraries(rasp_local_policy_probe PRIVATE rasp_core rasp_warnings rasp_language)
 target_link_libraries(rasp_core_decision_test PRIVATE rasp_yyjson)
 target_compile_definitions(rasp_core_decision_test PRIVATE
   RASP_ASSESSMENT_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/core/assessment_vectors.json")
@@ -303,6 +317,9 @@ if(Java_FOUND AND JNI_FOUND)
       ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/include ${PROJECT_SOURCE_DIR}/android/src)
     target_link_libraries(rasp_android_identity_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
     add_library(rasp_android_context_bridge_jni SHARED android/context_bridge/driver.cpp android/events/driver.cpp
+      android/context_bridge/policy_driver.cpp
+      ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/local_policy_bridge.cpp
       android/events/capture_driver.cpp
       ${PROJECT_SOURCE_DIR}/android/src/events/capture_bridge.cpp
       ${PROJECT_SOURCE_DIR}/android/src/events/capture_events.cpp
@@ -327,7 +344,7 @@ if(Java_FOUND AND JNI_FOUND)
       $<TARGET_OBJECTS:rasp_android_identity_dispatch>
       ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
     target_include_directories(rasp_android_context_bridge_jni PRIVATE ${JNI_INCLUDE_DIRS}
-      ${PROJECT_SOURCE_DIR}/android/src ${CMAKE_CURRENT_SOURCE_DIR})
+      ${PROJECT_SOURCE_DIR}/android/src ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/core/src)
     add_library(rasp_android_overlay_dispatch OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/overlay.cpp)
     target_compile_definitions(rasp_android_overlay_dispatch PRIVATE __ANDROID__)
     target_include_directories(rasp_android_overlay_dispatch PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
@@ -351,6 +368,14 @@ if(Java_FOUND AND JNI_FOUND)
       DEPENDS ${bridge_java} ${bridge_test_java} VERBATIM)
     add_custom_target(rasp_android_context_bridge_java ALL
       DEPENDS ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class)
+    add_test(NAME AndroidLocalPolicy.operationGate
+      COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
+        $<TARGET_FILE:rasp_android_context_bridge_jni> 5685df69e0340b2a8472c2929cd9be01db0444191abb8c5fdf366a51b0262c81)
+    set_tests_properties(AndroidLocalPolicy.operationGate PROPERTIES TIMEOUT 30)
+    add_test(NAME AndroidLocalPolicy.uint32MaxVersion
+      COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
+        $<TARGET_FILE:rasp_android_context_bridge_jni> 2a7a8bb45ec84bf9d23a6998b2f631505fa32a192fa771aae676df626a004ce4 4294967295)
+    set_tests_properties(AndroidLocalPolicy.uint32MaxVersion PROPERTIES TIMEOUT 30)
     add_test(NAME AndroidWindowBridge.lifecycle
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.WindowTest
         $<TARGET_FILE:rasp_android_context_bridge_jni>)

@@ -781,7 +781,9 @@ def testIOSCaptureFixture_whenCanonicalCompared_preservesExactScalarRows() -> No
     )
 
 
-def testIOSCaptureHostAPI_whenExportsCompared_hasExactlySixCEntries() -> None:
+def testIOSCaptureHostAPI_whenExportsCompared_preservesSixCaptureAndTwoPolicyEntries() -> (
+    None
+):
     runtime = pathlib.Path(__file__).resolve().parents[3] / "runtime"
     expected = {
         "rasp_ios_capture_start",
@@ -792,7 +794,13 @@ def testIOSCaptureHostAPI_whenExportsCompared_hasExactlySixCEntries() -> None:
         "rasp_ios_capture_stop",
     }
     exports = (runtime / "ios/capture_exports.txt").read_text().splitlines()
-    assert exports == sorted("_" + name for name in expected)
+    policy_entries = {"rasp_local_policy_gate_v1", "rasp_local_policy_info_v1"}
+    assert exports == sorted("_" + name for name in expected | policy_entries)
+    policy_header = (runtime / "core/include/rasp/local_policy_host.h").read_text()
+    assert (
+        set(re.findall(r"int32_t\s+(rasp_local_policy_[a-z_0-9]+)\(", policy_header))
+        == policy_entries
+    )
     header = (runtime / "ios/include/rasp/ios_capture.h").read_text()
     assert set(re.findall(r"int32_t (rasp_ios_capture_[a-z_]+)\(", header)) == expected
     probe = (runtime / "tests/ios/capture/host_link.c").read_text()

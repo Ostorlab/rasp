@@ -1,0 +1,7 @@
+{
+  global:
+    JNI_OnLoad;
+    rasp_local_policy_gate_v1;
+    rasp_local_policy_info_v1;
+  local: *;
+};

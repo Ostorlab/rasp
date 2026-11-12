@@ -8,6 +8,7 @@ from importlib import metadata
 
 from rasp_packer import checks as check_groups
 from rasp_packer import errors
+from rasp_packer import local_policy
 from rasp_packer import packer
 from rasp_packer import platforms
 
@@ -57,6 +58,11 @@ def _parser() -> argparse.ArgumentParser:
         help="the check groups the app runs, comma-separated, such as debugger,hooks; "
         "the platform's required groups always run (default: only required groups)",
     )
+    pack.add_argument(
+        "--local-policy",
+        type=pathlib.Path,
+        help="bounded embedded policy JSON; default report-only; gating requires adapted host calls",
+    )
     return parser
 
 
@@ -105,6 +111,9 @@ def _pack(arguments: argparse.Namespace) -> int:
             output=arguments.output,
             build_id=arguments.build_id,
             checks=checks,
+            local_policy=None
+            if arguments.local_policy is None
+            else local_policy.load(arguments.local_policy),
         )
     except errors.Error as error:
         print(f"rasp pack: {error}", file=sys.stderr)
@@ -124,6 +133,7 @@ def _pack(arguments: argparse.Namespace) -> int:
         f"(package {result.package_name}, version {result.version}, build {result.build_id}; "
         "unsigned, structurally verified)"
         f"\ncapabilities {capability_status}; effective checks {','.join(result.effective_checks)}"
+        f"\nlocal policy {result.policy_mode}; hash {result.policy_sha256}; effective config {result.effective_config_sha256}; host calls only, adaptation unverified"
     )
     return EXIT_OK
 

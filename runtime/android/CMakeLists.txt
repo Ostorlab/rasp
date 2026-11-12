@@ -1,4 +1,6 @@
 add_library(rasp SHARED
+  ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp
+  src/local_policy_bridge.cpp
   src/builtin.cpp
   src/events/window_bridge.cpp
   src/events/window_events.cpp
@@ -36,10 +38,12 @@ add_library(rasp SHARED
   src/util/jni.cpp
   src/util/service_components.cpp
   src/util/system_property.cpp)
-target_include_directories(rasp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/posix/include)
+target_include_directories(rasp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/posix/include ${PROJECT_SOURCE_DIR}/core/src)
 target_link_libraries(rasp PRIVATE rasp_core rasp_plugins rasp_loader_dex rasp_tfpsacrypto rasp_warnings rasp_language
   rasp_shipped nativehelper)
 target_link_options(rasp PRIVATE -Wl,--exclude-libs,ALL)
+target_link_options(rasp PRIVATE "-Wl,--version-script,${CMAKE_CURRENT_SOURCE_DIR}/policy_exports.map")
+set_property(TARGET rasp APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/policy_exports.map)
 target_link_options(rasp PRIVATE $<$<CONFIG:Release>:-Wl,--strip-all>)
 set_source_files_properties(src/entry.cpp PROPERTIES COMPILE_OPTIONS -Wno-global-constructors)
 

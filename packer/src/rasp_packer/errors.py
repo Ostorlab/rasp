@@ -67,3 +67,7 @@ class ConfigTooLargeError(Error):
 
 class VerificationError(Error):
     """Packed output does not satisfy its required protection artifact contract."""
+
+
+class InvalidLocalPolicyError(Error):
+    """An explicit local policy is malformed, unsupported or cannot be honored."""

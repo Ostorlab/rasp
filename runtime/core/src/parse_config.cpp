@@ -2,13 +2,16 @@
 
 #include "rasp/parse_config.h"
 
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <yyjson.h>
 
+#include "local_policy_config.h"
 #include "rasp/config.h"
+#include "rasp/local_policy.h"
 
 namespace rasp {
 
@@ -47,15 +50,31 @@ namespace {
 }  // namespace
 
 Config parse_config(std::string_view json) {
-  yyjson_doc* const document = yyjson_read(json.data(), json.size(), YYJSON_READ_NOFLAG);
+  Config invalid;
+  invalid.local_policy.state = LocalPolicyStateKind::kInvalid;
+  if (!policy_internal::config_envelope(json)) {
+    return invalid;
+  }
+  std::vector<std::byte> pool(131072);
+  yyjson_alc allocator{};
+  if (!yyjson_alc_pool_init(&allocator, pool.data(), pool.size())) {
+    return invalid;
+  }
+  std::string input(json);
+  yyjson_doc* const document = yyjson_read_opts(input.data(), json.size(), YYJSON_READ_NOFLAG, &allocator, nullptr);
   if (document == nullptr) {
-    return {};
+    return invalid;
   }
   const yyjson_val* const root = yyjson_doc_get_root(document);
+  if (!yyjson_is_obj(root)) {
+    yyjson_doc_free(document);
+    return invalid;
+  }
   Config config{
       .build_id = read_text(yyjson_obj_get(root, "build_id")),
       .checks = read_texts(yyjson_obj_get(root, "checks")),
   };
+  policy_internal::read_policy(root, config);
   yyjson_doc_free(document);
   return config;
 }
