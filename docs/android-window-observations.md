@@ -5,9 +5,9 @@ It counts MotionEvent obscuration flags received by this app. It does not identi
 screens, prevent taps, or prove malware. Legitimate overlays and system windows are context too. Android can block
 some obscured touches before delivery; such touches are outside this observer's coverage.
 
-This independent RT10 implementation is awaiting the exact reviewed combined parent. Its provisional packer selector
-accepts `overlay`, but the canonical manifest, compiled catalogue fixture and release sidecars must be registered on
-that parent before publication. Do not publish independent RT10 artifacts as an updated capability catalogue.
+Registered once in canonical schema1 revision6, **46 Android/26 iOS** outputs, catalogue
+`28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4`. The ten rows generate both native cycle identities and compiled expectations from the same manifest.
+All prior signer/service/inline/iOS rows are preserved exactly; the temporary selector is removed.
 
 ## Host setup
 
@@ -157,6 +157,16 @@ PYTHONPATH=src python -m pytest -q tests/rasp_packer/android/window_bridge_integ
 
 These tests use the SDK-compiled host APK and the repository's real InsecureBankv2 AAB, the actual splitter and
 post-pack verifier, and the built native libraries. They assert one bridge/nested wrapper definition and exact
-native configuration bytes for all four ABIs. The independent implementation deliberately tests the unknown
-capability path with no sidecars; final manifest-bound installed-wheel/public-API gates belong to combined-parent
-integration. No installed Android behavior is implied by successful archive verification.
+native configuration bytes for all four ABIs. These fixture tests also cover the unknown capability path with no sidecars. Release validation additionally builds
+an isolated installed wheel with exact revision6 sidecars and exercises the public APK/AAB path and real post-pack
+verifier, including mismatched artifacts and malformed staged-output controls. No installed Android behavior is implied by successful archive verification.
+
+
+The actual Android monitor selects builtins through `CycleMonitor.run` once per cycle. `run_checks` drains this
+FIFO once only when `overlay` is selected. Its ten observations and interval/availability/loss fields remain together
+inside the immutable cycle snapshot retained by both legacy and additive plugin callbacks. A later cycle or Context
+cleanup cannot overwrite that retained interval. `complete` means all ten expected rows were returned; an error or
+inactive observer can still produce complete metadata, which is not continuous touch coverage or a clean verdict.
+The real-JVM fixture exercises these production paths on the caller and an attached native worker, including a
+second zero-touch drain and retained prior run/session/sequence metadata. No separate window-specific cycle header
+or expectation append exists: both generated native headers use the one canonical manifest.

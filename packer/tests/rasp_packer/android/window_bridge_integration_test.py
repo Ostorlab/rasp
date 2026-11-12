@@ -2,8 +2,8 @@
 
 Build the RT10 stub/device/native artifacts first, then set RASP_WINDOW_STUB,
 RASP_WINDOW_HOST_APK and RASP_WINDOW_NATIVE_DIRECTORY (parent of ABI directories).
-The existing runtime config/unknown-capability path is used while canonical registration
-awaits the approved combined parent. No splitter, verifier or native bytes are mocked.
+This fixture explicitly tests the unknown-capability path by omitting sidecars;
+installed-wheel validation additionally exercises exact current release bindings. No splitter, verifier or native bytes are mocked.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ def testWindowBridge_whenRealCompiledArtifactsPacked_preservesSingleBridgeAndSel
     assert result.effective_checks == ("identity", "overlay")
     assert (
         result.bindings is None
-    )  # Canonical new-output contract deliberately awaits root's combined parent.
+    )  # Omitted metadata must remain unknown even with valid current compiled bytes.
     prefix = "base/" if artifact_format == "aab" else ""
     with zipfile.ZipFile(output) as archive:
         for abi in _ABIS:

@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "scope": "Portable native contract fixtures, not transport schema or device results.",
+  "cases": [
+    {
+      "name": "benign_assistive_metadata",
+      "platform": "android",
+      "api_level": 35,
+      "interpretation": "Enabled services and selected assistive IME; no malware verdict or active-control assertion.",
+      "observations": [
+        {
+          "signal": "a11y.enabled_services",
+          "source": "accessibility_manager",
+          "status": "ok",
+          "value": [
+            "com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService capabilities=1 flags=0",
+            "org.password/org.password.FillService capabilities=1 flags=128"
+          ]
+        },
+        {
+          "signal": "ime.enabled_components",
+          "source": "input_method_manager",
+          "status": "ok",
+          "value": [
+            "org.assist/org.assist.Keyboard"
+          ]
+        },
+        {
+          "signal": "ime.current_component",
+          "source": "input_method_manager",
+          "status": "ok",
+          "value": "org.assist/org.assist.Keyboard"
+        },
+        {
+          "signal": "notification.enabled_listeners",
+          "source": "settings_secure",
+          "status": "ok",
+          "value": [
+            "org.support/org.support.Listener"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "positive_structural_capabilities",
+      "platform": "android",
+      "api_level": 34,
+      "interpretation": "Declared gesture/window metadata is present; context for an assessor, no compromise classification.",
+      "observations": [
+        {
+          "signal": "a11y.enabled_services",
+          "source": "accessibility_manager",
+          "status": "ok",
+          "value": [
+            "org.example/org.example.Assist capabilities=33 flags=2"
+          ]
+        },
+        {
+          "signal": "ime.enabled_components",
+          "source": "input_method_manager",
+          "status": "ok",
+          "value": [
+            "org.assist/org.assist.Keyboard",
+            "org.example/org.example.Keyboard"
+          ]
+        },
+        {
+          "signal": "ime.current_component",
+          "source": "input_method_manager",
+          "status": "ok",
+          "value": "org.example/org.example.Keyboard"
+        },
+        {
+          "signal": "notification.enabled_listeners",
+          "source": "settings_secure",
+          "status": "ok",
+          "value": [
+            "org.example/org.example.Listener"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "benign_explicit_empty_with_older_ime_fallback",
+      "platform": "android",
+      "api_level": 31,
+      "interpretation": "Non-null empty service lists and explicit empty setting; selected IME unsupported, not assumed absent.",
+      "observations": [
+        {
+          "signal": "a11y.enabled_services",
+          "source": "accessibility_manager",
+          "status": "ok",
+          "value": []
+        },
+        {
+          "signal": "ime.enabled_components",
+          "source": "input_method_manager",
+          "status": "ok",
+          "value": []
+        },
+        {
+          "signal": "ime.current_component",
+          "source": "input_method_manager",
+          "status": "unsupported"
+        },
+        {
+          "signal": "notification.enabled_listeners",
+          "source": "settings_secure",
+          "status": "ok",
+          "value": []
+        }
+      ]
+    },
+    {
+      "name": "unknown_no_context_or_failed_read",
+      "platform": "android",
+      "api_level": 35,
+      "interpretation": "Not initialized, denied, JNI failure, malformed or overflow; error has no value and does not identify a specific cause.",
+      "observations": [
+        {
+          "signal": "a11y.enabled_services",
+          "source": "accessibility_manager",
+          "status": "error"
+        },
+        {
+          "signal": "ime.enabled_components",
+          "source": "input_method_manager",
+          "status": "error"
+        },
+        {
+          "signal": "ime.current_component",
+          "source": "input_method_manager",
+          "status": "error"
+        },
+        {
+          "signal": "notification.enabled_listeners",
+          "source": "settings_secure",
+          "status": "error"
+        }
+      ]
+    },
+    {
+      "name": "unknown_selected_ime_with_enabled_context",
+      "platform": "android",
+      "api_level": 34,
+      "interpretation": "Enabled IME metadata available; nullable current selection remains unknown.",
+      "observations": [
+        {
+          "signal": "ime.enabled_components",
+          "source": "input_method_manager",
+          "status": "ok",
+          "value": [
+            "org.assist/org.assist.Keyboard"
+          ]
+        },
+        {
+          "signal": "ime.current_component",
+          "source": "input_method_manager",
+          "status": "error"
+        }
+      ]
+    }
+  ]
+}

@@ -7,11 +7,11 @@
 #include <pthread.h>
 #include <string>
 #include <thread>
-#include <vector>
 
 #include "builtin.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
+#include "rasp/cycle.h"
 #include "rasp/embedded_config.h"
 #include "rasp/install_id.h"
 #include "rasp/observation.h"
@@ -45,13 +45,14 @@ constexpr std::chrono::seconds kCheckInterval{60};
 /// @return Never returns.
 void* monitor(void* /*argument*/) {
   const Config config = read_config();
+  CycleMonitor cycle_monitor;
   rasp::plugins::Context context;
   rasp::plugins::init_plugins(rasp::plugins::compiled_in(), config, context);
   while (true) {
-    const std::vector<Observation> observations =
-        rasp::plugins::run_plugins(rasp::plugins::compiled_in(), run_checks(config), context);
+    const auto snapshot = cycle_monitor.run(config, cycle_catalogue("android"), rasp::plugins::compiled_in(), context,
+                                            [](const Config& selection, const void*) { return run_checks(selection); });
     if constexpr (kLoggingEnabled) {
-      for (const Observation& observation : observations) {
+      for (const Observation& observation : snapshot->observations) {
         rasp::log(describe(observation));
       }
     }

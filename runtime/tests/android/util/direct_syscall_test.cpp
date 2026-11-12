@@ -156,6 +156,7 @@ TEST_F(DirectSyscallBoundary, exists_whenPathHasNull_doesNotAliasPrefix) {
   EXPECT_EQ(exists_direct(std::string("fixture\0tail", 12), invoke), std::nullopt);
 }
 
+#ifdef __linux__
 TEST(DirectSyscall, readFile_whenExactLimit_readsWholeFile) {
   const test_support::TemporaryDirectory directory;
   const std::string path = directory.path() + "/data";
@@ -163,6 +164,15 @@ TEST(DirectSyscall, readFile_whenExactLimit_readsWholeFile) {
   EXPECT_EQ(read_file_direct(path, 5), "hello");
   EXPECT_EQ(read_file_direct(path, 4), std::nullopt);
 }
+#else
+TEST(DirectSyscall, nativeBoundary_whenHostIsNotLinux_reportsUnavailable) {
+  const auto result = libc_syscall(0, {});
+  EXPECT_EQ(result.value, -1);
+  EXPECT_EQ(result.error, ENOSYS);
+  EXPECT_EQ(read_file_direct("/", 5), std::nullopt);
+  EXPECT_EQ(exists_direct("/"), std::nullopt);
+}
+#endif
 
 TEST(DirectSyscall, readFile_whenPathContainsNull_rejectsPrefixAlias) {
   const test_support::TemporaryDirectory directory;

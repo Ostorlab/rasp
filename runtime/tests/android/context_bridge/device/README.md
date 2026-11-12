@@ -63,7 +63,7 @@ Activities. Later Activity resumes/pauses/rotation use the real public lifecycle
 same commands; pack with `--checks identity,overlay`, and
 run `check.sh protected.apk --windows`. The mode checks
 all ten production output identities, active adapter and best-effort coverage on the next selected monitor pass.
-The root must first finish the approved combined catalogue; independent RT10 artifacts are not publication-ready.
+Use the matching schema1 revision6 runtime/stub and exact sidecars; root owns final release publication.
 
 On a dedicated API31+ device, tap the visible fixture, rotate repeatedly, use Home and return, open two Activity
 instances in supported multi-window mode, then dismiss them. Keep the app visible through a selected monitor pass
@@ -82,3 +82,26 @@ system accessibility/legitimate overlays need separate recorded cases. Never cla
 The host-JVM suite covers flag handling deterministically; it does not establish OEM dispatch or device efficacy.
 
 No ADB/hardware run is claimed by fixture compilation. No permissions or flags are added to the host manifest.
+
+## Service metadata checks
+
+To exercise the production public service collectors, pack this same attached host with
+`--checks identity,accessibility,input_method,notification_access`, sign the development artifact with a local test
+key as above, and run:
+
+```sh
+runtime/tests/android/context_bridge/device/check.sh /tmp/rt08-device/protected.apk --services
+```
+
+The optional check requires every selected service output after the delayed supported initialization. On API31/33
+the current IME output must be unsupported. On API34/35 it should report the user's selected component, or explicit
+error when unavailable. An error is surfaced as unknown and is never proof of an empty device state. Compare output
+against the dedicated test device's enabled-service settings yourself: valid empty lists, TalkBack/password manager,
+custom assistive keyboard and legitimate support notification listener. Enable/disable or select these controls
+manually with the device owner's consent; the fixture does not change service settings, request permissions or
+read content. Repeat a run after changing a control and compare the next monitor snapshot. No production native
+entry or service content probe is added.
+
+[Exact output names, flag semantics, public API references and visibility limits](../../../../../docs/android-service-observations.md)
+apply. This optional fixture was compiled locally; device execution, vendor/profile coverage and minified-host
+behavior remain separate validation and must be reported as such.

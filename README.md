@@ -38,7 +38,7 @@ on the device                  the runtime runs the chosen checks and hands the 
                                to its plugins; a development build also logs them
 ```
 
-A plugin is code compiled into the runtime ([API](runtime/core/include/rasp/plugin.h), [example](runtime/plugins/example/)). It can add its own checks, and it receives the observations of each run, for example to send them somewhere. A runtime built without plugins keeps the observations to itself, and a release build doesn't log them.
+A plugin is code compiled into the runtime ([API](runtime/core/include/rasp/plugin.h), [example](runtime/plugins/example/)). It can add its own checks, and it receives the observations of each run, for example to send them somewhere. A runtime built without plugins keeps the observations to itself, and a release build doesn't log them. Each actual monitor cycle also exposes an immutable owned snapshot with unverified process/run identity, timing and bounded builtin coverage. Plugins must retain that snapshot during the callback for asynchronous use; see the [cycle consumer contract](docs/measurement-cycle-contract.md). Wire metadata requires a separate backend/transport rollout.
 
 - **The packer** (`packer/`, Python) adds the runtime to the app and returns it unsigned.
 - **The runtime** (`runtime/`, C++) runs inside the protected app and runs the checks.

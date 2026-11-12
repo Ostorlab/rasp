@@ -138,3 +138,22 @@ def testResolveChecks_whenOverlaySelected_isOptInAndroidOnly() -> None:
     assert checks.resolve_checks(platforms.Platform.IOS, ["overlay"]).skipped == (
         "overlay",
     )
+
+
+def testResolveChecks_whenAndroidServiceGroupsSelected_preservesOptInGroups() -> None:
+    resolved = checks.resolve_checks(
+        platforms.Platform.ANDROID,
+        ["accessibility", "input_method", "notification_access"],
+    )
+
+    assert resolved.checks == (
+        "accessibility",
+        "identity",
+        "input_method",
+        "notification_access",
+    )
+    assert resolved.skipped == ()
+    assert checks.resolve_checks(platforms.Platform.ANDROID, []).checks == ("identity",)
+    assert checks.resolve_checks(
+        platforms.Platform.IOS, ["accessibility", "input_method", "notification_access"]
+    ).skipped == ("accessibility", "input_method", "notification_access")

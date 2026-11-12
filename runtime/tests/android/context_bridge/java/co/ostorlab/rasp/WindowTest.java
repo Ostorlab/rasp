@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class WindowTest {
     private static native String[] read(boolean enabled);
     private static native boolean registrationFailure();
+    private static native boolean cycleProbe(boolean worker);
     private static void check(boolean value) { if (!value) throw new AssertionError(); }
     private static void contains(String[] values, String signal, String value) {
         String expected = "overlay." + signal + "/window_callback ok " + value;
@@ -193,6 +194,10 @@ public final class WindowTest {
         contains(touches, "partially_obscured_touch_events", "2");
         contains(read(true), "touch_events", "0");
         // A successful callback must see telemetry before host code, and the same event object.
+        for (boolean worker : new boolean[]{false, true}) {
+            wrapper.dispatchTouchEvent(new MotionEvent(3));
+            check(cycleProbe(worker));
+        }
         MotionEvent exact = new MotionEvent(1);
         Window order = new Window();
         order.setCallback((Window.Callback) Proxy.newProxyInstance(WindowTest.class.getClassLoader(), new Class<?>[]{Window.Callback.class},

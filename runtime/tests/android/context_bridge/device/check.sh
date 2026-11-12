@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 apk="${1:?signed protected APK with development runtime}"
-mode="${2:-context}"
 adb="${ADB:-adb}"
+mode="${2:-}"
+if [[ -n "$mode" && "$mode" != --services && "$mode" != --windows ]]; then
+  echo 'second argument must be --services or --windows when checking opt-in metadata' >&2
+  exit 2
+fi
+api="$("$adb" shell getprop ro.build.version.sdk | tr -d '\r')"
 "$adb" install -r "$apk"
 "$adb" logcat -c
 "$adb" shell am force-stop fixture.contextbridge
@@ -14,7 +19,7 @@ result=0
 timeout 80 "$adb" logcat -v monotonic -s RaspRuntime:I ContextBridgeFixture:I WindowBridgeFixture:I AndroidRuntime:E > "$log" || result=$?
 if [[ "$result" != 0 && "$result" != 124 ]]; then cat "$log"; exit "$result"; fi
 cat "$log"
-python3 - "$log" "$mode" <<'PY'
+python3 - "$log" "$mode" "$api" <<'PY'
 import pathlib
 import sys
 lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
@@ -27,4 +32,18 @@ if sys.argv[2] == "--windows":
     for signal in ("touch_events", "obscured_touch_events", "partially_obscured_touch_events", "dropped_events", "lost_windows", "invalid_events", "interval_ms", "active_windows"):
         assert any("overlay." + signal + "/window_callback ok " in line for line in lines[marker + 1:]), "missing " + signal
 assert all("FATAL EXCEPTION" not in line for line in lines), "fixture crashed"
+if sys.argv[2] == "--services":
+    api = int(sys.argv[3])
+    after_init = lines[marker + 1:]
+    for identity in (
+        "a11y.enabled_services/accessibility_manager",
+        "ime.enabled_components/input_method_manager",
+        "ime.current_component/input_method_manager",
+        "notification.enabled_listeners/settings_secure",
+    ):
+        results = [line for line in after_init if identity + " " in line]
+        assert len(results) > 0, "missing selected output: " + identity
+        if identity.startswith("ime.current_component") and api < 34:
+            assert all(identity + " unsupported" in line for line in results), "unguarded selected IME"
+        print("Service metadata (inspect expected device state; error means unknown):", results[-1])
 PY
