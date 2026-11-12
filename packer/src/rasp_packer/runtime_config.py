@@ -21,9 +21,11 @@ class RuntimeConfig:
 
     Attributes:
         build_id: The id of the protected build.
+        checks: The ids of the check groups the protected app runs, sorted.
     """
 
     build_id: str
+    checks: tuple[str, ...]
 
     def to_json(self) -> bytes:
         """Writes the config as the runtime reads it.

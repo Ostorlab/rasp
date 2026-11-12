@@ -3,17 +3,20 @@
 #include "checks/root.h"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 #include "rasp/observation.h"
 #include "support/files.h"
+#include "support/syscall_files.h"
 
 namespace rasp::android::checks {
 namespace {
@@ -38,14 +41,27 @@ constexpr std::string_view kStockMounts =
   return {
       {.signal = "root.mounts", .source = "proc_mounts", .status = Status::kOk, .value = root_lines},
       {.signal = "root.rw_mounts", .source = "proc_mounts", .status = Status::kOk, .value = rw_lines},
+      {.signal = "root.mounts", .source = "proc_mounts_syscall", .status = Status::kOk, .value = root_lines},
+      {.signal = "root.rw_mounts", .source = "proc_mounts_syscall", .status = Status::kOk, .value = rw_lines},
   };
 }
 
-/// The observations of a mount table that couldn't be read.
+/// The observations of a mount table that couldn't be read, through both sources.
 [[nodiscard]] std::vector<Observation> unreadable_mounts() {
   return {
       {.signal = "root.mounts", .source = "proc_mounts", .status = Status::kError, .value = {}},
       {.signal = "root.rw_mounts", .source = "proc_mounts", .status = Status::kError, .value = {}},
+      {.signal = "root.mounts", .source = "proc_mounts_syscall", .status = Status::kError, .value = {}},
+      {.signal = "root.rw_mounts", .source = "proc_mounts_syscall", .status = Status::kError, .value = {}},
+  };
+}
+
+/// The root.fs_paths observations through access, stat and faccessat_syscall that all report `found`.
+[[nodiscard]] std::vector<Observation> fs_paths(const std::vector<std::string>& found) {
+  return {
+      {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = found},
+      {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = found},
+      {.signal = "root.fs_paths", .source = "faccessat_syscall", .status = Status::kOk, .value = found},
   };
 }
 
@@ -93,7 +109,7 @@ constexpr std::string_view kStockMounts =
 /// Reads properties that are all unset.
 [[nodiscard]] std::optional<std::string> read_nothing([[maybe_unused]] std::string_view name) { return std::nullopt; }
 
-TEST(Root, observePaths_whenOnePathExists_reportsItThroughBothSources) {
+TEST(Root, observePaths_whenOnePathExists_reportsItThroughEverySource) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string present = directory.path() + "/su";
@@ -104,10 +120,7 @@ TEST(Root, observePaths_whenOnePathExists_reportsItThroughBothSources) {
   const std::vector<Observation> observations = observe_paths(paths);
 
   const std::vector<std::string> found = {present};
-  EXPECT_EQ(observations, (std::vector<Observation>{
-                              {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = found},
-                              {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = found},
-                          }));
+  EXPECT_EQ(observations, fs_paths(found));
 }
 
 TEST(Root, observePaths_whenAPathIsADirectory_reportsIt) {
@@ -120,10 +133,7 @@ TEST(Root, observePaths_whenAPathIsADirectory_reportsIt) {
   const std::vector<Observation> observations = observe_paths(paths);
 
   const std::vector<std::string> found = {magisk};
-  EXPECT_EQ(observations, (std::vector<Observation>{
-                              {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = found},
-                              {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = found},
-                          }));
+  EXPECT_EQ(observations, fs_paths(found));
 }
 
 TEST(Root, observePaths_whenSeveralPathsExist_reportsThemInTheGivenOrder) {
@@ -138,13 +148,10 @@ TEST(Root, observePaths_whenSeveralPathsExist_reportsThemInTheGivenOrder) {
   const std::vector<Observation> observations = observe_paths(paths);
 
   const std::vector<std::string> found = {first, second};
-  EXPECT_EQ(observations, (std::vector<Observation>{
-                              {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = found},
-                              {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = found},
-                          }));
+  EXPECT_EQ(observations, fs_paths(found));
 }
 
-TEST(Root, observePaths_whenNoPathExists_reportsEmptyListsThroughBothSources) {
+TEST(Root, observePaths_whenNoPathExists_reportsEmptyListsThroughEverySource) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string missing = directory.path() + "/missing";
@@ -153,10 +160,7 @@ TEST(Root, observePaths_whenNoPathExists_reportsEmptyListsThroughBothSources) {
   const std::vector<Observation> observations = observe_paths(paths);
 
   const std::vector<std::string> none;
-  EXPECT_EQ(observations, (std::vector<Observation>{
-                              {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = none},
-                              {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = none},
-                          }));
+  EXPECT_EQ(observations, fs_paths(none));
 }
 
 /// A mount line that a root tool leaves, with one of the marks observe_mounts looks for.
@@ -188,22 +192,22 @@ TEST(Root, observeMounts_whenNoLineMentionsARootTool_reportsAnEmptyList) {
   EXPECT_EQ(observe_mounts(table), mounts({}));
 }
 
-TEST(Root, observeMounts_whenTheTableIsEmpty_reportsAnEmptyList) {
+TEST(Root, observeMounts_whenTheTableIsEmpty_reportsError) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, ""));
 
-  EXPECT_EQ(observe_mounts(table), mounts({}));
+  EXPECT_EQ(observe_mounts(table), unreadable_mounts());
 }
 
-TEST(Root, observeMounts_whenTheLastLineHasNoLineBreak_stillReportsIt) {
+TEST(Root, observeMounts_whenTheLastLineHasNoLineBreak_reportsError) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, std::string(kStockMounts) + "KSU /vendor overlay ro 0 0"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({"KSU /vendor overlay ro 0 0"}));
+  EXPECT_EQ(observe_mounts(table), unreadable_mounts());
 }
 
 TEST(Root, observeMounts_whenMoreThan32LinesMatch_reportsTheFirst32) {
@@ -229,7 +233,13 @@ TEST(Root, observeMounts_whenTheTableIsExactly1MiB_readsItWhole) {
   ASSERT_FALSE(directory.path().empty());
   const std::string table = directory.path() + "/mounts";
   const std::string last = "magisk /debug_ramdisk tmpfs rw 0 0";
-  const std::string content = std::string(kMountsLimit - last.size() - 1, 'a') + "\n" + last;
+  std::string content;
+  const std::string ordinary = "tmpfs /data tmpfs rw 0 0\n";
+  while (content.size() + ordinary.size() + last.size() + 64 < kMountsLimit) {
+    content += ordinary;
+  }
+  const std::string tail = " /data tmpfs rw 0 0\n";
+  content += std::string(kMountsLimit - content.size() - last.size() - tail.size() - 1, 'a') + tail + last + "\n";
   ASSERT_EQ(content.size(), kMountsLimit);
   ASSERT_TRUE(write_file(table, content));
 
@@ -313,13 +323,13 @@ TEST(Root, observeMounts_whenAnOptionOnlyStartsWithRw_ignoresIt) {
   EXPECT_EQ(observe_mounts(table), mounts({}));
 }
 
-TEST(Root, observeMounts_whenALineHasFewerThanFourFields_ignoresItForWritableMounts) {
+TEST(Root, observeMounts_whenALineHasFewerThanFourFields_reportsError) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, std::string(kStockMounts) + "/dev/block/dm-0 /system ext4\nrw\n\n"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({}));
+  EXPECT_EQ(observe_mounts(table), unreadable_mounts());
 }
 
 TEST(Root, observeMounts_whenARootToolMountsASystemFolderWritable_reportsTheLineInBothLists) {
@@ -438,11 +448,66 @@ TEST(Root, root_whenOffAndroid_reportsEveryCheckAsUnsupported) {
       (std::vector<Observation>{
           {.signal = "root.fs_paths", .source = "access", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.fs_paths", .source = "stat", .status = Status::kUnsupported, .value = {}},
+          {.signal = "root.fs_paths", .source = "faccessat_syscall", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.mounts", .source = "proc_mounts", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.rw_mounts", .source = "proc_mounts", .status = Status::kUnsupported, .value = {}},
+          {.signal = "root.mounts", .source = "proc_mounts_syscall", .status = Status::kUnsupported, .value = {}},
+          {.signal = "root.rw_mounts", .source = "proc_mounts_syscall", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.selinux_enforcing", .source = "selinuxfs", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.build_props", .source = "system_property", .status = Status::kUnsupported, .value = {}},
       }));
+}
+
+TEST(Root, observePaths_whenLookupFails_reportsErrorForEverySource) {
+  const TemporaryDirectory directory;
+  const std::string path = directory.path() + "/loop";
+  std::error_code error;
+  std::filesystem::create_symlink(path, path, error);
+  ASSERT_FALSE(error);
+  const std::string present = directory.path() + "/present";
+  ASSERT_TRUE(write_file(present, ""));
+  const std::array<std::string_view, 2> paths{present, path};
+  EXPECT_EQ(observe_paths(paths),
+            (std::vector<Observation>{failed("root.fs_paths", "access"), failed("root.fs_paths", "stat"),
+                                      failed("root.fs_paths", "faccessat_syscall")}));
+}
+
+TEST(Root, observePaths_whenSyscallIsDenied_preservesOtherSources) {
+  const TemporaryDirectory directory;
+  const std::string path = directory.path() + "/file";
+  ASSERT_TRUE(write_file(path, ""));
+  const std::array<std::string_view, 1> paths{path};
+  test_support::SyscallFile fixture{.content = {}, .error = EACCES};
+  test_support::SyscallFile::active = &fixture;
+  EXPECT_EQ(observe_paths(paths, test_support::SyscallFile::invoke),
+            (std::vector<Observation>{observed("root.fs_paths", "access", std::vector<std::string>{path}),
+                                      observed("root.fs_paths", "stat", std::vector<std::string>{path}),
+                                      failed("root.fs_paths", "faccessat_syscall")}));
+}
+
+TEST(Root, observeMounts_whenSourcesDiverge_preservesIndependentLists) {
+  const TemporaryDirectory directory;
+  const std::string path = directory.path() + "/mounts";
+  ASSERT_TRUE(write_file(path, kStockMounts));
+  const std::string line = "magisk /data/local tmpfs rw 0 0";
+  const std::string syscall_mounts = line + "\n";
+  test_support::SyscallFile fixture{.content = syscall_mounts};
+  test_support::SyscallFile::active = &fixture;
+  EXPECT_EQ(observe_mounts(path, test_support::SyscallFile::invoke),
+            (std::vector<Observation>{observed("root.mounts", "proc_mounts", std::vector<std::string>{}),
+                                      observed("root.rw_mounts", "proc_mounts", std::vector<std::string>{}),
+                                      observed("root.mounts", "proc_mounts_syscall", std::vector<std::string>{line}),
+                                      observed("root.rw_mounts", "proc_mounts_syscall", std::vector<std::string>{})}));
+}
+
+TEST(Root, observeMounts_whenInputIsMalformedOrTruncated_reportsError) {
+  const TemporaryDirectory directory;
+  const std::string path = directory.path() + "/mounts";
+  for (const std::string_view content :
+       {"\n", "garbage\n", "magisk /system tmpfs", "magisk /system tmpfs rw 0 0\ninvalid\n"}) {
+    ASSERT_TRUE(write_file(path, content));
+    EXPECT_EQ(observe_mounts(path), unreadable_mounts());
+  }
 }
 
 }  // namespace
