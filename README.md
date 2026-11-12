@@ -96,7 +96,7 @@ result = packer.pack(
 | `root` | ✓ | | Root files, writable system partitions, SELinux and build properties |
 | `jailbreak` | | ✓ | Jailbreak files, sandbox escape and process spawning |
 | `debugger` | ✓ | ✓ | A debugger attached to the app |
-| `hooks` | ✓ | ✓ | Frida and other libraries injected into the app |
+| `hooks` | ✓ | ✓ | Framework-map/thread heuristics; Android selected entry-byte differences ([limits](runtime/inline_hooks.md)) |
 | `integrity` | ✓ | | The runtime's code changed in memory |
 | `mitm` | ✓ | ✓ | VPN tunnels, and proxies on iOS |
 | `identity` | ✓ | ✓ | A repackaged copy of the app (always on) |

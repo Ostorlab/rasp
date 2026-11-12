@@ -62,6 +62,8 @@ struct ElfSection {
 
 /// One dynamic symbol, with the fields the readers need.
 struct ElfSymbol {
+  /// The function size; zero means the ELF does not bound its extent.
+  std::uint64_t size = 0;
   /// The symbol's value: for a function, the virtual address of its code, relative to the image's load address. On
   /// 32-bit Arm, the lowest bit of a Thumb function's value is set, and the code starts one byte lower.
   std::uint64_t value = 0;
@@ -105,16 +107,22 @@ struct CodeLocation {
 
 /// Finds the defined dynamic symbol named `name` in `image`.
 ///
-/// It reads the symbols of the first SHT_DYNSYM section and their names from the string table that section links to.
+/// It reads the symbols of the unique SHT_DYNSYM section and their names from the string table that section links to.
 /// An undefined symbol, one that the image imports, is skipped.
 ///
 /// @param image The bytes of the ELF file, read whole.
 /// @param headers The image's headers, from read_elf_headers.
 /// @param name The symbol's name, such as `open`.
-/// @return The first defined symbol with that name, or nothing when there is none, when the image has no dynamic
-/// symbol table, or when that table or its string table lies outside the image.
+/// @return The unique defined symbol with that name, or nothing for missing/duplicate/reserved definitions,
+/// multiple or malformed symbol tables (maximum 65536 entries), or an out-of-bounds table/string range.
 [[nodiscard]] std::optional<ElfSymbol> find_dynamic_symbol(std::span<const std::uint8_t> image,
                                                            const ElfHeaders& headers, std::string_view name);
+
+/// Checks for loader-declared text relocations before comparing immutable code.
+/// @param image The complete ELF image.
+/// @param headers Validated ELF headers.
+/// @return False for text relocations or malformed dynamic metadata, true otherwise.
+[[nodiscard]] bool immutable_code(std::span<const std::uint8_t> image, const ElfHeaders& headers);
 
 /// Finds where the code `range` lies in the file.
 ///

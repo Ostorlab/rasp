@@ -168,6 +168,13 @@ gtest_discover_tests(rasp_android_cipher_test)
 
 # Exercise hooks()' Android dispatch against Linux's real own-process procfs, without an Android device claim.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  foreach(library libc libdl)
+    add_library(rasp_watched_${library} SHARED support/watched_library.cpp)
+    set_target_properties(rasp_watched_${library} PROPERTIES PREFIX "" OUTPUT_NAME ${library}
+      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/watched")
+    target_link_options(rasp_watched_${library} PRIVATE -nostdlib)
+    target_link_libraries(rasp_watched_${library} PRIVATE rasp_warnings rasp_language)
+  endforeach()
   add_library(rasp_android_hooks_dispatch OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp
     ${PROJECT_SOURCE_DIR}/android/src/util/direct_syscall.cpp
     ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp
@@ -178,10 +185,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(rasp_android_hooks_dispatch_test android/checks/hooks_test.cpp
     $<TARGET_OBJECTS:rasp_android_hooks_dispatch>)
   target_compile_definitions(rasp_android_hooks_dispatch_test PRIVATE RASP_TEST_ANDROID_HOOKS
+    RASP_TEST_WATCHED_LIBC="$<TARGET_FILE:rasp_watched_libc>"
+    RASP_TEST_WATCHED_LIBDL="$<TARGET_FILE:rasp_watched_libdl>"
     RASP_TEST_ELF_DATA="${CMAKE_CURRENT_SOURCE_DIR}/android/util/data")
   target_include_directories(rasp_android_hooks_dispatch_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
     ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(rasp_android_hooks_dispatch_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  add_dependencies(rasp_android_hooks_dispatch_test rasp_watched_libc rasp_watched_libdl)
   gtest_discover_tests(rasp_android_hooks_dispatch_test TEST_PREFIX "AndroidDispatch.")
 endif()
 

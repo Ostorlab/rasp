@@ -33,7 +33,7 @@ namespace rasp::android::checks {
 /// library files, as observe_inline_hooks describes. The list holds the functions the runtime's checks call and those
 /// bypass scripts hook, such as `open`, `access`, `stat`, `syscall`, `ptrace`, `fork`, `kill`, `exit`, `dlopen` and
 /// `dlsym`. Each is resolved through its own library's handle, so the address compared is the library's own
-/// definition even when another library interposes the same name.
+/// definition or a definition in its dependency scope rather than the global default scope.
 ///
 /// @return One observation per signal and source, in this order: hook.maps_hits then hook.rwx_regions, both read
 /// through proc_maps, then hook.maps_hits through proc_maps_syscall, then hook.threads through proc_task,
@@ -81,27 +81,29 @@ struct ResolvedFunction {
   std::string_view name;
   /// The address the dynamic linker resolved the function to.
   std::uintptr_t address = 0;
+  /// Expected ELF machine in production; zero lets cross-ABI fixtures inspect any supported machine as data.
+  std::uint16_t expected_machine = 0;
 };
 
 /// Reports the functions among `functions` whose first bytes in memory differ from the same bytes in their library's
 /// file, the sign of an inline hook: Frida's Interceptor, Dobby and Substrate overwrite a function's first instructions
 /// in memory with a jump, while the file keeps the original bytes.
 ///
-/// For each function, the mapping of `maps_path` that holds its address gives the library's file and the file offset
-/// the address is mapped from. The function's name is looked up in that file's dynamic symbol table, and the symbol's
-/// address is translated through the file's program headers to a file offset inside an executable, non-writable
-/// segment. When the two offsets agree, the first 16 bytes of the function in memory are compared with the 16 bytes at
-/// that offset in the file, fewer when the segment's file part or the mapping ends sooner. An address is looked up
-/// without its top byte, and on 32-bit Arm without its Thumb bit.
+/// The complete bounded maps snapshot is validated before lookup. The unique RX, non-writable mapping gives the
+/// file offset of the address. A unique defined STT_FUNC symbol with nonzero size must translate through an immutable
+/// executable PT_LOAD to that same offset. At most min(16, symbol size) bytes are read through the OS own-process
+/// memory API, never dereferenced directly. A short mapping or OS read fails the comparison. Thumb low bits are removed
+/// from both code addresses; only AArch64 accepts top-byte tags. Production resolution requires the native ELF machine.
+/// Loader-declared text relocations and IFUNC resolvers are not comparable. Ordinary PLT/GOT data relocation does not
+/// rewrite these bytes. This reports differences, including authorized instrumentation, without a malware verdict.
 ///
-/// @param maps_path The memory map to read, `/proc/self/maps` on a device.
-/// @param functions The functions to compare, at most 64.
-/// @return One hook.inline observation read through prologue: the names of the functions whose bytes differ, in the
-/// order of `functions`. It has an error status when the map can't be read or is larger than 4 MiB, when there are
-/// more than 64 functions, or when any function can't be compared: its address isn't in a readable, executable mapping
-/// of a file; the file can't be read, is larger than 32 MiB or isn't an ELF file; the file defines no function of that
-/// name whose code lies in an executable, non-writable segment; or the symbol's file offset and the mapped address's
-/// file offset differ.
+/// @param maps_path The complete memory map, /proc/self/maps in production, limited to 4 MiB and 8192 bytes per line.
+/// @param functions One to 64 distinct function names, each 1 to 128 bytes without NUL, with resolved addresses.
+/// @return One hook.inline/prologue observation: kOk with changed names in input order (empty only after all
+/// comparisons succeeded); kError with no value on any missing, unreadable, malformed, ambiguous, oversized or
+/// incomparable input. Library files are limited to 32 MiB. The dispatcher emits at most 32 changed names from its
+/// fixed libc/libdl list. Off Android the dispatcher emits kUnsupported; an unsupported Android architecture also makes
+/// inline unsupported.
 [[nodiscard]] Observation observe_inline_hooks(std::string_view maps_path, std::span<const ResolvedFunction> functions);
 
 }  // namespace rasp::android::checks

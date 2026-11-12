@@ -4,9 +4,12 @@
 
 #include "util/elf.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <gtest/gtest.h>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,6 +36,120 @@ constexpr std::uint8_t kSymbolIndirectFunction = 10;
     return {};
   }
   return {content->begin(), content->end()};
+}
+
+/// A little-endian ELF64 fixture field, keeping its value and width distinct.
+struct FixtureField {
+  /// Little-endian field value.
+  std::uint64_t value = 0;
+  /// Field width in bytes.
+  std::size_t width = 0;
+};
+
+/// Writes a checked fixture field without conflating its offset, value and width.
+void put_word(std::vector<std::uint8_t>& image, std::uint64_t offset, FixtureField field) {
+  ASSERT_LE(offset, image.size());
+  ASSERT_LE(field.width, image.size() - offset);
+  for (std::size_t index = 0; index < field.width; ++index) {
+    image[static_cast<std::size_t>(offset) + index] = static_cast<std::uint8_t>(field.value >> (index * 8U));
+  }
+}
+
+TEST(Elf, findDynamicSymbol_whenDuplicateDefinitions_reportsNothing) {
+  std::vector<std::uint8_t> image = read_bytes(kArm64Library);
+  const auto headers = read_elf_headers(image);
+  ASSERT_TRUE(headers.has_value());
+  const auto symbols = find_section(image, *headers, ".dynsym");
+  ASSERT_TRUE(symbols.has_value());
+  ASSERT_GE(symbols->size, 48U);
+  const std::span<std::uint8_t> table =
+      std::span(image).subspan(static_cast<std::size_t>(symbols->file_offset), static_cast<std::size_t>(symbols->size));
+  std::memcpy(table.data(), table.subspan(48, 24).data(), 24);
+  EXPECT_FALSE(find_dynamic_symbol(image, *headers, "rasp_fixture_first").has_value());
+}
+
+TEST(Elf, findDynamicSymbol_whenTableHasPartialEntry_reportsNothing) {
+  std::vector<std::uint8_t> image = read_bytes(kArm64Library);
+  const auto headers = read_elf_headers(image);
+  ASSERT_TRUE(headers.has_value());
+  const auto symbols = find_section(image, *headers, ".dynsym");
+  ASSERT_TRUE(symbols.has_value());
+  for (std::uint16_t index = 0; index < headers->sections.count; ++index) {
+    const std::uint64_t base = headers->sections.offset + (std::uint64_t{index} * headers->sections.entry_size);
+    if (image[static_cast<std::size_t>(base) + 4] == 11) {
+      put_word(image, base + 32, {.value = symbols->size - 1, .width = 8});
+    }
+  }
+  EXPECT_FALSE(find_dynamic_symbol(image, *headers, "rasp_fixture_first").has_value());
+}
+
+TEST(Elf, findDynamicSymbol_whenSectionIndexIsReserved_reportsNothing) {
+  auto image = read_bytes(kArm64Library);
+  const auto headers = read_elf_headers(image);
+  ASSERT_TRUE(headers.has_value());
+  const auto symbols = find_section(image, *headers, ".dynsym");
+  ASSERT_TRUE(symbols.has_value());
+  put_word(image, symbols->file_offset + 48 + 6, {.value = 0xFFF1, .width = 2});
+  EXPECT_FALSE(find_dynamic_symbol(image, *headers, "rasp_fixture_first").has_value());
+}
+
+TEST(Elf, findDynamicSymbol_whenMultipleSymbolTablesExist_reportsNothing) {
+  auto image = read_bytes(kArm64Library);
+  const auto headers = read_elf_headers(image);
+  ASSERT_TRUE(headers.has_value());
+  put_word(image, headers->sections.offset + 4, {.value = 11, .width = 4});
+  EXPECT_FALSE(find_dynamic_symbol(image, *headers, "rasp_fixture_first").has_value());
+}
+
+TEST(Elf, immutableCode_whenDynamicMetadataIsMissing_rejectsComparison) {
+  auto image = read_bytes(kArm64Library);
+  const auto headers = read_elf_headers(image);
+  ASSERT_TRUE(headers.has_value());
+  for (std::uint16_t index = 0; index < headers->sections.count; ++index) {
+    const std::uint64_t base = headers->sections.offset + (std::uint64_t{index} * headers->sections.entry_size);
+    if (image[static_cast<std::size_t>(base) + 4] == 6) {
+      put_word(image, base + 4, {.value = 0, .width = 4});
+    }
+  }
+  EXPECT_FALSE(immutable_code(image, *headers));
+}
+
+TEST(Elf, immutableCode_whenDynamicFlagsDeclareTextRelocations_rejectsComparison) {
+  for (const std::uint64_t tag : {std::uint64_t{22}, std::uint64_t{30}}) {
+    auto image = read_bytes(kArm64Library);
+    const auto headers = read_elf_headers(image);
+    ASSERT_TRUE(headers.has_value());
+    EXPECT_TRUE(immutable_code(image, *headers));
+    const auto dynamic = find_section(image, *headers, ".dynamic");
+    ASSERT_TRUE(dynamic.has_value());
+    put_word(image, dynamic->file_offset, {.value = tag, .width = 8});
+    put_word(image, dynamic->file_offset + 8, {.value = 4, .width = 8});
+    EXPECT_FALSE(immutable_code(image, *headers));
+  }
+}
+
+TEST(Elf, findDynamicSymbol_whenStringTableIsInvalid_reportsNothing) {
+  auto image = read_bytes(kArm64Library);
+  const auto headers = read_elf_headers(image);
+  ASSERT_TRUE(headers.has_value());
+  const auto names = find_section(image, *headers, ".dynstr");
+  ASSERT_TRUE(names.has_value());
+  const auto bytes =
+      std::span(image).subspan(static_cast<std::size_t>(names->file_offset), static_cast<std::size_t>(names->size));
+  std::ranges::fill(bytes, std::uint8_t{0xFF});
+  EXPECT_FALSE(find_dynamic_symbol(image, *headers, "rasp_fixture_first").has_value());
+}
+
+TEST(Elf, readElfHeaders_whenTablesAreTruncatedOrOverflow_reportsNothing) {
+  const auto original = read_bytes(kArm64Library);
+  for (const std::size_t length : {std::size_t{0}, std::size_t{63}, original.size() - 1}) {
+    EXPECT_FALSE(read_elf_headers(std::span(original).first(length)).has_value());
+  }
+  for (const std::uint64_t offset : {std::uint64_t{0x20}, std::uint64_t{0x28}}) {
+    auto image = original;
+    put_word(image, offset, {.value = UINT64_MAX, .width = 8});
+    EXPECT_FALSE(read_elf_headers(image).has_value());
+  }
 }
 
 TEST(Elf, readElfHeaders_whenArm64Library_readsElf64AndItsMachine) {

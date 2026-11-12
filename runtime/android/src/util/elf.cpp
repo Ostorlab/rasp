@@ -331,33 +331,36 @@ template <typename T>
 /// Whether the string at `offset` in the string table `strings` is `name`. The string is a run of bytes ending at the
 /// first null; it is compared to `name` byte for byte, with no view that aliases the bytes as characters.
 [[nodiscard]] bool string_at_is(std::span<const std::uint8_t> strings, std::uint64_t offset, std::string_view name) {
-  if (offset >= strings.size()) {
+  if (name.size() >= strings.size() || !range_fits(offset, name.size() + 1, strings.size())) {
     return false;
   }
-  const std::span<const std::uint8_t> rest = strings.subspan(static_cast<std::size_t>(offset));
-  const auto terminator = std::ranges::find(rest, std::uint8_t{0});
-  if (terminator == rest.end()) {
+  const std::span<const std::uint8_t> rest = strings.subspan(static_cast<std::size_t>(offset), name.size() + 1);
+  if (rest.back() != 0) {
     return false;
   }
-  const auto length = static_cast<std::size_t>(terminator - rest.begin());
+  const std::size_t length = name.size();
   return std::ranges::equal(rest.first(length), name, [](std::uint8_t byte, char character) {
     return byte == static_cast<std::uint8_t>(character);
   });
 }
 
-/// The first section of type `type` in `image`, or nothing when there is none or a section header can't be read.
+/// The unique section of type `type` in `image`, or nothing when there is none or a section header can't be read.
 [[nodiscard]] std::optional<ElfSection> find_section_of_type(std::span<const std::uint8_t> image,
                                                              const ElfHeaders& headers, std::uint32_t type) {
+  std::optional<ElfSection> found;
   for (std::uint16_t index = 0; index < headers.sections.count; ++index) {
     const std::optional<ElfSection> section = read_section(image, headers, index);
     if (!section) {
       return std::nullopt;
     }
     if (section->type == type) {
-      return section;
+      if (found.has_value()) {
+        return std::nullopt;
+      }
+      found = section;
     }
   }
-  return std::nullopt;
+  return found;
 }
 
 /// One entry of a symbol table, with the fields the reader needs.
@@ -365,7 +368,7 @@ struct SymbolEntry {
   /// The offset of the symbol's name in the symbol table's string table.
   std::uint32_t name_offset = 0;
   /// Whether the image defines the symbol, rather than importing it.
-  bool defined = false;
+  std::uint16_t section_index = 0;
   /// The symbol's value and type.
   ElfSymbol symbol;
 };
@@ -378,13 +381,14 @@ struct SymbolEntry {
   const std::optional<std::uint8_t> info = read_u8(symbols, base + layout.st_info);
   const std::optional<std::uint16_t> section_index = read_u16(symbols, base + layout.st_shndx);
   const std::optional<std::uint64_t> value = read_word(symbols, base + layout.st_value, layout);
-  if (!name_offset || !info || !section_index || !value) {
+  const auto size = read_word(symbols, base + (layout.word_size == 8 ? 16 : 8), layout);
+  if (!name_offset || !info || !section_index || !value || !size) {
     return std::nullopt;
   }
   return SymbolEntry{
       .name_offset = *name_offset,
-      .defined = *section_index != kShnUndefined,
-      .symbol = {.value = *value, .type = static_cast<std::uint8_t>(*info & kSymbolTypeMask)},
+      .section_index = *section_index,
+      .symbol = {.size = *size, .value = *value, .type = static_cast<std::uint8_t>(*info & kSymbolTypeMask)},
   };
 }
 
@@ -412,7 +416,10 @@ std::optional<ElfHeaders> read_elf_headers(std::span<const std::uint8_t> image) 
   const std::optional<std::uint16_t> segment_entry_size = read_u16(image, layout.phentsize);
   const std::optional<std::uint16_t> segment_count = read_u16(image, layout.phnum);
   if (!machine || !section_offset || !section_entry_size || !section_count || !section_names_index || !segment_offset ||
-      !segment_entry_size || !segment_count || *section_count == 0 || *segment_count == 0) {
+      !segment_entry_size || !segment_count || *section_count == 0 || *segment_count == 0 ||
+      *section_entry_size < layout.section_header_size || *segment_entry_size < layout.program_header_size ||
+      !range_fits(*section_offset, std::uint64_t{*section_entry_size} * *section_count, image.size()) ||
+      !range_fits(*segment_offset, std::uint64_t{*segment_entry_size} * *segment_count, image.size())) {
     return std::nullopt;
   }
   return ElfHeaders{
@@ -453,13 +460,14 @@ std::optional<ElfSymbol> find_dynamic_symbol(std::span<const std::uint8_t> image
                                              std::string_view name) {
   const ElfLayout& layout = layout_of(headers);
   const std::optional<ElfSection> symbol_section = find_section_of_type(image, headers, kShtDynsym);
-  if (!symbol_section || symbol_section->entry_size < layout.symbol_size ||
-      symbol_section->link >= headers.sections.count) {
+  if (!symbol_section || symbol_section->entry_size != layout.symbol_size ||
+      symbol_section->size % symbol_section->entry_size != 0 ||
+      symbol_section->size / symbol_section->entry_size > 65536 || symbol_section->link >= headers.sections.count) {
     return std::nullopt;
   }
   const std::optional<ElfSection> names_section =
       read_section(image, headers, static_cast<std::uint16_t>(symbol_section->link));
-  if (!names_section) {
+  if (!names_section.has_value() || names_section->type != 3) {
     return std::nullopt;
   }
   const std::optional<std::span<const std::uint8_t>> symbols = section_bytes(image, *symbol_section);
@@ -468,13 +476,42 @@ std::optional<ElfSymbol> find_dynamic_symbol(std::span<const std::uint8_t> image
     return std::nullopt;
   }
   const std::uint64_t count = symbols->size() / symbol_section->entry_size;
+  std::optional<ElfSymbol> found;
   for (std::uint64_t index = 0; index < count; ++index) {
     const std::optional<SymbolEntry> entry = read_symbol(*symbols, index * symbol_section->entry_size, layout);
-    if (entry && entry->defined && string_at_is(*names, entry->name_offset, name)) {
-      return entry->symbol;
+    if (entry.has_value() && entry->section_index != kShnUndefined && string_at_is(*names, entry->name_offset, name)) {
+      if (found.has_value() || entry->section_index >= headers.sections.count) {
+        return std::nullopt;
+      }
+      found = entry->symbol;
     }
   }
-  return std::nullopt;
+  return found;
+}
+
+bool immutable_code(std::span<const std::uint8_t> image, const ElfHeaders& headers) {
+  const ElfLayout& layout = layout_of(headers);
+  const auto section = find_section_of_type(image, headers, 6);
+  if (!section.has_value()) {
+    return false;
+  }
+  const auto bytes = section_bytes(image, *section);
+  const std::size_t entry_size = 2 * layout.word_size;
+  if (!bytes.has_value() || section->entry_size != entry_size || bytes->size() % entry_size != 0 ||
+      bytes->size() / entry_size > 65536) {
+    return false;
+  }
+  for (std::size_t offset = 0; offset < bytes->size(); offset += entry_size) {
+    const auto tag = read_word(*bytes, offset, layout);
+    const auto value = read_word(*bytes, offset + layout.word_size, layout);
+    if (!tag.has_value() || !value.has_value() || *tag == 22 || (*tag == 30 && (*value & 4U) != 0)) {
+      return false;
+    }
+    if (*tag == 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 std::optional<CodeLocation> find_code(std::span<const std::uint8_t> image, const ElfHeaders& headers,

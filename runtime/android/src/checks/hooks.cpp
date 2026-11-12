@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <ranges>
 #include <set>
@@ -27,6 +28,19 @@
 #include "rasp/util/read_file.h"
 #include "util/apk_file.h"
 #include "util/elf.h"
+
+#ifdef __linux__
+#include <sys/uio.h>
+#if __has_include(<bits/types/struct_iovec.h>)
+#include <bits/types/struct_iovec.h>
+#else
+#include <linux/uio.h>
+#endif
+#include <unistd.h>
+#elifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 
 #ifdef __ANDROID__
 #include <dlfcn.h>
@@ -83,7 +97,7 @@ constexpr std::size_t kMaxFunctions = 64;
 /// sit, and on other 64-bit platforms a user-space address never sets it. A 32-bit address keeps all its bits.
 constexpr auto kAddressMask = static_cast<std::uintptr_t>(~std::uint64_t{0} >> 8U);
 /// The most hexadecimal digits a 64-bit number has.
-constexpr std::size_t kMaxHexDigits = 16;
+constexpr std::size_t kMaxFunctionName = 128;
 /// The bit a 32-bit Arm function address sets when the function is Thumb code.
 constexpr std::uint64_t kThumbBit = 1;
 
@@ -211,102 +225,66 @@ struct Mapping {
   std::string path;
 };
 
-/// The next space-separated field of `rest`, which is advanced past it; empty when `rest` holds no more fields.
-[[nodiscard]] std::string_view next_field(std::string_view& rest) {
-  const std::size_t start = rest.find_first_not_of(' ');
-  if (start == std::string_view::npos) {
-    rest = {};
-    return {};
-  }
-  rest.remove_prefix(start);
-  const std::size_t end = std::min(rest.find(' '), rest.size());
-  const std::string_view field = rest.substr(0, end);
-  rest.remove_prefix(end);
-  return field;
-}
-
-/// The value of the hexadecimal digit `digit`, or nothing when it isn't one.
-[[nodiscard]] std::optional<std::uint64_t> hex_digit(char digit) {
-  if (digit >= '0' && digit <= '9') {
-    return static_cast<std::uint64_t>(digit - '0');
-  }
-  if (digit >= 'a' && digit <= 'f') {
-    return static_cast<std::uint64_t>(digit - 'a' + 10);
-  }
-  if (digit >= 'A' && digit <= 'F') {
-    return static_cast<std::uint64_t>(digit - 'A' + 10);
-  }
-  return std::nullopt;
-}
-
-/// The hexadecimal number that is the whole of `text`, or nothing when `text` is empty, holds anything but hex digits,
-/// or has more digits than a 64-bit number holds.
-[[nodiscard]] std::optional<std::uint64_t> parse_hex(std::string_view text) {
-  if (text.empty() || text.size() > kMaxHexDigits) {
-    return std::nullopt;
-  }
-  std::uint64_t value = 0;
-  for (const char character : text) {
-    const std::optional<std::uint64_t> digit = hex_digit(character);
-    if (!digit) {
-      return std::nullopt;
-    }
-    value = (value << 4U) | *digit;
-  }
-  return value;
-}
-
-/// The mapping a memory-map `line` describes, or nothing when the line doesn't have the map's format or its addresses
-/// don't fit this process's addresses.
+/// The mapping a validated memory-map record describes, with addresses representable in this process.
 [[nodiscard]] std::optional<Mapping> parse_mapping(std::string_view line) {
-  std::string_view rest = line;
-  const std::string_view range = next_field(rest);
-  const std::string_view perms = next_field(rest);
-  const std::string_view offset = next_field(rest);
-  const std::string_view device = next_field(rest);
-  const std::string_view inode = next_field(rest);
+  const std::string_view range = util::take_proc_field(line);
+  const std::string_view perms = util::take_proc_field(line);
+  const auto offset = util::proc_number(util::take_proc_field(line), 16);
+  static_cast<void>(util::take_proc_field(line));
+  static_cast<void>(util::take_proc_field(line));
   const std::size_t dash = range.find('-');
-  if (dash == std::string_view::npos || perms.size() < 3 || device.empty() || inode.empty()) {
+  const auto start = util::proc_number(range.substr(0, dash), 16);
+  const auto end = util::proc_number(range.substr(dash + 1), 16);
+  if (!start.has_value() || !end.has_value() || !offset.has_value() || !std::in_range<std::uintptr_t>(*end)) {
     return std::nullopt;
   }
-  const std::optional<std::uint64_t> start = parse_hex(range.substr(0, dash));
-  const std::optional<std::uint64_t> end = parse_hex(range.substr(dash + 1));
-  const std::optional<std::uint64_t> file_offset = parse_hex(offset);
-  if (!start || !end || !file_offset || *start >= *end || !std::in_range<std::uintptr_t>(*end)) {
-    return std::nullopt;
-  }
-  const std::size_t path_start = rest.find_first_not_of(' ');
   return Mapping{
       .start = static_cast<std::uintptr_t>(*start),
       .end = static_cast<std::uintptr_t>(*end),
-      .file_offset = *file_offset,
-      .readable_executable = perms[0] == 'r' && perms[2] == 'x',
-      .path = path_start == std::string_view::npos ? std::string() : std::string(rest.substr(path_start)),
+      .file_offset = *offset,
+      .readable_executable = perms == "r-xp" || perms == "r-xs",
+      .path = std::string(line),
   };
 }
 
-/// Whether the address range at the start of a memory-map `line` holds `address`.
-[[nodiscard]] bool line_holds(std::string_view line, std::uintptr_t address) {
-  std::string_view rest = line;
-  const std::string_view range = next_field(rest);
-  const std::size_t dash = range.find('-');
-  if (dash == std::string_view::npos) {
-    return false;
-  }
-  const std::optional<std::uint64_t> start = parse_hex(range.substr(0, dash));
-  const std::optional<std::uint64_t> end = parse_hex(range.substr(dash + 1));
-  return start && end && *start <= address && address < *end;
-}
-
-/// The mapping of `maps` that holds `address`, or nothing when no line holds it or that line can't be parsed.
+/// The unique mapping containing address, rejecting overlapping candidate records.
 [[nodiscard]] std::optional<Mapping> mapping_holding(std::string_view maps, std::uintptr_t address) {
+  std::optional<Mapping> found;
   for (const auto piece : std::views::split(maps, '\n')) {
     const std::string_view line(piece.begin(), piece.end());
-    if (line_holds(line, address)) {
-      return parse_mapping(line);
+    if (line.empty()) {
+      continue;
+    }
+    const auto mapping = parse_mapping(line);
+    if (!mapping.has_value()) {
+      return std::nullopt;
+    }
+    if (mapping->start <= address && address < mapping->end) {
+      if (found.has_value()) {
+        return std::nullopt;
+      }
+      found = mapping;
     }
   }
-  return std::nullopt;
+  return found;
+}
+
+/// Reads exactly the requested own-process bytes through the OS; stale maps, denial and short reads fail safely.
+[[nodiscard]] bool read_prologue(std::uintptr_t address, std::span<std::uint8_t> output) {
+#ifdef __linux__
+  const iovec local{.iov_base = output.data(), .iov_len = output.size()};
+  const iovec remote{.iov_base = std::bit_cast<void*>(address), .iov_len = output.size()};
+  return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == static_cast<ssize_t>(output.size());
+#elifdef __APPLE__
+  mach_vm_size_t count = 0;
+  return mach_vm_read_overwrite(mach_task_self(), address, output.size(),
+                                std::bit_cast<mach_vm_address_t>(output.data()), &count) == KERN_SUCCESS &&
+         count == output.size();
+#else
+  static_cast<void>(address);
+  static_cast<void>(output);
+  return false;
+#endif
 }
 
 /// A library file read whole, with its ELF headers.
@@ -327,7 +305,8 @@ struct LibraryFile {
     return std::nullopt;
   }
   const std::optional<ElfHeaders> headers = read_elf_headers(*bytes);
-  if (!headers) {
+  if (!headers.has_value() || (headers->elf64 ? (headers->machine != 183 && headers->machine != 62)
+                                              : (headers->machine != util::kMachineArm && headers->machine != 3))) {
     return std::nullopt;
   }
   return LibraryFile{.path = std::string(path), .bytes = std::move(*bytes), .headers = *headers};
@@ -341,8 +320,8 @@ struct LibraryFile {
 /// mapping, must equal the file offset of the symbol, read from the program headers: that proves the bytes compared
 /// are the function's own. The loader maps an executable segment unchanged, since Android refuses text relocations
 /// from API 23, and a PC-relative call or jump to a PLT stub is the same in memory as in the file, so the bytes differ
-/// only when something rewrote them. A function shorter than kPrologueSize is compared with the file bytes after it in
-/// the same segment, which also match when nothing rewrote them.
+/// when something rewrote them. Loader-declared text relocations make the baseline unavailable. A short function is
+/// compared only within its nonzero symbol size; a partial mapping or OS read is an error.
 ///
 /// @param library The library file, read whole.
 /// @param mapping The mapping of the library that holds the function's address.
@@ -351,7 +330,7 @@ struct LibraryFile {
 [[nodiscard]] std::optional<bool> prologue_differs(const LibraryFile& library, const Mapping& mapping,
                                                    const ResolvedFunction& function) {
   const std::optional<ElfSymbol> symbol = find_dynamic_symbol(library.bytes, library.headers, function.name);
-  if (!symbol || symbol->type != util::kSymbolFunction) {
+  if (!symbol.has_value() || symbol->type != util::kSymbolFunction || symbol->size == 0) {
     return std::nullopt;
   }
   const bool arm = library.headers.machine == util::kMachineArm;
@@ -361,17 +340,45 @@ struct LibraryFile {
   if (address < mapping.start) {
     return std::nullopt;
   }
+  const auto length = static_cast<std::size_t>(std::min<std::uint64_t>(kPrologueSize, symbol->size));
   const std::optional<CodeLocation> code =
-      find_code(library.bytes, library.headers, {.address = symbol_address, .length = 1});
-  if (!code || code->file_offset != mapping.file_offset + (address - mapping.start)) {
+      find_code(library.bytes, library.headers, {.address = symbol_address, .length = symbol->size});
+  const std::uint64_t mapped_delta = address - mapping.start;
+  if (!code.has_value() || address >= mapping.end || length > mapping.end - address ||
+      mapped_delta > std::numeric_limits<std::uint64_t>::max() - mapping.file_offset ||
+      code->file_offset != mapping.file_offset + mapped_delta ||
+      !util::immutable_code(library.bytes, library.headers)) {
     return std::nullopt;
   }
-  const std::size_t length =
-      static_cast<std::size_t>(std::min<std::uint64_t>({kPrologueSize, code->available, mapping.end - address}));
-  const std::span<const std::uint8_t> memory(std::bit_cast<const std::uint8_t*>(address), length);
+  std::array<std::uint8_t, kPrologueSize> bytes{};
+  const std::span<std::uint8_t> memory = std::span(bytes).first(length);
+  if (!read_prologue(address, memory)) {
+    return std::nullopt;
+  }
   const std::span<const std::uint8_t> file =
       std::span<const std::uint8_t>(library.bytes).subspan(static_cast<std::size_t>(code->file_offset), length);
   return !std::ranges::equal(memory, file);
+}
+
+/// Compares one resolved function, reusing the most recently read library without retaining caller-owned views.
+[[nodiscard]] std::optional<bool> compare_function(std::string_view maps, const ResolvedFunction& function,
+                                                   std::optional<LibraryFile>& library) {
+  const ResolvedFunction untagged{.name = function.name, .address = function.address & kAddressMask};
+  const std::optional<Mapping> mapping = mapping_holding(maps, untagged.address);
+  if (!mapping || !mapping->readable_executable || !mapping->path.starts_with('/')) {
+    return std::nullopt;
+  }
+  if (!library || library->path != mapping->path) {
+    library = read_library(mapping->path);
+    if (!library) {
+      return std::nullopt;
+    }
+  }
+  if ((function.expected_machine != 0 && function.expected_machine != library->headers.machine) ||
+      (function.address != untagged.address && library->headers.machine != 183)) {
+    return std::nullopt;
+  }
+  return prologue_differs(*library, *mapping, untagged);
 }
 
 }  // namespace
@@ -428,28 +435,22 @@ Observation observe_threads(std::string_view task_path) {
 }
 
 Observation observe_inline_hooks(std::string_view maps_path, std::span<const ResolvedFunction> functions) {
-  if (functions.size() > kMaxFunctions) {
+  if (functions.empty() || functions.size() > kMaxFunctions) {
     return failed(kInlineSignal, kPrologueSource);
   }
   const std::optional<std::string> maps = read_file(maps_path, kMaxMapsSize);
-  if (!maps) {
+  if (!maps.has_value() || !util::valid_proc_table(*maps, valid_map_line)) {
     return failed(kInlineSignal, kPrologueSource);
   }
   std::optional<LibraryFile> library;
   std::vector<std::string> hooked;
+  std::set<std::string_view> names;
   for (const ResolvedFunction& function : functions) {
-    const ResolvedFunction untagged{.name = function.name, .address = function.address & kAddressMask};
-    const std::optional<Mapping> mapping = mapping_holding(*maps, untagged.address);
-    if (!mapping || !mapping->readable_executable || !mapping->path.starts_with('/')) {
+    if (function.name.empty() || function.name.size() > kMaxFunctionName || function.name.contains('\0') ||
+        !names.insert(function.name).second) {
       return failed(kInlineSignal, kPrologueSource);
     }
-    if (!library || library->path != mapping->path) {
-      library = read_library(mapping->path);
-      if (!library) {
-        return failed(kInlineSignal, kPrologueSource);
-      }
-    }
-    const std::optional<bool> differs = prologue_differs(*library, *mapping, untagged);
+    const std::optional<bool> differs = compare_function(*maps, function, library);
     if (!differs) {
       return failed(kInlineSignal, kPrologueSource);
     }
@@ -463,6 +464,19 @@ Observation observe_inline_hooks(std::string_view maps_path, std::span<const Res
 #ifdef __ANDROID__
 
 namespace {
+
+/// The ELF machine of the production process, with zero for an unsupported build target.
+#ifdef __aarch64__
+constexpr std::uint16_t kNativeMachine = 183;
+#elifdef __arm__
+constexpr std::uint16_t kNativeMachine = 40;
+#elifdef __x86_64__
+constexpr std::uint16_t kNativeMachine = 62;
+#elifdef __i386__
+constexpr std::uint16_t kNativeMachine = 3;
+#else
+constexpr std::uint16_t kNativeMachine = 0;
+#endif
 
 /// The app's memory map.
 constexpr std::string_view kMapsPath = "/proc/self/maps";
@@ -547,13 +561,17 @@ constexpr auto kWatchedLibraries = std::to_array<WatchedLibrary>({
       resolved = false;
       break;
     }
-    functions.push_back({.name = name, .address = std::bit_cast<std::uintptr_t>(address)});
+    functions.push_back(
+        {.name = name, .address = std::bit_cast<std::uintptr_t>(address), .expected_machine = kNativeMachine});
   }
   return dlclose(handle) == 0 && resolved;
 }
 
 /// The hook.inline observation for the watched functions, resolved in this process.
 [[nodiscard]] Observation observe_watched_functions() {
+  if constexpr (kNativeMachine == 0) {
+    return unsupported(kInlineSignal, kPrologueSource);
+  }
   std::vector<ResolvedFunction> functions;
   functions.reserve(kLibcFunctions.size() + kLibdlFunctions.size());
   for (const WatchedLibrary& library : kWatchedLibraries) {
