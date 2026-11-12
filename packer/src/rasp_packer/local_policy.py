@@ -400,11 +400,10 @@ def bind(
         return None
     try:
         document = _decode(sidecar, 4096)
-        expected = json.loads(
-            emit_support(
-                binary, platform, abi, "31" if platform == "android" else "12.0"
-            )
-        )
+        target = capabilities.catalogue()["platforms"].get(platform)
+        if target is None:
+            raise errors.InvalidRuntimeError("unsupported policy-support target")
+        expected = json.loads(emit_support(binary, platform, abi, target["minimum_os"]))
         _keys(document, set(expected))
         for field, value in expected.items():
             if type(document[field]) is not type(value) or document[field] != value:

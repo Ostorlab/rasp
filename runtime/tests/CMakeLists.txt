@@ -376,6 +376,10 @@ if(Java_FOUND AND JNI_FOUND)
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
         $<TARGET_FILE:rasp_android_context_bridge_jni> 2a7a8bb45ec84bf9d23a6998b2f631505fa32a192fa771aae676df626a004ce4 4294967295)
     set_tests_properties(AndroidLocalPolicy.uint32MaxVersion PROPERTIES TIMEOUT 30)
+    add_test(NAME AndroidLocalPolicy.reportOnlyAdmission
+      COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
+        $<TARGET_FILE:rasp_android_context_bridge_jni> cd463047b2990133678d5afdd887eca134a46a1063c6d3c39b637472a4341fee 1 report_only)
+    set_tests_properties(AndroidLocalPolicy.reportOnlyAdmission PROPERTIES TIMEOUT 30)
     add_test(NAME AndroidWindowBridge.lifecycle
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.WindowTest
         $<TARGET_FILE:rasp_android_context_bridge_jni>)

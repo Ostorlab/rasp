@@ -1,17 +1,15 @@
 # Runtime
 
-The optional [local policy host gate](../docs/local-policy-contract.md) reads the
-actual owned typed report before an explicitly adapted operation. It is offline,
-report-only by default, and never terminates the app or establishes server authority.
-The primitive C host API preserves the six iOS capture exports and adds exactly two
-versioned policy exports; Android retains JNI_OnLoad and those same two policy exports.
-
-The C++ runtime libraries that the packer adds to a protected app. They run the checks inside the app.
+The runtime is a set of C++ libraries that the packer adds to a protected app. They run the checks inside the app.
 
 Owned monitor snapshots include [typed local decision evidence](../docs/local-decisions-contract.md).
 The existing `on_cycle` callback receives the same immutable observations, coverage and report-only
 results. Disabled/missing/unavailable rows remain unknown; evaluated predicate counts are separate
-from row counts. These client observations grant no backend or operation authority.
+from row counts. An optional [local policy host gate](../docs/local-policy-contract.md) uses that owned
+report immediately before an explicitly adapted operation; report-only remains the default.
+These client observations grant no backend authorization. The gate never terminates the app.
+The primitive C API adds exactly two versioned policy exports alongside the six iOS capture exports;
+Android retains JNI_OnLoad and the same two policy exports.
 
 Android signing-block and key/map/DEX reads use bounded descriptors; see the
 [archive read limits](../docs/android-archive-reads.md) for allocation caps,
@@ -193,7 +191,7 @@ cmake --preset android
 cmake --build --preset android
 ```
 
-The library is written to `build/android/android/librasp.so`. It exports exactly the JVM's `JNI_OnLoad` hook, `rasp_local_policy_gate_v1` and `rasp_local_policy_info_v1`. The checks start from a load-time constructor, and `JNI_OnLoad` binds the stub's native method with `RegisterNatives`, so the library exports no `Java_...` symbol. A release build is also stripped (`-Wl,--strip-all`), so it carries no symbol table and no debug sections. Every other symbol, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 12 (API 31) and later.
+The library is written to `build/android/android/librasp.so`. It exports exactly the JVM's `JNI_OnLoad` hook, `rasp_local_policy_gate_v1` and `rasp_local_policy_info_v1`. The checks start from a load-time constructor, and `JNI_OnLoad` binds the stub's native method with `RegisterNatives`, so the library exports no `Java_...` symbol. A release build is also stripped (`-Wl,--strip-all`), so it carries no static symbol table and no debug sections; the three exports above remain in the dynamic symbol table. Every other symbol, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 12 (API 31) and later.
 
 The payload decryption uses ChaCha20-Poly1305 from TF-PSA-Crypto, the cryptography library of the Mbed TLS project, and some checks use its SHA-256. Its source is committed as an archive under `third_party/tf-psa-crypto/`, and `cmake/tf_psa_crypto.cmake` checks the archive's hash, extracts it and builds it as a static library, for Android, for iOS and for the builds with tests. Its symbols are hidden like every other one. Why it is built this way, its configuration, and the CI job that proves the archive is the official release are described in `third_party/tf-psa-crypto/README.md`.
 
