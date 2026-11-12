@@ -2,6 +2,7 @@
 #include "local_policy_clock.h"
 
 #include <cstdint>
+#include <mach/kern_return.h>
 #include <mach/mach_time.h>
 #include <optional>
 
