@@ -8,6 +8,12 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include)
 execute_process(COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/cycle_catalogue.py
   ${CMAKE_CURRENT_BINARY_DIR}/include/cycle_catalogue.h COMMAND_ERROR_IS_FATAL ANY)
 
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  ${PROJECT_SOURCE_DIR}/tools/root_package_header.py
+  ${PROJECT_SOURCE_DIR}/../packer/src/rasp_packer/android/root_manager_packages_v1.json)
+execute_process(COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/root_package_header.py
+  ${CMAKE_CURRENT_BINARY_DIR}/include/root_manager_packages.h COMMAND_ERROR_IS_FATAL ANY)
+
 configure_file(include/rasp/version.h.in ${CMAKE_CURRENT_BINARY_DIR}/include/rasp/version.h @ONLY)
 
 add_library(rasp_core STATIC

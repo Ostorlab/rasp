@@ -651,3 +651,89 @@ def set_app_component_factory(manifest: bytes, class_name: str) -> bytes:
         new_element = _add_attr_to_element(old_element, new_attr)
 
     return _replace_element_in_manifest(manifest, old_element, new_element)
+
+
+def _direct_elements(element: bytes) -> list[tuple[bytes, bytes, str]]:
+    """Return direct child node/element/name triples, preserving arbitrary other wire fields."""
+    result: list[tuple[bytes, bytes, str]] = []
+    for field in _parse_fields(element):
+        if (
+            field.number != _FIELD_ELEMENT_CHILD
+            or field.wire_type != _WIRE_LENGTH_DELIMITED
+        ):
+            continue
+        assert isinstance(field.value, bytes)
+        for child in _parse_fields(field.value):
+            if (
+                child.number != _FIELD_XML_ELEMENT
+                or child.wire_type != _WIRE_LENGTH_DELIMITED
+            ):
+                continue
+            assert isinstance(child.value, bytes)
+            names = [
+                item.value
+                for item in _parse_fields(child.value)
+                if item.number == _FIELD_ELEMENT_NAME
+                and item.wire_type == _WIRE_LENGTH_DELIMITED
+            ]
+            if len(names) != 1 or not isinstance(names[0], bytes):
+                raise ProtoManifestError("invalid child element name")
+            result.append((field.value, child.value, _decode_utf8(names[0])))
+    return result
+
+
+def read_package_queries(manifest: bytes) -> tuple[str, ...]:
+    """Read only exact direct package queries; leave host intent/provider queries untouched."""
+    root, _ = _get_manifest_element(manifest)
+    result: list[str] = []
+    for _, queries, tag in _direct_elements(root):
+        if tag != "queries":
+            continue
+        for _, package, child_tag in _direct_elements(queries):
+            if child_tag == "package":
+                name = _read_string_attr(_parse_fields(package), "name", ANDROID_NS)
+                if name is None:
+                    raise ProtoManifestError("package query name must be literal")
+                result.append(name)
+    return tuple(result)
+
+
+def add_package_queries(manifest: bytes, packages: tuple[str, ...]) -> bytes:
+    """Append missing exact package queries without replacing host intents, providers or attributes."""
+    existing = read_package_queries(manifest)
+    missing = tuple(
+        dict.fromkeys(package for package in packages if package not in existing)
+    )
+    if len(missing) == 0:
+        return manifest
+
+    def child(element: bytes) -> bytes:
+        return _encode_field(
+            _FIELD_ELEMENT_CHILD,
+            _WIRE_LENGTH_DELIMITED,
+            _encode_field(_FIELD_XML_ELEMENT, _WIRE_LENGTH_DELIMITED, element),
+        )
+
+    additions = b"".join(
+        child(
+            _encode_field(_FIELD_ELEMENT_NAME, _WIRE_LENGTH_DELIMITED, b"package")
+            + _encode_field(
+                _FIELD_ELEMENT_ATTR,
+                _WIRE_LENGTH_DELIMITED,
+                _build_string_attr(ANDROID_NS, "name", package, 0x01010003),
+            )
+        )
+        for package in missing
+    )
+    root, _ = _get_manifest_element(manifest)
+    queries = next(
+        (element for _, element, tag in _direct_elements(root) if tag == "queries"),
+        None,
+    )
+    if queries is None:
+        edited = root + child(
+            _encode_field(_FIELD_ELEMENT_NAME, _WIRE_LENGTH_DELIMITED, b"queries")
+            + additions
+        )
+        return _replace_element_in_manifest(manifest, root, edited)
+    return _replace_element_in_manifest(manifest, queries, queries + additions)

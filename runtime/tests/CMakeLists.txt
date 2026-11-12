@@ -199,7 +199,7 @@ foreach(platform android ios)
       ${expectations_dir}/capability_expectations.h ${platform}
     COMMAND_ERROR_IS_FATAL ANY)
   if(platform STREQUAL "android")
-    set(capability_checks debugger emulator hooks identity integrity mitm root service_exposure)
+    set(capability_checks debugger emulator hooks identity integrity mitm root service_exposure context_exposure root_namespace)
     set(capability_util util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp
       util/elf.cpp util/service_components.cpp)
   else()
@@ -259,7 +259,9 @@ if(Java_FOUND AND JNI_FOUND)
       DEPENDS ${bridge_java} ${bridge_test_java} VERBATIM)
     add_custom_target(rasp_android_context_bridge_java ALL
       DEPENDS ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class)
-    add_library(rasp_android_service_collectors OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp)
+    add_library(rasp_android_service_collectors OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/checks/context_exposure.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/checks/root_namespace.cpp)
     target_compile_definitions(rasp_android_service_collectors PRIVATE __ANDROID__)
     target_include_directories(rasp_android_service_collectors PRIVATE ${JNI_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/android/src)
     target_link_libraries(rasp_android_service_collectors PRIVATE rasp_core rasp_warnings rasp_language)
@@ -351,11 +353,24 @@ add_library(rasp_android_builtin_support OBJECT ${PROJECT_SOURCE_DIR}/android/sr
 target_include_directories(rasp_android_builtin_support PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
 target_link_libraries(rasp_android_builtin_support PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language)
 add_executable(rasp_android_builtin_test android/builtin_test.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp $<TARGET_OBJECTS:rasp_android_builtin_support>)
+  ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/context_exposure.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/root_namespace.cpp $<TARGET_OBJECTS:rasp_android_builtin_support>)
 target_include_directories(rasp_android_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
 target_link_libraries(rasp_android_builtin_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_builtin_test TEST_PREFIX "android.")
 if(TARGET rasp_android_service_jni)
   target_sources(rasp_android_service_jni PRIVATE $<TARGET_OBJECTS:rasp_android_builtin_support>)
   target_link_libraries(rasp_android_service_jni PRIVATE rasp_tfpsacrypto)
+endif()
+
+add_executable(rasp_android_root_namespace_test android/checks/root_namespace_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/root_namespace.cpp)
+target_include_directories(rasp_android_root_namespace_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_android_root_namespace_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_root_namespace_test)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(rasp_android_root_namespace_test PRIVATE RASP_TEST_WRAP_FSTAT)
+  target_link_options(rasp_android_root_namespace_test PRIVATE -Wl,--wrap=fstat)
 endif()

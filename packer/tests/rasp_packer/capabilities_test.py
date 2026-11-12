@@ -441,3 +441,17 @@ def testServiceContractFixtures_whenComparedWithCatalogue_preserveTypesAndUnknow
                     assert isinstance(value, str)
             else:
                 assert "value" not in observation
+
+
+def testParseCatalogue_whenAndroidTruthIsUnavailable_acceptsUnsupportedWithNoValue() -> (
+    None
+):
+    document = capabilities.catalogue()
+    row = document["platforms"]["android"]["groups"][0]["observations"][0]
+    row.update(
+        value_kind="none",
+        value_cardinality="none",
+        statuses=["unsupported"],
+        supported_on="never",
+    )
+    assert capabilities.parse_catalogue(capabilities.canonical(document)) == document

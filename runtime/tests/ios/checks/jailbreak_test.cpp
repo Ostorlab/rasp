@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 #include <vector>
 
 #include "rasp/observation.h"
@@ -71,6 +72,24 @@ TEST(Jailbreak, observeSandboxWrite_whenRefused_reportsFalse) {
 
   EXPECT_EQ(observation,
             (Observation{.signal = "jb.sandbox_escape", .source = "open", .status = Status::kOk, .value = false}));
+}
+
+TEST(Jailbreak, observePaths_whenLookupLoops_reportsErrorRatherThanClean) {
+  const TemporaryDirectory directory;
+  const std::string path = directory.path() + "/loop";
+  ASSERT_EQ(symlink("loop", path.c_str()), 0);
+  const std::array<std::string_view, 1> paths = {path};
+  for (const auto& observation : observe_paths(paths)) {
+    EXPECT_EQ(observation.status, Status::kError);
+  }
+}
+
+TEST(Jailbreak, observeSandboxWrite_whenProbeExists_preservesExistingContent) {
+  const TemporaryDirectory directory;
+  const std::string path = directory.path() + "/existing";
+  ASSERT_TRUE(write_file(path, "host-owned"));
+  EXPECT_EQ(observe_sandbox_write(path).status, Status::kError);
+  EXPECT_EQ(test_support::read_file(path), "host-owned");
 }
 
 TEST(Jailbreak, observeFork_whenForkIsAllowed_reportsTrue) {

@@ -66,6 +66,18 @@ std::string collect(jint group) {
     case 2:
       config.checks = {"notification_access"};
       break;
+    case 3:
+      config.checks = {"root_packages"};
+      break;
+    case 4:
+      config.checks = {"proxy"};
+      break;
+    case 5:
+      config.checks = {"developer_settings"};
+      break;
+    case 6:
+      config.checks = {"root_context"};
+      break;
     default:
       return {};
   }
@@ -121,17 +133,25 @@ jmethodID fail_method(JNIEnv* env, jclass /*type*/, const char* /*name*/, const 
 jstring faulty_snapshot(JNIEnv* env, jclass /*test*/, jint fault_kind) {
   const auto* original = env->functions;
   auto table = *original;
-  if (fault_kind == 0) {
+  const jint kind = fault_kind % 3;
+  if (kind == 0) {
     table.NewLocalRef = fail_reference;
   }
-  if (fault_kind == 1) {
+  if (kind == 1) {
     table.PushLocalFrame = fail_frame;
   }
-  if (fault_kind == 2) {
+  if (kind == 2) {
     table.GetMethodID = fail_method;
   }
   env->functions = &table;
-  const std::string result = collect(0);
+  jint group = 0;
+  if (fault_kind >= 3) {
+    group = 3;
+  }
+  if (fault_kind >= 6) {
+    group = 4;
+  }
+  const std::string result = collect(group);
   env->functions = original;
   if (env->ExceptionCheck() == JNI_TRUE) {
     return nullptr;

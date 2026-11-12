@@ -10,6 +10,8 @@ add_library(rasp SHARED
   src/checks/identity.cpp
   src/checks/integrity.cpp
   src/checks/mitm.cpp
+  src/checks/context_exposure.cpp
+  src/checks/root_namespace.cpp
   src/checks/root.cpp
   src/checks/service_exposure.cpp
   src/loader/loader.cpp
