@@ -14,23 +14,23 @@ handlers and generic Binder/XPC traffic receive no interception or protection.
 
 ## Rules and supported effects
 
-Compile1..16 immutable routes with unique IDs1..16, exact delivery/method,
+Compile 1..16 immutable routes with unique IDs 1..16, exact delivery/method,
 scheme/authority/path, dispatch class and existing native operation/hash.
 Malformed or duplicate configuration rejects the whole table. The policy hash
 is a reviewed compiled expectation, never copied from runtime policy info.
-C source rules/checks are676/32 bytes, natural alignment4; they are not additions
+C source rules/checks are 676/32 bytes, natural alignment 4; they are not additions
 to the injected runtime ABI. Java owns defensive profile/table copies; Swift and
 C use borrowed bounded input and owned finite readouts. Compiled configuration
-is capped at24 KiB; Java checks aggregate UTF16/primitive/pin payload before
+is capped at 24 KiB; Java checks aggregate UTF16/primitive/pin payload before
 copying the validated table, excluding VM object overhead. The fixed C/Swift
-rule table is at most16*676 bytes.
+rule table is at most 16*676 bytes.
 
 | Input | Accepted v1 grammar |
 | --- | --- |
-| URL |1..1024 delivered ASCII bytes; absolute hierarchical URL; no whitespace, controls, high bytes, NUL, backslash or plus |
-| Scheme | Exact lowercase `https`, app-compiled custom literal beginning `app.` (total<=32), or provider-only `content` |
-| Authority | Exact lowercase LDH domain<=253; labels1..63, at least2; final label2..63 ASCII letters; no IPs, trailing dot, userinfo, colon/port, IDNA/A-labels or wildcards |
-| Path | Exact case-sensitive path1..256; root or1..16 nonempty segments<=64 of letters/digits/`._~-`; no dot segments or trailing/repeated slash |
+| URL | 1..1024 delivered ASCII bytes; absolute hierarchical URL; no whitespace, controls, high bytes, NUL, backslash or plus |
+| Scheme | Exact lowercase `https`, app-compiled custom literal beginning `app.` (total <= 32), or provider-only `content` |
+| Authority | Exact lowercase LDH domain <= 253; labels 1..63, at least 2; final label 2..63 ASCII letters; no IPs, trailing dot, userinfo, colon/port, IDNA/A-labels or wildcards |
+| Path | Exact case-sensitive path 1..256; root or 1..16 nonempty segments <= 64 of letters/digits/`._~-`; no dot segments or trailing/repeated slash |
 | Encoding | Every percent escape, raw Unicode, query or fragment (even empty) rejects; no decoding, repair, redirect, prefix/suffix matching or fallback |
 | Method | Local OPEN for links, fixed QUERY_STATUS for provider, separately compiled parameter-free Binder demo method; no HTTP-method inference/override |
 
@@ -61,7 +61,7 @@ A worker/Messenger/oneway/forwarded invocation needs a separately reviewed adapt
 copying the UID to another thread cannot preserve the original transaction.
 
 Restricted routes require a full current UID/package association (exactly one
-package, matching ApplicationInfo.uid),1..2 compiled SHA256 signing-history pins
+package, matching ApplicationInfo.uid), 1..2 compiled SHA256 signing-history pins
 via PackageManager, and the host's declared signature permission granted to that
 caller. The helper checks the permission's owner, exact signature protection and
 absence of additional flags. Pins explicitly accept platform-verified signer
@@ -69,10 +69,10 @@ history/rotation, not current-signer-only equality. No TOFU, signing inventory,
 positive authorization cache or broad package query is used. These platform APIs
 remain hookable in a compromised app/OS.
 
-Activity restricted identity is conditional on API35 ComponentCaller sharing.
+Activity restricted identity is conditional on API 35 ComponentCaller sharing.
 Initial launch uses getCaller with its original Intent; onNewIntent uses that
 callback's getCurrentCaller. Never pair a new Intent with an earlier caller.
-Null/INVALID_UID remains unavailable; API31..34 restricted paths are unsupported.
+Null/INVALID_UID remains unavailable; API 31..34 restricted paths are unsupported.
 Public routes have no caller requirement and do not pretend to authenticate a
 browser, accessibility tool, launcher or password manager.
 
@@ -97,8 +97,8 @@ user, validate arguments or grant business/replay authorization.
 
 ## UIKit lifecycle and effects
 
-The Swift reference app explicitly routes iOS12 application URL/continuation
-callbacks and iOS13+ scene connection/openURLContexts/continuation callbacks.
+The Swift reference app explicitly routes iOS 12 application URL/continuation
+callbacks and iOS 13+ scene connection/openURLContexts/continuation callbacks.
 A scene checks its own activation state/window identity; another active scene
 does not substitute. Multiple or mixed deliveries reject together, without
 choosing an unordered Set.first or partially dispatching. BrowsingWeb can also
@@ -108,8 +108,8 @@ Only public navigation/empty confirmation entry is supported on iOS.
 A selected Activity/scene retains at most one **public route enum**, private
 receipt tick and nonwrapping generation before foreground activation. Its pending slot retains
 no URL/Intent, caller, permission or native decision. Platform/caller launch
-objects and returned copies are outside SDK cleanup. Lifetime30s including sleep;
-equality is accepted, +1ns/missing/backward/overflowing clock clears/rejects.
+objects and returned copies are outside SDK cleanup. Lifetime 30 s including sleep;
+equality is accepted, +1 ns/missing/backward/overflowing clock clears/rejects.
 Replacement, malformed delivery, pause/inactive/background/destroy/disconnect,
 cancel/logout/scope change/dispose invalidates pending work. No saved-state or
 disk restoration. Cleanup is logical/lazy at expiry, not forensic timed erasure.

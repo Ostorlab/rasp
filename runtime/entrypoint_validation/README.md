@@ -22,10 +22,10 @@ show boundary validation, fresh native gate and actual closed dispatch together.
   deliberate confirmation action; no C++ object crosses a framework boundary.
 
 Configuration is immutable app source, not a URL-supplied rule/permission/result.
-One bounded table admits1..16 exact argument-free routes; caller profiles<=4,
-pins1..2*32 bytes. Unknown/malformed configuration rejects wholly. Sources expose
+One bounded table admits 1..16 exact argument-free routes; caller profiles <= 4,
+pins 1..2*32 bytes. Unknown/malformed configuration rejects wholly. Sources expose
 finite local diagnostics, never a cached grant. The URL's delivered representation
-is bounded to1024 ASCII bytes; v1 rejects encodings/IDNA/ports/queries/fragments.
+is bounded to 1024 ASCII bytes; v1 rejects encodings/IDNA/ports/queries/fragments.
 
 No callbacks are installed by this package. Customers adapt every intended
 Activity/Binder/provider/UIKit effect boundary and explicitly own lifecycle,
@@ -38,7 +38,7 @@ needed to compile these sources.
 
 
 Host shrinkers must include `android/consumer-rules.pro` alongside the existing
-bridge/stub keep rules. It keeps the API35-only helper isolated so optimization
-cannot move newer platform references into API31 code. The real reference builder
+bridge/stub keep rules. It keeps the API 35-only helper isolated so optimization
+cannot move newer platform references into API 31 code. The real reference builder
 accepts optional `R8_JAR` pointing at the SDK's existing d8.jar for a minified
 compile; neither D8 nor R8 compilation proves device loading or caller identity.
