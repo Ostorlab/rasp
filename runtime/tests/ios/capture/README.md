@@ -27,6 +27,12 @@ must use the same matching framework ABI. Do not substitute a simulator or synth
 run for a physical device result. No credentials, signatures, app artifacts or screenshots belong
 in this repository.
 
+The C++/ObjC++ ABI probes and this ObjC++ fixture use no C++ standard-library headers. They use
+`-nostdinc++` so the public C header's `<stdint.h>` resolves through the compiler/system C headers;
+Xcode 27's libc++ wrapper otherwise rejects the preserved iOS 12 deployment target. This does not
+disable warnings or change the language, system/framework headers, linker inputs or deployment floor.
+It does not establish support for arbitrary C++ standard-library code on iOS 12 with that SDK.
+
 Use a physical iOS 12 legacy host; iOS 13–16 selected-scene and non-scene hosts; iOS 17+ scene
 traits; and an iPad with multiple scenes. If a version/device is unavailable, record not_run.
 The supplied scene manifest enables multi-scene use on supporting versions; to test a true

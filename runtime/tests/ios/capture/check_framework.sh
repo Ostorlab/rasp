@@ -23,7 +23,7 @@ xcodebuild -version
 xcrun --sdk iphoneos --show-sdk-version
 for language in c objective-c c++ objective-c++; do
   flags=(-Wall -Wextra -Werror -Wunguarded-availability)
-  if [[ "$language" == c++ || "$language" == objective-c++ ]]; then flags+=(-std=c++23); fi
+  if [[ "$language" == c++ || "$language" == objective-c++ ]]; then flags+=(-std=c++23 -nostdinc++); fi
   if [[ "$language" == objective-c || "$language" == objective-c++ ]]; then flags+=(-fobjc-arc); fi
   xcrun --sdk iphoneos clang -x "$language" -target arm64-apple-ios12.0 \
     -isysroot "$(xcrun --sdk iphoneos --show-sdk-path)" \

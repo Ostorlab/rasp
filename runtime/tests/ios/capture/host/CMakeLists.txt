@@ -4,7 +4,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" OR NOT IS_DIRECTORY "${RASP_FRAMEWORK}")
   message(FATAL_ERROR "Supply an actual iOS toolchain and -DRASP_FRAMEWORK=/path/RaspRuntime.framework")
 endif()
 add_executable(CaptureHost MACOSX_BUNDLE main.mm)
-target_compile_options(CaptureHost PRIVATE -fobjc-arc -Wall -Wextra -Werror -Wunguarded-availability)
+target_compile_options(CaptureHost PRIVATE -fobjc-arc -nostdinc++ -Wall -Wextra -Werror -Wunguarded-availability)
 target_include_directories(CaptureHost PRIVATE "${RASP_FRAMEWORK}/Headers")
 target_link_libraries(CaptureHost PRIVATE "${RASP_FRAMEWORK}/RaspRuntime" "-framework UIKit" "-framework Foundation")
 set_target_properties(CaptureHost PROPERTIES
