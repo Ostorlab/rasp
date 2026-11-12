@@ -1,9 +1,10 @@
 # Local entry-point source adapters
 
-Read the [integration contract](../../docs/entrypoint-validation.md). This opt-in
-package is compiled into the host. Its stateless classifier has no authorization
-or telemetry effect. The real [reference handlers](../tests/entrypoint_validation/README.md)
-show boundary validation, fresh native gate and actual closed dispatch together.
+Local entry-point source adapters are an opt-in package compiled into the host.
+The stateless classifier matches exact app-compiled routes; a match has no
+authorization or telemetry effect. The [integration contract](../../docs/entrypoint-validation.md)
+and real [reference handlers](../tests/entrypoint_validation/README.md) show boundary
+validation, fresh native gate and actual closed dispatch together.
 
 - C/ObjC/C++ hosts compile `src/link_validation.c` and include `include/`.
   Symbols are hidden; never link this optional target into RaspRuntime/librasp.

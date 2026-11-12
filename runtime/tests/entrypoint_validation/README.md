@@ -1,7 +1,8 @@
 # Real entry-point consumers and harmless reference apps
 
-The C and Java parsers share independent `vectors.tsv`; the C suite also covers
-framing, literal bounds and 20,000 deterministic mutations. `fuzz.c` is a synthetic
+The C and Java parsers are independent implementations that both consume the same
+`vectors.tsv` corpus. The C suite also covers framing, literal bounds and 20,000
+deterministic mutations. `fuzz.c` is a synthetic
 libFuzzer driver, bounded to 1025 input bytes and 16 rules. It never supplies native
 policy results. `gate_test.cpp` installs an actual process-lifetime policy, feeds
 real CycleMonitor publication and executes `c_host.c`'s native gate -> receipt
@@ -45,20 +46,46 @@ The same command accepts `host-unsigned.aab` and an `.aab` output. Both outputs
 remain unsigned and structurally verified, not store/bundletool/installation
 acceptance. The AAB uses a real aapt2 protobuf manifest and D8 classes with an
 empty default BundleConfig protobuf message for format admission; bundletool is
-not available locally and generated split/store validity is not claimed. Do not run this packer on the prelinked Apple reference host.
+not available locally and generated split/store validity is not claimed.
+
+**Do not run this packer on the prelinked Apple reference host.**
+
 The host uses the exact fixture policy pin. The caller's pins are all-zero public
 placeholders and intentionally do not authorize a real installed certificate.
 Real signed caller tests require explicitly reviewed customer/test signing pins
 and separately authorized facilities; no keys or device enrollment are generated
 by these scripts. They never contact example.invalid or alter domain verification.
 
-On a Mac run `check_apple.sh <actual framework> <task-output>` for Release and
-Debug. It executes actual Foundation/Swift/C URL tests on macOS, compiles real
-iphoneos C/ObjC/C++/ObjC++ consumers and the unsigned Swift UIKit legacy/scene app,
+From the repository root on a Mac, run the Apple check for each actual built
+framework. The script takes the framework path and a task-owned output directory:
+
+```sh
+bash runtime/tests/entrypoint_validation/check_apple.sh \
+  "$PWD/runtime/build/ios/ios/RaspRuntime.framework" /tmp/rt21-apple-release
+bash runtime/tests/entrypoint_validation/check_apple.sh \
+  "$PWD/runtime/build/ios-dev/ios/RaspRuntime.framework" /tmp/rt21-apple-debug
+```
+
+It executes actual Foundation/Swift/C URL tests on macOS, compiles real iphoneos
+C/ObjC/C++/ObjC++ consumers and the unsigned Swift UIKit legacy/scene app, and
 checks minos 12, copied framework bytes and unchanged exact 8 exports. A Linux
-Swift/fake UIKit header cannot replace this gate. `check_android.sh <stage> <ABI>
-<out> <Release|Debug>` cross-links real C/C++ consumers and checks helper symbols
-stay hidden. Neither script establishes device behavior or caller identity.
+Swift/fake UIKit header cannot replace this gate.
+
+From the repository root, with `ANDROID_NDK_HOME` set to the installed NDK, use
+the corresponding installed runtime prefix and build mode for the Android check.
+Its four arguments are `<stage> <ABI> <out> <Release|Debug>`:
+
+```sh
+bash runtime/tests/entrypoint_validation/check_android.sh \
+  /tmp/rt21-runtime-release arm64-v8a /tmp/rt21-entry-release Release
+bash runtime/tests/entrypoint_validation/check_android.sh \
+  /tmp/rt21-runtime-debug arm64-v8a /tmp/rt21-entry-debug Debug
+```
+
+The installed prefix must contain the matching `rasp_packer/android/resources/`
+header and native-library tree. The Android check cross-links real C/C++ consumers
+and checks helper symbols stay hidden. Neither script establishes device behavior
+or caller identity.
 
 No screenshot is supplied by an unsigned compiler/packer. On Linux without an
 Android emulator/device, adb or Apple SDK/simulator, runtime UI screenshots and

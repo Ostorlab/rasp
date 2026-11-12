@@ -14,16 +14,20 @@ handlers and generic Binder/XPC traffic receive no interception or protection.
 
 ## Rules and supported effects
 
-Compile 1..16 immutable routes with unique IDs 1..16, exact delivery/method,
-scheme/authority/path, dispatch class and existing native operation/hash.
-Malformed or duplicate configuration rejects the whole table. The policy hash
-is a reviewed compiled expectation, never copied from runtime policy info.
-C source rules/checks are 676/32 bytes, natural alignment 4; they are not additions
-to the injected runtime ABI. Java owns defensive profile/table copies; Swift and
-C use borrowed bounded input and owned finite readouts. Compiled configuration
-is capped at 24 KiB; Java checks aggregate UTF16/primitive/pin payload before
-copying the validated table, excluding VM object overhead. The fixed C/Swift
-rule table is at most 16*676 bytes.
+- **Routes:** Compile 1..16 immutable routes with unique IDs 1..16, exact
+  delivery/method, scheme/authority/path, dispatch class and existing native
+  operation/hash.
+- **Rejection:** Malformed or duplicate configuration rejects the whole table.
+- **Policy binding:** The policy hash is a reviewed compiled expectation, never
+  copied from runtime policy info.
+- **Ownership:** Java owns defensive profile/table copies. Swift and C use
+  borrowed bounded input and owned finite readouts.
+- **Layout:** C source rules are 676 bytes and checks are 32 bytes, both with
+  natural alignment 4. These source layouts are not additions to the injected
+  runtime ABI.
+- **Budgets:** Compiled configuration is capped at 24 KiB. Java checks aggregate
+  UTF16/primitive/pin payload before copying the validated table, excluding VM
+  object overhead. The fixed C/Swift rule table is at most 16 × 676 = 10,816 bytes.
 
 | Input | Accepted v1 grammar |
 | --- | --- |

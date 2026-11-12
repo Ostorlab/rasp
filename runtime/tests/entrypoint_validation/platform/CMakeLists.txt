@@ -11,7 +11,8 @@ set_target_properties(entry_c PROPERTIES C_STANDARD 11 C_VISIBILITY_PRESET hidde
 add_executable(entry_cpp ../consumer_cpp.cpp ../c_host.c)
 target_include_directories(entry_cpp PRIVATE "${RASP_POLICY_INCLUDE}" "${CMAKE_CURRENT_LIST_DIR}/..")
 target_link_libraries(entry_cpp PRIVATE rasp_entrypoint_validation "${RASP_LIBRARY}")
-target_compile_options(entry_cpp PRIVATE -Wall -Wextra -Werror -Wpedantic -Wconversion -Wframe-larger-than=4096)
+target_compile_options(entry_cpp PRIVATE -Wall -Wextra -Werror -Wpedantic -Wconversion -Wframe-larger-than=4096
+  "$<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>")
 set_target_properties(entry_cpp PROPERTIES CXX_STANDARD 23 CXX_VISIBILITY_PRESET hidden C_VISIBILITY_PRESET hidden)
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   add_library(entry_url OBJECT "${runtime}/entrypoint_validation/ios/url_bytes.c")

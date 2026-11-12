@@ -320,7 +320,7 @@ Android API31+ hosts can opt in to [bounded Activity/window touch observations](
 Optional iOS `screenshot` and `screen_recording` groups require the matching public C host API and explicit main-thread opt-in. See [UIKit capture observations](../docs/ios-capture-observations.md) and the [harmless host fixture](tests/ios/capture/README.md). Packing alone does not create scene ownership or a healthy observer.
 
 
-## Explicit entry-point source integration
+## Explicit entry-point validation
 
 Hosts can opt in to [bounded entry-point validation](../docs/entrypoint-validation.md)
 for concrete Android Activity/Binder/provider and UIKit URL/scene handlers.
