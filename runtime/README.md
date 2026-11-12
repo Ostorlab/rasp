@@ -2,6 +2,10 @@
 
 The C++ runtime libraries that the packer adds to a protected app. They run the checks inside the app.
 
+Android signing-block and key/map/DEX reads use bounded descriptors; see the
+[archive read limits](../docs/android-archive-reads.md) for allocation caps,
+ZIP validation, symlink compatibility and concurrent-mutation limits.
+
 Before you change anything here, read [CONTRIBUTING.md](CONTRIBUTING.md): it lists the rules the build enforces and the ones reviewers check.
 
 ## Layout

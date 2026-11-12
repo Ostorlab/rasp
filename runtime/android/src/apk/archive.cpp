@@ -1,5 +1,4 @@
-/// Reading an APK from its bytes: memory-map the file, then walk the ZIP central directory to copy a stored entry, or
-/// the APK Signing Block before it to copy the signer's certificate.
+/// Bounded descriptor reads of APK payloads and signing blocks, without mapping mutable archive bytes.
 
 #include "apk/archive.h"
 
@@ -13,11 +12,11 @@
 #include <cstdint>
 #include <expected>
 #include <fcntl.h>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <utility>
@@ -109,78 +108,6 @@ constexpr std::size_t kMaxCertificateSize = std::size_t{64} << 10U;
       return std::nullopt;
     }
   }
-}
-
-/// Where a stored entry's data sits: the offset of its local header in the file, and the entry's stored size.
-struct LocalEntry {
-  /// The offset of the local file header in the archive.
-  std::uint32_t local_offset = 0;
-  /// The stored size of the entry's data.
-  std::uint32_t data_size = 0;
-};
-
-/// The bytes of the entry whose local header and stored size `entry` describes.
-[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_local_data(std::span<const std::uint8_t> file,
-                                                                       LocalEntry entry) {
-  const std::uint32_t local_offset = entry.local_offset;
-  const std::uint32_t data_size = entry.data_size;
-  if (local_offset > file.size() || file.size() - local_offset < kLocalHeaderSize) {
-    return std::nullopt;
-  }
-  const std::span<const std::uint8_t> header = file.subspan(local_offset);
-  if (read_u32(header) != kLocalSignature) {
-    return std::nullopt;
-  }
-  const std::size_t name_length = read_u16(header.subspan(26));
-  const std::size_t extra_length = read_u16(header.subspan(28));
-  const std::size_t start = static_cast<std::size_t>(local_offset) + kLocalHeaderSize + name_length + extra_length;
-  if (start > file.size() || file.size() - start < data_size) {
-    return std::nullopt;
-  }
-  const std::span<const std::uint8_t> data = file.subspan(start, data_size);
-  return std::vector<std::uint8_t>(data.begin(), data.end());
-}
-
-/// The bytes of the stored entry named `name`, found by walking the archive's central directory.
-[[nodiscard]] std::optional<std::vector<std::uint8_t>> find_stored_entry(std::span<const std::uint8_t> file,
-                                                                         std::string_view name) {
-  const std::optional<std::span<const std::uint8_t>> record = find_end_record(file);
-  if (!record.has_value()) {
-    return std::nullopt;
-  }
-  const std::uint16_t count = read_u16(record->subspan(10));
-  const std::uint32_t directory_size = read_u32(record->subspan(12));
-  const std::uint32_t directory_offset = read_u32(record->subspan(16));
-  if (directory_offset > file.size() || directory_size > file.size() - directory_offset) {
-    return std::nullopt;
-  }
-  std::span<const std::uint8_t> rest = file.subspan(directory_offset, directory_size);
-  for (std::uint16_t index = 0; index < count; ++index) {
-    if (rest.size() < kCentralEntrySize || read_u32(rest) != kCentralSignature) {
-      return std::nullopt;
-    }
-    const std::uint16_t method = read_u16(rest.subspan(10));
-    const std::uint32_t stored_size = read_u32(rest.subspan(20));
-    const std::size_t name_length = read_u16(rest.subspan(28));
-    const std::size_t extra_length = read_u16(rest.subspan(30));
-    const std::size_t comment_length = read_u16(rest.subspan(32));
-    const std::uint32_t local_offset = read_u32(rest.subspan(42));
-    if (rest.size() < kCentralEntrySize + name_length) {
-      return std::nullopt;
-    }
-    if (equals(rest.subspan(kCentralEntrySize, name_length), name)) {
-      if (method != kStored) {
-        return std::nullopt;
-      }
-      return read_local_data(file, LocalEntry{.local_offset = local_offset, .data_size = stored_size});
-    }
-    const std::size_t entry_size = kCentralEntrySize + name_length + extra_length + comment_length;
-    if (rest.size() < entry_size) {
-      return std::nullopt;
-    }
-    rest = rest.subspan(entry_size);
-  }
-  return std::nullopt;
 }
 
 /// The value of the 32-bit length-prefixed field at the start of `data`, which then starts after it, or nothing when
@@ -295,63 +222,14 @@ struct MalformedScheme {};
   return std::nullopt;
 }
 
-/// Reads a regular archive through the legacy mapping path, preserving its singular signer and stored-entry parsers.
-/// Invalid paths/nonregular files fail before mapping. Concurrent truncation of a mapped regular file can still fault.
-template <typename Read>
-[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_mapped(const std::string& apk_path, Read read) {
-  if (apk_path.empty() || apk_path.contains('\0') || apk_path.size() > 4096) {
-    return std::nullopt;
-  }
-  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
-  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-  if (descriptor < 0) {
-    return std::nullopt;
-  }
-  std::optional<std::vector<std::uint8_t>> data;
-  struct stat status = {};
-  if (fstat(descriptor, &status) == 0 && S_ISREG(status.st_mode) && status.st_size > 0 &&
-      std::in_range<std::size_t>(status.st_size)) {
-    const auto size = static_cast<std::size_t>(status.st_size);
-    // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
-    void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
-    if (mapping != MAP_FAILED) {
-      const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
-      data = read(file);
-      if (munmap(mapping, size) != 0) {
-        data.reset();
-      }
-    }
-  }
-  if (close(descriptor) != 0) {
-    return std::nullopt;
-  }
-  return data;
-}
-
-}  // namespace
-
-std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& apk_path, std::string_view name) {
-  return read_mapped(apk_path, [name](std::span<const std::uint8_t> file) { return find_stored_entry(file, name); });
-}
-
-std::optional<std::vector<std::uint8_t>> find_signing_certificate(std::span<const std::uint8_t> apk,
-                                                                  std::uint32_t api_level) {
-  const std::optional<std::span<const std::uint8_t>> record = find_end_record(apk);
-  if (!record) {
-    return std::nullopt;
-  }
-  const std::optional<std::span<const std::uint8_t>> pairs =
-      signing_block_pairs(apk, read_u32(record->subspan(kDirectoryOffsetField)));
-  if (!pairs) {
-    return std::nullopt;
-  }
+/// Preserves legacy first-applicable-signer and first-certificate selection, including scheme fallback.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> singular_certificate(std::span<const std::uint8_t> pairs,
+                                                                            std::uint32_t api_level) {
   for (const std::uint32_t id : kSchemeIds) {
     if (id == kV31SchemeId && api_level < kMinApiLevelForV31) {
       continue;
     }
-    const std::expected<std::optional<std::span<const std::uint8_t>>, MalformedScheme> scheme =
-        scheme_value(*pairs, id);
+    const std::expected<std::optional<std::span<const std::uint8_t>>, MalformedScheme> scheme = scheme_value(pairs, id);
     if (!scheme) {
       return std::nullopt;
     }
@@ -375,15 +253,25 @@ std::optional<std::vector<std::uint8_t>> find_signing_certificate(std::span<cons
   return std::nullopt;
 }
 
-std::optional<std::vector<std::uint8_t>> read_signing_certificate(const std::string& apk_path,
+}  // namespace
+
+std::optional<std::vector<std::uint8_t>> find_signing_certificate(std::span<const std::uint8_t> apk,
                                                                   std::uint32_t api_level) {
-  return read_mapped(
-      apk_path, [api_level](std::span<const std::uint8_t> file) { return find_signing_certificate(file, api_level); });
+  const std::optional<std::span<const std::uint8_t>> record = find_end_record(apk);
+  if (!record) {
+    return std::nullopt;
+  }
+  const std::optional<std::span<const std::uint8_t>> pairs =
+      signing_block_pairs(apk, read_u32(record->subspan(kDirectoryOffsetField)));
+  if (!pairs) {
+    return std::nullopt;
+  }
+  return singular_certificate(*pairs, api_level);
 }
 
 namespace {
 
-/// Bound all new-path archive work, including unknown signing block entries.
+/// Bound descriptor signing-block reads, including unknown entries.
 constexpr std::size_t kMaxSigningBlockBytes = 1048576;
 /// ZIP32 APKs above this limit are explicitly unavailable, including on 32-bit builds.
 constexpr std::size_t kMaxApkBytes = 2147483647;
@@ -678,65 +566,283 @@ struct CompleteSigner {
   return std::move(v2->certificates);
 }
 
-/// Copies one bounded region with pread; short, interrupted or concurrently truncated reads fail without mapping
-/// faults.
-[[nodiscard]] std::optional<std::vector<std::uint8_t>> file_region(int descriptor, std::size_t offset,
+/// Operational payload-read bounds; these are not ZIP or DEX format maxima.
+constexpr std::size_t kMaxDirectoryBytes = 16777216;
+constexpr std::size_t kMaxPayloadBytes = 67108892;
+
+/// Couples the descriptor with its checked initial size for every region read.
+struct ArchiveFile {
+  int descriptor;
+  std::size_t size;
+};
+
+/// Copies exactly one checked region; short reads and EINTR fail without partial success.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> file_region(ArchiveFile file, std::size_t offset,
                                                                    std::size_t size) {
-  if (size > kMaxSigningBlockBytes || offset > kMaxApkBytes) {
+  if (size > kMaxPayloadBytes || offset > file.size || size > file.size - offset || !std::in_range<off_t>(offset) ||
+      !std::in_range<ssize_t>(size)) {
     return std::nullopt;
   }
   std::vector<std::uint8_t> bytes(size);
-  if (pread(descriptor, bytes.data(), size, static_cast<off_t>(offset)) != static_cast<ssize_t>(size)) {
+  if (pread(file.descriptor, bytes.data(), size, static_cast<off_t>(offset)) != static_cast<ssize_t>(size)) {
     return std::nullopt;
   }
   return bytes;
 }
 
 /// Checks descriptor identity, sizes and modification/change timestamps around the independent reads.
-[[nodiscard]] bool unchanged_archive(const struct stat& before, const struct stat& after) {
-  const bool same = before.st_dev == after.st_dev && before.st_ino == after.st_ino && before.st_mode == after.st_mode &&
-                    before.st_size == after.st_size && before.st_mtime == after.st_mtime &&
-                    before.st_ctime == after.st_ctime;
+[[nodiscard]] bool unchanged_archive(const struct stat& left, const struct stat& right) {
+  const bool same = left.st_dev == right.st_dev && left.st_ino == right.st_ino && left.st_mode == right.st_mode &&
+                    left.st_size == right.st_size && left.st_mtime == right.st_mtime && left.st_ctime == right.st_ctime;
 #ifdef __APPLE__
-  return same && before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec &&
-         before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec;
+  return same && left.st_mtimespec.tv_nsec == right.st_mtimespec.tv_nsec &&
+         left.st_ctimespec.tv_nsec == right.st_ctimespec.tv_nsec;
 #else
-  return same && before.st_mtim.tv_nsec == after.st_mtim.tv_nsec && before.st_ctim.tv_nsec == after.st_ctim.tv_nsec;
+  return same && left.st_mtim.tv_nsec == right.st_mtim.tv_nsec && left.st_ctim.tv_nsec == right.st_ctim.tv_nsec;
 #endif
 }
 
-/// Collects only ZIP tail, footer and a bounded signing block from a regular file.
-[[nodiscard]] SignerCertificates complete_file(int descriptor, const struct stat& status, std::uint32_t api_level) {
-  const auto size = static_cast<std::size_t>(status.st_size);
-  const auto tail_size = std::min(size, kEndSize + kMaxComment);
-  const auto tail = file_region(descriptor, size - tail_size, tail_size);
+/// Opens one regular archive and validates descriptor and resolved-path metadata around all reads.
+template <typename Result, typename Read>
+[[nodiscard]] Result read_archive(const std::string& apk_path, Result failure, Read read) {
+  if (apk_path.empty() || apk_path.contains('\0') || apk_path.size() > 4096) {
+    return failure;
+  }
+  struct stat path_before = {};
+  if (stat(apk_path.c_str(), &path_before) != 0 || !S_ISREG(path_before.st_mode)) {
+    return failure;
+  }
+  /// POSIX open's fixed flag argument uses the required variadic libc boundary.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
+  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+  if (descriptor < 0) {
+    return failure;
+  }
+  struct stat before = {};
+  Result result = failure;
+  if (fstat(descriptor, &before) == 0 && S_ISREG(before.st_mode) && !std::cmp_less(before.st_size, kEndSize) &&
+      !std::cmp_greater(before.st_size, kMaxApkBytes) && unchanged_archive(path_before, before)) {
+    result = read(descriptor, static_cast<std::size_t>(before.st_size));
+    struct stat after = {};
+    struct stat path_after = {};
+    if (fstat(descriptor, &after) != 0 || !unchanged_archive(before, after) ||
+        stat(apk_path.c_str(), &path_after) != 0 || !unchanged_archive(before, path_after)) {
+      result = failure;
+    }
+  }
+  if (close(descriptor) != 0) {
+    return failure;
+  }
+  return result;
+}
+
+/// Reads a strict terminal ZIP32 directory descriptor without allocating the archive.
+struct Directory {
+  std::size_t offset;
+  std::size_t size;
+  std::uint16_t count;
+};
+
+[[nodiscard]] std::optional<Directory> file_directory(int descriptor, std::size_t file_size) {
+  const std::size_t tail_size = std::min(file_size, kEndSize + kMaxComment);
+  const auto tail = file_region({.descriptor = descriptor, .size = file_size}, file_size - tail_size, tail_size);
   if (!tail.has_value()) {
-    return std::unexpected(SignerReadError::kError);
+    return std::nullopt;
   }
-  const auto end_offset = complete_end_offset(*tail, size - tail_size);
+  const auto end_offset = complete_end_offset(*tail, file_size - tail_size);
   if (!end_offset.has_value()) {
-    return std::unexpected(SignerReadError::kError);
+    return std::nullopt;
   }
-  const auto directory = read_u32(std::span(*tail).subspan(*end_offset + kDirectoryOffsetField));
-  if (directory < kSigningBlockHeaderSize + kSigningBlockFooterSize) {
-    return std::unexpected(SignerReadError::kError);
+  const auto end = std::span(*tail).subspan(*end_offset);
+  return Directory{
+      .offset = read_u32(end.subspan(16)),
+      .size = read_u32(end.subspan(12)),
+      .count = read_u16(end.subspan(10)),
+  };
+}
+
+/// Collects only a bounded tail/footer/signing block; selection remains a separate parser concern.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> file_signing_block(int descriptor, std::size_t file_size) {
+  const auto directory = file_directory(descriptor, file_size);
+  if (!directory.has_value() || directory->offset < kSigningBlockHeaderSize + kSigningBlockFooterSize) {
+    return std::nullopt;
   }
-  const auto footer = file_region(descriptor, directory - kSigningBlockFooterSize, kSigningBlockFooterSize);
+  const auto footer = file_region({.descriptor = descriptor, .size = file_size},
+                                  directory->offset - kSigningBlockFooterSize, kSigningBlockFooterSize);
   if (!footer.has_value()) {
-    return std::unexpected(SignerReadError::kError);
+    return std::nullopt;
   }
   const std::uint64_t block_size = read_u64(*footer);
   if (block_size < kSigningBlockFooterSize || block_size > kMaxSigningBlockBytes - kSigningBlockHeaderSize ||
-      block_size > directory - kSigningBlockHeaderSize) {
-    return std::unexpected(SignerReadError::kError);
+      block_size > directory->offset - kSigningBlockHeaderSize) {
+    return std::nullopt;
   }
   const auto full_size = static_cast<std::size_t>(block_size) + kSigningBlockHeaderSize;
-  const auto block = file_region(descriptor, directory - full_size, full_size);
-  if (!block.has_value()) {
-    return std::unexpected(SignerReadError::kError);
+  return file_region({.descriptor = descriptor, .size = file_size}, directory->offset - full_size, full_size);
+}
+
+/// ZIP extra fields may end in raw zero alignment padding written by the real APK packer.
+[[nodiscard]] bool supported_extra(std::span<const std::uint8_t> extra) {
+  while (extra.size() >= 4) {
+    if (read_u16(extra) == 1) {
+      return false;
+    }
+    const std::size_t size = read_u16(extra.subspan(2));
+    if (size > extra.size() - 4) {
+      return false;
+    }
+    extra = extra.subspan(4 + size);
   }
-  const auto pairs = signing_block_pairs(*block, block->size());
-  return pairs.has_value() ? complete_signers(*pairs, api_level) : std::unexpected(SignerReadError::kError);
+  return std::ranges::all_of(extra, [](std::uint8_t byte) { return byte == 0; });
+}
+
+/// Canonical member names have no aliases, embedded NUL, control characters or traversal components.
+[[nodiscard]] bool canonical_name(std::string_view name) {
+  if (name.empty()) {
+    return false;
+  }
+  if (name.ends_with('/')) {
+    name.remove_suffix(1);
+  }
+  if (name.empty() || name.starts_with('/') || name.ends_with('/')) {
+    return false;
+  }
+  for (const char byte : name) {
+    if (static_cast<unsigned char>(byte) < 32 || byte == 127 || byte == ':' || byte == '\\') {
+      return false;
+    }
+  }
+  while (!name.empty()) {
+    const auto slash = name.find('/');
+    const auto part = name.substr(0, slash);
+    if (part.empty() || part == "." || part == "..") {
+      return false;
+    }
+    if (slash == std::string_view::npos) {
+      break;
+    }
+    name.remove_prefix(slash + 1);
+  }
+  return true;
+}
+
+/// Target metadata copied from the central directory, before releasing its bounded buffer/name index.
+struct StoredEntry {
+  std::size_t local_offset;
+  std::size_t size;
+  std::uint32_t crc;
+  std::uint16_t flags;
+};
+
+/// Rejects file/directory aliases without reading unrelated entry payloads.
+[[nodiscard]] bool consistent_parents(const std::map<std::string_view, bool>& names) {
+  for (const auto& [member, is_directory] : names) {
+    for (auto slash = member.find('/'); slash != std::string_view::npos; slash = member.find('/', slash + 1)) {
+      const auto parent = names.find(member.substr(0, slash));
+      if (parent != names.end() && !parent->second) {
+        return false;
+      }
+    }
+    static_cast<void>(is_directory);
+  }
+  return true;
+}
+
+/// Checks all central records before selecting a unique stored target.
+[[nodiscard]] std::optional<StoredEntry> directory_entry(std::span<const std::uint8_t> rest, Directory directory,
+                                                         std::string_view name, std::size_t max_bytes) {
+  std::map<std::string_view, bool> names;
+  std::optional<StoredEntry> target;
+  for (std::size_t index = 0; index < directory.count; ++index) {
+    if (rest.size() < kCentralEntrySize || read_u32(rest) != kCentralSignature) {
+      return std::nullopt;
+    }
+    const std::size_t name_size = read_u16(rest.subspan(28));
+    const std::size_t extra_size = read_u16(rest.subspan(30));
+    const std::size_t comment_size = read_u16(rest.subspan(32));
+    const std::size_t record_size = kCentralEntrySize + name_size + extra_size + comment_size;
+    if (record_size > rest.size()) {
+      return std::nullopt;
+    }
+    const auto member_bytes = rest.subspan(kCentralEntrySize, name_size);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+    const std::string_view member_view(reinterpret_cast<const char*>(member_bytes.data()), member_bytes.size());
+    const bool is_directory = member_view.ends_with('/');
+    const auto key = is_directory ? member_view.substr(0, member_view.size() - 1) : member_view;
+    const std::uint16_t flags = read_u16(rest.subspan(8));
+    const std::uint16_t method = read_u16(rest.subspan(10));
+    const std::size_t stored_size = read_u32(rest.subspan(20));
+    const std::size_t plain_size = read_u32(rest.subspan(24));
+    const std::size_t local_offset = read_u32(rest.subspan(42));
+    if (!canonical_name(member_view) || !names.emplace(key, is_directory).second || (flags & 1U) != 0 ||
+        (method != 0 && method != 8) || read_u16(rest.subspan(34)) != 0 || stored_size == 0xffffffffU ||
+        plain_size == 0xffffffffU || local_offset > directory.offset ||
+        kLocalHeaderSize > directory.offset - local_offset ||
+        stored_size > directory.offset - local_offset - kLocalHeaderSize ||
+        ((read_u32(rest.subspan(38)) >> 16U) & S_IFMT) == S_IFLNK ||
+        !supported_extra(rest.subspan(kCentralEntrySize + name_size, extra_size))) {
+      return std::nullopt;
+    }
+    if (member_view == name) {
+      if (is_directory || method != kStored || (flags & ~0x0800U) != 0 || stored_size != plain_size ||
+          stored_size > max_bytes) {
+        return std::nullopt;
+      }
+      target = StoredEntry{
+          .local_offset = local_offset,
+          .size = stored_size,
+          .crc = read_u32(rest.subspan(16)),
+          .flags = flags,
+      };
+    }
+    rest = rest.subspan(record_size);
+  }
+  return rest.empty() && consistent_parents(names) ? target : std::nullopt;
+}
+
+/// Bounds and validates local metadata independently; local alignment extras may differ from central extras.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> stored_local_data(int descriptor, std::size_t file_size,
+                                                                         Directory directory, StoredEntry entry,
+                                                                         std::string_view name) {
+  const auto header = file_region({.descriptor = descriptor, .size = file_size}, entry.local_offset, kLocalHeaderSize);
+  if (!header.has_value()) {
+    return std::nullopt;
+  }
+  const auto local = std::span(*header);
+  const std::size_t name_size = read_u16(local.subspan(26));
+  const std::size_t extra_size = read_u16(local.subspan(28));
+  const std::size_t metadata_offset = entry.local_offset + kLocalHeaderSize;
+  const std::size_t metadata_size = name_size + extra_size;
+  if (read_u32(local) != kLocalSignature || read_u16(local.subspan(6)) != entry.flags ||
+      read_u16(local.subspan(8)) != kStored || read_u32(local.subspan(14)) != entry.crc ||
+      read_u32(local.subspan(18)) != entry.size || read_u32(local.subspan(22)) != entry.size ||
+      name_size != name.size() || metadata_size > directory.offset - metadata_offset ||
+      entry.size > directory.offset - metadata_offset - metadata_size) {
+    return std::nullopt;
+  }
+  const auto metadata = file_region({.descriptor = descriptor, .size = file_size}, metadata_offset, metadata_size);
+  if (!metadata.has_value() || !equals(std::span(*metadata).first(name_size), name) ||
+      !supported_extra(std::span(*metadata).subspan(name_size))) {
+    return std::nullopt;
+  }
+  return file_region({.descriptor = descriptor, .size = file_size}, metadata_offset + metadata_size, entry.size);
+}
+
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> stored_file(int descriptor, std::size_t file_size,
+                                                                   std::string_view name, std::size_t max_bytes) {
+  const auto directory = file_directory(descriptor, file_size);
+  if (!directory.has_value() || directory->size > kMaxDirectoryBytes) {
+    return std::nullopt;
+  }
+  std::optional<StoredEntry> entry;
+  {
+    const auto bytes = file_region({.descriptor = descriptor, .size = file_size}, directory->offset, directory->size);
+    if (!bytes.has_value()) {
+      return std::nullopt;
+    }
+    entry = directory_entry(*bytes, *directory, name, max_bytes);
+  }
+  return entry.has_value() ? stored_local_data(descriptor, file_size, *directory, *entry, name) : std::nullopt;
 }
 
 }  // namespace
@@ -759,33 +865,43 @@ SignerCertificates find_signing_certificates(std::span<const std::uint8_t> apk, 
   return complete_signers(*pairs, api_level);
 }
 
+std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& apk_path, std::string_view name,
+                                                           std::size_t max_bytes) {
+  if (name.size() > 4096 || !canonical_name(name) || name.ends_with('/') || max_bytes > kMaxPayloadBytes) {
+    return std::nullopt;
+  }
+  return read_archive(
+      apk_path, std::optional<std::vector<std::uint8_t>>{},
+      [name, max_bytes](int descriptor, std::size_t size) { return stored_file(descriptor, size, name, max_bytes); });
+}
+
+std::optional<std::vector<std::uint8_t>> read_signing_certificate(const std::string& apk_path,
+                                                                  std::uint32_t api_level) {
+  return read_archive(apk_path, std::optional<std::vector<std::uint8_t>>{},
+                      [api_level](int descriptor, std::size_t size) -> std::optional<std::vector<std::uint8_t>> {
+                        const auto block = file_signing_block(descriptor, size);
+                        if (!block.has_value()) {
+                          return std::nullopt;
+                        }
+                        const auto pairs = signing_block_pairs(*block, block->size());
+                        return pairs.has_value() ? singular_certificate(*pairs, api_level) : std::nullopt;
+                      });
+}
+
 SignerCertificates read_signing_certificates(const std::string& apk_path, std::uint32_t api_level) {
   if (api_level < 31) {
     return std::unexpected(SignerReadError::kUnsupported);
   }
-  if (apk_path.empty() || apk_path.contains('\0') || apk_path.size() > 4096) {
-    return std::unexpected(SignerReadError::kError);
-  }
-  /// POSIX open's fixed flag argument uses the required variadic libc boundary.
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
-  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-  if (descriptor < 0) {
-    return std::unexpected(SignerReadError::kError);
-  }
-  struct stat before = {};
-  SignerCertificates result = std::unexpected(SignerReadError::kError);
-  if (fstat(descriptor, &before) == 0 && S_ISREG(before.st_mode) && !std::cmp_less(before.st_size, kEndSize) &&
-      !std::cmp_greater(before.st_size, kMaxApkBytes)) {
-    result = complete_file(descriptor, before, api_level);
-    struct stat after = {};
-    if (fstat(descriptor, &after) != 0 || !unchanged_archive(before, after)) {
-      result = std::unexpected(SignerReadError::kError);
-    }
-  }
-  if (close(descriptor) != 0) {
-    return std::unexpected(SignerReadError::kError);
-  }
-  return result;
+  return read_archive(apk_path, SignerCertificates(std::unexpected(SignerReadError::kError)),
+                      [api_level](int descriptor, std::size_t size) -> SignerCertificates {
+                        const auto block = file_signing_block(descriptor, size);
+                        if (!block.has_value()) {
+                          return std::unexpected(SignerReadError::kError);
+                        }
+                        const auto pairs = signing_block_pairs(*block, block->size());
+                        return pairs.has_value() ? complete_signers(*pairs, api_level)
+                                                 : std::unexpected(SignerReadError::kError);
+                      });
 }
 
 }  // namespace rasp::android::apk

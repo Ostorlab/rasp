@@ -8,14 +8,14 @@ because different source, compiler or plugin builds can share it.
 `packer/src/rasp_packer/checks_manifest.json` is the versioned source of truth for built-in
 group, signal and source identities. Its entries come from the platform check implementations
 and production `builtin.cpp` dispatchers. The catalogue describes possible outputs, not
-execution evidence or device attestation. Schema 1, revision 5 declares 36 Android and 26 iOS
+execution evidence or device attestation. The catalogue uses schema 1 revision 5 and declares 36 Android and 26 iOS
 built-in signal/source identities.
 
-The current canonical catalogue ID is `c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5`. Revision4
+The current canonical catalogue ID is `c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5`. Revision 4
 `eaac77e3bdbf7f21af2abfb79a7868ccf516e5c3f758d25c90127550e3e7db7c` remains
-foreign to this revision5 consumer even with matching pristine bytes and sidecar.
+foreign to this revision 5 consumer even with matching pristine bytes and sidecar.
 
-Revision5 adds four [Android identity observations](android-signer-observations.md): actual
+Revision 5 adds four [Android identity observations](android-signer-observations.md): actual
 Application package, complete current signer sets from APK and PackageManager, and ordered
 single-signer rotation history. The two legacy certificate outputs remain first-signer
 strings. Identity has nine expected outputs; error/unsupported sources are present coverage,
