@@ -24,9 +24,10 @@ The ObjC++ host uses only system C headers and UIKit, so -nostdinc++ preserves t
 reviewed iOS12 header search behavior on Xcode27. This build validates linkage; its
 app already loads and embeds RaspRuntime and is not an unprotected packer input.
 
-The compiled expectation matches docs/fixtures/local-policy-ios-v1.json. To pack an
-unprotected `demo.ipa` using a packer installation with matching iOS artifacts, run
-from the repository root:
+The PolicyHost fixture compiles the exact policy hash matching
+docs/fixtures/local-policy-ios-v1.json. Rebuild the fixture when that policy or hash
+changes. To pack an unprotected `demo.ipa` using a packer installation with matching
+iOS artifacts, run from the repository root:
 
 ```sh
 rasp pack demo.ipa --platform ios --build-id demo-1 --checks debugger \

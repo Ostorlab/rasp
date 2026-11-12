@@ -215,6 +215,7 @@ ALLOW. Use `decision != null && decision.allows()` for status OK plus final ALLO
 REPORT never admits, and candidate ALLOW alone does not satisfy this accessor.
 It reads the owned historical
 decision and does not revalidate freshness; call the gate again at actual execution.
+
 The actual compile-only jar comes from `runtime/android/stub/build.sh`:
 use it as compileOnly, and do not put a duplicate RuntimeBridge class in the host APK.
 The actual packed stub provides that class. Source/header copies are staged with
