@@ -144,3 +144,17 @@ target_link_libraries(rasp_android_cipher_test PRIVATE rasp_core rasp_tfpsacrypt
   GTest::gtest_main)
 gtest_discover_tests(rasp_android_cipher_test)
 
+# Exercise hooks()' Android dispatch against Linux's real own-process procfs, without an Android device claim.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_library(rasp_android_hooks_dispatch OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp)
+  target_compile_definitions(rasp_android_hooks_dispatch PRIVATE __ANDROID__)
+  target_include_directories(rasp_android_hooks_dispatch PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+  target_link_libraries(rasp_android_hooks_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
+  add_executable(rasp_android_hooks_dispatch_test android/checks/hooks_test.cpp
+    $<TARGET_OBJECTS:rasp_android_hooks_dispatch>)
+  target_compile_definitions(rasp_android_hooks_dispatch_test PRIVATE RASP_TEST_ANDROID_HOOKS)
+  target_include_directories(rasp_android_hooks_dispatch_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_android_hooks_dispatch_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_android_hooks_dispatch_test TEST_PREFIX "AndroidDispatch.")
+endif()

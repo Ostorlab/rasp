@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cstddef>
 #include <filesystem>
+#include <iterator>
 #include <optional>
 #include <ranges>
 #include <set>
@@ -51,7 +52,7 @@ constexpr std::string_view kMapsPath = "/proc/self/maps";
 /// The folder that holds one folder per thread of the app.
 constexpr std::string_view kTaskPath = "/proc/self/task";
 /// The largest thread name read. The kernel keeps at most 15 characters and a line break.
-constexpr std::size_t kMaxThreadNameSize = 64;
+constexpr std::size_t kMaxThreadNameSize = 16;
 /// The most threads looked at. An app has a few hundred at most.
 constexpr std::size_t kMaxThreads = 4096;
 /// The largest memory map read. A real one is a few hundred KiB.
@@ -61,8 +62,8 @@ constexpr std::size_t kMaxLines = 32;
 
 /// The text that marks a mapping made by a known instrumentation or hooking framework, matched anywhere in the line.
 /// Frida maps its agent and gadget, Substrate and Xposed map their own libraries, and a gadget is often injected
-/// through a `re.frida` or `libgadget` name. These catch a framework that keeps its default names; one rebuilt to
-/// rename itself is caught instead by the writable-executable and prologue probes.
+/// through a `re.frida` or `libgadget` name. These are heuristic markers; renaming or hiding a framework can evade
+/// them, and a matching name alone does not establish instrumentation.
 constexpr auto kFrameworkMarkers = std::to_array<std::string_view>({
     "frida",
     "gadget",
@@ -110,14 +111,18 @@ constexpr auto kThreadMarkers = std::to_array<std::string_view>({
 /// Whether `line` is a mapping that names a known instrumentation framework.
 [[nodiscard]] bool names_framework(std::string_view line) { return contains_marker(line, kFrameworkMarkers); }
 
-/// The name of the thread whose folder is `thread_folder`, without its line break.
+/// The validated visible kernel name, or nothing for unreadable, incomplete or malformed comm data.
 ///
 /// @param thread_folder The thread's folder, such as `/proc/self/task/1234`.
-/// @return The name. Nothing when it can't be read, such as when the thread ended after the folder was listed.
+/// @return One to fifteen non-control bytes, without the required final newline. Kernel truncation is not recoverable.
 [[nodiscard]] std::optional<std::string> thread_name(const std::filesystem::path& thread_folder) {
   std::optional<std::string> name = read_file((thread_folder / "comm").string(), kMaxThreadNameSize);
-  if (name && name->ends_with('\n')) {
-    name->pop_back();
+  if (!name.has_value() || name->size() < 2 || !name->ends_with('\n')) {
+    return std::nullopt;
+  }
+  name->pop_back();
+  if (std::ranges::any_of(*name, [](unsigned char character) { return character < 32 || character == 127; })) {
+    return std::nullopt;
   }
   return name;
 }
@@ -166,11 +171,20 @@ Observation observe_threads(std::string_view task_path) {
   const std::filesystem::directory_iterator end;
   std::set<std::string> names;
   std::size_t threads = 0;
-  while (iterator != end && threads < kMaxThreads && names.size() < kMaxLines) {
+  while (iterator != end) {
+    if (threads == kMaxThreads) {
+      return failed(kThreadsSignal, kTaskSource);
+    }
     ++threads;
     const std::optional<std::string> name = thread_name(iterator->path());
-    if (name && contains_marker(*name, kThreadMarkers)) {
+    if (!name.has_value()) {
+      return failed(kThreadsSignal, kTaskSource);
+    }
+    if (contains_marker(*name, kThreadMarkers)) {
       names.insert(*name);
+      if (names.size() > kMaxLines) {
+        names.erase(std::prev(names.end()));
+      }
     }
     iterator.increment(error);
     if (error) {
