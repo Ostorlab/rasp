@@ -53,8 +53,15 @@ public final class ServiceTest {
         }
         for (boolean worker : new boolean[]{false, true}) {
             String local = snapshot(6, worker);
-            if (!local.startsWith("root.mountinfo_context_v1/proc_self_mountinfo ok [mounts=") ||
-                !local.contains("root.mount_namespace_v1/proc_self_ns_mnt ok mnt:[")) throw new AssertionError("own proc context: " + local);
+            if (System.getProperty("os.name").equals("Linux")) {
+                if (!local.startsWith("root.mountinfo_context_v1/proc_self_mountinfo ok [mounts=") ||
+                    !local.contains("root.mount_namespace_v1/proc_self_ns_mnt ok mnt:[")) throw new AssertionError("own proc context: " + local);
+            } else {
+                // macOS runs the real JNI fixture, but has no Linux /proc mount namespace.
+                String unavailable = "root.mountinfo_context_v1/proc_self_mountinfo error\n"
+                    + "root.mount_namespace_v1/proc_self_ns_mnt error";
+                if (!local.equals(unavailable)) throw new AssertionError("unavailable proc context: " + local);
+            }
         }
         String hidden = PACKAGES + "ok [com.topjohnwu.magisk not_visible, me.weishu.kernelsu not_visible, me.bmax.apatch not_visible]";
         expect(3, hidden);
