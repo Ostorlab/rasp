@@ -25,6 +25,7 @@ CHECKS: collections.abc.Mapping[platforms.Platform, tuple[str, ...]] = {
         "debugger",
         "hooks",
         "identity",
+        "codesign",
         "emulator",
         "virtualizer",
         "mitm",

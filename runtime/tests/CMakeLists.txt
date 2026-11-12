@@ -36,7 +36,7 @@ target_link_libraries(rasp_plugins_example_test PRIVATE rasp_test_plugins rasp_c
   GTest::gtest_main)
 gtest_discover_tests(rasp_plugins_example_test)
 
-foreach(check debugger emulator hooks identity jailbreak mitm virtualizer)
+foreach(check codesign debugger emulator hooks identity jailbreak mitm virtualizer)
   add_executable(rasp_ios_${check}_test ios/checks/${check}_test.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/checks/${check}.cpp)
   target_include_directories(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src
