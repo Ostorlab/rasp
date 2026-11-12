@@ -189,16 +189,23 @@ void CaptureEvents::sample(std::int64_t session, std::int64_t generation, std::i
     clear(source, Availability::kError);
     return;
   }
-  source.serial = serial;
   if (state < 0 || state > (source.scope == Scope::kScene ? 2 : 1)) {
     increment(source.ignored, source);
     increment(source.lost, source);
+    source.serial = serial;
     source.state = -1;
     source.sampled_ns = std::nullopt;
     source.availability = Availability::kUnavailableState;
     return;
   }
-  if (kind == SampleKind::kInitial) {
+  const auto now = tick();
+  const bool gap = kind != SampleKind::kInitial && sample_gap(source, now);
+  source.serial = serial;
+  if (gap) {
+    source.state = -1;
+    increment(source.lost, source);
+  }
+  if (kind == SampleKind::kInitial || gap) {
     increment(source.initial, source);
   }
   if (kind == SampleKind::kCallback) {
@@ -214,7 +221,7 @@ void CaptureEvents::sample(std::int64_t session, std::int64_t generation, std::i
     }
   }
   source.state = state;
-  source.sampled_ns = tick();
+  source.sampled_ns = now;
   source.availability = state == 2 ? Availability::kUnavailableState : Availability::kActive;
 }
 void CaptureEvents::invalidate(std::int64_t session, Availability reason) {
@@ -264,6 +271,15 @@ void CaptureEvents::reject(std::int64_t session, int source, std::int64_t genera
       live_generation_ = 0;
     }
   }
+}
+bool CaptureEvents::sample_gap(const SourceSnapshot& source, std::optional<std::int64_t> now) const {
+  if (!source.registered || source.state < 0 || source.serial <= 0) {
+    return false;
+  }
+  if (source.serial <= freshness_barriers_[1] || !source.sampled_ns.has_value() || !now.has_value()) {
+    return true;
+  }
+  return *now < *source.sampled_ns || *now - *source.sampled_ns > 15000000000LL;
 }
 void CaptureEvents::freshness(std::size_t index, SourceSnapshot& snapshot, std::optional<std::int64_t> now,
                               bool ordered) {

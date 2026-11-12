@@ -193,6 +193,36 @@ TEST(IOSCaptureEvents, cleanup_whenFailedStopIsRetried_doesNotLeaveObsoleteTeard
   events.cleanup_complete(session);
   EXPECT_EQ(events.drain(false, true).sources[1].availability, Availability::kDeactivated);
 }
+TEST(IOSCaptureEvents, sample_whenClockOrStaleGapEnds_startsNewBaselineWithoutInventedTransition) {
+  for (const int gap : {0, 1, 2, 3}) {
+    SCOPED_TRACE(gap);
+    clock_tick() = gap == 2 ? 1000000000 : 0;
+    CaptureEvents events(clock_reading);
+    const auto session = events.start(false, true);
+    const auto generation = events.open(session, Scope::kScene);
+    events.registered(session, generation);
+    publish(events, session, generation, 0);
+    static_cast<void>(events.drain(false, true));
+    if (gap == 0) {
+      clock_tick() = -1;
+    } else if (gap == 2) {
+      clock_tick() = 0;
+    } else {
+      clock_tick() = 16000000000;
+    }
+    if (gap != 3) {
+      static_cast<void>(events.drain(false, true));
+    }
+    clock_tick() = gap == 0 || gap == 2 ? 1000000000 : 16000000001;
+    publish(events, session, generation, 1, SampleKind::kCallback);
+    const auto cut = events.drain(false, true).sources[1];
+    EXPECT_EQ(cut.availability, Availability::kActive);
+    EXPECT_EQ(cut.callbacks, 1);
+    EXPECT_EQ(cut.initial, 1);
+    EXPECT_EQ(cut.changes, 0);
+    EXPECT_GT(cut.lost, 0);
+  }
+}
 TEST(IOSCaptureEvents, failure_whenOnlyRecordingFails_preservesScreenshotOwnershipAndCounts) {
   clock_tick() = 0;
   CaptureEvents events(clock_reading);

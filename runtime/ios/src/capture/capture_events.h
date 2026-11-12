@@ -172,6 +172,8 @@ class CaptureEvents {
   [[nodiscard]] bool current(std::int64_t session, std::size_t source) const;
   /// Removes only current validity, preserving the interval and identity.
   static void clear(SourceSnapshot& source, Availability reason);
+  /// Detects a clock/stale gap before accepting a new baseline, without inventing a transition.
+  [[nodiscard]] bool sample_gap(const SourceSnapshot& source, std::optional<std::int64_t> now) const;
   /// Computes effective freshness without mutating UIKit ownership.
   void freshness(std::size_t index, SourceSnapshot& snapshot, std::optional<std::int64_t> now, bool ordered);
   pthread_mutex_t mutex_ = PTHREAD_MUTEX_INITIALIZER;
