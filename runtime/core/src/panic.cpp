@@ -1,20 +1,27 @@
-/// detect: the verdict for every signal of the built-in checks, and the comparison of the sources of one signal.
+/// detect: the verdict for every signal of the built-in checks. panic_on_detection: arms a panic when they detect
+/// something, on a thread that ends the process a random few seconds later.
 
 #include "rasp/panic.h"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <memory>
 #include <optional>
+#include <pthread.h>
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "rasp/observation.h"
+#include "rasp/util/logging.h"
 
 namespace rasp {
 
@@ -175,6 +182,25 @@ constexpr auto kVerdicts = std::to_array<Verdict>({
   return Detection{.signal = first.signal, .source = first.source + "!=" + other->source};
 }
 
+/// What the panic thread receives: the function that ends the process and how long to wait before calling it.
+struct ArmedPanic {
+  /// The function that ends the process.
+  EndProcess end_process;
+  /// How long to wait before calling it.
+  std::chrono::milliseconds delay;
+};
+
+/// The panic thread: waits the armed delay, then ends the process.
+///
+/// @param argument The armed panic, an ArmedPanic allocated with `new`, which the thread takes.
+/// @return Nothing: in the runtime, the call to end the process never returns.
+void* run_panic(void* argument) {
+  const std::unique_ptr<const ArmedPanic> armed(static_cast<ArmedPanic*>(argument));
+  std::this_thread::sleep_for(armed->delay);
+  armed->end_process();
+  return nullptr;
+}
+
 }  // namespace
 
 std::vector<Detection> detect(std::span<const Observation> observations) {
@@ -190,6 +216,41 @@ std::vector<Detection> detect(std::span<const Observation> observations) {
     }
   }
   return detections;
+}
+
+std::chrono::milliseconds panic_delay() noexcept {
+  const auto span = static_cast<std::uint32_t>((kMaxPanicDelay - kMinPanicDelay).count());
+  return kMinPanicDelay + std::chrono::milliseconds{arc4random_uniform(span + 1)};
+}
+
+bool arm_panic(EndProcess end_process, std::chrono::milliseconds delay) noexcept {
+  auto armed = std::make_unique<ArmedPanic>(ArmedPanic{.end_process = end_process, .delay = delay});
+  pthread_attr_t attributes{};
+  if (pthread_attr_init(&attributes) != 0) {
+    return false;
+  }
+  bool started = false;
+  if (pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED) == 0) {
+    pthread_t thread{};
+    started = pthread_create(&thread, &attributes, run_panic, armed.get()) == 0;
+  }
+  static_cast<void>(pthread_attr_destroy(&attributes));
+  if (started) {
+    static_cast<void>(armed.release());
+  }
+  return started;
+}
+
+bool panic_on_detection(std::span<const Observation> observations, EndProcess end_process) noexcept {
+  const std::vector<Detection> detections = detect(observations);
+  if constexpr (kLoggingEnabled) {
+    for (const Detection& detection : detections) {
+      rasp::log("would panic: " + detection.signal + "/" + detection.source);
+    }
+    return false;
+  } else {
+    return !detections.empty() && arm_panic(end_process, panic_delay());
+  }
 }
 
 }  // namespace rasp
