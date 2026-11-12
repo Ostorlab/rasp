@@ -27,7 +27,7 @@
 #include <bit>
 #include <dlfcn.h>
 #include <mach/mach.h>
-#include <mach/mach_vm.h>
+#include <mach/vm_map.h>
 #endif
 
 namespace rasp::ios::checks {
@@ -765,10 +765,13 @@ struct TextFile {
 #if defined(__APPLE__) && TARGET_OS_IOS && !TARGET_OS_SIMULATOR
 /// Copies through the kernel so an unmapped, unreadable or concurrently unmapped range cannot fault the app.
 [[nodiscard]] bool read_process(void*, std::uintptr_t address, std::span<std::uint8_t> into) {
-  mach_vm_size_t copied = 0;
-  return mach_vm_read_overwrite(mach_task_self(), static_cast<mach_vm_address_t>(address), into.size(),
-                                std::bit_cast<mach_vm_address_t>(into.data()), &copied) == KERN_SUCCESS &&
-         copied == into.size();
+  static_assert(sizeof(vm_address_t) == sizeof(std::uintptr_t) && sizeof(vm_address_t) == 8);
+  static_assert(sizeof(vm_size_t) == sizeof(std::size_t) && sizeof(vm_size_t) == 8);
+  vm_size_t copied = 0;
+  const auto size = static_cast<vm_size_t>(into.size());
+  return vm_read_overwrite(mach_task_self(), static_cast<vm_address_t>(address), size,
+                           std::bit_cast<vm_address_t>(into.data()), &copied) == KERN_SUCCESS &&
+         copied == size;
 }
 
 /// An object in the runtime's own image, used only for its address: dladdr on it names the framework's binary.

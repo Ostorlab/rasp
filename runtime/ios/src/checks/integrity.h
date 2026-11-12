@@ -96,7 +96,7 @@ struct ImageMemory {
 /// Layouts with possible text fixups are unsupported for both sources. Matching values are not attestation:
 /// an attacker controlling both sources, the reader or the reporting code can forge them.
 /// @param image_path Installed runtime binary, located through dladdr in production.
-/// @param memory Bounded image reader (mach_vm_read_overwrite on a physical device).
+/// @param memory Bounded image reader (vm_read_overwrite on a physical device).
 /// @return Two observations; failures carry no value, successful hashes are 64 lowercase hexadecimal digits.
 [[nodiscard]] std::vector<Observation> observe_text_hashes(std::string_view image_path, ImageMemory memory);
 
