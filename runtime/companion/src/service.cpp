@@ -745,6 +745,11 @@ std::uint32_t Service::eligible(Request& request, std::uint64_t now) const {
   }
   return RASP_SK_OP_OK;
 }
+template <typename Output>
+void Service::snapshot_retained(Output& output) const {
+  output.retained_requests = static_cast<std::uint32_t>(std::ranges::count(requests_, true, &Request::used));
+  output.retained_jobs = static_cast<std::uint32_t>(std::ranges::count(jobs_, true, &Job::used));
+}
 std::int32_t Service::take(const RaspScopedKeyTakeRequestV1& input, RaspScopedKeyTakeResultV1& output) {
   if (!refresh_clock()) {
     return RASP_SK_CALL_BUSY;
@@ -762,6 +767,7 @@ std::int32_t Service::take(const RaspScopedKeyTakeRequestV1& input, RaspScopedKe
   output.request = input.request;
   if (found == requests_.end() || found->taken) {
     output.take_state = RASP_SK_UNKNOWN_REQUEST;
+    snapshot_retained(output);
     return RASP_SK_CALL_OK;
   }
   std::uint64_t now = 0;
@@ -773,6 +779,7 @@ std::int32_t Service::take(const RaspScopedKeyTakeRequestV1& input, RaspScopedKe
   output.durability = found->result.durability;
   if (!found->terminal) {
     output.take_state = RASP_SK_PENDING;
+    snapshot_retained(output);
     return RASP_SK_CALL_OK;
   }
   if (found->taking.exchange(true)) {
@@ -814,6 +821,7 @@ std::int32_t Service::take(const RaspScopedKeyTakeRequestV1& input, RaspScopedKe
   native_borrowers_.fetch_sub(1);
   retire(index);
   dispatch(posts);
+  snapshot_retained(output);
   lock.unlock();
   post(posts);
   return RASP_SK_CALL_OK;
@@ -846,8 +854,7 @@ std::int32_t Service::control(const RaspScopedKeyControlV1& input, RaspScopedKey
       retire(index);
     }
     dispatch(posts);
-    output.retained_jobs = static_cast<std::uint32_t>(std::ranges::count(jobs_, true, &Job::used));
-    output.retained_requests = static_cast<std::uint32_t>(std::ranges::count(requests_, true, &Request::used));
+    snapshot_retained(output);
     output.retained_callbacks = static_cast<std::uint32_t>(std::ranges::count(requests_, true, &Request::delivery));
   }
   post(posts);

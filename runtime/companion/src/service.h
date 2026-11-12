@@ -149,6 +149,9 @@ class Service {
   void fail(Request& request, std::uint32_t status);
   /// Destroy a taken request only when jobs, native copies and callbacks no longer borrow it.
   void retire(std::size_t index);
+  /// Caller holds the state mutex and has authenticated the client; snapshot physically retained slots.
+  template <typename Output>
+  void snapshot_retained(Output& output) const;
   /// Fold atomically acknowledged callback returns into the bounded tables on next state access.
   void drain_releases();
   /// Select at most two jobs while holding the state lock; return copied post identities.

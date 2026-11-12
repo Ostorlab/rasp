@@ -3,6 +3,7 @@
 #include <atomic>
 #include <bit>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <future>
@@ -111,6 +112,11 @@ class ScopedKeys : public ::testing::Test {
     value.request = token;
     ASSERT_EQ(rasp_scoped_key_take_v1(&value, sizeof(value), state().result.get(), sizeof(*state().result)),
               RASP_SK_CALL_OK);
+  }
+  /// Pending/unknown results cannot retain a prior owned completion or diagnostic projection.
+  void empty_completion() const {
+    EXPECT_TRUE(std::ranges::all_of(std::as_bytes(std::span(&state().result->completion, 1)),
+                                    [](std::byte byte) { return byte == std::byte{}; }));
   }
   /// Bounded control result is independent of operation/erasure success.
   [[nodiscard]] RaspScopedKeyControlResultV1 control(std::uint32_t action, RaspScopedKeyTokenV1 target = {}) const {
@@ -1036,4 +1042,173 @@ TEST_F(ScopedKeys, authentication_whenDescribeCancelsClosesOrExpiresUse_neverSta
       EXPECT_EQ(control(RASP_SK_CLOSE_CLIENT).outcome, RASP_SK_ALREADY_CLOSED);
     }
   }
+}
+
+TEST_F(ScopedKeys, take_whenQueuedAndCancelled_snapshotsOutstandingAndRetiredWork) {
+  request(RASP_SK_CREATE);
+  const auto first = admit();
+  ASSERT_EQ(state().provider.state().queue.size(), 1U);
+  take(first.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_PENDING);
+  EXPECT_EQ(state().result->retained_requests, 1U);
+  EXPECT_EQ(state().result->retained_jobs, 1U);
+  empty_completion();
+  const auto cancelled = control(RASP_SK_CANCEL, first.request);
+  EXPECT_EQ(cancelled.retained_requests, 1U);
+  EXPECT_EQ(cancelled.retained_jobs, 1U);
+  EXPECT_EQ(cancelled.retained_callbacks, 0U);
+  take(first.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_COMPLETED);
+  EXPECT_EQ(state().result->completion.operation_status, RASP_SK_OP_CANCELLED);
+  EXPECT_EQ(state().result->retained_requests, 1U);
+  EXPECT_EQ(state().result->retained_jobs, 1U);
+  EXPECT_EQ(state().provider.state().queue.size(), 1U);
+  EXPECT_EQ(state().provider.state().generates, 0U);
+  take(first.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_UNKNOWN_REQUEST);
+  EXPECT_EQ(state().result->retained_requests, 1U);
+  EXPECT_EQ(state().result->retained_jobs, 1U);
+  empty_completion();
+  state().provider.drain();
+  take(first.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_UNKNOWN_REQUEST);
+  EXPECT_EQ(state().result->retained_requests, 0U);
+  EXPECT_EQ(state().result->retained_jobs, 0U);
+  EXPECT_EQ(state().provider.state().generates, 0U);
+  request(RASP_SK_CREATE);
+  const auto second = admit();
+  take(first.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_UNKNOWN_REQUEST);
+  EXPECT_EQ(state().result->retained_requests, 1U);
+  EXPECT_EQ(state().result->retained_jobs, 1U);
+  empty_completion();
+  state().provider.drain();
+  take(second.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_COMPLETED);
+  EXPECT_EQ(state().result->completion.operation_status, RASP_SK_OP_OK);
+  EXPECT_EQ(state().result->retained_requests, 0U);
+  EXPECT_EQ(state().result->retained_jobs, 0U);
+  EXPECT_TRUE(state().provider.state().queue.empty());
+  EXPECT_EQ(state().provider.state().generates, 1U);
+}
+TEST_F(ScopedKeys, take_whenInflightSignCancelled_countsPhysicalBorrowerUntilReturn) {
+  const auto key = create();
+  request(RASP_SK_SIGN);
+  state().input->input.sign.key = key.key_handle;
+  const auto admission = admit();
+  state().provider.state().during_sign = [&] {
+    const auto cancelled = control(RASP_SK_CANCEL, admission.request);
+    EXPECT_EQ(cancelled.retained_requests, 1U);
+    EXPECT_EQ(cancelled.retained_jobs, 1U);
+    EXPECT_EQ(cancelled.retained_callbacks, 0U);
+    EXPECT_TRUE(state().provider.state().queue.empty());
+    take(admission.request);
+    EXPECT_EQ(state().result->completion.operation_status, RASP_SK_OP_CANCELLED);
+    EXPECT_EQ(state().result->take_state, RASP_SK_COMPLETED);
+    EXPECT_EQ(state().result->retained_requests, 1U);
+    EXPECT_EQ(state().result->retained_jobs, 1U);
+    take(admission.request);
+    EXPECT_EQ(state().result->take_state, RASP_SK_UNKNOWN_REQUEST);
+    EXPECT_EQ(state().result->retained_requests, 1U);
+    EXPECT_EQ(state().result->retained_jobs, 1U);
+    empty_completion();
+  };
+  state().provider.drain();
+  state().provider.state().during_sign = {};
+  EXPECT_EQ(state().provider.state().signs, 1U);
+  take(admission.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_UNKNOWN_REQUEST);
+  EXPECT_EQ(state().result->retained_requests, 0U);
+  EXPECT_EQ(state().result->retained_jobs, 0U);
+  empty_completion();
+}
+TEST_F(ScopedKeys, take_whenCallbackOwnsTransferredCompletion_countsLeaseUntilAcknowledgment) {
+  const auto key = create();
+  request(RASP_SK_DESCRIBE);
+  state().input->input.key_handle = key.key_handle;
+  const auto admission = admit();
+  state().provider.drain();
+  ASSERT_TRUE(rasp::keys::begin_delivery(admission.request));
+  state().deliveries.push_back(admission.request);
+  take(admission.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_COMPLETED);
+  EXPECT_EQ(state().result->completion.operation_status, RASP_SK_OP_OK);
+  EXPECT_EQ(state().result->retained_requests, 1U);
+  EXPECT_EQ(state().result->retained_jobs, 0U);
+  const auto counts = control(RASP_SK_CANCEL, admission.request);
+  EXPECT_EQ(counts.outcome, RASP_SK_TOO_LATE);
+  EXPECT_EQ(counts.retained_requests, 1U);
+  EXPECT_EQ(counts.retained_jobs, 0U);
+  EXPECT_EQ(counts.retained_callbacks, 1U);
+  take(admission.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_UNKNOWN_REQUEST);
+  EXPECT_EQ(state().result->retained_requests, 1U);
+  EXPECT_EQ(state().result->retained_jobs, 0U);
+  empty_completion();
+  const auto closing = control(RASP_SK_CLOSE_CLIENT);
+  EXPECT_EQ(closing.outcome, RASP_SK_DRAINING);
+  EXPECT_EQ(closing.retained_callbacks, 1U);
+  EXPECT_TRUE(state().provider.state().storage_owned);
+  rasp::keys::end_delivery(admission.request);
+  EXPECT_EQ(state().provider.state().queue.size(), 1U);
+  take(admission.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_UNKNOWN_REQUEST);
+  EXPECT_EQ(state().result->retained_requests, 0U);
+  EXPECT_EQ(state().result->retained_jobs, 1U);
+  empty_completion();
+  const auto released = control(RASP_SK_CLOSE_CLIENT);
+  EXPECT_EQ(released.retained_requests, 0U);
+  EXPECT_EQ(released.retained_jobs, 1U);
+  EXPECT_EQ(released.retained_callbacks, 0U);
+  state().provider.drain();
+  EXPECT_EQ(control(RASP_SK_CLOSE_CLIENT).outcome, RASP_SK_ALREADY_CLOSED);
+}
+TEST_F(ScopedKeys, take_whenTransferStartsExpiredCreateCleanup_countsDispatchedJob) {
+  request(RASP_SK_CREATE);
+  const auto admission = admit();
+  state().provider.drain();
+  ASSERT_EQ(state().provider.state().generates, 1U);
+  ASSERT_TRUE(state().provider.state().queue.empty());
+  fixture::ticks().fetch_add(UINT64_C(60000000000));
+  take(admission.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_COMPLETED);
+  EXPECT_EQ(state().result->completion.operation_status, RASP_SK_OP_EXPIRED);
+  EXPECT_EQ(state().result->retained_requests, 1U);
+  EXPECT_EQ(state().result->retained_jobs, 1U);
+  EXPECT_EQ(state().provider.state().queue.size(), 1U);
+  EXPECT_EQ(state().provider.state().erases, 0U);
+  const auto counts = control(RASP_SK_CANCEL, admission.request);
+  EXPECT_EQ(counts.retained_requests, 1U);
+  EXPECT_EQ(counts.retained_jobs, 1U);
+  state().provider.drain();
+  EXPECT_EQ(state().provider.state().erases, 1U);
+  take(admission.request);
+  EXPECT_EQ(state().result->take_state, RASP_SK_UNKNOWN_REQUEST);
+  EXPECT_EQ(state().result->retained_requests, 0U);
+  EXPECT_EQ(state().result->retained_jobs, 0U);
+}
+TEST_F(ScopedKeys, take_whenInvalidOrRetiredClient_doesNotDiscloseRetainedCounts) {
+  const auto retired = state().client.client;
+  reopen();
+  request(RASP_SK_CREATE);
+  const auto admission = admit();
+  for (const auto& client : {retired, RaspScopedKeyTokenV1{}}) {
+    RaspScopedKeyTakeRequestV1 input{};
+    input.abi_version = 1;
+    input.struct_size = sizeof(input);
+    input.client = client;
+    input.request = admission.request;
+    std::memset(state().result.get(), 0xa5, sizeof(*state().result));
+    EXPECT_EQ(rasp_scoped_key_take_v1(&input, sizeof(input), state().result.get(), sizeof(*state().result)),
+              RASP_SK_CALL_NOT_FOUND);
+    EXPECT_EQ(state().result->retained_requests, 0U);
+    EXPECT_EQ(state().result->retained_jobs, 0U);
+    EXPECT_EQ(state().result->take_state, RASP_SK_TAKE_NONE);
+    empty_completion();
+  }
+  const auto counts = control(RASP_SK_CANCEL, admission.request);
+  EXPECT_EQ(counts.retained_requests, 1U);
+  EXPECT_EQ(counts.retained_jobs, 1U);
+  EXPECT_EQ(state().provider.state().queue.size(), 1U);
+  EXPECT_EQ(state().provider.state().generates, 0U);
 }

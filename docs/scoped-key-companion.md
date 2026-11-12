@@ -117,9 +117,11 @@ expire at300 seconds and explicit request deadlines at most60 seconds, including
 suspension. Exact expiry is invalid; clock regression/read failure latches the
 client domain. Reopening cannot reset the runtime gate's separate publication latch.
 
-Full-entry nonblocking native read leases precede every active-owner pointer load, including private
-job/auth/delivery trampolines. The owner/mutex is constructed once and never destroyed
-or replaced. Detach is a nonblocking exclusive upgrade only when fully closed.
+Public/UI entry tries a native read lease without waiting before loading the active owner.
+Worker `run_job`/`authenticated` entries wait for that lease. `end_delivery` first touches
+only permanent atomic slots/counters; its fold/post pins the native owner before any
+platform access. The owner/mutex is constructed once and never destroyed or replaced.
+Detach is a nonblocking exclusive upgrade only when fully closed.
 The closing worker waits for whole-entry quiescence before releasing platform
 storage/descriptors. UI/public entries never perform that wait. End-delivery records
 its acknowledgment atomically even if the state mutex is contended; the next bounded
