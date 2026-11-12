@@ -166,7 +166,7 @@ public final class HostOperationContext {
         } else if (e.kind == 5 || e.kind == 6) {
             if (state != 2 && state != 9) return false;
             state = e.kind == 6 ? 5 : e.completion == 1 ? 3 : 4; secure = 0;
-            if (state != 4 || e.attempt == 3) { Arrays.fill(action, (byte)0); purpose = 0; actionStart = 0; }
+            if (state != 4 || e.attempt == 3) { Arrays.fill(action, (byte)0); purpose = 0; attempt = 0; actionStart = 0; }
             return true;
         } else return false;
         state = 2; purpose = e.purpose; secure = e.secureEntry; attempt = e.attempt; return true;
@@ -204,7 +204,7 @@ public final class HostOperationContext {
             if (!transition(e)) { closeFlow(8, 12); return view(7, 12, false); }
         }
         sequence = e.sequence; if (state != 6) eventTick = lastTick; last = e;
-        if (state == 3 || state == 5 || (state == 4 && attempt == 3))
+        if (state == 3 || state == 5 || (state == 4 && e.attempt == 3))
             last = new Event(e.kind, 0, 0, 0, e.attempt, e.completion, e.generation, e.sequence, new byte[16], new byte[16]);
         if (state == 6 && e.kind != 8) last = null;
         return view(0, reason, false);

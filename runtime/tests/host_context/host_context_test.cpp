@@ -151,8 +151,9 @@ class HostContext : public testing::Test {
 
     std::uint32_t kind = 99;
     const std::vector<std::pair<std::string, std::uint32_t>> kinds{
-        {"start", 1},  {"begin", 2},  {"input", 3}, {"background", 4}, {"foreground", 4},
-        {"cancel", 6}, {"finish", 5}, {"fail", 5},  {"retry", 7},      {"stop", 8},
+        {"start", 1},  {"begin", 2},    {"input", 3},     {"background", 4}, {"foreground", 4},
+        {"cancel", 6}, {"finish", 5},   {"fail", 5},      {"retry", 7},      {"stop", 8},
+        {"fresh", 2},  {"inactive", 4}, {"destroyed", 4}, {"unknown", 4},
     };
     for (const auto& [name, number] : kinds) {
       if (command == name) {
@@ -169,13 +170,23 @@ class HostContext : public testing::Test {
       value.secure_entry = secure;
     }
     if (kind == 4) {
-      value.lifecycle = command == "foreground" ? 1U : 3U;
+      const std::vector<std::pair<std::string_view, std::uint32_t>> lifecycles{
+          {"unknown", 0}, {"foreground", 1}, {"inactive", 2}, {"background", 3}, {"destroyed", 4},
+      };
+      for (const auto& [name, number] : lifecycles) {
+        if (command == name) {
+          value.lifecycle = number;
+        }
+      }
       if (attempt == 0) {
         std::ranges::fill(value.action_ref, 0);
       }
     }
     if (command == "finish") {
       value.completion = 1;
+    }
+    if (command == "fresh") {
+      value.action_ref[0] = 4;
     }
     return value;
   }
@@ -363,6 +374,24 @@ TEST_F(HostContext, reduce_whenSharedIndependentVectors_matchFiniteContract) {
     EXPECT_EQ(data().view.state, state);
     EXPECT_EQ(data().decision.abi_version != 0, called != 0);
     EXPECT_EQ(data().decision.action, action);
+    std::uint32_t live_attempt = 0;
+    std::uint32_t reason = 0;
+    std::uint64_t accepted_sequence = 0;
+    if (fields >> live_attempt >> reason >> accepted_sequence) {
+      EXPECT_EQ(data().view.attempt, live_attempt);
+      EXPECT_EQ(data().view.reason, reason);
+      EXPECT_EQ(data().view.generation, generation);
+      EXPECT_EQ(data().view.event_sequence, accepted_sequence);
+      std::uint64_t session_age = 0;
+      std::uint64_t action_age = 0;
+      std::uint64_t last_event_age = 0;
+      if (fields >> session_age >> action_age >> last_event_age) {
+        EXPECT_EQ(data().view.timing_present, 1U);
+        EXPECT_EQ(data().view.session_age_ns, session_age);
+        EXPECT_EQ(data().view.action_age_ns, action_age);
+        EXPECT_EQ(data().view.last_event_age_ns, last_event_age);
+      }
+    }
   }
 }
 TEST_F(HostContext, gate_whenNativeClockUnavailable_consumesEvenWithoutPermit) {

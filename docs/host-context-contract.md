@@ -25,7 +25,7 @@ accepts no timestamps, text, arbitrary labels, raw URLs or variable-length blobs
 | refs | Exactly16 random opaque bytes each for session/action; zero when unused |
 | generation/sequence | Nonzero1..INT64_MAX, never wrapped or wall clocks |
 | attempts |1..3, initial BEGIN1, explicit RETRY increments |
-| ages | Session300s; action120s from original BEGIN; last event30s. Equality accepted; +1ns expires. |
+| ages | Session300s; action120s from original BEGIN; last meaningful event30s. Equality accepted; +1ns expires. |
 
 Use fresh UUID/SecureRandom references, scoped to this app and selected tenant.
 They must not be customer/account IDs, real auth sessions, challenges, cookies,
@@ -88,10 +88,12 @@ INACTIVE/BACKGROUND/DESTROYED/UNKNOWN lifecycle closes the session. Resume needs
 fresh START/BEGIN. END records a local result; CANCEL closes the action. STOP
 closes the session. No client completion claims server authentication or success.
 
-Only retry-eligible FAILED retains the action ref/purpose/start; FINISHED/CANCELED
-erase them and retain a minimal terminal tombstone. A valid repeat matching its
-generation/sequence/kind/attempt/completion is NO_CHANGE without accepting refs
-or readiness. This intentionally does not detect payload conflicts after erasure.
+Only retry-eligible FAILED retains the live action ref/purpose/attempt/start;
+FINISHED/CANCELED and exhausted FAILED clear them, including the live attempt.
+The separate terminal tombstone retains the original event attempt. A valid
+FINISHED/CANCELED repeat matching its generation/sequence/kind/attempt/completion
+is NO_CHANGE without accepting refs or readiness. This intentionally does not
+detect payload conflicts after erasure.
 Live/retry-eligible duplicates compare the exact event. STOP's canonical zero-ref
 event can be retained; lifecycle termination/fault/expiry erase it. NO_CHANGE
 never samples a new age or refreshes timestamps. Error/terminal readouts redact

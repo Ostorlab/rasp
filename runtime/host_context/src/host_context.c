@@ -284,6 +284,7 @@ static void finish_action(struct RaspHostContextV1* owner, const struct RaspHost
   if (owner->view.state != 4 || event->attempt == 3) {
     clear_bytes(owner->view.action_ref, 16);
     owner->view.purpose = 0;
+    owner->view.attempt = 0;
     owner->action_start = 0;
   }
 }

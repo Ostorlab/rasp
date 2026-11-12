@@ -14,13 +14,15 @@ public final class HostContextTest {
     private static void check(boolean value, String message) { if (!value) throw new AssertionError(message); }
     private static byte[] ref(int value) { byte[] bytes = new byte[16]; bytes[0] = (byte)value; return bytes; }
     private static HostOperationContext.Event event(String command, long generation, long sequence, int attempt, int secure) {
-        int kind = command.equals("start") ? 1 : command.equals("begin") ? 2 : command.equals("input") ? 3 :
-            (command.equals("background") || command.equals("foreground")) ? 4 : (command.equals("finish") || command.equals("fail")) ? 5 :
+        int kind = command.equals("start") ? 1 : (command.equals("begin") || command.equals("fresh")) ? 2 : command.equals("input") ? 3 :
+            (command.equals("background") || command.equals("foreground") || command.equals("inactive")
+                || command.equals("destroyed") || command.equals("unknown")) ? 4 : (command.equals("finish") || command.equals("fail")) ? 5 :
             command.equals("cancel") ? 6 : command.equals("retry") ? 7 : command.equals("stop") ? 8 : 99;
         return new HostOperationContext.Event(kind, (kind == 2 || kind == 3 || kind == 7) ? 1 : 0,
-            (kind == 2 || kind == 3 || kind == 7) ? secure : 0, kind == 1 ? 1 : kind == 4 ? (command.equals("foreground") ? 1 : 3) : 0,
+            (kind == 2 || kind == 3 || kind == 7) ? secure : 0, kind == 1 ? 1 : kind == 4 ? (command.equals("foreground") ? 1 :
+                command.equals("inactive") ? 2 : command.equals("destroyed") ? 4 : command.equals("unknown") ? 0 : 3) : 0,
             attempt, kind == 5 ? (command.equals("finish") ? 1 : 2) : 0, generation, sequence,
-            ref(kind == 8 ? 0 : generation == 1 ? 1 : 3), ref(kind == 1 || kind == 8 || (kind == 4 && attempt == 0) ? 0 : 2));
+            ref(kind == 8 ? 0 : generation == 1 ? 1 : 3), ref(kind == 1 || kind == 8 || (kind == 4 && attempt == 0) ? 0 : command.equals("fresh") ? 4 : 2));
     }
     private static HostOperationContext flow() {
         return flow(HASH);
@@ -79,6 +81,12 @@ public final class HostContextTest {
             check(view.state == Integer.parseInt(f[8]), "state: " + line + " got=" + view.state);
             check((nativeDecision != null) == f[9].equals("1"), "native invocation: " + line);
             check((nativeDecision == null ? 0 : nativeDecision.action()) == Integer.parseInt(f[10]), "native action: " + line);
+            if (f.length > 11) {
+                check(view.attempt == Integer.parseInt(f[11]) && view.reason == Integer.parseInt(f[12]), "live attempt/reason: " + line);
+                check(view.generation == generation && view.sequence == Long.parseLong(f[13]), "preserved owner tuple: " + line);
+                if (f.length > 14) check(view.timingPresent && view.sessionAgeNs == Long.parseLong(f[14])
+                    && view.actionAgeNs == Long.parseLong(f[15]) && view.lastEventAgeNs == Long.parseLong(f[16]), "ages: " + line);
+            }
             byte[] copy = view.sessionRef(); copy[0] = 99;
             check(view.sessionRef()[0] != 99, "owned view");
             rows++;
