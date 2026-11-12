@@ -1,4 +1,33 @@
 package fixture.contextbridge;
 
-/** Keeps the fixture process visible while the runtime performs a subsequent identity measurement. */
-public final class MainActivity extends android.app.Activity {}
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
+import android.widget.TextView;
+import co.ostorlab.rasp.RuntimeBridge;
+
+/** Real SDK Activity; normal touches use actual OS MotionEvents, never fabricated obscuration flags. */
+public final class MainActivity extends android.app.Activity {
+    private boolean resumed;
+    @Override public void onCreate(android.os.Bundle state) {
+        super.onCreate(state);
+        TextView view = new TextView(this);
+        view.setText("Window observation fixture: tap, rotate, pause/resume. No input content is collected.");
+        setContentView(view);
+    }
+    @Override public void onResume() {
+        super.onResume();
+        resumed = true;
+        new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+            @Override public void run() {
+                if (!resumed) return;
+                int attached = RuntimeBridge.attachWindow(getWindow());
+                if (attached != RuntimeBridge.INITIALIZED && attached != RuntimeBridge.ALREADY_INITIALIZED) {
+                    throw new AssertionError("window attach result " + attached);
+                }
+                Log.i("WindowBridgeFixture", "active window attached");
+            }
+        }, 11000);
+    }
+    @Override public void onPause() { resumed = false; super.onPause(); }
+}

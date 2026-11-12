@@ -72,6 +72,30 @@
         "input_method",
         "notification_access"
       ]
+    },
+    {
+      "platform": "android",
+      "requested": [
+        "overlay",
+        "overlay"
+      ],
+      "effective_checks": [
+        "identity",
+        "overlay"
+      ],
+      "skipped": []
+    },
+    {
+      "platform": "ios",
+      "requested": [
+        "overlay"
+      ],
+      "effective_checks": [
+        "identity"
+      ],
+      "skipped": [
+        "overlay"
+      ]
     }
   ],
   "unknown_release": {
@@ -187,10 +211,10 @@
   ],
   "catalogue": {
     "schema_version": 1,
-    "revision": 5,
-    "catalogue_id": "c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5",
+    "revision": 6,
+    "catalogue_id": "28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4",
     "observation_counts": {
-      "android": 36,
+      "android": 46,
       "ios": 26
     }
   },
@@ -206,6 +230,11 @@
   },
   "unmatched_revision4_release": {
     "catalogue_id": "eaac77e3bdbf7f21af2abfb79a7868ccf516e5c3f758d25c90127550e3e7db7c",
+    "expected_outputs": null,
+    "health": "unsupported"
+  },
+  "unmatched_revision5_release": {
+    "catalogue_id": "c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5",
     "expected_outputs": null,
     "health": "unsupported"
   }

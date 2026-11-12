@@ -111,3 +111,12 @@ source change still requires an exact catalogue update.
 Real device execution, suspension, storage failures, iOS toolchain/obfuscation and
 supported compiler CI remain necessary validation; host execution is no device
 health evidence. Session/run generation does not depend on installation storage.
+
+
+RT10 ordinary-merges the exact approved RT09 parent. Canonical schema1/revision6 declares **46 Android/26 iOS**
+identities, catalogue `28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4`. The ten opt-in window outputs consume one bounded FIFO drain per selected actual
+measurement cycle through the same production builtin dispatcher; disabled selection does not drain. Legacy and
+additive callbacks retain the same immutable snapshot, including interval/loss metadata and observations, across
+later drains and Context destruction. Real-JVM caller and attached-native-worker tests exercise that handoff.
+`complete` means all expected metadata/count rows are present, including observer error or unknown coverage; it
+does not certify an active observer, uninterrupted ownership, delivered touches or overlay absence.

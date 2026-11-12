@@ -2,7 +2,7 @@
 
 The `identity` group adds four versioned outputs without changing group selection or its five legacy outputs. These are bounded, untrusted observations. Benign rotation and parallel signing are controls, not repackaging or malware verdicts.
 
-This implementation ordinary-merges the root-approved RT07 parent `70d938b2cc33edea6bba3f715b32cd286c94d592`, preserving RT08/RT06 collectors and immutable cycle handoff. The four outputs are registered once in canonical schema1 revision5: **36 Android /26 iOS** identities, catalogue `c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5`. The [v1 fixture](fixtures/android-signer-observations-v1.json), generated native cycle definitions and compiled capability expectations use this same canonical source; the temporary draft header/append is removed. Existing identity-only defaults and legacy scalar fields remain intact. Exact-head platform CI and independent root review remain required before publication.
+This implementation ordinary-merges the root-approved RT07 parent `70d938b2cc33edea6bba3f715b32cd286c94d592`, preserving RT08/RT06 collectors and immutable cycle handoff. The four outputs are registered once in canonical schema1 revision6: **46 Android /26 iOS** identities, catalogue `28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4`. The [v1 fixture](fixtures/android-signer-observations-v1.json), generated native cycle definitions and compiled capability expectations use this same canonical source; the temporary draft header/append is removed. Existing identity-only defaults and legacy scalar fields remain intact. Exact-head platform CI and independent root review remain required before publication.
 
 | Signal | Source | Successful value |
 |---|---|---|

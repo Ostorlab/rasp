@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "group": "overlay",
+  "source": "window_callback",
+  "scenarios": [
+    {
+      "name": "no_adapter",
+      "observer_state": "never_started",
+      "coverage": "unknown",
+      "active_windows": 0,
+      "touch_events": 0
+    },
+    {
+      "name": "normal_received",
+      "observer_state": "active",
+      "coverage": "best_effort",
+      "active_windows": 1,
+      "touch_events": 1,
+      "obscured_touch_events": 0,
+      "partially_obscured_touch_events": 0
+    },
+    {
+      "name": "legitimate_or_unattributed_obscuration",
+      "observer_state": "active",
+      "coverage": "best_effort",
+      "active_windows": 1,
+      "touch_events": 3,
+      "obscured_touch_events": 2,
+      "partially_obscured_touch_events": 2
+    },
+    {
+      "name": "ownership_lost",
+      "observer_state": "active",
+      "coverage": "loss_detected",
+      "active_windows": 0,
+      "lost_windows": 1
+    },
+    {
+      "name": "queue_overflow_after_drained_open",
+      "observer_state": "active",
+      "coverage": "loss_detected",
+      "touch_events": 128,
+      "dropped_events": 72
+    },
+    {
+      "name": "registration_failure",
+      "observer_state": "error",
+      "coverage": "unknown",
+      "active_windows": 0
+    },
+    {
+      "name": "stopped",
+      "observer_state": "deactivated",
+      "coverage": "unknown",
+      "active_windows": 0
+    },
+    {
+      "name": "old_sdk",
+      "observer_state": "unsupported",
+      "coverage": "unknown",
+      "active_windows": 0
+    }
+  ],
+  "counter_interval": "delta since previous selected drain, including session transitions; first duration -1; no touches never proves absence",
+  "registration": "schema1_revision6",
+  "catalogue_id": "28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4",
+  "observations": [
+    {
+      "signal": "overlay.observer_state",
+      "source": "window_callback",
+      "value_kind": "string",
+      "cardinality": "one",
+      "value_cardinality": "scalar",
+      "statuses": [
+        "ok",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Snapshot of adapter state: never_started, active, deactivated, error, or unsupported. Registration/JNI/teardown failure is explicit error state, never a clean verdict. Active does not prove uninterrupted callback ownership; no adapter or no touches cannot establish overlay absence."
+    },
+    {
+      "signal": "overlay.coverage",
+      "source": "window_callback",
+      "value_kind": "string",
+      "cardinality": "one",
+      "value_cardinality": "scalar",
+      "statuses": [
+        "ok",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Interval loss_detected when records were dropped, windows/adapter coverage lost, or JNI inputs rejected. Otherwise best_effort only with an active adapter and at least one current window; unknown otherwise. Callback replacement/restoration between probes is unobservable: this is never continuous coverage or overlay-absence evidence."
+    },
+    {
+      "signal": "overlay.active_windows",
+      "source": "window_callback",
+      "value_kind": "integer",
+      "cardinality": "one",
+      "value_cardinality": "scalar",
+      "statuses": [
+        "ok",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Current snapshot of registered window tokens, 0 through 32. Tokens are opaque ephemeral in-process integers and are not exported. Activity pause/stop/destroy, manual detach, detected replacement and adapter teardown remove windows. Snapshot availability must accompany interval touch deltas."
+    },
+    {
+      "signal": "overlay.touch_events",
+      "source": "window_callback",
+      "value_kind": "integer",
+      "cardinality": "one",
+      "value_cardinality": "scalar",
+      "statuses": [
+        "ok",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Retained dispatchTouchEvent records since the previous selected drain, including normal touches and all actions, not unique gestures. Fixed 128-record FIFO also contains lifecycle records. Overflow drops newest records; counts are lower bounds with explicit dropped/lost/invalid metadata. No touches cannot establish overlay absence."
+    },
+    {
+      "signal": "overlay.obscured_touch_events",
+      "source": "window_callback",
+      "value_kind": "integer",
+      "cardinality": "one",
+      "value_cardinality": "scalar",
+      "statuses": [
+        "ok",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Retained received touches with public MotionEvent FLAG_WINDOW_IS_OBSCURED bit 1, which passed through an obscured area. Counts since the previous selected drain, bounded by retained touches. Legitimate overlays/system windows are context, not malware; no package attribution. OS-blocked or undelivered touches are unobserved."
+    },
+    {
+      "signal": "overlay.partially_obscured_touch_events",
+      "source": "window_callback",
+      "value_kind": "integer",
+      "cardinality": "one",
+      "value_cardinality": "scalar",
+      "statuses": [
+        "ok",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Retained received touches with public MotionEvent FLAG_WINDOW_IS_PARTIALLY_OBSCURED bit 2, obscured elsewhere in the receiving window. Counts since the previous selected drain; both bits increment both flag counters. No coordinates, content, package attribution or malware verdict. Zero cannot establish absence."
+    },
+    {
+      "signal": "overlay.dropped_events",
+      "source": "window_callback",
+      "value_kind": "integer",
+      "cardinality": "one",
+      "value_cardinality": "scalar",
+      "statuses": [
+        "ok",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Interval newest-record drops when the fixed 128-record FIFO is full. Saturates at INT64_MAX. Current window state and loss metadata still update outside the FIFO. Retained touch counters are lower bounds after drops; selection disabled does not drain and cannot imply clean coverage."
+    },
+    {
+      "signal": "overlay.lost_windows",
+      "source": "window_callback",
+      "value_kind": "integer",
+      "cardinality": "one",
+      "value_cardinality": "scalar",
+      "statuses": [
+        "ok",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Interval detected callback ownership/collection loss and adapter/slot failures, saturating at INT64_MAX. Not a unique-window count: repeated failures can increment it. Probe checks are nominally once per second on the main thread and before received touches, with no guarantee during a stalled looper or between probes."
+    },
+    {
+      "signal": "overlay.invalid_events",
+      "source": "window_callback",
+      "value_kind": "integer",
+      "cardinality": "one",
+      "value_cardinality": "scalar",
+      "statuses": [
+        "ok",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Interval rejected malformed, stale-session or unknown-window JNI event inputs, saturating at INT64_MAX. Native ingress accepts only a session token, opaque positive window token, finite event kind and the two obscuration bits. Rejection remains explicit unknown/lost coverage, never a successful absence observation."
+    },
+    {
+      "signal": "overlay.interval_ms",
+      "source": "window_callback",
+      "value_kind": "integer",
+      "cardinality": "one",
+      "value_cardinality": "scalar",
+      "statuses": [
+        "ok",
+        "unsupported"
+      ],
+      "supported_on": "android",
+      "behavior": "Monotonic milliseconds since the previous selected atomic drain. First drain is -1 because no previous boundary exists; subsequent zero is a measured short interval. Deltas include all sessions since the boundary, while state/window counts describe the final snapshot. Start/stop never erase pending evidence."
+    }
+  ]
+}

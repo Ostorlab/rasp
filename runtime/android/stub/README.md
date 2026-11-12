@@ -26,7 +26,7 @@ dependencies {
 }
 ```
 
-The JAR contains only RuntimeBridge. **Never use `implementation`, `api`, or bundle its source/class in the host
+The JAR contains RuntimeBridge and its nested implementation classes. **Never use `implementation`, `api`, or bundle its source/class in the host
 APK/AAB.** The packer keeps framework DEX classes and appends stub.dex; bundling another bridge would create
 competing definitions, possibly in the on-demand loader. Its sole runtime definition must come from stub.dex,
 visible through the base loader to decrypted host code. The compile-only JAR is not a standalone runtime SDK.
@@ -38,6 +38,7 @@ Do not run R8 on the shipped stub without these rules:
 
 ```proguard
 -keep class co.ostorlab.rasp.RuntimeBridge { *; }
+-keep class co.ostorlab.rasp.RuntimeBridge$* { *; }
 -keep class co.ostorlab.rasp.RaspStub { *; }
 ```
 
@@ -128,3 +129,12 @@ retained VM allocations are not sanitizer-compatible. No sanitizer reports are s
 
 Android lifecycle and ART behavior require the [device fixture](../../tests/android/context_bridge/device/README.md).
 Host tests and fixture compilation do not establish actual device or minified-host behavior.
+
+## Optional Activity/window observation
+
+After successful initialization, `startWindowObservation(Application)` opts in to the public API31+ main-thread
+lifecycle adapter. Select the separate `overlay` builtin to drain its bounded received-touch counters. See the
+[complete setup, teardown, exact output and coverage contract](../../../docs/android-window-observations.md).
+The compile-only JAR includes RuntimeBridge and its nested classes; none may be bundled in the host's DEX. The
+shipped stub includes those classes exactly once. Context initialization, window attachment and check selection
+are separate steps. No touch filtering or capture callbacks are enabled by this API.
