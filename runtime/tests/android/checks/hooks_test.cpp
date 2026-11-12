@@ -1,12 +1,19 @@
 /// Tests for the Android hooking checks: the memory-map probe that reports instrumentation-framework mappings and
-/// writable-executable regions, and the thread probe that reports Frida's threads.
+/// writable-executable regions, the thread probe that reports Frida's threads, and the inline-hook probe that compares
+/// functions' first bytes in memory with their library's file. The inline-hook tests read two small libraries built
+/// from util/data/prologue.c, copy each into memory as its loaded image, and describe that copy in a memory map.
 
 #include "checks/hooks.h"
 
 #include <array>
+#include <bit>
 #include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <format>
 #include <gtest/gtest.h>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -19,16 +26,40 @@
 #include "rasp/plugin.h"
 #include "rasp/plugins/registry.h"
 #ifdef RASP_TEST_ANDROID_HOOKS
+#include <dlfcn.h>
 #include <pthread.h>
 #endif
 #include "support/files.h"
 #include "support/syscall_files.h"
+#include "util/direct_syscall.h"
+#include "util/elf.h"
+#ifdef __linux__
+#include <cstring>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 namespace rasp::android::checks {
 namespace {
 
+using test_support::read_file;
 using test_support::TemporaryDirectory;
 using test_support::write_file;
+
+/// The arm64 fixture library.
+constexpr std::string_view kArm64Library = RASP_TEST_ELF_DATA "/libprologue-arm64.so";
+/// The armeabi-v7a fixture library, built as Thumb code.
+constexpr std::string_view kArmv7Library = RASP_TEST_ELF_DATA "/libprologue-armv7.so";
+/// The file offset of `rasp_fixture_first` in the arm64 fixture.
+constexpr std::uintptr_t kArm64First = 0x3AC;
+/// The file offset of `rasp_fixture_second` in the arm64 fixture.
+constexpr std::uintptr_t kArm64Second = 0x3D0;
+/// The file offset of `rasp_fixture_indirect`, an IFUNC, in the arm64 fixture.
+constexpr std::uintptr_t kArm64Indirect = 0x3DC;
+/// The file offset of `rasp_fixture_first` in the armeabi-v7a fixture, a Thumb function.
+constexpr std::uintptr_t kArmv7First = 0x224;
 
 /// A clean app's memory map: its own library, libc, the stack and the heap, none of them writable-executable.
 constexpr std::string_view kCleanMaps =
@@ -83,6 +114,60 @@ void capture_observations(std::span<const Observation> observations, plugins::Co
   std::error_code error;
   std::filesystem::create_directories(folder, error);
   return !error && write_file((folder / "comm").string(), std::string(name) + "\n");
+}
+
+/// A fixture library as the inline-hook probe sees it: its file, and a copy of the file's bytes that stands for its
+/// loaded image, mapped from the start of the file.
+struct LoadedLibrary {
+  /// The path of the library file.
+  std::string path;
+  /// The copy of the file's bytes, read by the probe as the library's memory.
+  std::vector<std::uint8_t> memory;
+};
+
+/// The library file at `path`, loaded as a copy of its bytes. The copy is empty when the file can't be read.
+[[nodiscard]] LoadedLibrary load(std::string_view path) {
+  const std::optional<std::string> content = read_file(std::string(path));
+  if (!content) {
+    return {.path = std::string(path), .memory = {}};
+  }
+  return {.path = std::string(path), .memory = {content->begin(), content->end()}};
+}
+
+/// The address of the byte at `file_offset` in the loaded copy of `library`.
+[[nodiscard]] std::uintptr_t address_of(const LoadedLibrary& library, std::uintptr_t file_offset) {
+  return std::bit_cast<std::uintptr_t>(library.memory.data()) + file_offset;
+}
+
+/// How a memory-map line describes a loaded library: its permissions, the file offset it says the copy is mapped
+/// from, and how many of the copy's bytes it spans, all of them when 0.
+struct MapsLine {
+  /// The permissions field.
+  std::string_view perms = "r-xp";
+  /// The offset field.
+  std::uint64_t file_offset = 0;
+  /// The number of bytes the line spans, or 0 for the whole copy.
+  std::size_t length = 0;
+};
+
+/// Writes a memory map in `directory` that maps the loaded copy of `library` as `line` describes, and returns its path.
+[[nodiscard]] std::string write_library_maps(const TemporaryDirectory& directory, const LoadedLibrary& library,
+                                             const MapsLine& line = {}) {
+  const std::uintptr_t start = address_of(library, 0);
+  const std::size_t length = line.length == 0 ? library.memory.size() : line.length;
+  const std::string maps = std::format("{:x}-{:x} {} {:08x} fd:00 100  {}\n", start, start + length, line.perms,
+                                       line.file_offset, library.path);
+  return write_maps(directory, std::string(kCleanMaps) + maps);
+}
+
+/// The hook.inline observation that reports `names`.
+[[nodiscard]] Observation inline_hooks(std::vector<std::string> names) {
+  return {.signal = "hook.inline", .source = "prologue", .status = Status::kOk, .value = std::move(names)};
+}
+
+/// The hook.inline observation of a probe that couldn't compare the functions.
+[[nodiscard]] Observation inline_failed() {
+  return {.signal = "hook.inline", .source = "prologue", .status = Status::kError, .value = {}};
 }
 
 TEST(Hooks, observeMaps_whenMapIsClean_reportsEmptyLists) {
@@ -211,6 +296,418 @@ TEST(Hooks, observeThreads_whenTheFolderIsMissing_reportsAnError) {
             (Observation{.signal = "hook.threads", .source = "proc_task", .status = Status::kError, .value = {}}));
 }
 
+#ifdef __linux__
+/// Exercises real RX file mappings without executing cross-ABI fixture instructions.
+[[nodiscard]] bool check_executable_fixture(std::string_view filename) {
+  const std::string path = std::string(RASP_TEST_ELF_DATA) + "/" + std::string(filename);
+  const LoadedLibrary file = load(path);
+  const auto headers = util::read_elf_headers(file.memory);
+  if (!headers.has_value()) {
+    return false;
+  }
+  const auto symbol = util::find_dynamic_symbol(file.memory, *headers, "rasp_fixture_first");
+  if (!symbol.has_value()) {
+    return false;
+  }
+  const bool thumb = headers->machine == util::kMachineArm && (symbol->value & 1U) != 0;
+  const auto code = util::find_code(
+      file.memory, *headers, {.address = symbol->value & ~(thumb ? std::uint64_t{1} : std::uint64_t{0}), .length = 16});
+  if (!code.has_value()) {
+    return false;
+  }
+  const auto opened = util::libc_syscall(
+      SYS_openat,
+      {static_cast<std::uintptr_t>(AT_FDCWD), std::bit_cast<std::uintptr_t>(path.c_str()), O_RDONLY | O_CLOEXEC, 0});
+  if (opened.value < 0) {
+    return false;
+  }
+  const int descriptor = static_cast<int>(opened.value);
+  void* const memory = mmap(nullptr, file.memory.size(), PROT_READ | PROT_EXEC, MAP_PRIVATE, descriptor, 0);
+  const bool closed = close(descriptor) == 0;
+  if (memory == MAP_FAILED) {
+    return false;
+  }
+  const auto base = std::bit_cast<std::uintptr_t>(memory);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = base + code->file_offset + (thumb ? 1U : 0U)},
+  });
+  const bool stock = observe_inline_hooks("/proc/self/maps", functions) == inline_hooks({});
+  const bool writable = mprotect(memory, file.memory.size(), PROT_READ | PROT_WRITE) == 0;
+  bool changed = false;
+  if (writable) {
+    const auto bytes = std::span(static_cast<std::uint8_t*>(memory), file.memory.size());
+    bytes[static_cast<std::size_t>(code->file_offset)] ^= 0xFFU;
+    if (mprotect(memory, file.memory.size(), PROT_READ | PROT_EXEC) == 0) {
+      changed = observe_inline_hooks("/proc/self/maps", functions) == inline_hooks({"rasp_fixture_first"});
+    }
+  }
+  const bool unmapped = munmap(memory, file.memory.size()) == 0;
+  return closed && stock && writable && changed && unmapped;
+}
+
+TEST(Hooks, observeInlineHooks_whenRealExecutableFixturesArePatched_reportsChangedBytesAcrossAbis) {
+  constexpr auto kNames = std::to_array<std::string_view>({
+      "libprologue-arm64.so",
+      "libprologue-armv7.so",
+      "libprologue-arm.so",
+      "libprologue-x86.so",
+      "libprologue-x86_64.so",
+  });
+  for (const std::string_view filename : kNames) {
+    EXPECT_TRUE(check_executable_fixture(filename)) << filename;
+  }
+}
+
+TEST(Hooks, observeInlineHooks_whenMemoryBecameUnreadable_reportsAnErrorWithoutCrashing) {
+  const TemporaryDirectory directory;
+  LoadedLibrary library = load(kArm64Library);
+  const long page_size = sysconf(_SC_PAGESIZE);
+  ASSERT_GT(page_size, 0);
+  void* const memory =
+      mmap(nullptr, static_cast<std::size_t>(page_size), PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  ASSERT_NE(memory, MAP_FAILED);
+  const auto base = std::bit_cast<std::uintptr_t>(memory);
+  const std::string maps = write_maps(
+      directory,
+      std::format("{:x}-{:x} r-xp 0 00:00 1 {}\n", base, base + static_cast<std::uintptr_t>(page_size), library.path));
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = base + kArm64First},
+  });
+  const Observation result = observe_inline_hooks(maps, functions);
+  EXPECT_EQ(munmap(memory, static_cast<std::size_t>(page_size)), 0);
+  EXPECT_EQ(result, inline_failed());
+}
+#endif
+
+TEST(Hooks, observeInlineHooks_whenMemoryReadIsShort_reportsAnError) {
+#ifdef __linux__
+  const TemporaryDirectory directory;
+  LoadedLibrary library = load(kArm64Library);
+  const long page_size = sysconf(_SC_PAGESIZE);
+  ASSERT_GT(page_size, 0);
+  const auto size = static_cast<std::size_t>(page_size);
+  void* const memory = mmap(nullptr, 2 * size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  ASSERT_NE(memory, MAP_FAILED);
+  const auto base = std::bit_cast<std::uintptr_t>(memory);
+  const auto address = base + size - 8;
+  void* const second = std::bit_cast<void*>(base + size);
+  ASSERT_EQ(mprotect(second, size, PROT_NONE), 0);
+  const std::string maps = write_maps(
+      directory, std::format("{:x}-{:x} r-xp {:x} 00:00 1 {}\n", address, address + 16, kArm64First, library.path));
+  const auto functions = std::to_array<ResolvedFunction>({{.name = "rasp_fixture_first", .address = address}});
+  const auto result = observe_inline_hooks(maps, functions);
+  EXPECT_EQ(munmap(memory, 2 * size), 0);
+  EXPECT_EQ(result, inline_failed());
+#endif
+}
+
+TEST(Hooks, observeInlineHooks_whenFunctionExtentIsZero_reportsAnError) {
+  const TemporaryDirectory directory;
+  LoadedLibrary library = load(kArm64Library);
+  const auto original = read_file(library.path);
+  ASSERT_TRUE(original.has_value());
+  std::string bytes = *original;
+  const auto headers = util::read_elf_headers(library.memory);
+  ASSERT_TRUE(headers.has_value());
+  const auto symbols = util::find_section(library.memory, *headers, ".dynsym");
+  ASSERT_TRUE(symbols.has_value());
+  bytes.replace(static_cast<std::size_t>(symbols->file_offset) + 48 + 16, 8, 8, '\0');
+  library.path = directory.path() + "/zero.so";
+  ASSERT_TRUE(write_file(library.path, bytes));
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+  });
+  EXPECT_EQ(observe_inline_hooks(write_library_maps(directory, library), functions), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenFunctionsAreDuplicateOrNamesUnbounded_reportsAnError) {
+  const TemporaryDirectory directory;
+  const LoadedLibrary library = load(kArm64Library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+  });
+  const std::string path = write_library_maps(directory, library);
+  EXPECT_EQ(observe_inline_hooks(path, functions), inline_failed());
+  for (const std::string& name : {std::string(), std::string(129, 'x'), std::string("rasp\0suffix", 11)}) {
+    const auto invalid = std::to_array<ResolvedFunction>({{.name = name, .address = functions[0].address}});
+    EXPECT_EQ(observe_inline_hooks(path, invalid), inline_failed());
+  }
+}
+
+TEST(Hooks, observeInlineHooks_whenLibraryArchitectureIsInvalid_reportsAnError) {
+  const TemporaryDirectory directory;
+  LoadedLibrary library = load(kArm64Library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+  });
+  const auto original = read_file(library.path);
+  ASSERT_TRUE(original.has_value());
+  library.path = directory.path() + "/library.so";
+  for (const std::size_t offset : {std::size_t{4}, std::size_t{5}, std::size_t{18}}) {
+    std::string invalid = *original;
+    invalid[offset] = 0;
+    ASSERT_TRUE(write_file(library.path, invalid));
+    EXPECT_EQ(observe_inline_hooks(write_library_maps(directory, library), functions), inline_failed());
+  }
+}
+
+TEST(Hooks, observeInlineHooks_whenNoFunctionsWereCompared_reportsAnError) {
+  const TemporaryDirectory directory;
+  EXPECT_EQ(observe_inline_hooks(write_maps(directory, kCleanMaps), {}), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenMapsContainInvalidRecords_neverReportsClean) {
+  const TemporaryDirectory directory;
+  const LoadedLibrary library = load(kArm64Library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+  });
+  const std::string path = write_library_maps(directory, library);
+  const auto maps = read_file(path);
+  ASSERT_TRUE(maps.has_value());
+  for (const std::string& invalid :
+       {std::string("invalid\n"), std::string(8193, 'x') + "\n", std::string("1000-2000 r-xp 0 zz:00 0 /fake\n")}) {
+    ASSERT_TRUE(write_file(path, *maps + invalid));
+    EXPECT_EQ(observe_inline_hooks(path, functions), inline_failed());
+  }
+  ASSERT_TRUE(write_file(path, maps->substr(0, maps->size() - 1)));
+  EXPECT_EQ(observe_inline_hooks(path, functions), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenMapIsWritable_reportsAnError) {
+  const TemporaryDirectory directory;
+  const LoadedLibrary library = load(kArm64Library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+  });
+  EXPECT_EQ(observe_inline_hooks(write_library_maps(directory, library, {.perms = "rwxp"}), functions),
+            inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenMapOffsetWouldOverflow_reportsAnError) {
+  const TemporaryDirectory directory;
+  const LoadedLibrary library = load(kArm64Library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+  });
+  EXPECT_EQ(observe_inline_hooks(write_library_maps(directory, library, {.file_offset = UINT64_MAX}), functions),
+            inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenMemoryMatchesTheFile_reportsAnEmptyList) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const LoadedLibrary library = load(kArm64Library);
+  ASSERT_FALSE(library.memory.empty());
+  const std::string maps = write_library_maps(directory, library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+      {.name = "rasp_fixture_second", .address = address_of(library, kArm64Second)},
+  });
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_hooks({}));
+}
+
+TEST(Hooks, observeInlineHooks_whenAPrologueWasRewritten_reportsThatFunction) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  LoadedLibrary library = load(kArm64Library);
+  ASSERT_FALSE(library.memory.empty());
+  library.memory[kArm64Second + 4] ^= 0xFFU;
+  const std::string maps = write_library_maps(directory, library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+      {.name = "rasp_fixture_second", .address = address_of(library, kArm64Second)},
+  });
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_hooks({"rasp_fixture_second"}));
+}
+
+TEST(Hooks, observeInlineHooks_whenABytePastThePrologueChanged_reportsAnEmptyList) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  LoadedLibrary library = load(kArm64Library);
+  ASSERT_FALSE(library.memory.empty());
+  library.memory[kArm64First + 16] ^= 0xFFU;
+  const std::string maps = write_library_maps(directory, library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+  });
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_hooks({}));
+}
+
+TEST(Hooks, observeInlineHooks_whenTheMappingEndsInsideThePrologue_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  LoadedLibrary library = load(kArm64Library);
+  ASSERT_FALSE(library.memory.empty());
+  library.memory[kArm64First + 8] ^= 0xFFU;
+  const std::string maps = write_library_maps(directory, library, {.length = kArm64First + 8});
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+  });
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenTheAddressIsTagged_comparesTheUntaggedAddress) {
+  if constexpr (sizeof(std::uintptr_t) == sizeof(std::uint64_t)) {
+    const TemporaryDirectory directory;
+    ASSERT_FALSE(directory.path().empty());
+    LoadedLibrary library = load(kArm64Library);
+    ASSERT_FALSE(library.memory.empty());
+    library.memory[kArm64First] ^= 0xFFU;
+    const std::string maps = write_library_maps(directory, library);
+    const std::uintptr_t tag = std::uintptr_t{0xB4} << 56U;
+    const auto functions = std::to_array<ResolvedFunction>({
+        {.name = "rasp_fixture_first", .address = address_of(library, kArm64First) | tag},
+    });
+
+    EXPECT_EQ(observe_inline_hooks(maps, functions), inline_hooks({"rasp_fixture_first"}));
+  }
+}
+
+TEST(Hooks, observeInlineHooks_whenAThumbFunctionMatches_reportsAnEmptyList) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const LoadedLibrary library = load(kArmv7Library);
+  ASSERT_FALSE(library.memory.empty());
+  const std::string maps = write_library_maps(directory, library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArmv7First + 1)},
+  });
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_hooks({}));
+}
+
+TEST(Hooks, observeInlineHooks_whenAThumbFunctionsFirstByteWasRewritten_reportsThatFunction) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  LoadedLibrary library = load(kArmv7Library);
+  ASSERT_FALSE(library.memory.empty());
+  library.memory[kArmv7First] ^= 0xFFU;
+  const std::string maps = write_library_maps(directory, library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArmv7First + 1)},
+  });
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_hooks({"rasp_fixture_first"}));
+}
+
+TEST(Hooks, observeInlineHooks_whenTheMappedOffsetDisagreesWithTheSymbol_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const LoadedLibrary library = load(kArm64Library);
+  ASSERT_FALSE(library.memory.empty());
+  const std::string maps = write_library_maps(directory, library, {.file_offset = 0x1000});
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+  });
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenTheAddressIsNotTheSymbols_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const LoadedLibrary library = load(kArm64Library);
+  ASSERT_FALSE(library.memory.empty());
+  const std::string maps = write_library_maps(directory, library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64Second)},
+  });
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenTheMappingIsNotExecutable_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const LoadedLibrary library = load(kArm64Library);
+  ASSERT_FALSE(library.memory.empty());
+  const std::string maps = write_library_maps(directory, library, {.perms = "rw-p"});
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+  });
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenTheAddressIsNotMapped_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const LoadedLibrary library = load(kArm64Library);
+  ASSERT_FALSE(library.memory.empty());
+  const std::string maps = write_maps(directory, kCleanMaps);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+  });
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenTheSymbolIsMissing_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const LoadedLibrary library = load(kArm64Library);
+  ASSERT_FALSE(library.memory.empty());
+  const std::string maps = write_library_maps(directory, library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+      {.name = "rasp_fixture_missing", .address = address_of(library, kArm64Second)},
+  });
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenTheSymbolIsAnIndirectFunction_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const LoadedLibrary library = load(kArm64Library);
+  ASSERT_FALSE(library.memory.empty());
+  const std::string maps = write_library_maps(directory, library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_indirect", .address = address_of(library, kArm64Indirect)},
+  });
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenTheLibraryFileIsMissing_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  LoadedLibrary library = load(kArm64Library);
+  ASSERT_FALSE(library.memory.empty());
+  library.path = directory.path() + "/missing.so";
+  const std::string maps = write_library_maps(directory, library);
+  const auto functions = std::to_array<ResolvedFunction>({
+      {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)},
+  });
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenTheMapIsMissing_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+
+  EXPECT_EQ(observe_inline_hooks(directory.path() + "/missing", {}), inline_failed());
+}
+
+TEST(Hooks, observeInlineHooks_whenGivenTooManyFunctions_reportsAnError) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const LoadedLibrary library = load(kArm64Library);
+  ASSERT_FALSE(library.memory.empty());
+  const std::string maps = write_library_maps(directory, library);
+  const std::vector<ResolvedFunction> functions(
+      65, {.name = "rasp_fixture_first", .address = address_of(library, kArm64First)});
+
+  EXPECT_EQ(observe_inline_hooks(maps, functions), inline_failed());
+}
+
 TEST(Hooks, observeThreads_whenNamesAreGenericOrRenamed_reportsAnEmptyList) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
@@ -311,6 +808,44 @@ TEST(Hooks, observeThreads_whenErrorReachesPlugins_preservesTypedFailure) {
 }
 
 #ifdef RASP_TEST_ANDROID_HOOKS
+TEST(Hooks, hooks_whenLoadedWatchedCodeChanges_reachesActualCollectorAndPlugins) {
+  void* const libc = dlopen(RASP_TEST_WATCHED_LIBC, RTLD_NOW | RTLD_LOCAL);
+  ASSERT_NE(libc, nullptr);
+  void* const libdl = dlopen(RASP_TEST_WATCHED_LIBDL, RTLD_NOW | RTLD_LOCAL);
+  ASSERT_NE(libdl, nullptr);
+  const auto stock = hooks();
+  ASSERT_EQ(stock.size(), 5);
+  EXPECT_EQ(stock[4], inline_hooks({}));
+  void* const address = dlsym(libc, "open");
+  ASSERT_NE(address, nullptr);
+  const long page_size = sysconf(_SC_PAGESIZE);
+  ASSERT_GT(page_size, 0);
+  const auto integer = std::bit_cast<std::uintptr_t>(address);
+  void* const page = std::bit_cast<void*>(integer - (integer % static_cast<std::uintptr_t>(page_size)));
+  std::uint8_t original = 0;
+  std::memcpy(&original, address, 1);
+  ASSERT_EQ(mprotect(page, static_cast<std::size_t>(page_size), PROT_READ | PROT_WRITE), 0);
+  const std::uint8_t changed = original ^ 0xFFU;
+  std::memcpy(address, &changed, 1);
+  ASSERT_EQ(mprotect(page, static_cast<std::size_t>(page_size), PROT_READ | PROT_EXEC), 0);
+  const auto patched = hooks();
+  ASSERT_EQ(mprotect(page, static_cast<std::size_t>(page_size), PROT_READ | PROT_WRITE), 0);
+  std::memcpy(address, &original, 1);
+  ASSERT_EQ(mprotect(page, static_cast<std::size_t>(page_size), PROT_READ | PROT_EXEC), 0);
+  const auto restored = hooks();
+  EXPECT_EQ(dlclose(libdl), 0);
+  EXPECT_EQ(dlclose(libc), 0);
+  ASSERT_EQ(patched.size(), 5);
+  EXPECT_EQ(patched[4], inline_hooks({"open"}));
+  ASSERT_EQ(restored.size(), 5);
+  EXPECT_EQ(restored[4], inline_hooks({}));
+  plugins::Context context;
+  const plugins::Plugin plugin{.init = nullptr, .checks = {}, .on_observations = capture_observations};
+  const std::array plugins{&plugin};
+  EXPECT_EQ(plugins::run_plugins(plugins, patched, context), patched);
+  EXPECT_EQ(context.get(kCapturedObservations), patched);
+}
+
 TEST(Hooks, hooks_whenAndroidBranchRuns_readsOwnThreadsAndPreservesPluginContract) {
   std::array<char, 16> original{};
   ASSERT_EQ(pthread_getname_np(pthread_self(), original.data(), original.size()), 0);
@@ -320,9 +855,9 @@ TEST(Hooks, hooks_whenAndroidBranchRuns_readsOwnThreadsAndPreservesPluginContrac
   const std::vector<Observation> renamed_observations = hooks();
   ASSERT_EQ(pthread_setname_np(pthread_self(), original.data()), 0);
   ASSERT_EQ(renamed, 0);
-  ASSERT_EQ(renamed_observations.size(), 4);
+  ASSERT_EQ(renamed_observations.size(), 5);
   EXPECT_EQ(renamed_observations[3], threads({}));
-  ASSERT_EQ(observations.size(), 4);
+  ASSERT_EQ(observations.size(), 5);
   EXPECT_EQ(observations[0].signal, "hook.maps_hits");
   EXPECT_EQ(observations[1].signal, "hook.rwx_regions");
   EXPECT_EQ(observations[2].source, "proc_maps_syscall");
@@ -342,6 +877,7 @@ TEST(Hooks, hooks_whenOffAndroid_reportsEveryCheckAsUnsupported) {
           {.signal = "hook.rwx_regions", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
           {.signal = "hook.maps_hits", .source = "proc_maps_syscall", .status = Status::kUnsupported, .value = {}},
           {.signal = "hook.threads", .source = "proc_task", .status = Status::kUnsupported, .value = {}},
+          {.signal = "hook.inline", .source = "prologue", .status = Status::kUnsupported, .value = {}},
       }));
 }
 
