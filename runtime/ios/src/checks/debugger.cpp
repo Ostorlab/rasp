@@ -150,7 +150,7 @@ Observation observe_parent_syscall() {
   if (!read_process_info(info, true)) {
     return failed(kParentSignal, kParentSyscallSource);
   }
-  return observed(kParentSignal, kParentSyscallSource, static_cast<std::int64_t>(info.kp_proc.p_ppid));
+  return observed(kParentSignal, kParentSyscallSource, static_cast<std::int64_t>(info.kp_eproc.e_ppid));
 #else
   return unsupported(kParentSignal, kParentSyscallSource);
 #endif
