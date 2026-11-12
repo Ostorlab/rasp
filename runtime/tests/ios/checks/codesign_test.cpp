@@ -48,6 +48,36 @@ TEST(Codesign, observeCodesign_whenOnlyDebuggedIsSet_reportsDebuggedTrueAndTheRe
             }));
 }
 
+TEST(Codesign, observeCodesign_whenOnlyValidIsSet_reportsValidTrueAndTheRestFalse) {
+  EXPECT_EQ(observe_codesign(kCsValid),
+            (std::vector<Observation>{
+                {.signal = "cs.valid", .source = "csops", .status = Status::kOk, .value = true},
+                {.signal = "cs.debugged", .source = "csops", .status = Status::kOk, .value = false},
+                {.signal = "cs.get_task_allow", .source = "csops", .status = Status::kOk, .value = false},
+                {.signal = "cs.library_validation", .source = "csops", .status = Status::kOk, .value = false},
+            }));
+}
+
+TEST(Codesign, observeCodesign_whenOnlyGetTaskAllowIsSet_reportsGetTaskAllowTrueAndTheRestFalse) {
+  EXPECT_EQ(observe_codesign(kCsGetTaskAllow),
+            (std::vector<Observation>{
+                {.signal = "cs.valid", .source = "csops", .status = Status::kOk, .value = false},
+                {.signal = "cs.debugged", .source = "csops", .status = Status::kOk, .value = false},
+                {.signal = "cs.get_task_allow", .source = "csops", .status = Status::kOk, .value = true},
+                {.signal = "cs.library_validation", .source = "csops", .status = Status::kOk, .value = false},
+            }));
+}
+
+TEST(Codesign, observeCodesign_whenOnlyLibraryValidationIsSet_reportsLibraryValidationTrueAndTheRestFalse) {
+  EXPECT_EQ(observe_codesign(kCsRequireLibraryValidation),
+            (std::vector<Observation>{
+                {.signal = "cs.valid", .source = "csops", .status = Status::kOk, .value = false},
+                {.signal = "cs.debugged", .source = "csops", .status = Status::kOk, .value = false},
+                {.signal = "cs.get_task_allow", .source = "csops", .status = Status::kOk, .value = false},
+                {.signal = "cs.library_validation", .source = "csops", .status = Status::kOk, .value = true},
+            }));
+}
+
 TEST(Codesign, codesign_whenOffAPhysicalDevice_reportsEverySignalAsUnsupported) {
   EXPECT_EQ(codesign(),
             (std::vector<Observation>{
