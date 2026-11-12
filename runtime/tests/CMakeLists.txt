@@ -253,6 +253,14 @@ if(Java_FOUND AND JNI_FOUND)
   target_link_libraries(rasp_android_application_context_test PRIVATE rasp_warnings rasp_language
     JNI::JVM Threads::Threads GTest::gtest_main)
   gtest_discover_tests(rasp_android_application_context_test)
+  add_executable(rasp_android_private_storage_test android/util/private_storage_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/private_storage.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
+  target_include_directories(rasp_android_private_storage_test PRIVATE ${JNI_INCLUDE_DIRS}
+    ${PROJECT_SOURCE_DIR}/android/src ${PROJECT_SOURCE_DIR}/posix/include)
+  target_link_libraries(rasp_android_private_storage_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_android_private_storage_test PROPERTIES TIMEOUT 30)
   if(CMAKE_CXX_FLAGS MATCHES "fsanitize=")
     message(STATUS "Real-JVM integration runs in the host preset; native Application Context tests run with sanitizers")
   else()
@@ -333,6 +341,23 @@ if(Java_FOUND AND JNI_FOUND)
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.ServiceTest
         $<TARGET_FILE:rasp_android_service_jni>)
     set_tests_properties(AndroidServiceExposure.publicMetadata PROPERTIES TIMEOUT 60)
+    add_library(rasp_android_storage_jni SHARED android/context_bridge/storage_driver.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/private_storage.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
+    target_include_directories(rasp_android_storage_jni PRIVATE ${JNI_INCLUDE_DIRS}
+      ${PROJECT_SOURCE_DIR}/android/src ${PROJECT_SOURCE_DIR}/posix/include)
+    target_link_libraries(rasp_android_storage_jni PRIVATE rasp_core rasp_warnings rasp_language JNI::JVM Threads::Threads)
+    add_test(NAME AndroidPrivateStorage.publicApplication
+      COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.StorageTest
+        $<TARGET_FILE:rasp_android_storage_jni>)
+    set_tests_properties(AndroidPrivateStorage.publicApplication PROPERTIES TIMEOUT 60)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      add_test(NAME AndroidPrivateStorage.globalProcessAlias
+        COMMAND bash -c "exec -a unrelated.global.process \"$@\"" storage-alias ${Java_JAVA_EXECUTABLE}
+          -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.StorageTest $<TARGET_FILE:rasp_android_storage_jni> global-alias)
+      set_tests_properties(AndroidPrivateStorage.globalProcessAlias PROPERTIES TIMEOUT 60)
+    endif()
     foreach(mode late early concurrent lifetime unavailable)
       add_test(NAME AndroidContextBridge.${mode}
         COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.BridgeTest
@@ -418,6 +443,43 @@ gtest_discover_tests(rasp_android_builtin_test TEST_PREFIX "android.")
 if(TARGET rasp_android_service_jni)
   target_sources(rasp_android_service_jni PRIVATE $<TARGET_OBJECTS:rasp_android_builtin_support>)
   target_link_libraries(rasp_android_service_jni PRIVATE rasp_tfpsacrypto)
+endif()
+
+add_executable(rasp_private_storage_probe core/private_storage_probe.cpp)
+target_include_directories(rasp_private_storage_probe PRIVATE ${PROJECT_SOURCE_DIR}/posix/include)
+target_link_libraries(rasp_private_storage_probe PRIVATE rasp_core rasp_warnings rasp_language)
+add_executable(rasp_core_private_storage_test core/private_storage_test.cpp)
+target_compile_definitions(rasp_core_private_storage_test PRIVATE RASP_STORAGE_PROBE="$<TARGET_FILE:rasp_private_storage_probe>")
+add_dependencies(rasp_core_private_storage_test rasp_private_storage_probe)
+target_include_directories(rasp_core_private_storage_test PRIVATE ${PROJECT_SOURCE_DIR}/posix/include ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_core_private_storage_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_core_private_storage_test PROPERTIES TIMEOUT 30)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(rasp_core_private_storage_fault_test core/private_storage_fault_test.cpp)
+  target_include_directories(rasp_core_private_storage_fault_test PRIVATE ${PROJECT_SOURCE_DIR}/posix/include ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_core_private_storage_fault_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  foreach(storage_call getentropy write read fsync linkat close fstat fstatat flock unlinkat)
+    target_link_options(rasp_core_private_storage_fault_test PRIVATE "-Wl,--wrap=${storage_call}")
+  endforeach()
+  gtest_discover_tests(rasp_core_private_storage_fault_test PROPERTIES TIMEOUT 30)
+endif()
+if(APPLE)
+  enable_language(OBJCXX)
+  set(CMAKE_OBJCXX_STANDARD 23)
+  set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+  set(CMAKE_OBJCXX_EXTENSIONS OFF)
+  add_executable(rasp_ios_private_storage_test ios/util/private_storage_test.mm
+    ${PROJECT_SOURCE_DIR}/ios/src/util/private_storage.mm)
+  target_include_directories(rasp_ios_private_storage_test PRIVATE ${PROJECT_SOURCE_DIR}/posix/include ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_options(rasp_ios_private_storage_test PRIVATE -fobjc-arc -fno-objc-exceptions)
+  target_link_libraries(rasp_ios_private_storage_test PRIVATE rasp_core rasp_warnings rasp_language
+    GTest::gtest_main "$<LINK_LIBRARY:FRAMEWORK,Foundation>")
+  gtest_discover_tests(rasp_ios_private_storage_test PROPERTIES TIMEOUT 30)
+  add_executable(rasp_ios_private_entropy_test ios/util/private_entropy_test.cpp)
+  target_include_directories(rasp_ios_private_entropy_test PRIVATE ${PROJECT_SOURCE_DIR}/posix/include
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_ios_private_entropy_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_ios_private_entropy_test PROPERTIES TIMEOUT 30)
 endif()
 
 add_executable(rasp_android_window_events_test android/events/window_events_test.cpp

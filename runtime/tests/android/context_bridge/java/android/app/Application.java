@@ -2,6 +2,7 @@ package android.app;
 
 public class Application extends android.content.Context {
     public volatile boolean fail;
+    public java.io.File getNoBackupFilesDir() { return null; }
     public boolean failRegistration;
     public boolean failUnregister;
     public final java.util.ArrayList<ActivityLifecycleCallbacks> callbacks = new java.util.ArrayList<>();

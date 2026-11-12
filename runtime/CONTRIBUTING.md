@@ -45,11 +45,11 @@ The tests must pass under `host-asan` and `host-tsan`, not only `host`. A memory
 Before pushing, run what CI runs (`.github/workflows/runtime.yml`): clang-format, clang-tidy, the three host presets, `android` and `android-dev` with the Android NDK for each Android ABI, and on a Mac, `ios` and `ios-dev`. The Android presets build for `arm64-v8a`; pass `-DANDROID_ABI=armeabi-v7a`, `x86_64` or `x86` when you configure them to build for another ABI.
 
 ```
-git ls-files -z -- '*.h' '*.cpp' '*.h.in' | xargs -0 clang-format --dry-run --Werror
+git ls-files -z -- '*.h' '*.cpp' '*.mm' '*.h.in' | xargs -0 clang-format --dry-run --Werror
 run-clang-tidy -quiet -p build/host "^$PWD/(?!build/).*\.cpp$"
 ```
 
-The host build doesn't compile the iOS code. On a Mac, check it too: `cmake --preset ios-dev`, then `run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.cpp$"`.
+The host build doesn't compile the iOS code. On a Mac, check it too: `cmake --preset ios-dev`, then `run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.(cpp|mm)$"`.
 
 Fix clang-tidy findings instead of silencing them with `NOLINT`. If a check is wrong for the whole project, propose turning it off in `.clang-tidy`, so everyone sees the decision.
 
@@ -140,3 +140,6 @@ The packer sets the app's manifest `android:appComponentFactory` to `co.ostorlab
 - **Platform code goes in its platform's folder** (`ios/`, `android/`), chosen by CMake. Every check is platform code: it goes in `ios/src/checks/` or `android/src/checks/`. The same shared code builds for both platforms, so it must not contain platform `#if` blocks.
 - **Document every file and function with `///`.** Every C++ file starts with a description of what it holds. A public header documents every public symbol. Every public function says what it does and the cases a caller must know about, describes each parameter with `@param` and, unless it returns `void`, its result with `@return`. Every private function has at least one sentence that says what it does. Write no other comments: names and small functions say how the code does it.
 - **Test names** follow `TEST(Suite, action_whenCondition_result)`, for example `TEST(Jailbreak, observeSandboxWrite_whenRefused_reportsFalse)`.
+
+Private telemetry consumers use the worker-only [owned storage capability](../docs/private-storage-contract.md).
+The iOS adapter is Objective-C++ (`.mm`) and links Foundation; include it in formatting and platform static analysis.

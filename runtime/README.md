@@ -12,6 +12,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
   - `include/rasp/config.h`: `Config`, the runtime's config that the packer writes into the app (the build id and the ids of the check groups to run), and `is_check_enabled`. Without a list of groups, no group runs.
   - `include/rasp/parse_config.h`: `parse_config`, which reads the config from the JSON the packer writes. Members it doesn't know are ignored.
   - `include/rasp/cycle.h`: the finite monitor-cycle path and immutable owned metadata/observation snapshot. See the [consumer contract](../docs/measurement-cycle-contract.md) for callback ownership, coverage, bounds and rollout.
+  - `include/rasp/private_storage.h`: a worker-only owned private directory and matching local identity, queried independently after late Application attachment. See the [storage consumer contract](../docs/private-storage-contract.md).
   - `include/rasp/observation.h`: `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`), and `observed`, `unsupported` and `failed`, which build one.
   - `include/rasp/util/`: generic helpers.
     - `logging.h`: `rasp::log` and `kLoggingEnabled`, the development logging that release builds leave out.

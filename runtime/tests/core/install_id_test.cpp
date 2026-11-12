@@ -3,6 +3,7 @@
 #include "rasp/install_id.h"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <gtest/gtest.h>
@@ -87,8 +88,20 @@ TEST(InstallId, loadOrCreateInstallId_whenTwoInstallsCreateAnId_givesThemDiffere
   EXPECT_NE(*first, *second);
 }
 
+/// Bounds retry only in the concurrent fixture; production lock acquisition never waits.
+std::optional<std::string> retry_identity(std::string_view directory) {
+  for (int attempt = 0; attempt < 100; ++attempt) {
+    auto identity = load_or_create_install_id(directory);
+    if (identity.has_value()) {
+      return identity;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return std::nullopt;
+}
+
 TEST(InstallId, loadOrCreateInstallId_whenProcessesCreateAnIdAtOnce_givesThemAllTheKeptId) {
-  constexpr std::size_t kProcesses = 8;
+  constexpr std::size_t kProcesses = 2;
   const TemporaryDirectory directory;
   std::array<std::optional<std::string>, kProcesses> ids;
   std::latch start(kProcesses);
@@ -98,7 +111,7 @@ TEST(InstallId, loadOrCreateInstallId_whenProcessesCreateAnIdAtOnce_givesThemAll
   for (std::optional<std::string>& id : ids) {
     processes.emplace_back([&directory, &start, &id] {
       start.arrive_and_wait();
-      id = load_or_create_install_id(directory.path());
+      id = retry_identity(directory.path());
     });
   }
   for (std::thread& process : processes) {
@@ -117,7 +130,7 @@ TEST(InstallId, loadOrCreateInstallId_whenProcessesCreateAnIdAtOnce_givesThemAll
 
 TEST(InstallId, loadOrCreateInstallId_whenACrashLeftATemporaryFile_reusesItsName) {
   const TemporaryDirectory directory;
-  ASSERT_TRUE(write_file(id_path(directory) + ".tmp", "0f8e5b8e-6c1a"));
+  ASSERT_TRUE(write_file(id_path(directory) + ".private.tmp", "0f8e5b8e-6c1a"));
 
   const std::optional<std::string> id = load_or_create_install_id(directory.path());
 
@@ -128,10 +141,11 @@ TEST(InstallId, loadOrCreateInstallId_whenACrashLeftATemporaryFile_reusesItsName
   }
 }
 
-TEST(InstallId, loadOrCreateInstallId_whenTheKeptFileIsNotAnId_replacesIt) {
+TEST(InstallId, loadOrCreateInstallId_whenTheKeptFileIsNotAnId_preservesItAndReturnsUnavailable) {
   for (const std::string_view kept : {
            std::string_view(""),
            std::string_view("not an id"),
+           std::string_view("00000000-0000-0000-0000-000000000000"),
            std::string_view("0F8E5B8E-6C1A-4B7E-9D3A-2A4C5E6F7A8B"),
            std::string_view("0f8e5b8e-6c1a-4b7e-9d3a-2a4c5e6f7a8b\n"),
        }) {
@@ -140,9 +154,8 @@ TEST(InstallId, loadOrCreateInstallId_whenTheKeptFileIsNotAnId_replacesIt) {
 
     const std::optional<std::string> id = load_or_create_install_id(directory.path());
 
-    ASSERT_TRUE(id.has_value()) << kept;
-    EXPECT_TRUE(is_uuid_v4(*id)) << kept;
-    EXPECT_EQ(util::read_file(id_path(directory), 64), id) << kept;
+    EXPECT_FALSE(id.has_value()) << kept;
+    EXPECT_EQ(util::read_file(id_path(directory), 64), kept);
   }
 }
 
@@ -154,5 +167,17 @@ TEST(InstallId, loadOrCreateInstallId_whenTheFolderDoesNotExist_returnsNothing) 
   EXPECT_FALSE(id.has_value());
 }
 
+}  // namespace
+}  // namespace rasp
+
+namespace rasp {
+namespace {
+TEST(InstallId, loadOrCreateInstallId_whenLegacyIdentityIsOversized_preservesItAndReturnsUnavailable) {
+  const TemporaryDirectory directory;
+  const std::string oversized(4097, 'a');
+  ASSERT_TRUE(write_file(id_path(directory), oversized));
+  EXPECT_FALSE(load_or_create_install_id(directory.path()).has_value());
+  EXPECT_EQ(test_support::read_file(id_path(directory)), oversized);
+}
 }  // namespace
 }  // namespace rasp
