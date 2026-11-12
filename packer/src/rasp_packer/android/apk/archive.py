@@ -18,15 +18,16 @@ from the APK, so it must be page-aligned or it cannot load. The output is
 unsigned; the customer signs it.
 """
 
-import collections
 import collections.abc
 import dataclasses
 import pathlib
 import re
+import struct
 import zipfile
 import zlib
 from typing import Self
 
+from rasp_packer import archive_validation
 from rasp_packer import errors
 
 MANIFEST_ENTRY = "AndroidManifest.xml"
@@ -39,7 +40,6 @@ _SO_ALIGNMENT = 16384
 _LOCAL_HEADER_SIZE = 30
 _FIXED_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 _MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
-_ANDROID_COMPRESSION_METHODS = frozenset({zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED})
 _DEX_NUMBER = re.compile(r"[2-9]|[1-9][0-9]+")
 _READ_ERRORS = (
     zipfile.BadZipFile,
@@ -49,6 +49,30 @@ _READ_ERRORS = (
     zlib.error,
     EOFError,
 )
+
+
+def check_alignment(path: pathlib.Path) -> None:
+    """Verify stored members using the same alignment policy as the APK writer.
+
+    Read local header lengths: central-directory extra fields need not match them.
+    This policy does not apply to AABs, whose splits the store generates.
+    """
+    with zipfile.ZipFile(path) as archive, path.open("rb") as stream:
+        for entry in archive.infolist():
+            if entry.is_dir() is True or entry.compress_type != zipfile.ZIP_STORED:
+                continue
+            stream.seek(entry.header_offset)
+            header = stream.read(_LOCAL_HEADER_SIZE)
+            if len(header) != _LOCAL_HEADER_SIZE or header[:4] != b"PK\x03\x04":
+                raise errors.InvalidApkError(
+                    f"invalid local ZIP header: {entry.filename}"
+                )
+            name_size, extra_size = struct.unpack_from("<HH", header, 26)
+            offset = entry.header_offset + _LOCAL_HEADER_SIZE + name_size + extra_size
+            if offset % _entry_alignment(entry.filename) != 0:
+                raise errors.InvalidApkError(
+                    f"unaligned stored APK entry: {entry.filename}"
+                )
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -96,8 +120,11 @@ class Apk:
                 can't be read (encrypted, corrupt or cut short).
         """
         try:
+            archive_validation.check_file(path)
             with zipfile.ZipFile(path) as archive:
-                infos = [info for info in archive.infolist() if not info.is_dir()]
+                all_infos = archive.infolist()
+                archive_validation.check_entries(all_infos)
+                infos = [info for info in all_infos if not info.is_dir()]
                 _check_entries(infos)
                 entries = [
                     Entry(
@@ -107,6 +134,8 @@ class Apk:
                     )
                     for info in infos
                 ]
+        except errors.InvalidAppError as error:
+            raise errors.InvalidApkError(str(error)) from error
         except _READ_ERRORS as error:
             raise errors.InvalidApkError(f"cannot read APK {path}: {error}") from error
         return cls(entries)
@@ -183,20 +212,7 @@ class Apk:
 
 
 def _check_entries(infos: collections.abc.Sequence[zipfile.ZipInfo]) -> None:
-    """Refuses entries that share a name, use a method Android can't read, or are too big once uncompressed."""
-    counts = collections.Counter(info.filename for info in infos)
-    duplicates = sorted(name for name, count in counts.items() if count > 1)
-    if len(duplicates) > 0:
-        raise errors.InvalidApkError(f"APK has duplicate entries: {duplicates}")
-    unreadable = sorted(
-        info.filename
-        for info in infos
-        if info.compress_type not in _ANDROID_COMPRESSION_METHODS
-    )
-    if len(unreadable) > 0:
-        raise errors.InvalidApkError(
-            f"APK has entries Android can't decompress: {unreadable}"
-        )
+    """Enforce the APK's 1 GiB total after shared ZIP validation."""
     if sum(info.file_size for info in infos) > _MAX_UNCOMPRESSED_BYTES:
         raise errors.InvalidApkError(
             f"APK holds more than {_MAX_UNCOMPRESSED_BYTES} bytes once uncompressed"
@@ -218,9 +234,14 @@ def _write_entry(
 
 def _alignment_padding(offset: int, name: str) -> bytes:
     """Returns the extra-field padding that aligns an entry's data: 16 KB for a .so, else 4 bytes."""
-    alignment = _SO_ALIGNMENT if name.endswith(_SO_SUFFIX) else _DEFAULT_ALIGNMENT
+    alignment = _entry_alignment(name)
     header_end = offset + _LOCAL_HEADER_SIZE + len(name.encode("utf-8"))
     return b"\x00" * ((alignment - header_end % alignment) % alignment)
+
+
+def _entry_alignment(name: str) -> int:
+    """Return the writer's alignment policy for a stored entry."""
+    return _SO_ALIGNMENT if name.endswith(_SO_SUFFIX) else _DEFAULT_ALIGNMENT
 
 
 def _is_dex(name: str) -> bool:

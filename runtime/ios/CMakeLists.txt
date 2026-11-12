@@ -3,12 +3,14 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/omvll_ios.cmake)
 
 add_library(RaspRuntime SHARED
+  src/builtin.cpp
   src/entry.cpp
   src/monitoring.cpp
   src/checks/debugger.cpp
   src/checks/emulator.cpp
   src/checks/hooks.cpp
   src/checks/identity.cpp
+  src/checks/integrity.cpp
   src/checks/jailbreak.cpp
   src/checks/mitm.cpp
   src/checks/virtualizer.cpp

@@ -36,7 +36,7 @@ target_link_libraries(rasp_plugins_example_test PRIVATE rasp_test_plugins rasp_c
   GTest::gtest_main)
 gtest_discover_tests(rasp_plugins_example_test)
 
-foreach(check debugger emulator hooks identity jailbreak mitm virtualizer)
+foreach(check debugger emulator hooks identity integrity jailbreak mitm virtualizer)
   add_executable(rasp_ios_${check}_test ios/checks/${check}_test.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/checks/${check}.cpp)
   target_include_directories(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src
@@ -45,7 +45,7 @@ foreach(check debugger emulator hooks identity jailbreak mitm virtualizer)
   gtest_discover_tests(rasp_ios_${check}_test)
 endforeach()
 
-foreach(check identity)
+foreach(check identity integrity)
   target_sources(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/macho.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/util/sha256.cpp)
   target_link_libraries(rasp_ios_${check}_test PRIVATE rasp_tfpsacrypto)
@@ -149,6 +149,67 @@ target_include_directories(rasp_android_cipher_test PRIVATE ${PROJECT_SOURCE_DIR
 target_link_libraries(rasp_android_cipher_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
   GTest::gtest_main)
 gtest_discover_tests(rasp_android_cipher_test)
+
+target_compile_definitions(rasp_ios_integrity_test PRIVATE
+  RASP_TEST_EXECUTABLE_PATH="${PROJECT_SOURCE_DIR}/../packer/tests/rasp_packer/ios/data/arm64_app"
+  RASP_TEST_SIGNED_EXECUTABLE_PATH="${PROJECT_SOURCE_DIR}/../packer/tests/rasp_packer/ios/data/arm64_app_signed")
+
+add_executable(rasp_ios_builtin_test ios/builtin_test.cpp ${PROJECT_SOURCE_DIR}/ios/src/builtin.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/debugger.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/emulator.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/hooks.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/identity.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/jailbreak.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/checks/mitm.cpp ${PROJECT_SOURCE_DIR}/ios/src/checks/virtualizer.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/util/macho.cpp ${PROJECT_SOURCE_DIR}/ios/src/util/sha256.cpp)
+target_include_directories(rasp_ios_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_builtin_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
+  GTest::gtest_main)
+if(APPLE)
+  target_link_libraries(rasp_ios_builtin_test PRIVATE
+    "$<LINK_LIBRARY:FRAMEWORK,CFNetwork>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
+endif()
+gtest_discover_tests(rasp_ios_builtin_test)
+
+# Run the shipped Java bridge and JNI consumer on a real JVM, with Android services replaced at the Java boundary.
+find_package(Java QUIET COMPONENTS Runtime Development)
+find_package(JNI QUIET COMPONENTS JVM)
+if(Java_FOUND AND JNI_FOUND)
+  find_package(Threads REQUIRED)
+  add_executable(rasp_android_application_context_test android/util/application_context_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
+  target_include_directories(rasp_android_application_context_test PRIVATE ${JNI_INCLUDE_DIRS}
+    ${PROJECT_SOURCE_DIR}/android/src)
+  target_link_libraries(rasp_android_application_context_test PRIVATE rasp_warnings rasp_language
+    JNI::JVM Threads::Threads GTest::gtest_main)
+  gtest_discover_tests(rasp_android_application_context_test)
+  if(CMAKE_CXX_FLAGS MATCHES "fsanitize=")
+    message(STATUS "Real-JVM integration runs in the host preset; native Application Context tests run with sanitizers")
+  else()
+    add_library(rasp_android_context_bridge_jni SHARED android/context_bridge/driver.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/package_manager.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
+    target_include_directories(rasp_android_context_bridge_jni PRIVATE ${JNI_INCLUDE_DIRS}
+      ${PROJECT_SOURCE_DIR}/android/src)
+    target_link_libraries(rasp_android_context_bridge_jni PRIVATE rasp_warnings rasp_language JNI::JVM Threads::Threads)
+    file(GLOB_RECURSE bridge_test_java CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/java/*.java)
+    set(bridge_java ${PROJECT_SOURCE_DIR}/android/stub/co/ostorlab/rasp/RuntimeBridge.java)
+    set(bridge_test_classes ${CMAKE_CURRENT_BINARY_DIR}/context-bridge-classes)
+    add_custom_command(OUTPUT ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class
+      COMMAND ${Java_JAVAC_EXECUTABLE} -d ${bridge_test_classes} ${bridge_java} ${bridge_test_java}
+      DEPENDS ${bridge_java} ${bridge_test_java} VERBATIM)
+    add_custom_target(rasp_android_context_bridge_java ALL
+      DEPENDS ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class)
+    foreach(mode late early concurrent lifetime unavailable)
+      add_test(NAME AndroidContextBridge.${mode}
+        COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.BridgeTest
+          $<TARGET_FILE:rasp_android_context_bridge_jni> ${mode})
+      set_tests_properties(AndroidContextBridge.${mode} PROPERTIES TIMEOUT 30)
+    endforeach()
+  endif()
+else()
+  message(STATUS "Android bridge JVM integration tests unavailable: install a JDK and set JAVA_HOME")
+endif()
 
 # Exercise hooks()' Android dispatch against Linux's real own-process procfs, without an Android device claim.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

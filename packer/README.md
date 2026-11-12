@@ -55,6 +55,7 @@ The key is stored in the clear, in `assets/rasp/key.bin`. The encryption raises 
 ## Layout
 
 - `src/rasp_packer/packer.py`: `pack`, the entry point.
+- `src/rasp_packer/verification.py`: `verify`, the read-only post-pack verifier and its `VerificationResult`.
 - `src/rasp_packer/platforms.py`: the platforms, Android and iOS.
 - `src/rasp_packer/identity.py`: `AppIdentity`, the package name and version read from the app.
 - `src/rasp_packer/checks.py`: the check groups of each platform, in the order the runtime runs them, and the ones every protected app runs. The packer skips an id that isn't one of them and reports it, so that a caller still packs when it passes a check group that was renamed or removed, and adds the ones every protected app runs.
@@ -107,3 +108,45 @@ The runtime runs its checks in groups, such as `debugger` or `hooks`. `src/rasp_
 - writes the ids sorted into the runtime config.
 
 An empty choice, such as `checks=[]`, runs only the required groups. Without `--checks`, the command line warns and packs the app with only the required groups.
+
+## Post-pack verification
+
+Before creating the requested output file, `packer.pack` and `rasp pack` verify the staged archive. The platform packers use the same verification path when called directly. Packing writes to a temporary directory beside the destination, verifies that archive, then atomically creates the destination without overwriting an existing file. Failed packing or verification removes the staging files. The destination filesystem must support hard links.
+
+The CLI reports `unsigned, structurally verified` on success. A verification failure raises `errors.VerificationError` in the library and exits with status 1 and a diagnostic on stderr in the CLI.
+
+Unknown requested checks keep the existing skip-and-report behavior. `pack` resolves the configured checks to the required checks plus every supported requested check, sorted and de-duplicated. Verification requires the embedded configuration to match the declared build id and that exact resolved check sequence.
+
+`rasp_packer.verification.verify(app=..., platform=..., config=..., expected_entries=...)` is the reusable read-only API:
+
+- `config` declares the build id and the canonical check sequence: supported checks only, sorted and de-duplicated, including all required checks.
+- `expected_entries` maps ZIP paths to the **trusted bytes prepared for injection**, including every injected/replaced manifest, loader, runtime and payload entry. Keep those bytes from the packing step; deriving them from an untrusted output would defeat replacement detection. The platform packers construct this contract automatically.
+
+The API returns `VerificationResult` with the artifact format (`apk`, `aab`, `ipa`), app identity, declared config and verified runtime paths, or raises `VerificationError`. There is no separate standalone CLI verifier because verifying replacement requires this trusted injection contract.
+
+The checks are deliberately structural:
+
+| Artifact | Verified contract |
+| --- | --- |
+| All formats | Unique canonical ZIP member paths; no traversal, file/directory aliases, symlinks, encryption or unsupported compression; injected bytes present at their exact paths; embedded config exactly matches the canonical declared config. |
+| APK | Binary manifest identity, RASP component factory and minimum API 31; base DEX entries; runtime for every native ABI; runtime ELF machine, bitness, little-endian encoding and shared-library type match its ABI directory; authenticated key/map/business payload coherence; stored payload members; actual local ZIP data alignment (16 KiB for stored `.so`, 4 bytes for other stored files). |
+| AAB | Protobuf base manifest, `base/dex`, `base/lib` and `base/assets` paths; the same runtime ELF/config and authenticated payload checks for the base module. Feature modules and unrelated assets are preserved, without imposing base-module ABI coverage or APK alignment on feature delivery. |
+| IPA | Exactly one main app bundle; its executable retains execute permission; main executable and embedded runtime are unencrypted arm64 Mach-O files of executable/dylib type respectively; the executable strongly loads `@rpath/RaspRuntime.framework/RaspRuntime` with `@executable_path/Frameworks`; the framework plist names `RaspRuntime`; every runtime slice contains the declared config. Other architectures and encrypted App Store executables are rejected. |
+
+Read limits:
+
+- ZIP: at most 4 GiB on disk, 100,000 members and 4 GiB total uncompressed. Individual members cannot exceed the archive limit; APK/AAB readers retain their stricter 1 GiB total.
+- Manifests/plists: at most 4 MiB; runtime binaries: at most 256 MiB.
+- Embedded config sections: entirely inside the binary, at most 64 KiB and zero-terminated.
+- Encrypted Android class map: at most 16 MiB.
+
+Empty business-code sets are valid and need no encrypted business DEX.
+
+`assets/rasp/` and numbered `assets/business/<i>.dex` entries are reserved for packer output.
+
+Verification limitations:
+
+- Output remains **unsigned**. Structural verification is not proof of installation, successful device execution, attack resistance or runtime provenance.
+- The verifier trusts the runtime build and upstream DEX splitter, and compares loader/payload bytes without adding another DEX parser.
+- It does not run checks on a device or validate store signatures. AAB `native.pb`/`BundleConfig.pb`, delivery configuration, generated split APKs and their final alignment are not certified here. Google Play/bundletool generate those APKs; validate, sign and test the generated artifacts with the target platform tools before shipping.
+- Fixture-sized runtime binaries exercise the archive/config contract in tests; real Android and iOS builds and devices remain separate platform validation.
