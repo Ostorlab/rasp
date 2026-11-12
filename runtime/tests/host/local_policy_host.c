@@ -27,7 +27,8 @@ static struct RaspLocalPolicyInfoV1 policy_info;
 static struct RaspLocalGateResultV1 decision;
 /// Actual harmless adapted operation: return before modifying the book unless explicitly allowed.
 int main(void) {
-  struct RaspLocalGateRequestV1 request = {0};
+  struct RaspLocalGateRequestV1 request;
+  memset(&request, 0, sizeof(request));
   request.abi_version = 1;
   request.struct_size = sizeof(request);
   memcpy(request.operation, "append_demo_receipt", sizeof("append_demo_receipt"));

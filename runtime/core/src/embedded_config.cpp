@@ -6,6 +6,7 @@
 #include <string>
 
 #include "rasp/config.h"
+#include "rasp/local_policy.h"
 #include "rasp/parse_config.h"
 
 namespace rasp {

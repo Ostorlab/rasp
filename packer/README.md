@@ -44,6 +44,12 @@ is `None`). `effective_checks` records config selection, not execution evidence.
 
 ## Android
 
+`--local-policy policy.json` (Python `local_policy=`) embeds a bounded opt-in policy.
+Absence preserves the exact legacy config and report-only behavior. Any explicit
+policy requires compatible policy-support descriptors and actual host ABI exports
+for every injected native artifact. The packer reports effective policy/config
+hashes; it cannot prove host adaptation. See [policy, API and compatibility](../docs/local-policy-contract.md).
+
 For Android the packer protects the app's code:
 
 - it sorts the app's classes with the bundled `split-dex` tool. The classes under the app's package are the app's own code. The other classes, such as libraries, stay in the clear, as `classes.dex`, `classes2.dex`, ...;

@@ -22,6 +22,6 @@ for language in c c++; do
   flags=()
   if [[ "$language" == c++ ]]; then flags+=(-nostdinc++); fi
   "$bin/clang" --target="$target" -x "$language" -Wall -Wextra -Werror "${flags[@]}" \
-    -I "$resources/include" tests/host/local_policy_host.c "$lib" \
+    -I "$resources/include" tests/host/local_policy_host.c -x none "$lib" \
     -Wl,--allow-shlib-undefined -o "$out/host-$language"
 done
