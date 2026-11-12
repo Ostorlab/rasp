@@ -200,6 +200,22 @@ if(Java_FOUND AND JNI_FOUND)
       DEPENDS ${bridge_java} ${bridge_test_java} VERBATIM)
     add_custom_target(rasp_android_context_bridge_java ALL
       DEPENDS ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class)
+    add_library(rasp_android_service_collectors OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp)
+    target_compile_definitions(rasp_android_service_collectors PRIVATE __ANDROID__)
+    target_include_directories(rasp_android_service_collectors PRIVATE ${JNI_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/android/src)
+    target_link_libraries(rasp_android_service_collectors PRIVATE rasp_core rasp_warnings rasp_language)
+    add_library(rasp_android_service_jni SHARED android/context_bridge/service_driver.cpp
+      $<TARGET_OBJECTS:rasp_android_service_collectors>
+      ${PROJECT_SOURCE_DIR}/android/src/util/service_components.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
+    target_include_directories(rasp_android_service_jni PRIVATE ${JNI_INCLUDE_DIRS}
+      ${PROJECT_SOURCE_DIR}/android/src)
+    target_link_libraries(rasp_android_service_jni PRIVATE rasp_core rasp_warnings rasp_language JNI::JVM Threads::Threads)
+    add_test(NAME AndroidServiceExposure.publicMetadata
+      COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.ServiceTest
+        $<TARGET_FILE:rasp_android_service_jni>)
+    set_tests_properties(AndroidServiceExposure.publicMetadata PROPERTIES TIMEOUT 60)
     foreach(mode late early concurrent lifetime unavailable)
       add_test(NAME AndroidContextBridge.${mode}
         COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.BridgeTest
@@ -240,3 +256,28 @@ add_executable(rasp_ios_process_query_test ios/util/process_query_test.cpp
 target_include_directories(rasp_ios_process_query_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
 target_link_libraries(rasp_ios_process_query_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_ios_process_query_test)
+
+add_executable(rasp_android_service_components_test android/util/service_components_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/service_components.cpp)
+target_include_directories(rasp_android_service_components_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_service_components_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_service_components_test)
+
+add_library(rasp_android_builtin_support OBJECT ${PROJECT_SOURCE_DIR}/android/src/builtin.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/emulator.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/mitm.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/root.cpp ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp ${PROJECT_SOURCE_DIR}/android/src/util/system_property.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/direct_syscall.cpp)
+target_include_directories(rasp_android_builtin_support PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_builtin_support PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language)
+add_executable(rasp_android_builtin_test android/builtin_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp $<TARGET_OBJECTS:rasp_android_builtin_support>)
+target_include_directories(rasp_android_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_builtin_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_builtin_test TEST_PREFIX "android.")
+if(TARGET rasp_android_service_jni)
+  target_sources(rasp_android_service_jni PRIVATE $<TARGET_OBJECTS:rasp_android_builtin_support>)
+  target_link_libraries(rasp_android_service_jni PRIVATE rasp_tfpsacrypto)
+endif()

@@ -15,10 +15,7 @@ _RUNTIME = pathlib.Path(__file__).resolve().parents[3] / "runtime"
 def testChecks_whenComparedWithTheRuntime_listsTheGroupsItRunsInItsOrder(
     platform: platforms.Platform,
 ) -> None:
-    dispatch_file = (
-        "builtin.cpp" if platform == platforms.Platform.IOS else "monitoring.cpp"
-    )
-    monitoring = (_RUNTIME / platform / "src" / dispatch_file).read_text()
+    monitoring = (_RUNTIME / platform / "src" / "builtin.cpp").read_text()
 
     runtime_groups = re.findall(r'is_check_enabled\(config, "(\w+)"\)', monitoring)
 
@@ -90,3 +87,22 @@ def testResolveChecks_whenIosIntegritySelected_preservesRuntimeCheck() -> None:
 
     assert resolved.checks == ("identity", "integrity")
     assert resolved.skipped == ()
+
+
+def testResolveChecks_whenAndroidServiceGroupsSelected_preservesOptInGroups() -> None:
+    resolved = checks.resolve_checks(
+        platforms.Platform.ANDROID,
+        ["accessibility", "input_method", "notification_access"],
+    )
+
+    assert resolved.checks == (
+        "accessibility",
+        "identity",
+        "input_method",
+        "notification_access",
+    )
+    assert resolved.skipped == ()
+    assert checks.resolve_checks(platforms.Platform.ANDROID, []).checks == ("identity",)
+    assert checks.resolve_checks(
+        platforms.Platform.IOS, ["accessibility", "input_method", "notification_access"]
+    ).skipped == ("accessibility", "input_method", "notification_access")

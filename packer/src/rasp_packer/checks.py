@@ -1,8 +1,7 @@
 """The check groups the runtime runs on each platform, and the ones every protected app runs.
 
-A check group is one function of the runtime's checks, run by its thread in runtime/<platform>/src/monitoring.cpp
-(iOS dispatch lives in builtin.cpp), and its id is the name of that function. The caller of the packer chooses the
-groups a protected app runs. The packer writes them into the runtime's config, and the runtime runs only those.
+A check group is one function of the runtime's checks, dispatched from runtime/<platform>/src/builtin.cpp.
+Its id is the name of that function. The caller of the packer chooses the groups a protected app runs. The packer writes them into the runtime's config, and the runtime runs only those.
 """
 
 import collections.abc
@@ -19,6 +18,9 @@ CHECKS: collections.abc.Mapping[platforms.Platform, tuple[str, ...]] = {
         "mitm",
         "identity",
         "emulator",
+        "accessibility",
+        "input_method",
+        "notification_access",
     ),
     platforms.Platform.IOS: (
         "jailbreak",
