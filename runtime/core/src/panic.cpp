@@ -141,6 +141,7 @@ constexpr auto kVerdicts = std::to_array<Verdict>({
     {.signal = "id.cdhash", .detected = informational},
     {.signal = "id.debuggable", .detected = is_true},
     {.signal = "integ.text_sha256", .detected = informational},
+    {.signal = "integ.monitor_alive", .detected = is_false},
     {.signal = "jb.fs_paths", .detected = is_non_empty_list},
     {.signal = "jb.sandbox_escape", .detected = is_true},
     {.signal = "jb.fork_ok", .detected = is_true},

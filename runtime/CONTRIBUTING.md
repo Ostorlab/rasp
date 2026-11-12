@@ -55,7 +55,7 @@ Fix clang-tidy findings instead of silencing them with `NOLINT`. If a check is w
 
 ## Never crash the app
 
-Detections are the one exception, and they end the app on purpose: when a built-in check detects something, `panic_on_detection` (`core/include/rasp/panic.h`) ends it a few seconds later, through a direct system call. A development build only logs what would have ended it. No other code ends the app.
+Detections are the one exception, and they end the app on purpose: when a built-in check detects something, `panic_on_detection` (`core/include/rasp/panic.h`) ends it a few seconds later, through a direct system call. A stopped monitoring thread is a detection too: the thread beats a heartbeat (`core/include/rasp/heartbeat.h`), and a heartbeat seen stale twice, while the app keeps running, reports `integ.monitor_alive` false. A development build only logs what would have ended it. No other code ends the app.
 
 ### Errors are values, never exceptions
 

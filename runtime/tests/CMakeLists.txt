@@ -16,7 +16,7 @@ target_link_libraries(rasp_core_test PRIVATE rasp_core rasp_warnings rasp_langua
 target_compile_definitions(rasp_core_test PRIVATE RASP_EXPECTED_VERSION="${PROJECT_VERSION}")
 gtest_discover_tests(rasp_core_test)
 
-foreach(test config context embedded_config install_id observation panic parse_config plugins/init_plugins plugins/plugin plugins/registry
+foreach(test config context embedded_config heartbeat install_id observation panic parse_config plugins/init_plugins plugins/plugin plugins/registry
     plugins/run_plugins schedule)
   cmake_path(GET test FILENAME name)
   add_executable(rasp_core_${name}_test core/${test}_test.cpp)
