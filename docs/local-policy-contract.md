@@ -13,13 +13,16 @@ There is no process termination, delayed panic, signal takeover or hook repair.
 
 The gate reads the actual immutable `LocalDecisionReport` owned by a completed
 native cycle. It does not accept a caller report, score, time, policy replacement
-or reusable permit. Every result remains unverified client evidence. A matching
+or reusable permit.
+
+Every result remains unverified client evidence. A matching
 policy/config hash establishes equality, not authenticity, a trusted baseline,
 device health, malware classification or server authorization. An attacker who
 controls the app can patch its gate and caller. The backend authorizes server
-operations; this gate cannot grant that authority. Signed remote policy and hardware-key operations are separate work.
+operations; this gate cannot grant that authority. It does not provide signed remote
+policy delivery or hardware-key attestation.
 
-## Configure explicitly
+## Configure and pack an embedded local policy
 
 Run the commands below from the repository root with a packer installation containing
 the matching native artifacts. The platform examples are [Android](fixtures/local-policy-android-v1.json) and

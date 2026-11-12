@@ -1,6 +1,7 @@
 """Public API/CLI against installed exact SDK/NDK policy artifacts; no gate mock or device claim."""
 
 import dataclasses
+import hashlib
 import json
 import os
 import pathlib
@@ -82,6 +83,14 @@ def testPolicy_whenActualInstalledArtifactsPacked_roundTripsPublicApiAndCli(
     assert result.policy_mode == ("gate" if explicit is True else "report_only")
     if policy is not None:
         assert result.policy_sha256 == policy.sha256
+    else:
+        assert (
+            result.policy_sha256
+            == hashlib.sha256(local_policy.DEFAULT_POLICY).hexdigest()
+        )
+        assert result.effective_config_sha256 == local_policy.effective_hash(
+            "test", result.effective_checks, None
+        )
     config = runtime_config.RuntimeConfig(
         build_id="test", checks=result.effective_checks, local_policy=policy
     )

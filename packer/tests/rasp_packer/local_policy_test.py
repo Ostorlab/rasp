@@ -1,6 +1,7 @@
 """Strict embedded policy, canonical identity and pristine support-binding tests."""
 
 import copy
+import hashlib
 import json
 import os
 import pathlib
@@ -382,3 +383,37 @@ def testSupport_whenPlatformUnknown_raisesTypedRuntimeError(platform: str) -> No
         local_policy.bind(
             b"runtime", descriptor, platform, target["abis"][0], required=True
         )
+
+
+@pytest.mark.parametrize(
+    "build_id", ["test", 'bühl "7"', "line\u2028paragraph\u2029end"]
+)
+@pytest.mark.parametrize(
+    "checks", [("identity", "debugger"), ("debugger", "identity"), ()]
+)
+def testPolicy_whenAbsent_matchesActualNativeDefaultHashes(
+    tmp_path: pathlib.Path, build_id: str, checks: tuple[str, ...]
+) -> None:
+    probe = os.environ.get("RASP_LOCAL_POLICY_PROBE")
+    if probe is None:
+        pytest.skip("actual native parser probe not supplied")
+    config = runtime_config.RuntimeConfig(
+        build_id=build_id, checks=checks, local_policy=None
+    )
+    data = config.to_json()
+    assert "local_policy" not in json.loads(data)
+    filename = tmp_path / "default-config.json"
+    filename.write_bytes(data)
+    result = subprocess.run(
+        [probe, str(filename), "android"], check=True, capture_output=True, timeout=10
+    )
+    output = json.loads(result.stdout)
+    assert output["status"] == 0
+    assert output["config_state"] == 0
+    assert (
+        output["policy_sha256"]
+        == hashlib.sha256(local_policy.DEFAULT_POLICY).hexdigest()
+    )
+    assert output["effective_config_sha256"] == local_policy.effective_hash(
+        build_id, checks, None
+    )
