@@ -21,7 +21,6 @@ with some entries replaced, added or removed. Each kept entry keeps its original
 compression. The output is unsigned; the customer signs it.
 """
 
-import collections
 import collections.abc
 import dataclasses
 import pathlib
@@ -30,6 +29,7 @@ import zipfile
 import zlib
 from typing import Self
 
+from rasp_packer import archive_validation
 from rasp_packer import errors
 
 MANIFEST_ENTRY = "base/manifest/AndroidManifest.xml"
@@ -39,7 +39,6 @@ _DEX_PREFIX = "classes"
 _DEX_SUFFIX = ".dex"
 _FIXED_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 _MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
-_ANDROID_COMPRESSION_METHODS = frozenset({zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED})
 _DEX_NUMBER = re.compile(r"[2-9]|[1-9][0-9]+")
 _READ_ERRORS = (
     zipfile.BadZipFile,
@@ -96,8 +95,11 @@ class Aab:
                 hold more than 1 GiB once uncompressed.
         """
         try:
+            archive_validation.check_file(path)
             with zipfile.ZipFile(path) as archive:
-                infos = [info for info in archive.infolist() if not info.is_dir()]
+                all_infos = archive.infolist()
+                archive_validation.check_entries(all_infos)
+                infos = [info for info in all_infos if not info.is_dir()]
                 _check_entries(infos)
                 entries = [
                     Entry(
@@ -107,6 +109,8 @@ class Aab:
                     )
                     for info in infos
                 ]
+        except errors.InvalidAppError as error:
+            raise errors.InvalidAabError(str(error)) from error
         except _READ_ERRORS as error:
             raise errors.InvalidAabError(f"cannot read AAB {path}: {error}") from error
         return cls(entries)
@@ -189,20 +193,7 @@ class Aab:
 
 
 def _check_entries(infos: collections.abc.Sequence[zipfile.ZipInfo]) -> None:
-    """Refuses entries that share a name, use a method Android can't read, or are too big once uncompressed."""
-    counts = collections.Counter(info.filename for info in infos)
-    duplicates = sorted(name for name, count in counts.items() if count > 1)
-    if len(duplicates) > 0:
-        raise errors.InvalidAabError(f"AAB has duplicate entries: {duplicates}")
-    unreadable = sorted(
-        info.filename
-        for info in infos
-        if info.compress_type not in _ANDROID_COMPRESSION_METHODS
-    )
-    if len(unreadable) > 0:
-        raise errors.InvalidAabError(
-            f"AAB has entries Android can't decompress: {unreadable}"
-        )
+    """Enforce the AAB's 1 GiB total after shared ZIP validation."""
     if sum(info.file_size for info in infos) > _MAX_UNCOMPRESSED_BYTES:
         raise errors.InvalidAabError(
             f"AAB holds more than {_MAX_UNCOMPRESSED_BYTES} bytes once uncompressed"

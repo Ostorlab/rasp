@@ -69,3 +69,41 @@ def testWriteConfig_whenTheJsonFillsTheWholeSpace_raisesConfigTooLargeError() ->
 
     with pytest.raises(errors.ConfigTooLargeError):
         runtime_config.write_config(_BINARY, _SPACE, config)
+
+
+@pytest.mark.parametrize(
+    "space",
+    [
+        runtime_config.ConfigSpace(offset=-1, size=4),
+        runtime_config.ConfigSpace(offset=4, size=1000),
+        runtime_config.ConfigSpace(offset=4, size=0),
+        runtime_config.ConfigSpace(offset=0, size=65537),
+    ],
+)
+def testReadConfig_whenSectionBoundsInvalid_rejects(
+    space: runtime_config.ConfigSpace,
+) -> None:
+    with pytest.raises(errors.InvalidRuntimeError, match="config"):
+        runtime_config.read_config(_BINARY, space)
+
+
+def testReadConfig_whenUnterminated_rejects() -> None:
+    with pytest.raises(errors.InvalidRuntimeError, match="terminated"):
+        runtime_config.read_config(
+            b"x" * 64, runtime_config.ConfigSpace(offset=0, size=64)
+        )
+
+
+@pytest.mark.parametrize(
+    "space",
+    [
+        runtime_config.ConfigSpace(offset=-1, size=64),
+        runtime_config.ConfigSpace(offset=4, size=1000),
+        runtime_config.ConfigSpace(offset=0, size=65537),
+    ],
+)
+def testWriteConfig_whenSectionBoundsInvalid_rejects(
+    space: runtime_config.ConfigSpace,
+) -> None:
+    with pytest.raises(errors.InvalidRuntimeError, match="config"):
+        runtime_config.write_config(_BINARY, space, _CONFIG)

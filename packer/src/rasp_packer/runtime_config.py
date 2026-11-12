@@ -66,6 +66,7 @@ def write_config(binary: bytes, space: ConfigSpace, config: RuntimeConfig) -> by
     Raises:
         ConfigTooLargeError: The config's JSON and one zero byte do not fit in the space.
     """
+    _check_space(binary, space)
     json_config = config.to_json()
     if len(json_config) >= space.size:
         raise errors.ConfigTooLargeError(
@@ -89,4 +90,21 @@ def read_config(binary: bytes, space: ConfigSpace) -> bytes:
     Returns:
         The config's JSON: the space's bytes up to the first zero byte.
     """
-    return binary[space.offset : space.offset + space.size].split(b"\0", 1)[0]
+    _check_space(binary, space)
+    data = binary[space.offset : space.offset + space.size]
+    if b"\0" not in data:
+        raise errors.InvalidRuntimeError("the runtime config is not zero-terminated")
+    return data.split(b"\0", 1)[0]
+
+
+def _check_space(binary: bytes, space: ConfigSpace) -> None:
+    """Bound both config reads and allocations before accessing an embedded section."""
+    if (
+        space.offset < 0
+        or space.size <= 0
+        or space.size > 65536
+        or space.offset + space.size > len(binary)
+    ):
+        raise errors.InvalidRuntimeError(
+            "the runtime config section has invalid bounds (limit: 64 KiB)"
+        )
