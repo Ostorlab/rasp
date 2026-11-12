@@ -11,6 +11,12 @@ trap 'rm -rf "$work"' EXIT
 
 cmake --preset host -S "$runtime" -B "$work" "$@"
 cmake --build "$work" --parallel 2 --target \
-  rasp_android_context_bridge_jni rasp_android_context_bridge_java rasp_android_application_context_test
+  rasp_android_context_bridge_jni rasp_android_context_bridge_java rasp_android_application_context_test \
+  rasp_android_storage_jni
 ctest --test-dir "$work" --parallel 2 --output-on-failure --no-tests=error \
-  -R '^(AndroidContextBridge[.]|ApplicationContext[.])'
+  -R '^(AndroidContextBridge[.]|ApplicationContext[.]|AndroidPrivateStorage[.])'
+
+if [[ "$(uname -s)" == Darwin ]]; then
+  cmake --build "$work" --parallel 2 --target rasp_ios_private_storage_test
+  ctest --test-dir "$work" --parallel 2 --output-on-failure --no-tests=error -R '^ApplePrivateStorage[.]'
+fi

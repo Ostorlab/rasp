@@ -2,6 +2,7 @@ package android.app;
 
 public class Application extends android.content.Context {
     public volatile boolean fail;
+    public java.io.File getNoBackupFilesDir() { return null; }
     public android.view.accessibility.AccessibilityManager accessibility = new android.view.accessibility.AccessibilityManager();
     public android.view.inputmethod.InputMethodManager ime = new android.view.inputmethod.InputMethodManager();
     public Object getSystemService(String name) {
