@@ -1,5 +1,10 @@
 # Native measurement cycle contract v1
 
+The same owning snapshot also contains [local decision evidence](local-decisions-contract.md),
+with an independent report/reason version. Evaluation uses only the retained builtin producer prefix;
+plugin outputs cannot supply missing builtins or participate in builtin comparisons. This adds no
+cycle-wire fields or authority. All callbacks see the completed report on the same immutable owner.
+
 Consumer entry point: `rasp/cycle.h`, shared by the Android and iOS monitors and
 native plugins. The compiled catalogue comes from the same validated
 `checks_manifest.json` and canonical SHA-256 as the packer release binding.
