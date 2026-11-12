@@ -766,7 +766,8 @@ struct TextFile {
 
 #if defined(__APPLE__) && TARGET_OS_IOS && !TARGET_OS_SIMULATOR
 /// Copies through the kernel so an unmapped, unreadable or concurrently unmapped range cannot fault the app.
-[[nodiscard]] bool read_process([[maybe_unused]] void* context, std::uintptr_t address, std::span<std::uint8_t> into) {
+[[nodiscard]] bool read_process([[maybe_unused]] const void* context, std::uintptr_t address,
+                                std::span<std::uint8_t> into) {
   static_assert(sizeof(vm_address_t) == sizeof(std::uintptr_t) && sizeof(vm_address_t) == 8);
   static_assert(sizeof(vm_size_t) == sizeof(std::size_t) && sizeof(vm_size_t) == 8);
   vm_size_t copied = 0;

@@ -81,10 +81,10 @@ struct TextLayout {
 struct ImageMemory {
   /// The mapped Mach-O header address, not its preferred virtual address.
   std::uintptr_t header = 0;
-  /// Reader-owned state, kept only for this call.
-  void* context = nullptr;
+  /// Reader-owned read-only state, kept only for this call.
+  const void* context = nullptr;
   /// Copies the requested address range into a caller-owned bounded buffer.
-  bool (*read)(void*, std::uintptr_t, std::span<std::uint8_t>) = nullptr;
+  bool (*read)(const void*, std::uintptr_t, std::span<std::uint8_t>) = nullptr;
 };
 
 /// Reports SHA-256 strings through file then memory, without deciding whether they match.

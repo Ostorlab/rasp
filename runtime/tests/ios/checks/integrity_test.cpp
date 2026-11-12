@@ -131,8 +131,8 @@ struct FixtureMemory {
 };
 
 /// Copies only ranges inside the fixture, without dereferencing untrusted addresses.
-[[nodiscard]] bool read_fixture(void* context, std::uintptr_t address, std::span<std::uint8_t> into) {
-  const auto& fixture_memory = *static_cast<FixtureMemory*>(context);
+[[nodiscard]] bool read_fixture(const void* context, std::uintptr_t address, std::span<std::uint8_t> into) {
+  const auto& fixture_memory = *static_cast<const FixtureMemory*>(context);
   constexpr std::uintptr_t kBase = 0x100000;
   if (address < kBase || address - kBase > fixture_memory.bytes.size() ||
       into.size() > fixture_memory.bytes.size() - (address - kBase)) {
