@@ -302,7 +302,14 @@ std::uint32_t Service::load() {
   } else {
     std::memset(&manifest_, 0, sizeof(manifest_));
     manifest_.application_sha256 = app_hash;
-    if (!token(manifest_.generation) || !encode_manifest(manifest_, scratch)) {
+    bool generated = false;
+    for (std::size_t attempt = 0; attempt < 4 && !generated; ++attempt) {
+      if (!platform_->random(manifest_.generation.bytes)) {
+        return RASP_SK_OP_INTERNAL_ERROR;
+      }
+      generated = nonzero(manifest_.generation);
+    }
+    if (!generated || !encode_manifest(manifest_, scratch)) {
       return RASP_SK_OP_INTERNAL_ERROR;
     }
     status = platform_->persist(scratch);

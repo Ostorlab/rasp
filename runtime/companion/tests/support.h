@@ -44,6 +44,7 @@ struct ProviderState {
   std::uint32_t sign_status = RASP_SK_OP_OK;
   std::uint32_t describe_status = RASP_SK_OP_OK;
   std::atomic<std::uint32_t> calls{0};
+  std::atomic<std::uint32_t> random_calls{0};
   std::atomic<std::uint32_t> generates{0};
   std::atomic<std::uint32_t> signs{0};
   std::atomic<std::uint32_t> prompts{0};
@@ -101,7 +102,6 @@ class Provider final : public rasp::keys::Platform {
  private:
   ProviderState state_{};
   std::map<std::string, EVP_PKEY*> keys_;
-  std::uint8_t entropy_ = 1;
 };
 /// Independently reconstruct message bytes using vectors/OpenSSL hashing, not production encoding functions.
 std::vector<std::uint8_t> message(const RaspScopedKeyInfoV1& key, const RaspScopedKeyClientSpecV1& client,

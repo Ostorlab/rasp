@@ -7,11 +7,13 @@
 #include <cstdint>
 #include <cstring>
 #include <gtest/gtest.h>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <openssl/core_names.h>
 #include <openssl/evp.h>
 #include <openssl/params.h>
+#include <openssl/rand.h>
 #include <openssl/types.h>
 #include <optional>
 #include <span>
@@ -136,6 +138,7 @@ bool Provider::main_thread() {
   return state_.on_main;
 }
 bool Provider::random(std::span<std::uint8_t> output) {
+  state_.random_calls.fetch_add(1);
   state_.calls.fetch_add(1);
   if (state_.constant_entropy) {
     std::ranges::fill(output, 7);
@@ -144,10 +147,10 @@ bool Provider::random(std::span<std::uint8_t> output) {
   if (state_.random_fail) {
     return false;
   }
-  for (auto& byte : output) {
-    byte = entropy_++;
+  if (output.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    return false;
   }
-  return true;
+  return RAND_bytes(output.data(), static_cast<int>(output.size())) == 1;
 }
 bool Provider::clock(std::uint64_t& output) {
   if (state_.during_clock) {

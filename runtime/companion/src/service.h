@@ -172,6 +172,8 @@ class Service {
   [[nodiscard]] bool gate(const Request& request, RaspLocalGateResultV1& output) const;
   /// Check request/handle lease, cancel, current record identity and namespace before key use.
   [[nodiscard]] std::uint32_t eligible(Request& request, std::uint64_t now) const;
+  /// Persistent public identity uses full128-bit CSPRNG output, with at most four collision attempts.
+  [[nodiscard]] std::uint32_t fresh_key_id(RaspScopedKeyTokenV1& output);
   /// Complete worker phases through actual adapter operations.
   [[nodiscard]] std::uint32_t create(Job& job);
   [[nodiscard]] std::uint32_t describe(Job& job);

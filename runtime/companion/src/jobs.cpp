@@ -225,11 +225,23 @@ std::uint32_t Service::cleanup_created(Job& job) {
   }
   return saved == RASP_SK_OP_OK ? RASP_SK_OP_OK : RASP_SK_OP_CLEANUP_PENDING;
 }
+std::uint32_t Service::fresh_key_id(RaspScopedKeyTokenV1& output) {
+  for (std::size_t attempt = 0; attempt < 4; ++attempt) {
+    if (!platform_->random(output.bytes)) {
+      return RASP_SK_OP_INTERNAL_ERROR;
+    }
+    const std::scoped_lock lock(mutex_);
+    if (nonzero(output) && record_index(output) == 32) {
+      return RASP_SK_OP_OK;
+    }
+  }
+  return RASP_SK_OP_INTERNAL_ERROR;
+}
 std::uint32_t Service::create(Job& job) {
   auto& request = std::span{requests_}[job.request];
-  RaspScopedKeyTokenV1 key_entropy{};
-  if (!platform_->random(key_entropy.bytes)) {
-    return RASP_SK_OP_INTERNAL_ERROR;
+  const auto allocated = fresh_key_id(job.reference.key_id);
+  if (allocated != RASP_SK_OP_OK) {
+    return allocated;
   }
   {
     const std::scoped_lock lock(mutex_);
@@ -239,10 +251,6 @@ std::uint32_t Service::create(Job& job) {
     }
     job.record = static_cast<std::uint32_t>(empty - manifest_.records.begin());
     request.targets = UINT32_C(1) << job.record;
-    if (!token(job.reference.key_id)) {
-      return RASP_SK_OP_INTERNAL_ERROR;
-    }
-    std::ranges::copy(std::span(key_entropy.bytes).first(8), std::span(job.reference.key_id.bytes).begin());
     request.target_ids[0] = job.reference.key_id;
     request.target_count = 1;
     candidate_ = manifest_;

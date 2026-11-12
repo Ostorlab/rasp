@@ -818,13 +818,23 @@ TEST_F(ScopedKeys, provenance_whenDefaultLockIsStricter_reportsItWithoutPermitti
   EXPECT_FALSE(rasp::keys::valid_info(info, state().spec.namespaces[0]));
 }
 
-TEST_F(ScopedKeys, tokens_whenEntropyRepeats_neverRecycleKeyOrHandleIdentity) {
+TEST_F(ScopedKeys, keyId_whenEntropyRepeats_rejectsCollisionAfterFourAttemptsWithoutFallback) {
   state().provider.state().constant_entropy = true;
   const auto first = create();
-  const auto second = create();
-  EXPECT_NE(fixture::identity(first.info.key_id), fixture::identity(second.info.key_id));
-  EXPECT_NE(fixture::identity(first.key_handle), fixture::identity(second.key_handle));
-  EXPECT_EQ(state().provider.state().generates, 2U);
+  const auto before = state().provider.state().random_calls.load();
+  request(RASP_SK_CREATE);
+  const auto collision = admit();
+  state().provider.drain();
+  take(collision.request);
+  EXPECT_EQ(state().result->completion.operation_status, RASP_SK_OP_INTERNAL_ERROR);
+  EXPECT_EQ(state().provider.state().random_calls.load() - before, 4U);
+  EXPECT_EQ(state().provider.state().generates, 1U);
+  request(RASP_SK_DESCRIBE);
+  state().input->input.key_handle = first.key_handle;
+  const auto unaffected = admit();
+  state().provider.drain();
+  take(unaffected.request);
+  EXPECT_EQ(state().result->completion.operation_status, RASP_SK_OP_OK);
 }
 TEST_F(ScopedKeys, storage_whenReservationRestored_recoversOnlyItsExactKeyAndNeverRegenerates) {
   std::vector<std::uint8_t> reserved;

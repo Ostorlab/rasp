@@ -133,6 +133,8 @@ are refused. CLOSED means quiescence, not key deletion. Release/close retain liv
 persistent keys. Cancellation cannot retract an already delivered signature or
 guarantee a physical primitive was aborted; results report actual/unknown effects.
 
+Persistent KeyIds and installation generations use full16-byte CSPRNG outputs. Key allocation checks current records and rejects after at most four zero/collision attempts; it never substitutes a predictable identity after RNG failure. Process-local request/job/handle lookup tokens use a non-reused allocation ordinal and are not cryptographic capabilities against the host.
+
 The dedicated manifest contains only generation/app/profile/key identities,
 public keys/properties and reserved/live/delete-pending states. Its fixed8192-byte
 codec validates version, closed states, padding, duplicate identities and corruption
