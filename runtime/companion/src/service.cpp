@@ -430,12 +430,16 @@ std::int32_t Service::open(const RaspScopedKeyClientSpecV1& input, RaspScopedKey
   if (platform_->main_thread()) {
     return RASP_SK_CALL_WRONG_THREAD;
   }
+  Posts posts;
   {
-    const std::unique_lock lock(mutex_, std::try_to_lock);
+    std::unique_lock lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock()) {
       return RASP_SK_CALL_BUSY;
     }
     if (state_ == State::kClosing) {
+      dispatch(posts);
+      lock.unlock();
+      post(posts);
       return RASP_SK_CALL_CLOSING;
     }
     if (state_ != State::kIdle && state_ != State::kClosed) {
@@ -469,10 +473,16 @@ std::int32_t Service::open(const RaspScopedKeyClientSpecV1& input, RaspScopedKey
   if (status != RASP_SK_OP_OK && storage_owned_) {
     storage_owned_ = !platform_->close_storage();
   }
-  const std::scoped_lock lock(mutex_);
+  std::unique_lock lock(mutex_);
   output.operation_status = status;
   if (status != RASP_SK_OP_OK) {
     state_ = storage_owned_ ? State::kClosing : State::kIdle;
+    if (storage_owned_) {
+      storage_fault_ = true;
+      dispatch(posts);
+    }
+    lock.unlock();
+    post(posts);
     return RASP_SK_CALL_OK;
   }
   state_ = State::kReady;

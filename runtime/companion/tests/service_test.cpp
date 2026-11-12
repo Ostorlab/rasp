@@ -1212,3 +1212,154 @@ TEST_F(ScopedKeys, take_whenInvalidOrRetiredClient_doesNotDiscloseRetainedCounts
   EXPECT_EQ(state().provider.state().queue.size(), 1U);
   EXPECT_EQ(state().provider.state().generates, 0U);
 }
+namespace {
+/// Failed first open has no usable client; recovery must use the actual worker-open entry.
+class ScopedKeysOpenCleanup : public ::testing::Test {
+ private:
+  fixture::Provider provider_;
+  RaspScopedKeyClientSpecV1 spec_{};
+  RaspScopedKeyClientOpenedV1 opened_{};
+  std::atomic<std::uint32_t> closes_{0};
+
+ protected:
+  [[nodiscard]] fixture::Provider& provider() { return provider_; }
+  [[nodiscard]] std::uint32_t closes() const { return closes_.load(); }
+  [[nodiscard]] const RaspScopedKeyClientOpenedV1& opened() const { return opened_; }
+  void SetUp() override {
+    fixture::ticks().fetch_add(1000000);
+    fixture::publish();
+    fixture::publish();
+    spec_ = fixture::config();
+    provider_.state().during_close = [this] { closes_.fetch_add(1); };
+    ASSERT_TRUE(rasp::keys::attach_platform(provider_));
+  }
+  void TearDown() override {
+    provider_.state().close_fail = false;
+    provider_.state().schedule_fail = false;
+    provider_.state().on_main = false;
+    provider_.state().during_main = {};
+    RaspScopedKeyControlV1 input{};
+    input.abi_version = 1;
+    input.struct_size = sizeof(input);
+    input.action = RASP_SK_CLOSE_CLIENT;
+    input.client = opened_.client;
+    RaspScopedKeyControlResultV1 output{};
+    static_cast<void>(rasp_scoped_key_control_v1(&input, sizeof(input), &output, sizeof(output)));
+    provider_.drain();
+    EXPECT_TRUE(rasp::keys::detach_platform(provider_));
+  }
+  [[nodiscard]] std::int32_t open() {
+    return rasp_scoped_key_client_open_v1(&spec_, sizeof(spec_), &opened_, sizeof(opened_));
+  }
+  /// First close failure preserves the original operation error and never fabricates a client.
+  void failed_open(std::uint32_t expected) {
+    provider_.state().close_fail = true;
+    ASSERT_EQ(open(), RASP_SK_CALL_OK);
+    EXPECT_EQ(opened_.operation_status, expected);
+    EXPECT_FALSE(rasp::keys::nonzero(opened_.client));
+    EXPECT_EQ(opened_.namespace_count, 0U);
+    EXPECT_EQ(closes(), 1U);
+    EXPECT_TRUE(provider_.state().storage_owned);
+    EXPECT_FALSE(rasp::keys::detach_platform(provider_));
+  }
+  /// Run exactly one bounded close attempt, then prove normal open is usable again.
+  void recover(std::uint32_t expected) {
+    failed_open(expected);
+    ASSERT_EQ(provider_.state().queue.size(), 1U);
+    const auto disk = provider_.state().disk;
+    const auto persists = provider_.state().persists.load();
+    provider_.state().close_fail = false;
+    ASSERT_TRUE(provider_.step());
+    EXPECT_EQ(closes(), 2U);
+    EXPECT_TRUE(provider_.state().queue.empty());
+    EXPECT_FALSE(provider_.state().storage_owned);
+    EXPECT_EQ(provider_.state().disk, disk);
+    EXPECT_EQ(provider_.state().persists.load(), persists);
+    EXPECT_EQ(opened_.operation_status, expected);
+    provider_.state().disk.clear();
+    provider_.state().persist_fail_at = -1;
+    ASSERT_EQ(open(), RASP_SK_CALL_OK);
+    EXPECT_EQ(opened_.operation_status, RASP_SK_OP_OK);
+    EXPECT_TRUE(rasp::keys::nonzero(opened_.client));
+  }
+};
+TEST_F(ScopedKeysOpenCleanup, open_whenFirstReadIsTruncatedAndCloseFails_retriesWithoutRewritingFile) {
+  provider().state().disk = {1};
+  recover(RASP_SK_OP_STORAGE_CORRUPT);
+}
+TEST_F(ScopedKeysOpenCleanup, open_whenFirstEntropyReadAndCloseFail_retriesWithoutRewritingFile) {
+  provider().state().random_fail = true;
+  failed_open(RASP_SK_OP_INTERNAL_ERROR);
+  provider().state().random_fail = false;
+  provider().state().close_fail = false;
+  ASSERT_EQ(provider().state().queue.size(), 1U);
+  ASSERT_TRUE(provider().step());
+  ASSERT_EQ(open(), RASP_SK_CALL_OK);
+  EXPECT_EQ(opened().operation_status, RASP_SK_OP_OK);
+}
+TEST_F(ScopedKeysOpenCleanup, open_whenFirstPersistAndCloseFail_retriesWithoutPublishingUncertainState) {
+  provider().state().persist_fail_at = 1;
+  recover(RASP_SK_OP_STORAGE_UNAVAILABLE);
+}
+TEST_F(ScopedKeysOpenCleanup, open_whenCloseAndSchedulerKeepFailing_retriesOnlyOnExplicitWorkerEntry) {
+  provider().state().persist_fail_at = 1;
+  provider().state().schedule_fail = true;
+  failed_open(RASP_SK_OP_STORAGE_UNAVAILABLE);
+  EXPECT_TRUE(provider().state().queue.empty());
+  provider().state().schedule_fail = false;
+  for (std::uint32_t attempt = 0; attempt < 3; ++attempt) {
+    ASSERT_EQ(open(), RASP_SK_CALL_CLOSING);
+    ASSERT_EQ(provider().state().queue.size(), 1U);
+    ASSERT_EQ(open(), RASP_SK_CALL_CLOSING);
+    EXPECT_EQ(provider().state().queue.size(), 1U);
+    ASSERT_TRUE(provider().step());
+    EXPECT_EQ(closes(), attempt + 2);
+    EXPECT_TRUE(provider().state().queue.empty());
+    EXPECT_TRUE(provider().state().storage_owned);
+    EXPECT_FALSE(rasp::keys::detach_platform(provider()));
+  }
+  provider().state().on_main = true;
+  EXPECT_EQ(open(), RASP_SK_CALL_WRONG_THREAD);
+  EXPECT_TRUE(provider().state().queue.empty());
+  EXPECT_EQ(closes(), 4U);
+  provider().state().on_main = false;
+  provider().state().close_fail = false;
+  ASSERT_EQ(open(), RASP_SK_CALL_CLOSING);
+  ASSERT_EQ(provider().state().queue.size(), 1U);
+  ASSERT_TRUE(provider().step());
+  EXPECT_FALSE(provider().state().storage_owned);
+  ASSERT_EQ(open(), RASP_SK_CALL_OK);
+  EXPECT_EQ(opened().operation_status, RASP_SK_OP_OK);
+  EXPECT_LE(provider().state().max_queue, 1U);
+}
+TEST_F(ScopedKeysOpenCleanup, open_whenRetryCloseWaitsForNativeEntry_retainsStorageUntilEntryReturns) {
+  provider().state().persist_fail_at = 1;
+  failed_open(RASP_SK_OP_STORAGE_UNAVAILABLE);
+  ASSERT_EQ(provider().state().queue.size(), 1U);
+  provider().state().close_fail = false;
+  provider().state().on_main = true;
+  std::promise<void> entered;
+  std::promise<void> release;
+  const auto released = release.get_future().share();
+  provider().state().during_main = [&] {
+    entered.set_value();
+    released.wait();
+  };
+  auto caller = std::async(std::launch::async, [this] { return open(); });
+  entered.get_future().wait();
+  auto worker = std::async(std::launch::async, [this] { return provider().step(); });
+  EXPECT_EQ(worker.wait_for(std::chrono::milliseconds(20)), std::future_status::timeout);
+  EXPECT_TRUE(provider().state().storage_owned);
+  EXPECT_EQ(closes(), 1U);
+  EXPECT_FALSE(rasp::keys::detach_platform(provider()));
+  release.set_value();
+  EXPECT_EQ(caller.get(), RASP_SK_CALL_WRONG_THREAD);
+  EXPECT_TRUE(worker.get());
+  EXPECT_EQ(closes(), 2U);
+  EXPECT_FALSE(provider().state().storage_owned);
+  provider().state().during_main = {};
+  provider().state().on_main = false;
+  ASSERT_EQ(open(), RASP_SK_CALL_OK);
+  EXPECT_EQ(opened().operation_status, RASP_SK_OP_OK);
+}
+}  // namespace
