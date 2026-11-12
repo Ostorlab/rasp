@@ -8,7 +8,7 @@ because different source, compiler or plugin builds can share it.
 `packer/src/rasp_packer/checks_manifest.json` is the versioned source of truth for built-in
 group, signal and source identities. Its entries come from the platform check implementations
 and production `builtin.cpp` dispatchers. The catalogue describes possible outputs, not
-execution evidence or device attestation. Schema 1, revision 2 declares 27 Android and 26 iOS
+execution evidence or device attestation. Schema 1, revision 4 declares 32 Android and 26 iOS
 built-in signal/source identities.
 
 ## Group selection and output semantics
@@ -26,6 +26,31 @@ conditions. `string_list` values may contain zero or more members; those members
 not additional observation identities. An always-unsupported source declares value kind
 `none`. Non-OK observations have no value. Read each entry's `behavior` for partial-data,
 read-error and truncation limits.
+
+Android `hook.inline/prologue` emits one observation with a variable string list of at most
+32 distinct changed libc/libdl names in fixed resolution order. An empty OK list requires all
+32 comparisons to succeed. Unavailable symbols/libraries, invalid ELF/maps, incomparable
+relocations and denied/short/stale memory reads are error results with no value or partial
+list. Off Android or on an unimplemented Android build architecture it is unsupported.
+Authorized instrumentation can change these bytes; this is not a malware verdict. The fixed
+list cannot cover other inline sites, renamed/unlisted targets, hidden modules or matching
+modified disk/memory; its APIs remain hookable. See [the mechanism and limits](../runtime/inline_hooks.md).
+The schema's `value_cardinality` remains `variable`; its bound is specified in `behavior`,
+as for the existing map/thread list outputs. Revision 2 and 3 artifacts remain foreign to this
+consumer even when their sidecars match their own pristine bytes.
+
+Android's opt-in `accessibility`, `input_method` and `notification_access` groups add four
+fixed output identities. Accessibility emits enabled component/capability/request-mask records;
+IME emits an enabled-component list plus the API34+ selected component; notification access
+emits enabled-listener components through the AndroidX-compatible secure setting. API31–33
+selected IME is explicitly unsupported, never inferred from the enabled list. The schema1
+`android` support condition names the platform; each row's `behavior` supplies its API gates,
+Context requirements, limits and null/error contract. Read [exact contracts and primary API
+provenance](android-service-observations.md) and the [portable benign/positive/unknown fixtures](fixtures/android-service-observations-v1.json).
+Null/denied/malformed/over-limit values are unknown/error; only complete explicit empty lists
+or settings strings can be empty OK. Assistive services/keyboards and authorized support tools
+are legitimate context. Neither enabled access nor capability flags establish malware or
+active control. Existing groups, identity-only defaults and all iOS outputs are preserved.
 
 Android's supported release presets target API31+ and the four listed ABIs. The iOS release
 preset and consumer support arm64/iOS12+. `ios_device` probes emit unsupported on simulators

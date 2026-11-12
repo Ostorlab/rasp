@@ -53,9 +53,9 @@ observations, invalidate complete, and are distinct from missing execution.
 RT08 service collectors may return up to 128 list entries. The cycle limit remains
 64: a 65..128 entry list is dropped whole, `dropped` increments and `complete` is
 false even when the builtin identity was present. A finite production-path fixture
-checks exactly 128 entries and the legacy callback's empty retained span. Root must
-replay this against the actual RT08 integrated catalogue; no RT08 source is declared
-present in this branch.
+checks exactly 128 entries and the legacy callback's empty retained span. The integrated real-JVM fixture also exercises the approved RT08 accessibility
+collector through this cycle path at 64 and 128 entries. These are simulated
+Android services on a real JVM, not device evidence.
 
 Counters saturate at uint64 max and set overflow. Coverage/config truncation is
 explicit and invalidates complete. No new check selection or builtin order.
@@ -65,7 +65,8 @@ explicit and invalidates complete. No new check selection or builtin order.
 All checks finish before dispatch constructs one owned `shared_ptr<const
 CycleSnapshot>` containing metadata **and the observations together**. While
 synchronous callbacks run, `plugins::kCycleSnapshot` in their Context holds that
-same pointer. An additive `Plugin::on_cycle` callback receives the pointer too.
+same pointer. This key is runtime-owned; plugins read it and retain their own
+copy of the pointer. An additive `Plugin::on_cycle` callback receives the pointer too.
 Callbacks run in plugin order; each existing `on_observations` precedes that
 plugin's `on_cycle`. Existing callbacks and checks keep their signatures/order.
 The legacy observation span expires at callback return. During monitor dispatch it
@@ -87,7 +88,8 @@ remain immutable and valid across subsequent runs.
 
 A delivery batch ID is **not** allocated by this API. The serializer owns one fresh
 v4 batch UUID per immutable serialized payload, stores it with those bytes and the
-snapshot, and reuses both on retry/fallback. Splitting a run into payloads gives
+snapshot, and reuses both on retry/fallback. Consumers must bound their pending
+snapshot and serialized-payload queues. Splitting a run into payloads gives
 separate batch IDs and no claim of atomic full delivery. Dropping/truncating at
 serialization must downgrade delivery completeness, never mutate the snapshot.
 
@@ -99,9 +101,12 @@ data, not a GraphQL input. BE03 accepts only optional `sessionId`, `runId`,
 fields. Sequence, duration, catalogue/config and health require an explicit
 additive backend schema and transport rollout before transmission. Network/DNS
 plugin implementation is coordinated separately; native availability may precede
-it. Legacy metadata remains unavailable. RT06 `hook.inline` and RT08 service
-outputs are not registered here: root supplies the exact integrated parent and
-updates the catalogue for its actual compiled outputs later.
+it. Legacy metadata remains unavailable. This branch ordinary-merges approved RT08 parent
+`d2deaf39961b292e247a17e8209d01e6e987bf35`, including RT06 `hook.inline` and
+RT08 service outputs. It preserves schema 1/revision 4, 32 Android/26 iOS rows,
+and catalogue ID `eaac77e3bdbf7f21af2abfb79a7868ccf516e5c3f758d25c90127550e3e7db7c`.
+Cycle metadata adds no observation rows or catalogue revision. Every later builtin
+source change still requires an exact catalogue update.
 
 Real device execution, suspension, storage failures, iOS toolchain/obfuscation and
 supported compiler CI remain necessary validation; host execution is no device

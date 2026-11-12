@@ -38,6 +38,40 @@
         "root"
       ],
       "skipped": []
+    },
+    {
+      "platform": "android",
+      "requested": [
+        "accessibility",
+        "input_method",
+        "notification_access",
+        "hooks",
+        "accessibility"
+      ],
+      "effective_checks": [
+        "accessibility",
+        "hooks",
+        "identity",
+        "input_method",
+        "notification_access"
+      ],
+      "skipped": []
+    },
+    {
+      "platform": "ios",
+      "requested": [
+        "accessibility",
+        "input_method",
+        "notification_access"
+      ],
+      "effective_checks": [
+        "identity"
+      ],
+      "skipped": [
+        "accessibility",
+        "input_method",
+        "notification_access"
+      ]
     }
   ],
   "unknown_release": {
@@ -75,19 +109,74 @@
       "source": "sysctl_syscall",
       "status": "unsupported",
       "value": null
+    },
+    {
+      "signal": "hook.inline",
+      "source": "prologue",
+      "status": "ok",
+      "value": []
+    },
+    {
+      "signal": "hook.inline",
+      "source": "prologue",
+      "status": "ok",
+      "value": [
+        "open"
+      ]
+    },
+    {
+      "signal": "hook.inline",
+      "source": "prologue",
+      "status": "error",
+      "value": null
+    },
+    {
+      "signal": "hook.inline",
+      "source": "prologue",
+      "status": "unsupported",
+      "value": null
+    },
+    {
+      "signal": "a11y.enabled_services",
+      "source": "accessibility_manager",
+      "status": "error",
+      "value": null
+    },
+    {
+      "signal": "ime.enabled_components",
+      "source": "input_method_manager",
+      "status": "error",
+      "value": null
+    },
+    {
+      "signal": "ime.current_component",
+      "source": "input_method_manager",
+      "status": "unsupported",
+      "value": null
+    },
+    {
+      "signal": "notification.enabled_listeners",
+      "source": "settings_secure",
+      "status": "error",
+      "value": null
     }
   ],
   "catalogue": {
     "schema_version": 1,
-    "revision": 2,
-    "catalogue_id": "f011b708204f5fcc5aedab7427097b9666676af412d05a43a9eaf5a937f7bc40",
+    "revision": 4,
+    "catalogue_id": "eaac77e3bdbf7f21af2abfb79a7868ccf516e5c3f758d25c90127550e3e7db7c",
     "observation_counts": {
-      "android": 27,
+      "android": 32,
       "ios": 26
     }
   },
   "unmatched_previous_release": {
-    "catalogue_id": "5628418b4c23ec3dd7a4975c03ff7cfc2272df37b22c21c35dc60cf0ed137e90",
+    "catalogue_id": "f011b708204f5fcc5aedab7427097b9666676af412d05a43a9eaf5a937f7bc40",
+    "expected_outputs": null,
+    "health": "unsupported"
+  },
+  "unmatched_revision3_release": {
+    "catalogue_id": "caa83ed5b9ce8a93058c1445220d3416e2f59796eee59f25254bd4811996d1b6",
     "expected_outputs": null,
     "health": "unsupported"
   }

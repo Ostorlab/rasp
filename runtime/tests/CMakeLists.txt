@@ -69,6 +69,12 @@ foreach(check debugger hooks mitm)
   gtest_discover_tests(rasp_android_${check}_test)
 endforeach()
 
+# The hooks check reads system library files through the shared ELF reader, and its tests read the ELF fixtures.
+target_sources(rasp_android_hooks_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp)
+target_compile_definitions(rasp_android_hooks_test PRIVATE
+  RASP_TEST_ELF_DATA="${CMAKE_CURRENT_SOURCE_DIR}/android/util/data")
+
 # The emulator and root checks read system properties through the shared util/system_property helper, so their tests
 # link it too.
 foreach(check emulator root)
@@ -89,7 +95,8 @@ endforeach()
 
 add_executable(rasp_android_integrity_test android/checks/integrity_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp)
 target_include_directories(rasp_android_integrity_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_integrity_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
@@ -99,6 +106,7 @@ gtest_discover_tests(rasp_android_integrity_test)
 # The identity check hashes the signer's certificate with the integrity check's sha256_hex, so its test links it too.
 add_executable(rasp_android_identity_test android/checks/identity_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
 target_include_directories(rasp_android_identity_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
@@ -124,6 +132,14 @@ target_include_directories(rasp_android_apk_file_test PRIVATE ${PROJECT_SOURCE_D
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_apk_file_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_apk_file_test)
+
+add_executable(rasp_android_elf_test android/util/elf_test.cpp ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp)
+target_include_directories(rasp_android_elf_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_android_elf_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+target_compile_definitions(rasp_android_elf_test PRIVATE
+  RASP_TEST_ELF_DATA="${CMAKE_CURRENT_SOURCE_DIR}/android/util/data")
+gtest_discover_tests(rasp_android_elf_test)
 
 if(TARGET rasp_loader_dex)
   add_executable(rasp_android_loader_dex_test android/loader/loader_dex_test.cpp
@@ -183,8 +199,9 @@ foreach(platform android ios)
       ${expectations_dir}/capability_expectations.h ${platform}
     COMMAND_ERROR_IS_FATAL ANY)
   if(platform STREQUAL "android")
-    set(capability_checks debugger emulator hooks identity integrity mitm root)
-    set(capability_util util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp)
+    set(capability_checks debugger emulator hooks identity integrity mitm root service_exposure)
+    set(capability_util util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp
+      util/elf.cpp util/service_components.cpp)
   else()
     set(capability_checks debugger emulator hooks identity integrity jailbreak mitm virtualizer)
     set(capability_util util/macho.cpp util/sha256.cpp util/process_query.cpp)
@@ -242,6 +259,22 @@ if(Java_FOUND AND JNI_FOUND)
       DEPENDS ${bridge_java} ${bridge_test_java} VERBATIM)
     add_custom_target(rasp_android_context_bridge_java ALL
       DEPENDS ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class)
+    add_library(rasp_android_service_collectors OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp)
+    target_compile_definitions(rasp_android_service_collectors PRIVATE __ANDROID__)
+    target_include_directories(rasp_android_service_collectors PRIVATE ${JNI_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/android/src)
+    target_link_libraries(rasp_android_service_collectors PRIVATE rasp_core rasp_warnings rasp_language)
+    add_library(rasp_android_service_jni SHARED android/context_bridge/service_driver.cpp
+      $<TARGET_OBJECTS:rasp_android_service_collectors>
+      ${PROJECT_SOURCE_DIR}/android/src/util/service_components.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
+    target_include_directories(rasp_android_service_jni PRIVATE ${JNI_INCLUDE_DIRS}
+      ${PROJECT_SOURCE_DIR}/android/src)
+    target_link_libraries(rasp_android_service_jni PRIVATE rasp_core rasp_warnings rasp_language JNI::JVM Threads::Threads)
+    add_test(NAME AndroidServiceExposure.publicMetadata
+      COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.ServiceTest
+        $<TARGET_FILE:rasp_android_service_jni>)
+    set_tests_properties(AndroidServiceExposure.publicMetadata PROPERTIES TIMEOUT 60)
     foreach(mode late early concurrent lifetime unavailable)
       add_test(NAME AndroidContextBridge.${mode}
         COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.BridgeTest
@@ -255,17 +288,30 @@ endif()
 
 # Exercise hooks()' Android dispatch against Linux's real own-process procfs, without an Android device claim.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  foreach(library libc libdl)
+    add_library(rasp_watched_${library} SHARED support/watched_library.cpp)
+    set_target_properties(rasp_watched_${library} PROPERTIES PREFIX "" OUTPUT_NAME ${library}
+      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/watched")
+    target_link_options(rasp_watched_${library} PRIVATE -nostdlib)
+    target_link_libraries(rasp_watched_${library} PRIVATE rasp_warnings rasp_language)
+  endforeach()
   add_library(rasp_android_hooks_dispatch OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp
-    ${PROJECT_SOURCE_DIR}/android/src/util/direct_syscall.cpp)
+    ${PROJECT_SOURCE_DIR}/android/src/util/direct_syscall.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
   target_compile_definitions(rasp_android_hooks_dispatch PRIVATE __ANDROID__)
   target_include_directories(rasp_android_hooks_dispatch PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
   target_link_libraries(rasp_android_hooks_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
   add_executable(rasp_android_hooks_dispatch_test android/checks/hooks_test.cpp
     $<TARGET_OBJECTS:rasp_android_hooks_dispatch>)
-  target_compile_definitions(rasp_android_hooks_dispatch_test PRIVATE RASP_TEST_ANDROID_HOOKS)
+  target_compile_definitions(rasp_android_hooks_dispatch_test PRIVATE RASP_TEST_ANDROID_HOOKS
+    RASP_TEST_WATCHED_LIBC="$<TARGET_FILE:rasp_watched_libc>"
+    RASP_TEST_WATCHED_LIBDL="$<TARGET_FILE:rasp_watched_libdl>"
+    RASP_TEST_ELF_DATA="${CMAKE_CURRENT_SOURCE_DIR}/android/util/data")
   target_include_directories(rasp_android_hooks_dispatch_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
     ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(rasp_android_hooks_dispatch_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  add_dependencies(rasp_android_hooks_dispatch_test rasp_watched_libc rasp_watched_libdl)
   gtest_discover_tests(rasp_android_hooks_dispatch_test TEST_PREFIX "AndroidDispatch.")
 endif()
 
@@ -289,3 +335,27 @@ add_executable(rasp_posix_cycle_clock_test posix/cycle_clock_test.cpp)
 target_include_directories(rasp_posix_cycle_clock_test PRIVATE ${PROJECT_SOURCE_DIR}/posix/include)
 target_link_libraries(rasp_posix_cycle_clock_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_posix_cycle_clock_test)
+add_executable(rasp_android_service_components_test android/util/service_components_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/service_components.cpp)
+target_include_directories(rasp_android_service_components_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_service_components_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_service_components_test)
+
+add_library(rasp_android_builtin_support OBJECT ${PROJECT_SOURCE_DIR}/android/src/builtin.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/emulator.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/mitm.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/root.cpp ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp ${PROJECT_SOURCE_DIR}/android/src/util/system_property.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/direct_syscall.cpp ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp)
+target_include_directories(rasp_android_builtin_support PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_builtin_support PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language)
+add_executable(rasp_android_builtin_test android/builtin_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp $<TARGET_OBJECTS:rasp_android_builtin_support>)
+target_include_directories(rasp_android_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_builtin_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_builtin_test TEST_PREFIX "android.")
+if(TARGET rasp_android_service_jni)
+  target_sources(rasp_android_service_jni PRIVATE $<TARGET_OBJECTS:rasp_android_builtin_support>)
+  target_link_libraries(rasp_android_service_jni PRIVATE rasp_tfpsacrypto)
+endif()
