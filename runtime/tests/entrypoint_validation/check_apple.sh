@@ -25,9 +25,9 @@ for source in entrypoint_validation/src/link_validation.c entrypoint_validation/
     -c "$runtime/$source" -o "$out/$(basename "$source" .c).o"
 done
 for language in c objective-c c++ objective-c++; do
-  extra=(); if [[ "$language" == c++ || "$language" == objective-c++ ]]; then extra+=(-std=c++23 -nostdinc++); fi
+  extra=("${flags[@]}"); if [[ "$language" == c++ || "$language" == objective-c++ ]]; then extra+=(-std=c++23 -nostdinc++); fi
   if [[ "$language" == objective-c || "$language" == objective-c++ ]]; then extra+=(-fobjc-arc); fi
-  xcrun --sdk iphoneos clang -x "$language" "${flags[@]}" "${extra[@]}" "${includes[@]}" \
+  xcrun --sdk iphoneos clang -x "$language" "${extra[@]}" "${includes[@]}" \
     -F "$(dirname "$framework")" "$runtime/tests/entrypoint_validation/consumer.c" -x none \
     "$out/link_validation.o" "$out/c_host.o" -framework RaspRuntime -o "$out/consumer-${language//+/p}"
 done

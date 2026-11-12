@@ -14,5 +14,10 @@ cmake --build "$out" --parallel 2
 nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
 for consumer in entry_c entry_cpp; do
   "$nm" -D --defined-only "$out/$consumer" > "$out/$consumer-exports.txt"
-  if rg 'rasp_entry_|entry_demo_' "$out/$consumer-exports.txt"; then exit 1; fi
+  if grep -E 'rasp_entry_|entry_demo_' "$out/$consumer-exports.txt"; then
+    exit 1
+  else
+    grep_status=$?
+    [[ "$grep_status" -eq 1 ]] || exit "$grep_status"
+  fi
 done
