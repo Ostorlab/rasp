@@ -13,7 +13,9 @@
 #include "checks/hooks.h"
 #include "checks/identity.h"
 #include "checks/integrity.h"
+#include "checks/loader_provenance.h"
 #include "checks/mitm.h"
+#include "checks/module_provenance.h"
 #include "checks/overlay.h"
 #include "checks/root.h"
 #include "checks/root_namespace.h"
@@ -37,6 +39,8 @@ std::vector<Observation> run_checks(const Config& config) {
   }
   if (is_check_enabled(config, "hooks")) {
     std::ranges::move(checks::hooks(), std::back_inserter(observations));
+    std::ranges::move(checks::module_provenance(), std::back_inserter(observations));
+    std::ranges::move(checks::loader_provenance(), std::back_inserter(observations));
   }
   if (is_check_enabled(config, "integrity")) {
     std::ranges::move(checks::integrity(), std::back_inserter(observations));

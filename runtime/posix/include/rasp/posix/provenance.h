@@ -1,4 +1,4 @@
-/// Bounded, path-free provenance values shared by the inactive platform collectors.
+/// Bounded, path-free provenance values shared by the opt-in platform collectors.
 #pragma once
 
 #include <array>

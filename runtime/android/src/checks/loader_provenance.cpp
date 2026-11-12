@@ -1,4 +1,4 @@
-/// Inactive public topology implementation; no boot registration or named class loading.
+/// Public topology implementation; no boot registration or named class loading.
 #include "checks/loader_provenance.h"
 
 #include <array>

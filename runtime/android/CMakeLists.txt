@@ -15,6 +15,10 @@ add_library(rasp SHARED
   src/checks/debugger.cpp
   src/checks/emulator.cpp
   src/checks/hooks.cpp
+  src/checks/module_provenance.cpp
+  src/checks/module_provenance_io.c
+  src/checks/loader_provenance.cpp
+  src/checks/loader_provenance_jni.c
   src/checks/identity.cpp
   src/checks/integrity.cpp
   src/checks/mitm.cpp

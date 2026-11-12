@@ -1,4 +1,4 @@
-/// Fixed-signature C boundary for the inactive collector's own-process file open.
+/// Fixed-signature C boundary for the collector's own-process file open.
 #pragma once
 #ifdef __cplusplus
 extern "C" {

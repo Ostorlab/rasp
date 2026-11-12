@@ -1,4 +1,4 @@
-/// Inactive bounded dyld executable-image observation with owned native access boundaries.
+/// Bounded dyld executable-image observation with owned native access boundaries.
 #pragma once
 #include <cstdint>
 #include <string>
@@ -31,6 +31,6 @@ struct DyldCalls {
 [[nodiscard]] provenance::Pair collect_module_provenance(const provenance::Locations& locations,
                                                          DyldCalls calls = native_dyld_calls(),
                                                          provenance::Clock clock = provenance::monotonic_ns);
-/// Physical-iOS gate for eventual explicit integration; not registered in Stage A.
+/// Physical-iOS gate used by the explicitly selected hooks dispatcher.
 [[nodiscard]] provenance::Pair module_provenance();
 }  // namespace rasp::ios::checks

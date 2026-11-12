@@ -1,4 +1,4 @@
-/// Inactive public Application class-loader topology and location metadata; no class resolution.
+/// Public Application class-loader topology and location metadata; no class resolution.
 #pragma once
 #include <jni.h>
 
@@ -21,6 +21,6 @@ namespace rasp::android::checks {
     JNIEnv* env, jobject application, provenance::Clock clock = provenance::monotonic_ns);
 /// Gets roots only from the already initialized Application; no new global reference.
 [[nodiscard]] provenance::Locations application_provenance_locations();
-/// Reads the actual supplied Application chain for eventual explicit dispatch; currently inactive.
+/// Reads the actual supplied Application chain for explicit opt-in hooks dispatch.
 [[nodiscard]] provenance::Pair loader_provenance();
 }  // namespace rasp::android::checks

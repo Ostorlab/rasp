@@ -1,4 +1,4 @@
-/// Bounded own-process map/native-loader sampling, currently linked only by inactive tests.
+/// Bounded own-process map/native-loader sampling for the selected hooks group.
 #include "checks/module_provenance.h"
 
 #include <algorithm>
@@ -28,7 +28,12 @@
 #if __has_include(<bits/types/struct_iovec.h>)
 #include <bits/types/struct_iovec.h>
 #endif
+#ifdef __ANDROID__
+#include <bits/sysconf.h>
+#include <linux/uio.h>
+#else
 #include <elf.h>
+#endif
 #include <link.h>
 #include <sys/uio.h>
 #endif
@@ -38,6 +43,12 @@ namespace {
 using provenance::Budget;
 using provenance::Error;
 using provenance::Result;
+
+#ifdef __linux__
+/// Standard ELF PT_LOAD program-header type and PF_X flag, independent of host header macro redefinitions.
+constexpr std::uint32_t kExecutableLoad = 1;
+constexpr std::uint32_t kExecutableFlag = 1;
+#endif
 /// Input limits are independent of the32-row output sample.
 constexpr std::size_t kMaxMaps = std::size_t{4} * 1024U * 1024U;
 constexpr std::size_t kMaxNames = std::size_t{4} * 1024U * 1024U;
@@ -297,14 +308,14 @@ Result<ExecutableImage> copy_image(dl_phdr_info* borrowed, std::size_t size, Nat
     if (!state.budget->step()) {
       return std::unexpected(state.budget->error());
     }
-    if (header.p_type != PT_LOAD) {
+    if (header.p_type != kExecutableLoad) {
       continue;
     }
     auto interval = load_interval(header, info.dlpi_addr);
     if (!interval) {
       return std::unexpected(interval.error());
     }
-    if (interval->start == interval->end || (header.p_flags & PF_X) == 0) {
+    if (interval->start == interval->end || (header.p_flags & kExecutableFlag) == 0) {
       continue;
     }
     if (state.intervals == kMaxIntervals) {

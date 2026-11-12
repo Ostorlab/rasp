@@ -373,15 +373,15 @@ if(Java_FOUND AND JNI_FOUND)
       DEPENDS ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class)
     add_test(NAME AndroidLocalPolicy.operationGate
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
-        $<TARGET_FILE:rasp_android_context_bridge_jni> 5685df69e0340b2a8472c2929cd9be01db0444191abb8c5fdf366a51b0262c81)
+        $<TARGET_FILE:rasp_android_context_bridge_jni> 174e5db59a8f1bd3a657d8263d971b1507c66017b2513a2acda442deaa798cb0)
     set_tests_properties(AndroidLocalPolicy.operationGate PROPERTIES TIMEOUT 30)
     add_test(NAME AndroidLocalPolicy.uint32MaxVersion
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
-        $<TARGET_FILE:rasp_android_context_bridge_jni> 2a7a8bb45ec84bf9d23a6998b2f631505fa32a192fa771aae676df626a004ce4 4294967295)
+        $<TARGET_FILE:rasp_android_context_bridge_jni> b6f92e142a82c468fa63caae4ca728ecfb2d8aa60bc5822dace6f05388f307c8 4294967295)
     set_tests_properties(AndroidLocalPolicy.uint32MaxVersion PROPERTIES TIMEOUT 30)
     add_test(NAME AndroidLocalPolicy.reportOnlyAdmission
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
-        $<TARGET_FILE:rasp_android_context_bridge_jni> cd463047b2990133678d5afdd887eca134a46a1063c6d3c39b637472a4341fee 1 report_only)
+        $<TARGET_FILE:rasp_android_context_bridge_jni> d18c67bccbd63e3a4a4d6d6724932caa862f4272ee825eb3b61b1eafffaa2453 1 report_only)
     set_tests_properties(AndroidLocalPolicy.reportOnlyAdmission PROPERTIES TIMEOUT 30)
     add_test(NAME AndroidWindowBridge.lifecycle
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.WindowTest

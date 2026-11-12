@@ -1,4 +1,4 @@
-/// Inactive own-process executable maps/native-loader collector; no dispatcher registration.
+/// Own-process executable maps/native-loader collector for opt-in hooks diagnostics.
 #pragma once
 
 #include <cstddef>

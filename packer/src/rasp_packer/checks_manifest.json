@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 9,
+  "revision": 10,
   "plugins": "unmodelled",
   "platforms": {
     "android": {
@@ -278,6 +278,87 @@
               ],
               "supported_on": "android",
               "behavior": "Fixed libc/libdl entry comparison: at most 32 distinct changed function names in fixed resolution order; empty only after all 32 comparisons succeed. Compare min(16, nonzero symbol size) bytes from immutable executable ELF code with actual RX non-writable mapped addresses via checked own-process reads. Maps limited to 4 MiB/8192-byte lines, library 32 MiB; native ARM/Thumb, AArch64, x86 and x86_64 only. Missing/duplicate/reserved/IFUNC symbols, malformed metadata, text relocations, unavailable resolution, denied/short/stale reads or incomplete coverage produce error with no value and no partial list; unsupported off Android or for an unimplemented build architecture. Raw differences can include authorized instrumentation; matching disk/memory, unlisted/renamed targets, other inline sites, hidden modules and hookable APIs remain limitations, not malware or clean-device verdicts."
+            },
+            {
+              "signal": "hook.exec_modules",
+              "source": "proc_maps_v1",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported",
+                "timeout"
+              ],
+              "supported_on": "android",
+              "behavior": "Own-process executable mappings from actual permission fields; two complete bounded snapshots, 4 MiB/read, 8192 records and 8192 bytes/line. First32 reduced ASCII rows of at most192bytes, no paths/addresses/stable IDs. Lexical app/OS/other location and backing are unverified; loader correlation is unknown for changed/failed brackets or unavailable native source. Malformed, denied, cleanup or input-limit failures have no value; cooperative100ms deadline is timeout. Legitimate ART/JIT/memfd/plugin mappings are not malware or code-authenticity verdicts."
+            },
+            {
+              "signal": "hook.exec_modules_meta",
+              "source": "proc_maps_v1",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok"
+              ],
+              "supported_on": "android",
+              "behavior": "One fixed ASCII v=1 diagnostic string of at most256bytes per invocation, including unsupported platform/data failures. Status is always ok when the diagnostic is produced, not collection success. Fixed outcome/reason/seen/eligible/emitted/sample_truncated/scope/correlation/stability fields; unavailable counts are na and non-ok data has emitted0. Underlying data platform gate applies to its source, not diagnostic availability. No raw paths, classes, addresses, arbitrary errors, malware verdict or attestation."
+            },
+            {
+              "signal": "hook.exec_modules",
+              "source": "dl_iterate_phdr_v1",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported",
+                "timeout"
+              ],
+              "supported_on": "android",
+              "behavior": "Public own-process native loader executable PT_LOAD declarations with owned bounded copies:4096images,1024headers/image,2MiBheaders,4MiBnames,16384intervals; page-aware names at most4096bytes. First32 location/segment/flag rows of at most192bytes, no paths/addresses/stable IDs. Error/timeout has no partial value. Not exhaustive ART/JIT/memfd/linker-namespace coverage or attestation."
+            },
+            {
+              "signal": "hook.exec_modules_meta",
+              "source": "dl_iterate_phdr_v1",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok"
+              ],
+              "supported_on": "android",
+              "behavior": "One fixed ASCII v=1 diagnostic string of at most256bytes per invocation, including unsupported platform/data failures. Status is always ok when the diagnostic is produced, not collection success. Fixed outcome/reason/seen/eligible/emitted/sample_truncated/scope/correlation/stability fields; unavailable counts are na and non-ok data has emitted0. Underlying data platform gate applies to its source, not diagnostic availability. No raw paths, classes, addresses, arbitrary errors, malware verdict or attestation."
+            },
+            {
+              "signal": "hook.loader_chain",
+              "source": "application_classloader_v1",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported",
+                "timeout"
+              ],
+              "supported_on": "android",
+              "behavior": "Supplied Application public ClassLoader parent topology and concrete Class name reduction only; two passes,16nodes,256UTF16units/name,64local slots and at most2048JNI operations. At most16 fixed ASCII rows of96bytes, no class names/paths/object IDs or named class loading/private fields. Missing context/platform is unsupported; probe/race/cleanup/input errors and cooperative timeout have no partial chain. Legitimate custom and in-memory loaders imply no malware verdict."
+            },
+            {
+              "signal": "hook.loader_chain_meta",
+              "source": "application_classloader_v1",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok"
+              ],
+              "supported_on": "android",
+              "behavior": "One fixed ASCII v=1 diagnostic string of at most256bytes per invocation, including unsupported platform/data failures. Status is always ok when the diagnostic is produced, not collection success. Fixed outcome/reason/seen/eligible/emitted/sample_truncated/scope/correlation/stability fields; unavailable counts are na and non-ok data has emitted0. Underlying data platform gate applies to its source, not diagnostic availability. No raw paths, classes, addresses, arbitrary errors, malware verdict or attestation."
             }
           ]
         },
@@ -1314,6 +1395,33 @@
               ],
               "supported_on": "ios_device",
               "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "hook.exec_modules",
+              "source": "dyld_v1",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported",
+                "timeout"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical-iOS public dyld image declarations with owned exact copies and two bounded passes sharing a cooperative100ms budget:4096images/pass,4096commands/image,64KiBcommands/image,8MiBheaders/4MiBnames/pass. First32 executable-declaration rows of at most192bytes; no paths/addresses/stable IDs. Short/denied/malformed/racing/limit copies fail without partial value. Simulator/non-device is unsupported; declared flags are not live VM permissions or exhaustive executable memory/code authenticity."
+            },
+            {
+              "signal": "hook.exec_modules_meta",
+              "source": "dyld_v1",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One fixed ASCII v=1 diagnostic string of at most256bytes per invocation, including unsupported platform/data failures. Status is always ok when the diagnostic is produced, not collection success. Fixed outcome/reason/seen/eligible/emitted/sample_truncated/scope/correlation/stability fields; unavailable counts are na and non-ok data has emitted0. Underlying data platform gate applies to its source, not diagnostic availability. No raw paths, classes, addresses, arbitrary errors, malware verdict or attestation."
             }
           ]
         },

@@ -1,16 +1,11 @@
-# RT19 inactive collector tests
+# Module provenance checks
 
-Stage A is based on `0fd8b4d01f6d9e398904dea28f85d193daeb1edb`.
-The new Android maps/native-loader/public-JNI and iOS copied-dyld collectors are
-compiled only by this test directory. Their implementation is intended for later
-reuse after root approves Stage B. Normal dispatch, shipping source lists,
-catalogues, six iOS capture exports, packer code and installed resources retain
-all parent bytes. No new output is supported by a shipping artifact.
-
-The shared review contract is `/tmp/mega-adr/contracts/module-provenance.md`;
-local gate evidence and unavailable platform checks are recorded in
-`/tmp/mega-adr/reports/rt19.md`. Those shared files are outside the checkout.
-Root owns the final combined runtime/plugin/backend parent and revision.
+Stage B reuses the approved Stage A collectors from `f78a8187fac16db9d3b27cdd6f79577652185751`
+after merging HD02 `67002a9a9ae78409f90f42341c48f8971e1d15eb`. The shipping
+hooks dispatcher emits the allocated revision-10 pairs. Original inactive evidence
+and its checkpoint remain intact; dormant-stage assertions are no longer active.
+See [module-provenance.md](../../../docs/module-provenance.md) for public semantics
+and `/tmp/mega-adr/reports/rt19-stage-b.md` for exact task evidence.
 
 Collectors report unverified location/topology evidence, without paths, file or
 class names, addresses or stable module identifiers. App/OS location is lexical;
@@ -70,35 +65,31 @@ LLVM23 CI remains a separate gate.
 For NDK adapters, configure this directory with the NDK toolchain,
 `ANDROID_PLATFORM=android-31`, each supported `ANDROID_ABI`,
 `ANDROID_STL=c++_static` and `RASP_PROVENANCE_COMPILE_ONLY=ON`; build in Debug and
-Release. This produces inactive objects/static helpers, not a shipping runtime,
+Release. The standalone compile-only graph produces objects/static helpers, not a shipping runtime,
 DEX, sidecar or packer resource. Actual iPhoneOS/Simulator Foundation/Mach/dyld
 adapter compilation, minOS12 imports, UIKit/export gates and physical devices
 require the appropriate Apple environment; portable Mach-O fixtures cannot
 close those gates. On Apple, the bundle helper uses ARC and disables Objective-C
 exceptions in its test target.
 
-When included by the normal `RASP_BUILD_TESTS=ON` native graph, actual Android/iOS
-capability executables gain dormant builtin/CycleMonitor checks. Optional frozen
-PL03 sink checks require `RASP_PROVENANCE_PL03_SOURCE` pointing at the task-owned
-copy of exact commit `e5f3ec3df0cd3e34dfad43bdc15e6533578f22d7`, with its verified
-`source-identities.json`. Configuration validates every copied file hash. It
-uses unchanged Sender/serializer/CycleDelivery/Outbox/DNS encoder sources, real
-private storage, and captured external network boundaries. The digest C island
-uses the native TF-PSA SHA256 implementation with its private declaration macro;
-this test does not validate PL03 platform TLS adapters. No live sibling source
-or dependency environment is modified.
+When included in the normal native graph, the capability executables check actual
+selected/unselected builtin dispatch and both monitor callback paths. With actual
+reporting and DNS plugin targets selected, `pl05_sink_test.cpp` uses their real
+serializers, private storage, cycle admission, outbox restore/retry and DNS encoder.
+Only transport I/O is captured; no external service is contacted. Controlled lanes
+replace only collector I/O and preserve the actual parser, reducer and catalogue.
+They include source denial/deadline and sample saturation. Sentinel paths and
+addresses must be absent from new reduced rows. Existing older hooks retain their
+own payload semantics.
 
-Dormancy executables do not link collector objects. A separate explicit exposure
-executable invokes all eight proposed pairs and proves inherited serialization,
-spooling and retry without approved catalogue coverage or finite local TTL.
-Those intentionally incomplete test cycles are never published. Reporting
-opt-in can automatically upload/spool future delivered rows; no per-pair privacy
-filter is implemented. Stage B stays held before emission/artifact admission
-pending exact tenant/authority, hold, retention, erasure, restore and consumer
-approval. Existing deletion scope is not expanded.
+The stage-16 retry test preserves an old matched record with its still-active
+original authority: native storage has no finite TTL. Serialization loss, monitor
+retention loss and original caps remain visible. This does not implement backend
+retention/hold/erasure/restore controls or claim backend admission. Emitted fixtures
+are local test evidence for the separately owned registered-backend adoption gate.
 
-`ProvenanceDormancy.exactInheritedBytes` compares inherited files against the
-exact parent and admits only new collector/helpers/test paths plus the test
-CMake addition. It proves dormant source bytes, not device efficacy. The full
-unchanged installed packer matrix is not duplicated for these inactive objects;
-root must run genuine combined artifact/packer/consumer gates before Stage B.
+`ProvenanceIntegration.historyAndPolicy` checks exact revision-9 reconstruction,
+unchanged 125 semantic rule blocks, 13/7 selector digests, and the original
+3 Android/8 iOS exports. The Apple workflow checks actual SDK sources, obfuscation,
+framework exports/minOS12, packer consumer and UIKit hosts, including pinned PL05.
+Linux/portable fixtures do not close Apple SDK or physical-device gates.

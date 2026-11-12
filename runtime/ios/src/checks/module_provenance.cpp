@@ -1,4 +1,4 @@
-/// Inactive dyld provenance implementation; no dispatcher or constructor calls this source.
+/// Bounded dyld provenance implementation called by the selected hooks group.
 #include "checks/module_provenance.h"
 
 #include <cstddef>
@@ -123,19 +123,25 @@ Result<Declared> declared(const ProvenanceImage& image, Budget& budget) {
 #ifdef __APPLE__
 /// Copies only exact own-task bytes; VM errors are unknown/error, never benign.
 Result<void> copy_memory(std::uintptr_t address, std::span<std::uint8_t> bytes, Budget& budget) {
-  if (!budget.step()) return std::unexpected(budget.error());
-  if (address == 0 || bytes.size() > std::numeric_limits<std::uintptr_t>::max() - address)
+  if (!budget.step()) {
+    return std::unexpected(budget.error());
+  }
+  if (address == 0 || bytes.size() > std::numeric_limits<std::uintptr_t>::max() - address) {
     return std::unexpected(Error::kMalformed);
+  }
   mach_vm_size_t copied = 0;
   const auto result = mach_vm_read_overwrite(mach_task_self(), address, bytes.size(),
                                              std::bit_cast<mach_vm_address_t>(bytes.data()), &copied);
-  if (result != KERN_SUCCESS || copied != bytes.size())
+  if (result != KERN_SUCCESS || copied != bytes.size()) {
     return std::unexpected(result == KERN_PROTECTION_FAILURE ? Error::kDenied : Error::kIo);
+  }
   return {};
 }
 /// Returns at most the current readable region extent, releasing every returned port right exactly once.
 Result<std::size_t> region_bytes(std::uintptr_t pointer, Budget& budget) {
-  if (!budget.step()) return std::unexpected(budget.error());
+  if (!budget.step()) {
+    return std::unexpected(budget.error());
+  }
   mach_vm_address_t address = pointer;
   mach_vm_size_t size = 0;
   vm_region_basic_info_data_64_t info{};
@@ -144,12 +150,16 @@ Result<std::size_t> region_bytes(std::uintptr_t pointer, Budget& budget) {
   const auto result = mach_vm_region(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64,
                                      static_cast<vm_region_info_t>(static_cast<void*>(&info)), &count, &object);
   bool released = true;
-  if (object != MACH_PORT_NULL && object != MACH_PORT_DEAD)
+  if (object != MACH_PORT_NULL && object != MACH_PORT_DEAD) {
     released = mach_port_deallocate(mach_task_self(), object) == KERN_SUCCESS;
-  if (!released) return std::unexpected(Error::kCleanup);
+  }
+  if (!released) {
+    return std::unexpected(Error::kCleanup);
+  }
   if (result != KERN_SUCCESS || count != VM_REGION_BASIC_INFO_COUNT_64 || address > pointer ||
-      size > UINT64_MAX - address || pointer >= address + size || (info.protection & VM_PROT_READ) == 0)
+      size > UINT64_MAX - address || pointer >= address + size || (info.protection & VM_PROT_READ) == 0) {
     return std::unexpected(Error::kIo);
+  }
   return static_cast<std::size_t>(std::min<std::uint64_t>(256, address + size - pointer));
 }
 /// Copies bounded dyld-owned C-string bytes without assuming a valid borrowed pointer or page boundary.
@@ -157,16 +167,26 @@ Result<std::string> copied_name(std::uintptr_t pointer, Budget& budget) {
   std::string result;
   std::array<std::uint8_t, 256> buffer{};
   while (result.size() < 4096) {
-    if (pointer > std::numeric_limits<std::uintptr_t>::max() - result.size()) return std::unexpected(Error::kMalformed);
+    if (pointer > std::numeric_limits<std::uintptr_t>::max() - result.size()) {
+      return std::unexpected(Error::kMalformed);
+    }
     const auto address = pointer + result.size();
     const auto extent = region_bytes(address, budget);
-    if (!extent) return std::unexpected(extent.error());
+    if (!extent) {
+      return std::unexpected(extent.error());
+    }
     const auto length = std::min(*extent, 4096 - result.size());
     const auto copied = copy_memory(address, std::span(buffer).first(length), budget);
-    if (!copied) return std::unexpected(copied.error());
+    if (!copied) {
+      return std::unexpected(copied.error());
+    }
     for (const auto byte : std::span(buffer).first(length)) {
-      if (byte == 0) return result;
-      if (byte < 32 || byte == 127) return std::unexpected(Error::kMalformed);
+      if (byte == 0) {
+        return result;
+      }
+      if (byte < 32 || byte == 127) {
+        return std::unexpected(Error::kMalformed);
+      }
       result.push_back(static_cast<char>(byte));
     }
   }
@@ -174,35 +194,56 @@ Result<std::string> copied_name(std::uintptr_t pointer, Budget& budget) {
 }
 /// Public count accessor; count/index enumeration is best effort, not atomic.
 Result<std::uint32_t> native_count(void* /*context*/, Budget& budget) {
-  if (!budget.step()) return std::unexpected(budget.error());
+  if (!budget.step()) {
+    return std::unexpected(budget.error());
+  }
   return _dyld_image_count();
 }
 /// Reads a single copied image from public accessors and own-task memory APIs only.
 Result<ProvenanceImage> native_image(void* /*context*/, std::uint32_t index, Budget& budget) {
-  if (!budget.step()) return std::unexpected(budget.error());
+  if (!budget.step()) {
+    return std::unexpected(budget.error());
+  }
   const auto* header = _dyld_get_image_header(index);
-  if (!budget.step()) return std::unexpected(budget.error());
+  if (!budget.step()) {
+    return std::unexpected(budget.error());
+  }
   const auto* name = _dyld_get_image_name(index);
-  if (!budget.step()) return std::unexpected(budget.error());
+  if (!budget.step()) {
+    return std::unexpected(budget.error());
+  }
   const auto slide = _dyld_get_image_vmaddr_slide(index);
-  if (header == nullptr || name == nullptr) return std::unexpected(Error::kRace);
+  if (header == nullptr || name == nullptr) {
+    return std::unexpected(Error::kRace);
+  }
   auto copied = copied_name(std::bit_cast<std::uintptr_t>(name), budget);
-  if (!copied) return std::unexpected(copied.error());
+  if (!copied) {
+    return std::unexpected(copied.error());
+  }
   ProvenanceImage result{.name = std::move(*copied),
                          .header_address = std::bit_cast<std::uintptr_t>(header),
                          .slide = slide,
                          .bytes = std::vector<std::uint8_t>(util::kMachHeaderSize)};
   auto read = copy_memory(result.header_address, result.bytes, budget);
-  if (!read) return std::unexpected(read.error());
+  if (!read) {
+    return std::unexpected(read.error());
+  }
   const auto parsed = util::read_mach_header(result.bytes);
-  if (!parsed) return std::unexpected(Error::kMalformed);
-  if (parsed->commands_size > 65536 || parsed->command_count > 4096) return std::unexpected(Error::kInputLimit);
+  if (!parsed) {
+    return std::unexpected(Error::kMalformed);
+  }
+  if (parsed->commands_size > 65536 || parsed->command_count > 4096) {
+    return std::unexpected(Error::kInputLimit);
+  }
   const auto original = result.bytes;
   result.bytes.resize(util::kMachHeaderSize + parsed->commands_size);
   read = copy_memory(result.header_address, result.bytes, budget);
-  if (!read) return std::unexpected(read.error());
-  if (!std::ranges::equal(original, std::span(result.bytes).first(util::kMachHeaderSize)))
+  if (!read) {
+    return std::unexpected(read.error());
+  }
+  if (!std::ranges::equal(original, std::span(result.bytes).first(util::kMachHeaderSize))) {
     return std::unexpected(Error::kRace);
+  }
   return result;
 }
 #endif
