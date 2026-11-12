@@ -54,7 +54,7 @@ jobs:
 
       - name: Decode the app
         run: |
-          base64 --decode ci/app.ipa.b64 > "$RUNNER_TEMP/app.ipa"
+          base64 --decode < ci/app.ipa.b64 > "$RUNNER_TEMP/app.ipa"
           file "$RUNNER_TEMP/app.ipa"
 
       - name: Pack the app
