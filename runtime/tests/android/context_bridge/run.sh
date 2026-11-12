@@ -18,6 +18,6 @@ ctest --test-dir "$work" --parallel 2 --output-on-failure --no-tests=error \
   -R '^(AndroidWindowBridge[.]|WindowEvents[.]|AndroidContextBridge[.]|AndroidIdentity[.]|AndroidServiceExposure[.]|ApplicationContext[.]|AndroidPrivateStorage[.]|AndroidPrivateStorageVm[.])'
 
 if [[ "$(uname -s)" == Darwin ]]; then
-  cmake --build "$work" --parallel 2 --target rasp_ios_private_storage_test
-  ctest --test-dir "$work" --parallel 2 --output-on-failure --no-tests=error -R '^ApplePrivateStorage[.]'
+  cmake --build "$work" --parallel 2 --target rasp_ios_private_storage_test rasp_ios_private_entropy_test
+  ctest --test-dir "$work" --parallel 2 --output-on-failure --no-tests=error -R '^ApplePrivateStorage(Entropy)?[.]'
 fi

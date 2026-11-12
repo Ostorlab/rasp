@@ -143,5 +143,28 @@ TEST(ApplePrivateStorage, acquire_whenOwnedLegacyParentIsSelected_preservesIdent
     EXPECT_TRUE(storage->close().has_value());
   }
 }
+
+TEST(ApplePrivateStorage, acquire_whenFreshDirectoryUsesSecurityRandom_persistsOneVersionFourIdentity) {
+  @autoreleasepool {
+    const test_support::TemporaryDirectory directory;
+    StorageFixtureManager* manager = [[StorageFixtureManager alloc] init];
+    manager.fixtureRoot = [NSURL fileURLWithFileSystemRepresentation:directory.path().c_str()
+                                                         isDirectory:YES
+                                                       relativeToURL:nil];
+    const ScopedMethod selection(class_getClassMethod([NSFileManager class], @selector(defaultManager)),
+                                 sandbox_manager(manager));
+    auto first = acquire_private_storage();
+    ASSERT_TRUE(first.has_value());
+    const std::string identity(first->install_id());
+    ASSERT_EQ(identity.size(), 36U);
+    EXPECT_EQ(identity[14], '4');
+    EXPECT_NE(std::string_view("89ab").find(identity[19]), std::string_view::npos);
+    ASSERT_TRUE(first->close().has_value());
+    auto second = acquire_private_storage();
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ(second->install_id(), identity);
+    EXPECT_TRUE(second->close().has_value());
+  }
+}
 }  // namespace
 }  // namespace rasp

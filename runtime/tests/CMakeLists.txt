@@ -475,6 +475,11 @@ if(APPLE)
   target_link_libraries(rasp_ios_private_storage_test PRIVATE rasp_core rasp_warnings rasp_language
     GTest::gtest_main "$<LINK_LIBRARY:FRAMEWORK,Foundation>")
   gtest_discover_tests(rasp_ios_private_storage_test PROPERTIES TIMEOUT 30)
+  add_executable(rasp_ios_private_entropy_test ios/util/private_entropy_test.cpp)
+  target_include_directories(rasp_ios_private_entropy_test PRIVATE ${PROJECT_SOURCE_DIR}/posix/include
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_ios_private_entropy_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_ios_private_entropy_test PROPERTIES TIMEOUT 30)
 endif()
 
 add_executable(rasp_android_window_events_test android/events/window_events_test.cpp

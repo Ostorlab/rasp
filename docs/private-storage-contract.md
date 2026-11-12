@@ -24,6 +24,8 @@ The verified parent must belong to the effective app UID, permit owner rwx and f
 
 Corrupt, oversized, noncanonical or zero identities fail explicitly with `kInvalidIdentity`; they are not automatically rotated. Recovery requires deliberate operator/app-owned removal while no consumer holds a queue; the existing queue must be handled under its original identity. Unsafe objects are never removed as recovery. `load_or_create_install_id(directory)` keeps its source signature and now shares this same nonblocking lock/writer. Its observable hardening is deliberate: corrupt/zero/noncanonical values and contention return nullopt instead of automatic rotation or waiting. The old `.tmp` name is neither copied nor trusted; the new writer owns only `rasp_install_id.private.tmp`.
 
+Identity generation uses `getentropy` on Android/Linux and the public Security framework `SecRandomCopyBytes` on Apple platforms. A nonzero result rejects acquisition with `kRandomUnavailable`; there is no predictable fallback. The Apple path supports the existing deployment floor and does not require a private or unavailable iOS kernel header.
+
 `StorageError` distinguishes absent platform capability (`kUnavailable`), contention (`kBusy`), invalid ownership/path (`kInvalidDirectory`), unsafe files (`kUnsafeFile`), invalid identity (`kInvalidIdentity`), filesystem failure (`kIoError`), secure random failure (`kRandomUnavailable`), and iOS backup exclusion failure (`kBackupExclusionFailed`). These are capability states, not malware observations. No secret store, encryption or cryptographic attestation is provided.
 
 ## Review and validation

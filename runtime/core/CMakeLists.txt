@@ -24,6 +24,7 @@ add_library(rasp_core STATIC
   src/util/read_file.cpp)
 # The host suite exercises the POSIX clock used by its native platform too.
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR APPLE)
+  target_link_libraries(rasp_core PRIVATE "$<LINK_LIBRARY:FRAMEWORK,Security>")
   target_include_directories(rasp_core PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
   target_sources(rasp_core PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/cycle_clock.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/util/storage_flags.cpp)

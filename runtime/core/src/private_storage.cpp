@@ -153,7 +153,11 @@ class Descriptor {
 /// Gets secure bytes through the supported OS API; entropy failures never fall back to predictable identifiers.
 [[nodiscard]] std::expected<std::string, StorageError> random_identity() {
   std::array<std::uint8_t, 16> bytes{};
+#ifdef __APPLE__
+  if (SecRandomCopyBytes(kSecRandomDefault, bytes.size(), bytes.data()) != 0) {
+#else
   if (getentropy(bytes.data(), bytes.size()) != 0) {
+#endif
     return std::unexpected(StorageError::kRandomUnavailable);
   }
   bytes[6] = static_cast<std::uint8_t>((bytes[6] & 0x0fU) | 0x40U);
