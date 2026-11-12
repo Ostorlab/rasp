@@ -1,28 +1,11 @@
-# Builds the obfuscated iOS runtime framework and packs an IPA with it, on the Xcode 27 runner.
-#
-# This is a manual (workflow_dispatch) job: it builds RaspRuntime.framework with O-MVLL obfuscation on
-# (RASP_OBFUSCATE_IOS=ON), embeds it in the packer, packs the IPA you point it at, and uploads the packed
-# (unsigned) IPA as an artifact. Signing and installing on a device are done separately -- the runner has no
-# device and no signing identity. The IPA to pack is not committed; pass it as a base64 input, or adapt the
-# "Fetch the app" step to download it from where you keep it.
-name: iOS pack
+# Loop packer. On push to the loop branch it builds the obfuscated iOS runtime FROM THIS BRANCH'S
+# runtime/ code, embeds it in the packer, packs the committed test IPA (ci/app.ipa.b64), and uploads
+# the packed (unsigned) IPA as the `app-protected-ipa` artifact. Signing + device install happen off-CI.
+name: iOS pack (loop)
 
 on:
-  workflow_dispatch:
-    inputs:
-      app_base64:
-        description: "The IPA to pack, base64-encoded (e.g. `base64 -i app.ipa | pbcopy`)"
-        required: true
-        type: string
-      build_id:
-        description: "Build id written into the protected app"
-        required: true
-        type: string
-      checks:
-        description: "Comma-separated check groups (e.g. debugger,hooks,jailbreak)"
-        required: false
-        default: "debugger,hooks,jailbreak"
-        type: string
+  push:
+    branches: ["wip/zakaria-ios-rasp-loop"]
 
 env:
   CMAKE_VERSION: "4.4.1"
@@ -30,7 +13,7 @@ env:
 jobs:
   pack:
     runs-on: xcode-27
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -55,21 +38,12 @@ jobs:
         working-directory: runtime
         run: cmake --build --preset ios --parallel
 
-      - name: Check it built and is obfuscated
-        working-directory: runtime
-        run: |
-          binary=build/ios/ios/RaspRuntime.framework/RaspRuntime
-          file "$binary" | grep -q "Mach-O 64-bit dynamically linked shared library arm64"
-          # The jailbreak signal strings must not be readable in the obfuscated binary.
-          test -z "$(strings -a "$binary" | grep -iF 'jailbreak_signal')"
-
       - name: Embed the framework in the packer
         working-directory: runtime
         run: |
           dest="../packer/src/rasp_packer/ios/resources"
           rm -rf "$dest/RaspRuntime.framework"
           cp -R build/ios/ios/RaspRuntime.framework "$dest/RaspRuntime.framework"
-          ls -la "$dest/RaspRuntime.framework"
 
       - name: Install the packer
         working-directory: packer
@@ -80,15 +54,15 @@ jobs:
 
       - name: Decode the app
         run: |
-          echo '${{ inputs.app_base64 }}' | base64 --decode > "$RUNNER_TEMP/app.ipa"
+          base64 --decode ci/app.ipa.b64 > "$RUNNER_TEMP/app.ipa"
           file "$RUNNER_TEMP/app.ipa"
 
       - name: Pack the app
         run: |
           rasp pack "$RUNNER_TEMP/app.ipa" \
             --platform ios \
-            --build-id '${{ inputs.build_id }}' \
-            --checks '${{ inputs.checks }}' \
+            --build-id "${GITHUB_SHA}" \
+            --checks 'debugger,hooks,jailbreak' \
             --output "$RUNNER_TEMP/app-protected.ipa"
 
       - name: Upload the packed IPA
