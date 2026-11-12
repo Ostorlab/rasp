@@ -5,9 +5,9 @@ It counts MotionEvent obscuration flags received by this app. It does not identi
 screens, prevent taps, or prove malware. Legitimate overlays and system windows are context too. Android can block
 some obscured touches before delivery; such touches are outside this observer's coverage.
 
-Introduced in schema 1, revision 6 and retained unchanged in canonical schema 1, revision 9,
-**73 Android/52 iOS** outputs, catalogue
-`2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d`. The ten rows generate both native cycle identities and compiled expectations from the same manifest.
+These ten rows were introduced in schema 1, revision 6 and remain unchanged in canonical schema 1,
+revision 9. The catalogue declares **73 Android/52 iOS** outputs with digest
+`2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d`. The same manifest generates both native cycle identities and compiled expectations for these rows.
 All prior signer/service/inline/iOS rows are preserved exactly; the temporary selector is removed.
 
 ## Host setup

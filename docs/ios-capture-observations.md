@@ -1,13 +1,17 @@
-# iOS screenshots and selected-scene capture observations
+# iOS screenshot and capture-state observations
 
-The optional `screenshot` and `screen_recording` groups require explicit host source integration.
-Packing alone does not install UIKit observers. Both groups remain disabled by default;
-identity-only defaults, iOS 12.0 / arm64 and Android API31 support are preserved.
+**iOS capture observations** are two opt-in groups, `screenshot` and `screen_recording`, that report
+post-capture screenshot notifications and capture state from a host-selected scene or the
+display-scoped legacy fallback. They include freshness and loss metadata. Explicit host source
+integration is required; packing alone does not install UIKit observers.
 
 A notification or capture flag does not prevent capture, identify a recorder, attribute another
 app's recording, detect remote control, prove malware or attest a device. Legitimate screen
 sharing produces the same observations. No screen image, screenshot file, view text, URL,
 scene title, account identifier, scene session identifier or object address is collected.
+
+Both groups remain disabled by default; identity-only defaults, iOS 12.0 / arm64 and Android
+API31 support are preserved.
 
 ## Public APIs and scope
 
@@ -60,15 +64,15 @@ if (started == RASP_IOS_CAPTURE_OK || started == RASP_IOS_CAPTURE_NO_CHANGE) {
 The host additionally selects `screenshot`, `screen_recording`, or both in the packer's check
 configuration. Source opt-in and group selection are independent. Without host integration,
 a selected supported group reports never_started and measured state remains error/absent.
-A host may use the C symbols through dlsym for an unpacked build; absence is integration absent,
-not success. Do not install another runtime or pretend an absent function succeeded.
+A host may use the C symbols through dlsym for an unpacked build; missing symbols mean no
+integration, not success. Do not install another runtime or pretend an absent function succeeded.
 
 | Function | Ownership behavior |
 |---|---|
-| `rasp_ios_capture_start(options)` | Nonzero screenshot/recording bit set; identical active options are idempotent, changed options require stop/start. |
+| `rasp_ios_capture_start(options)` | Nonzero screenshot/recording bit set; identical active options return NO_CHANGE without ownership mutation or setup retry. Changed options require successful stop then start. |
 | `rasp_ios_capture_select_scene(scene)` | Replaces the one weak selected scene after invalidating/removing old ownership. Same selection is NO_CHANGE, not a refresh. |
 | `rasp_ios_capture_select_legacy_window(window)` | Explicit non-scene display fallback on iOS 12–16 only. |
-| `rasp_ios_capture_clear_selection(object)` | Clears only the identical current selection. Another scene's teardown cannot clear a newer selection. |
+| `rasp_ios_capture_clear_selection(object)` | Cleans slots for only the identical current selection; removes ownership only when cleanup succeeds. Another scene's teardown cannot clear a newer selection. |
 | `rasp_ios_capture_refresh()` | Confirms current activity/selection and reads state on main; no selection/discovery or drain. |
 | `rasp_ios_capture_stop()` | Makes callbacks inert before removal; pending deltas survive stop/start. |
 
@@ -79,6 +83,24 @@ Reentrant host entries during an in-progress operation return UNAVAILABLE withou
 Successful operations confirm integration work, not a capture state or future delivery guarantee.
 A setup failure in one source preserves the other source. Shared process lifecycle/timer failures
 invalidate both. Repeating start is not a retry of a failed registration; stop/start is explicit.
+
+### Recovery after setup or cleanup errors
+
+For repeated start/select calls, NO_CHANGE means no ownership mutation, not health, a refresh or
+a registration retry. Read the source availability, freshness and loss observations separately;
+NO_CHANGE cannot turn failed or absent evidence into a measured negative capture state.
+
+| Failed operation | Explicit host recovery on main |
+|---|---|
+| `rasp_ios_capture_start(options)` registration | Call `rasp_ios_capture_stop()` and require OK or NO_CHANGE before a new `rasp_ios_capture_start(options)`. Repeating the failed start with identical options does not retry setup. |
+| Selected-scene registration after a successful start | While the original scene remains live, call `rasp_ios_capture_clear_selection(original)` and require OK before explicitly selecting it again. Repeating selection or calling refresh does not repair failed lifecycle registration. Successful stop/start followed by explicit selection is another recovery path. |
+| Cleanup returns CLEANUP_ERROR | If clear failed, retry that matching clear or stop; if stop failed, retry stop. Require cleanup success before replacement. Failed slots stay inert and bounded; persistent failure can require process restart. |
+
+Keep the original selected object live while clearing it. NO_CHANGE from clear can mean that the
+argument is not the current selection; it does not prove that matching cleanup occurred. If the
+host cannot establish that the intended ownership was cleared, use a successful stop/start rather
+than treating that status as repair. A successful stop can return OK or NO_CHANGE; neither promises
+that the next start or registration will succeed. Check every subsequent status.
 
 ## Ownership, lifecycle and freshness
 
@@ -103,7 +125,7 @@ A main-runloop timer rechecks ownership/activity and samples every 5 seconds. Ti
 refresh reads count as resamples, not callback events. A sample/heartbeat age at most 15,000 ms
 is fresh; 15,001 ms is stale. Missing/backwards clocks produce clock_unavailable. Recovery needs
 a fresh main-thread sample/heartbeat; a worker clock recovering alone does not restore old evidence.
-The worker never calls UIKit, dispatches to main or waits for a main-thread response.
+The worker never calls UIKit, never dispatches to main, and never waits for a main-thread response.
 
 Screenshot blocks do no UIKit work and can accept primitive notifications on the posting thread;
 Apple's screenshot documentation does not promise a delivery thread. Last main-confirmed active
@@ -154,6 +176,10 @@ Capture rows use source `uikit_capture_observer` except where stated:
 | loss_events | integer | Detected gaps/failures or resample-discovered changes |
 | counter_overflow | Boolean | Saturated interval counter incremented again |
 | interval_ms | integer | Selected source interval, -1 unavailable |
+
+The `state` suffix occurs once per source: `uikit_scene_trait` + `capture.recording.state` is a
+string, while `uikit_screen_capture` + `capture.recording.state` is Boolean. Preserve the source
+as part of each identity; do not collapse these rows by suffix alone.
 
 Availability reasons are unsupported, never_started, not_requested, exhausted, teardown_error,
 registration_error, error, deactivated, no_selection, disconnected, owner_gone, inactive,
