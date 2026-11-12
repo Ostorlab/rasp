@@ -5,6 +5,7 @@ add_library(rasp_core STATIC
   src/embedded_config.cpp
   src/install_id.cpp
   src/observation.cpp
+  src/panic.cpp
   src/parse_config.cpp
   src/plugins/init_plugins.cpp
   src/plugins/run_plugins.cpp
