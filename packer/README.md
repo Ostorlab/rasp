@@ -107,3 +107,24 @@ The runtime runs its checks in groups, such as `debugger` or `hooks`. `src/rasp_
 - writes the ids sorted into the runtime config.
 
 An empty choice, such as `checks=[]`, runs only the required groups. Without `--checks`, the command line warns and packs the app with only the required groups.
+
+## Post-pack verification
+
+Every successful `packer.pack` / `rasp pack` now verifies the serialized output before creating the requested output file. The platform packers use the same verification path when called directly. Packing writes to a temporary directory beside the destination, verifies that archive, then atomically creates the destination without overwriting an existing file. Failed packing or verification removes the staging files. The destination filesystem must support hard links.
+
+The CLI reports `unsigned, structurally verified` on success. A verification failure raises `errors.VerificationError` in the library and exits with status 1 and a diagnostic on stderr in the CLI. Unknown requested checks still follow the existing skip-and-report behavior; verification requires the resulting embedded configuration to contain the supported, sorted, unique checks and all required checks.
+
+`rasp_packer.verification.verify(app=..., platform=..., config=..., expected_entries=...)` is the reusable read-only API. `expected_entries` is a mapping of ZIP paths to the **trusted bytes prepared for injection**, including every injected/replaced manifest, loader, runtime and payload entry. Keep those bytes from the packing step; deriving them from an untrusted output would defeat replacement detection. The platform packers construct this contract automatically. The API returns `VerificationResult` with the artifact format (`apk`, `aab`, `ipa`), app identity, declared config and verified runtime paths, or raises `VerificationError`. There is no separate standalone CLI verifier because verifying replacement requires this trusted injection contract.
+
+The checks are deliberately structural:
+
+| Artifact | Verified contract |
+| --- | --- |
+| All formats | Unique canonical ZIP member paths; no traversal, file/directory aliases, symlinks, encryption or unsupported compression; injected bytes present at their exact paths; embedded config exactly matches the canonical declared config. |
+| APK | Binary manifest identity, RASP component factory and minimum API 31; base DEX entries; runtime for every native ABI; runtime ELF machine, bitness, little-endian encoding and shared-library type match its ABI directory; authenticated key/map/business payload coherence; stored payload members; actual local ZIP data alignment (16 KiB for stored `.so`, 4 bytes for other stored files). |
+| AAB | Protobuf base manifest, `base/dex`, `base/lib` and `base/assets` paths; the same runtime ELF/config and authenticated payload checks for the base module. Feature modules and unrelated assets are preserved, without imposing base-module ABI coverage or APK alignment on feature delivery. |
+| IPA | Exactly one main app bundle; its executable retains execute permission; main executable and embedded runtime are unencrypted arm64 Mach-O files of executable/dylib type respectively; the executable strongly loads `@rpath/RaspRuntime.framework/RaspRuntime` with `@executable_path/Frameworks`; the framework plist names `RaspRuntime`; every runtime slice contains the declared config. Other architectures and encrypted App Store executables are rejected. |
+
+ZIP input is bounded to 4 GiB on disk, 100,000 members and 4 GiB total uncompressed; APK/AAB readers retain their stricter 1 GiB total. Individual members cannot exceed the archive limit; manifests/plists are limited to 4 MiB and runtime binaries to 256 MiB. Embedded config sections must lie entirely inside the binary, be at most 64 KiB and contain a zero terminator. The encrypted Android class map is limited to 16 MiB. Empty business-code sets are valid and need no encrypted business DEX. `assets/rasp/` and numbered `assets/business/<i>.dex` entries are reserved for packer output.
+
+The output remains **unsigned**. Structural verification is not proof of installation, successful device execution, attack resistance or runtime provenance. The verifier trusts the runtime build and upstream DEX splitter, and compares loader/payload bytes without adding another DEX parser. It does not run checks on a device, validate store signatures, or certify AAB `native.pb`/`BundleConfig.pb`, delivery configuration, generated split APKs or their final alignment. Google Play/bundletool generate those APKs; validate, sign and test the generated artifacts with the target platform tools before shipping. Fixture-sized runtime binaries exercise the archive/config contract in tests; real Android and iOS builds and devices remain separate platform validation.
