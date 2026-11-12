@@ -254,3 +254,9 @@ On the release binaries, it checks that:
 - the framework exports no symbols, and the Android library exports only the JVM's `JNI_OnLoad` hook;
 - neither imports any of `exit`, `_Exit`, `quick_exit`, `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `setenv`, `putenv`, `unsetenv`, `setlocale` and `setrlimit`. `.clang-tidy` forbids these functions in the source, and also `abort` and `std::terminate`, which the binary check leaves out;
 - neither writes logs: the framework imports no symbol with `_os_log` in its name and contains no `{public}` text, and the Android library imports no symbol with `__android_log` in its name and contains no `RaspRuntime` text.
+
+## Android source Context integration
+
+Hosts can optionally supply their attached Application Context through `RuntimeBridge.initialize(Context)`.
+See [integration, compile-only packaging, lifecycle and failure behavior](android/stub/README.md).
+Binary-only apps retain existing best-effort measurements; a supported Context is not automatically available.
