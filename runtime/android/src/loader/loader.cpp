@@ -1,12 +1,17 @@
 /// @file The JNI layer of the on-demand loader. The runtime loads the loader's dex, which is embedded in the library,
 /// binds its native findClass, creates the loader, and installs it as the parent of the app's base loader. Everything
-/// the loader does, from its install to the first time a class is needed, lives here, in native code.
+/// the loader does, from its install to the first time a class is needed, lives here, in native code. Serving a class
+/// is also a checkpoint of the runtime's protection: at most once a second, one quick check runs on the thread that
+/// asked for the class.
 ///
 /// Only `JNI_OnLoad` is an exported symbol. It binds `RaspStub.install` with RegisterNatives; `install` in turn binds
 /// `GeneratingClassLoader.findClass` on the class it just loaded. So neither native method is a `Java_...` symbol, and
 /// the library's symbols can be stripped or renamed.
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <jni.h>
 #include <mutex>
 #include <optional>
@@ -19,10 +24,18 @@
 
 #include "apk/archive.h"
 #include "apk/location.h"
+#include "checks/debugger.h"
+#include "checks/hooks.h"
+#include "checks/root.h"
 #include "loader/loader_dex.h"
+#include "panic/end_process.h"
 #include "payload/assets.h"
 #include "payload/cipher.h"
 #include "payload/dex_store.h"
+#include "rasp/heartbeat.h"
+#include "rasp/observation.h"
+#include "rasp/panic.h"
+#include "rasp/schedule.h"
 #include "rasp/util/logging.h"
 
 namespace rasp::android::loader {
@@ -59,6 +72,56 @@ struct State {
   /// dex. Held by value like `define_locks`, so a pointer to one stays valid as the map grows.
   std::unordered_map<std::string, std::mutex> dex_locks;
 };
+
+/// The shortest time between two checkpoints, whichever call site runs them.
+constexpr std::chrono::milliseconds kCheckpointInterval{1000};
+
+/// A checkpoint: runs one quick check when the loader serves a class, and arms a panic when it detects something.
+///
+/// At most one checkpoint runs per kCheckpointInterval, across every call site and thread; every other call returns
+/// after reading the clock and one atomic. The one that runs picks one check at random, the debugger, hooking or root
+/// check, observes the monitoring thread's heartbeat, and passes both to panic_on_detection. It is always inlined, so
+/// each call site holds its own copy, and patching one call site leaves the others. A development build logs the call
+/// site, how many classes were served since the last checkpoint, how long the check took and what it observed.
+///
+/// @param site The call site, for development logs.
+/// @param name The binary name of the class being served, for development logs.
+[[gnu::always_inline]] inline void checkpoint(int site, const std::string& name) noexcept {
+  static constinit RateLimit limit{kCheckpointInterval};
+  static constinit std::atomic<std::uint32_t> served{0};
+  if constexpr (kLoggingEnabled) {
+    served.fetch_add(1, std::memory_order_relaxed);
+  }
+  const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+  if (!limit.try_acquire(now)) {
+    return;
+  }
+  std::vector<Observation> observations;
+  switch (arc4random_uniform(3)) {
+    case 0:
+      observations = checks::debugger();
+      break;
+    case 1:
+      observations = checks::hooks();
+      break;
+    default:
+      observations = checks::root();
+      break;
+  }
+  observations.push_back(monitor_heartbeat().observe(now));
+  if constexpr (kLoggingEnabled) {
+    const auto took =
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - now).count();
+    std::string line = "checkpoint " + std::to_string(site) + " on " + name + " after " +
+                       std::to_string(served.exchange(0, std::memory_order_relaxed)) + " classes, " +
+                       std::to_string(took) + " us:";
+    for (const Observation& observation : observations) {
+      line += " " + describe(observation) + ";";
+    }
+    rasp::log(line);
+  }
+  static_cast<void>(panic_on_detection(observations, end_process));
+}
 
 /// Reads the payload key from the app's APK, the key that decrypts the class map and every business dex.
 ///
@@ -198,6 +261,7 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
   if (!bytes.has_value()) {
     return nullptr;
   }
+  checkpoint(2, name);
   jobject child = make_child_loader(env, generating, *bytes);
   if (child == nullptr) {
     // make_child_loader may leave a JNI exception pending; clear it so the caller's base-loader fallback is clean.
@@ -234,13 +298,20 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
   const std::string name = to_string(env, class_name);
   State& current = state();
 
+  bool is_cached = false;
+  jobject cached = nullptr;
   {
     const std::scoped_lock guard(current.maps_mutex);
     const auto found = current.defined.find(name);
     if (found != current.defined.end()) {
-      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): JNI jobject to jclass.
-      return static_cast<jclass>(env->NewLocalRef(found->second));
+      is_cached = true;
+      cached = env->NewLocalRef(found->second);
     }
+  }
+  if (is_cached) {
+    checkpoint(1, name);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): JNI jobject to jclass.
+    return static_cast<jclass>(cached);
   }
 
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
@@ -297,6 +368,9 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
     if (global != nullptr) {
       current.defined.emplace(name, global);
     }
+  }
+  if (owner != nullptr) {
+    checkpoint(3, name);
   }
   return defined;
 }

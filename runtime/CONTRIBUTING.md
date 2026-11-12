@@ -55,7 +55,7 @@ Fix clang-tidy findings instead of silencing them with `NOLINT`. If a check is w
 
 ## Never crash the app
 
-Detections are the one exception, and they end the app on purpose: when a built-in check detects something, `panic_on_detection` (`core/include/rasp/panic.h`) ends it a few seconds later, through a direct system call. The checks run at start-up and on our thread. A stopped monitoring thread is a detection too: the thread beats a heartbeat (`core/include/rasp/heartbeat.h`), and a heartbeat seen stale twice, while the app keeps running, reports `integ.monitor_alive` false. A development build only logs what would have ended it. No other code ends the app.
+Detections are the one exception, and they end the app on purpose: when a built-in check detects something, `panic_on_detection` (`core/include/rasp/panic.h`) ends it a few seconds later, through a direct system call. The checks run at start-up, on our thread, and on Android at checkpoints of the on-demand loader, when it serves a class. A stopped monitoring thread is a detection too: the thread beats a heartbeat (`core/include/rasp/heartbeat.h`), and a heartbeat seen stale twice, while the app keeps running, reports `integ.monitor_alive` false. A development build only logs what would have ended it. No other code ends the app.
 
 ### Errors are values, never exceptions
 
@@ -71,7 +71,7 @@ When a choice exists, use the function that can't fail.
 
 ### Load time and the main thread
 
-The runtime starts from a function that runs while the app loads, on the app's main thread, before the app's own code. Anything slow there delays the app's launch, and if launch takes too long, the system kills the app. That function runs only the start-up checks, the few that take a few milliseconds together, use no network and never call `fork`, then starts our own thread, which runs every other check and does the waiting. Measure a check on a device before you add it to the start-up checks. On Android, the stub then asks the library for the on-demand loader on the main thread, before the app's own code, so that must stay fast too.
+The runtime starts from a function that runs while the app loads, on the app's main thread, before the app's own code. Anything slow there delays the app's launch, and if launch takes too long, the system kills the app. That function runs only the start-up checks, the few that take a few milliseconds together, use no network and never call `fork`, then starts our own thread, which runs every other check and does the waiting. Measure a check on a device before you add it to the start-up checks. On Android, the stub then asks the library for the on-demand loader on the main thread, before the app's own code, so that must stay fast too. The checkpoints the loader runs when it serves a class are rate-limited, so most class loads only pay for a clock read and an atomic read.
 
 For the same reason, CI enforces three rules on the code that ships:
 
