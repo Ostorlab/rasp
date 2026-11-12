@@ -90,11 +90,12 @@ Operational limits are 64 MiB per input/rewritten DEX, 256 input and 256 output 
 256 MiB aggregate input and separately aggregate output, 100,000 unique classes,
 1,048,576 aggregate input string IDs and nesting depth 64. Mapping limits are 64 MiB,
 1,000,000 class records and 65,536 bytes per line. These are compatibility limits,
-not DEX format maxima. A request also has **16,777,216 work units**, **268,435,456
-cumulative logical allocation bytes**, and **268,435,456 cumulative retained native
-backing bytes**. Real apps can exceed these finite limits even below the input size
-cap; the checked-in 6.1 MB InsecureBankv2 DEX currently does. It fails explicitly.
-There is no automatic larger-budget fallback.
+not DEX format maxima. A retained request also has **64,000,000 work units** (decimal,
+not 64 Mi), **1,610,612,736 cumulative logical allocation bytes** (1.5 GiB), and
+**536,870,912 cumulative retained native backing bytes** (512 MiB). Aggregate input
+and output remain separately capped at 256 MiB each. Real apps can exceed these finite
+limits even below the input size cap and fail explicitly. There is no automatic
+larger-budget fallback.
 
 Native allocations consume logical allowance before allocation, including pool reuse,
 copies and retries; actual pool growth consumes backing allowance including headers,

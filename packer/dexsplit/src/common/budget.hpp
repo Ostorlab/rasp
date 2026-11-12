@@ -22,8 +22,11 @@
 /// Finite, cumulative request accounting; releasing memory never replenishes a budget.
 namespace dexsplit::budget {
 inline constexpr std::size_t kDexBytes = 64U * 1024U * 1024U;
+/// Aggregate input/output bytes stay separate from cumulative allocation and backing limits.
 inline constexpr std::size_t kTotalBytes = 256U * 1024U * 1024U;
-inline constexpr std::size_t kWork = 16U * 1024U * 1024U;
+inline constexpr std::size_t kAllocationBytes = 1536U * 1024U * 1024U;
+inline constexpr std::size_t kBackingBytes = 512U * 1024U * 1024U;
+inline constexpr std::size_t kWork = 64000000;
 inline constexpr std::size_t kClasses = 100000;
 inline constexpr std::size_t kStrings = 1048576;
 inline constexpr std::size_t kFiles = 256;
@@ -48,8 +51,8 @@ struct State {
   // Conservative fixed allowance for State/control block/pool object and native request bookkeeping.
   std::size_t backing = 4096;
   std::size_t max_work = kWork;
-  std::size_t max_storage = kTotalBytes;
-  std::size_t max_backing = kTotalBytes;
+  std::size_t max_storage = kAllocationBytes;
+  std::size_t max_backing = kBackingBytes;
   std::mutex accounting_mutex;
   std::mutex pool_mutex;
   struct Upstream : std::pmr::memory_resource {

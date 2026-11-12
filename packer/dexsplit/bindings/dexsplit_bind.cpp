@@ -62,7 +62,7 @@ struct Request {
   std::shared_ptr<budget::State> state = std::make_shared<budget::State>();
   std::unique_ptr<budget::Scope> scope;
   Request(std::size_t work, std::size_t storage) {
-    if (work > budget::kWork || storage > budget::kTotalBytes) {
+    if (work > budget::kWork || storage > budget::kAllocationBytes) {
       throw py::value_error("request limits exceed finite defaults");
     }
     if (budget::active != nullptr) {
@@ -309,7 +309,7 @@ PYBIND11_MODULE(_dex, m) {
   py::register_exception<budget::Exhausted>(m, "BudgetError", PyExc_ValueError);
   py::class_<Request>(m, "Request")
       .def(py::init<std::size_t, std::size_t>(), py::arg("work") = budget::kWork,
-           py::arg("storage") = budget::kTotalBytes)
+           py::arg("storage") = budget::kAllocationBytes)
       .def(
           "__enter__",
           [](Request& request) -> Request& {

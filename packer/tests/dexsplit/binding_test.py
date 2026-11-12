@@ -44,6 +44,39 @@ def testRequest_whenNested_doesNotResetAllowance() -> None:
         assert outer.work == 3
 
 
+def testRequest_whenApprovedDefaultIsExactlyConsumed_nestedScopeCannotReset() -> None:
+    with _dex.Request() as outer:
+        outer.charge(work=64_000_000, storage=1_610_612_736)
+        with _dex.Request() as inner:
+            assert inner.work == 64_000_000
+            assert inner.storage == 1_610_612_736
+            with pytest.raises(_dex.BudgetError):
+                inner.charge(work=1)
+            with pytest.raises(_dex.BudgetError):
+                inner.charge(storage=1)
+        assert outer.work == 64_000_000
+        assert outer.storage == 1_610_612_736
+
+
+@pytest.mark.parametrize(
+    ("limit", "value"),
+    [("work", 64_000_001), ("work", 67_108_864), ("storage", 1_610_612_737)],
+)
+def testRequest_whenAboveExactApprovedDefault_refuses(limit: str, value: int) -> None:
+    arguments = {limit: value}
+    with pytest.raises(ValueError, match="exceed finite defaults"):
+        _dex.Request(**arguments)
+
+
+def testRead_whenAllocationBudgetIncreases_inputByteCapsStayUnchanged() -> None:
+    payload = bytes(64 * 1024 * 1024 + 1)
+    with pytest.raises(ValueError, match="64 MiB"):
+        _dex.Model.read(payload)
+    exact_input_limit = payload[:-1]
+    with pytest.raises(ValueError, match="aggregate DEX input limit exceeded"):
+        _dex.AnalysisContext.from_dex_buffers([exact_input_limit] * 5)
+
+
 @pytest.mark.parametrize("limit", ["work", "storage"])
 def testRead_whenNativeAllowanceIsExhausted_failsBeforeGrowth(limit: str) -> None:
     request = _dex.Request(work=0) if limit == "work" else _dex.Request(storage=0)
@@ -68,7 +101,7 @@ def testWrite_whenOriginalRequestScopeExited_retainsCumulativeAllowance() -> Non
             break
     assert exhausted is True
     assert request.storage <= allowance
-    assert request.backing <= 256 * 1024 * 1024
+    assert request.backing <= 512 * 1024 * 1024
     with pytest.raises(_dex.BudgetError):
         model.write()
 

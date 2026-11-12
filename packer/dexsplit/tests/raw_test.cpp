@@ -44,6 +44,34 @@ TEST(Raw, allocate_whenBudgetIsTooSmall_failsBeforeBackingGrowth) {
   budget::Scope scope(state);
   EXPECT_THROW((budget::Vector<uint8_t>(1024)), budget::Exhausted);
 }
+TEST(Raw, charge_whenAtApprovedDefaults_rejectsOneMoreWithoutRefund) {
+  budget::State state;
+  EXPECT_EQ(state.max_work, 64000000U);
+  EXPECT_EQ(state.max_storage, 1610612736U);
+  EXPECT_EQ(state.max_backing, 536870912U);
+  EXPECT_EQ(budget::kDexBytes, 67108864U);
+  EXPECT_EQ(budget::kTotalBytes, 268435456U);
+  state.charge(64000000U, 1610612736U);
+  EXPECT_THROW(state.charge(1, 0), budget::Exhausted);
+  EXPECT_THROW(state.charge(0, 1), budget::Exhausted);
+  EXPECT_EQ(state.work, 64000000U);
+  EXPECT_EQ(state.storage, 1610612736U);
+}
+TEST(Raw, allocate_whenBackingReachesApprovedDefault_checksAlignmentBeforeGrowth) {
+  budget::State state;
+  constexpr auto alignment = alignof(std::max_align_t);
+  state.backing = 536870912U - alignment;
+  void* pointer = nullptr;
+  ASSERT_NO_THROW(pointer = state.upstream.allocate(1, alignment));
+  EXPECT_EQ(state.backing, 536870912U);
+  state.upstream.deallocate(pointer, 1, alignment);
+  EXPECT_EQ(state.backing, 536870912U);
+  void* refused = nullptr;
+  EXPECT_THROW(refused = state.upstream.allocate(1, alignment), budget::Exhausted);
+  if (refused != nullptr) {
+    state.upstream.deallocate(refused, 1, alignment);
+  }
+}
 TEST(Raw, allocate_whenRetainedPoolOutlivesScopes_remainsBoundedAndReleasesOwner) {
   auto state = std::make_shared<budget::State>();
   std::weak_ptr<budget::State> owner = state;
