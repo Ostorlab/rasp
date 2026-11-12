@@ -12,11 +12,19 @@ JNIEnv* attached_env() {
   if (JNI_GetCreatedJavaVMs(&vm, 1, &count) != JNI_OK || count < 1 || vm == nullptr) {
     return nullptr;
   }
+#ifdef __ANDROID__
   JNIEnv* env = nullptr;
+#else
+  void* env = nullptr;
+#endif
   if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
     return nullptr;
   }
+#ifdef __ANDROID__
   return env;
+#else
+  return static_cast<JNIEnv*>(env);
+#endif
 }
 
 bool threw(JNIEnv* env) {

@@ -24,6 +24,7 @@
 #include "payload/cipher.h"
 #include "payload/dex_store.h"
 #include "rasp/util/logging.h"
+#include "util/application_context.h"
 
 namespace rasp::android::loader {
 
@@ -441,8 +442,8 @@ void install(JNIEnv* env, jclass /*stub*/, jobject base, jstring library_search_
 
 }  // namespace rasp::android::loader
 
-/// Binds RaspStub.install with RegisterNatives when the library loads, so the loader's native entry point is not an
-/// exported `Java_...` symbol. JNI_OnLoad is the only symbol the VM resolves by name.
+/// Binds RaspStub.install and optionally RuntimeBridge initialization with RegisterNatives when the library loads.
+/// JNI_OnLoad is the only symbol the VM resolves by name; bridge failure leaves the existing loader available.
 ///
 /// @param vm The Java virtual machine loading the library.
 /// @return The JNI version the library needs, or JNI_ERR when the method can't be bound.
@@ -469,5 +470,6 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     env->ExceptionClear();
     return JNI_ERR;
   }
+  static_cast<void>(rasp::android::util::register_context_bridge(env));
   return JNI_VERSION_1_6;
 }
