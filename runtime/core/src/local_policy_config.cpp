@@ -62,6 +62,24 @@ bool number(const yyjson_val* value, std::uint32_t minimum, std::uint32_t maximu
   output = static_cast<std::uint32_t>(parsed);
   return true;
 }
+/// Validate independent semantic pins before accepting any operation policy.
+bool compatible_versions(const yyjson_val* value, Config& config) {
+  static constexpr std::array<std::string_view, 5> kVersions{
+      "schema_version", "engine_version", "report_schema_version", "report_reason_version", "native_metadata_version",
+  };
+  for (const auto version : kVersions) {
+    std::uint32_t number_value = 0;
+    if (!number(yyjson_obj_getn(value, version.data(), version.size()), 1, std::numeric_limits<std::uint32_t>::max(),
+                number_value)) {
+      return false;
+    }
+    if (number_value != 1) {
+      config.local_policy.state = LocalPolicyStateKind::kUnsupported;
+      return false;
+    }
+  }
+  return true;
+}
 /// Find a reviewed platform rule; unknown/context/capture rows have no fallback.
 const Selector* selector(std::string_view platform, std::string_view rule_id) {
   for (const auto& candidate : kSelectors) {
@@ -235,6 +253,24 @@ bool explicit_config(const yyjson_val* root, const Config& config, std::string_v
   }
   return true;
 }
+/// Fill bounded target/operation fields separately from the policy envelope.
+bool read_fields(const yyjson_val* root, Config& config, LocalPolicy& policy) {
+  const auto* const value = yyjson_obj_get(root, "local_policy");
+  policy.platform = text(yyjson_obj_get(value, "platform"));
+  if ((policy.platform != "android" && policy.platform != "ios") ||
+      text(yyjson_obj_get(value, "catalogue_id")) != kCatalogue) {
+    config.local_policy.state = LocalPolicyStateKind::kUnsupported;
+    return false;
+  }
+  const auto mode = text(yyjson_obj_get(value, "mode"));
+  if ((mode != "gate" && mode != "report_only") || text(yyjson_obj_get(value, "scope")) != "host_calls_only") {
+    return false;
+  }
+  policy.state = mode == "gate" ? LocalPolicyStateKind::kGate : LocalPolicyStateKind::kReportOnly;
+  policy.policy_id = text(yyjson_obj_get(value, "policy_id"));
+  return name(policy.policy_id, 64) && number(yyjson_obj_get(value, "policy_version"), 1,
+                                              std::numeric_limits<std::uint32_t>::max(), policy.policy_version);
+}
 }  // namespace
 
 bool config_envelope(std::string_view json) {
@@ -274,7 +310,7 @@ void read_policy(const yyjson_val* root, Config& config) {
   LocalPolicy policy;
   policy.state = LocalPolicyStateKind::kInvalid;
   config.local_policy = policy;
-  constexpr std::array<std::string_view, 12> kKeys{
+  static constexpr std::array<std::string_view, 12> kKeys{
       "schema_version",
       "engine_version",
       "policy_id",
@@ -291,36 +327,10 @@ void read_policy(const yyjson_val* root, Config& config) {
   if (!keys(value, kKeys)) {
     return;
   }
-  constexpr std::array<std::string_view, 5> kVersions{
-      "schema_version", "engine_version", "report_schema_version", "report_reason_version", "native_metadata_version",
-  };
-  for (const auto version : kVersions) {
-    const std::string key(version);
-    std::uint32_t number_value = 0;
-    if (!number(yyjson_obj_get(value, key.c_str()), 1, std::numeric_limits<std::uint32_t>::max(), number_value)) {
-      return;
-    }
-    if (number_value != 1) {
-      config.local_policy.state = LocalPolicyStateKind::kUnsupported;
-      return;
-    }
-  }
-  policy.platform = text(yyjson_obj_get(value, "platform"));
-  if ((policy.platform != "android" && policy.platform != "ios") ||
-      text(yyjson_obj_get(value, "catalogue_id")) != kCatalogue) {
-    config.local_policy.state = LocalPolicyStateKind::kUnsupported;
+  if (!compatible_versions(value, config)) {
     return;
   }
-  const auto mode = text(yyjson_obj_get(value, "mode"));
-  if ((mode != "gate" && mode != "report_only") || text(yyjson_obj_get(value, "scope")) != "host_calls_only") {
-    return;
-  }
-  policy.state = mode == "gate" ? LocalPolicyStateKind::kGate : LocalPolicyStateKind::kReportOnly;
-  policy.policy_id = text(yyjson_obj_get(value, "policy_id"));
-  if (!name(policy.policy_id, 64) ||
-      !number(yyjson_obj_get(value, "policy_version"), 1, std::numeric_limits<std::uint32_t>::max(),
-              policy.policy_version) ||
-      !explicit_config(root, config, policy.platform) ||
+  if (!read_fields(root, config, policy) || !explicit_config(root, config, policy.platform) ||
       !operations(yyjson_obj_get(value, "operations"), config, policy)) {
     return;
   }

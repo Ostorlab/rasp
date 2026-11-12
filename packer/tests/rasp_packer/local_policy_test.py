@@ -252,3 +252,84 @@ def testSupport_whenConfigOnlyElfHasMatchingDescriptors_stillRejectsMissingFacad
     )
     with pytest.raises(errors.InvalidRuntimeError, match="exports"):
         resources.policy_bindings(artifacts, ("arm64-v8a",), required=True)
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ('"policy_id":"demo"', '"policy_id":"' + "p" * 65 + '"'),
+        ('"name":"append_demo_receipt"', '"name":"' + "o" * 33 + '"'),
+        ('"max_evidence_age_ms":75000', '"max_evidence_age_ms":999'),
+        ('"max_evidence_age_ms":75000', '"max_evidence_age_ms":120001'),
+        ('"max_cycle_duration_ms":5000', '"max_cycle_duration_ms":0'),
+        ('"max_cycle_duration_ms":5000', '"max_cycle_duration_ms":10001'),
+        ('"max_evidence_age_ms":75000', '"max_evidence_age_ms":1000'),
+        ('"policy_version":1', '"policy_version":-0'),
+        ('"policy_version":1', '"policy_version":4294967296'),
+        ('"rule_version":1', '"rule_version":2'),
+        ('"report_reason_version":1', '"report_reason_version":2'),
+        ('"native_metadata_version":1', '"native_metadata_version":2'),
+        ('"mode":"gate"', '"mode":"gate","mode":"gate"'),
+        ('"policy_id":"demo"', '"policy_id":"demo","extra":false'),
+    ],
+)
+def testPolicy_whenSharedBoundaryVectorsAreInvalid_bothParsersRefuse(
+    tmp_path: pathlib.Path, before: str, after: str
+) -> None:
+    data = (
+        json.dumps(policy_document(), separators=(",", ":"))
+        .replace(before, after)
+        .encode()
+    )
+    with pytest.raises(errors.InvalidLocalPolicyError):
+        local_policy.parse(data)
+    probe = os.environ.get("RASP_LOCAL_POLICY_PROBE")
+    if probe is not None:
+        filename = tmp_path / "config.json"
+        filename.write_bytes(
+            b'{"build_id":"test","checks":["debugger"],"local_policy":' + data + b"}"
+        )
+        result = subprocess.run(
+            [probe, str(filename), "android"],
+            check=True,
+            capture_output=True,
+            timeout=10,
+        )
+        output = json.loads(result.stdout)
+        assert output["status"] != 0
+        assert output["config_state"] in (3, 4)
+
+
+@pytest.mark.parametrize(
+    "mutation", ["duplicate_rule", "empty_rules", "five_operations", "nine_total_rules"]
+)
+def testPolicy_whenSelectionBoundsAreExceeded_rejectsWithoutTruncation(
+    mutation: str,
+) -> None:
+    document = policy_document()
+    operations = document["operations"]
+    assert isinstance(operations, list)
+    operation = operations[0]
+    if mutation == "duplicate_rule":
+        operation["rules"] *= 2
+    elif mutation == "empty_rules":
+        operation["rules"] = []
+    elif mutation == "five_operations":
+        document["operations"] = [
+            dict(operation, name="op" + str(index)) for index in range(5)
+        ]
+    else:
+        inventory = [
+            entry
+            for entry in local_policy.selector_inventory()["rules"]
+            if entry["platform"] == "android"
+        ]
+        rules = [
+            {"rule_id": entry["rule_id"], "rule_version": entry["rule_version"]}
+            for entry in inventory[:3]
+        ]
+        document["operations"] = [
+            dict(operation, name="op" + str(index), rules=rules) for index in range(3)
+        ]
+    with pytest.raises(errors.InvalidLocalPolicyError):
+        local_policy.parse(json.dumps(document).encode())
