@@ -75,19 +75,45 @@
       "source": "sysctl_syscall",
       "status": "unsupported",
       "value": null
+    },
+    {
+      "signal": "hook.inline",
+      "source": "prologue",
+      "status": "ok",
+      "value": []
+    },
+    {
+      "signal": "hook.inline",
+      "source": "prologue",
+      "status": "ok",
+      "value": [
+        "open"
+      ]
+    },
+    {
+      "signal": "hook.inline",
+      "source": "prologue",
+      "status": "error",
+      "value": null
+    },
+    {
+      "signal": "hook.inline",
+      "source": "prologue",
+      "status": "unsupported",
+      "value": null
     }
   ],
   "catalogue": {
     "schema_version": 1,
-    "revision": 2,
-    "catalogue_id": "f011b708204f5fcc5aedab7427097b9666676af412d05a43a9eaf5a937f7bc40",
+    "revision": 3,
+    "catalogue_id": "caa83ed5b9ce8a93058c1445220d3416e2f59796eee59f25254bd4811996d1b6",
     "observation_counts": {
-      "android": 27,
+      "android": 28,
       "ios": 26
     }
   },
   "unmatched_previous_release": {
-    "catalogue_id": "5628418b4c23ec3dd7a4975c03ff7cfc2272df37b22c21c35dc60cf0ed137e90",
+    "catalogue_id": "f011b708204f5fcc5aedab7427097b9666676af412d05a43a9eaf5a937f7bc40",
     "expected_outputs": null,
     "health": "unsupported"
   }

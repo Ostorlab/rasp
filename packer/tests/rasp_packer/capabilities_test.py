@@ -218,6 +218,7 @@ def testBind_whenPreviousCatalogueRevisionHasMatchingBytes_rejects() -> None:
         ("android", "debugger", "dbg.tracer_pid", "proc_status_syscall", "integer"),
         ("android", "hooks", "hook.maps_hits", "proc_maps_syscall", "string_list"),
         ("android", "hooks", "hook.threads", "proc_task", "string_list"),
+        ("android", "hooks", "hook.inline", "prologue", "string_list"),
         ("android", "root", "root.fs_paths", "access", "string_list"),
         ("android", "root", "root.fs_paths", "stat", "string_list"),
         ("android", "root", "root.fs_paths", "faccessat_syscall", "string_list"),
@@ -242,3 +243,28 @@ def testCatalogue_whenReviewedSourceRegistered_preservesTypedErrors(
     assert row["value_kind"] == kind
     assert set(row["statuses"]) == {"ok", "error", "unsupported"}
     assert row["cardinality"] == "one"
+
+
+def testCatalogue_whenInlineSourceRegistered_preservesBoundedUnknownContract() -> None:
+    platforms_document = capabilities.catalogue()["platforms"]
+    android_hooks = next(
+        group["observations"]
+        for group in platforms_document["android"]["groups"]
+        if group["name"] == "hooks"
+    )
+    identities = {(row["signal"], row["source"]): row for row in android_hooks}
+    assert ("hook.inline", "prologue") in identities
+    row = identities[("hook.inline", "prologue")]
+    assert row["value_kind"] == "string_list"
+    assert row["cardinality"] == "one"
+    assert row["value_cardinality"] == "variable"
+    assert set(row["statuses"]) == {"ok", "error", "unsupported"}
+    assert row["supported_on"] == "android"
+    assert "at most 32" in row["behavior"]
+    assert "empty only after all 32 comparisons succeed" in row["behavior"]
+    assert "no partial list" in row["behavior"]
+    assert all(
+        entry["signal"] != "hook.inline"
+        for group in platforms_document["ios"]["groups"]
+        for entry in group["observations"]
+    )

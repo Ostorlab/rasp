@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 2,
+  "revision": 3,
   "plugins": "unmodelled",
   "platforms": {
     "android": {
@@ -264,6 +264,20 @@
               ],
               "supported_on": "android",
               "behavior": "Own /proc/self/task comm names only: at most 4096 entries; complete names of 1-15 non-control bytes plus newline. Up to 32 sorted/deduplicated matching names retained while continuing validation. Denial, disappearance, malformed/oversized name or incomplete enumeration makes the entire source error, with no partial list. Generic gmain is not a marker; renamed/hidden threads evade."
+            },
+            {
+              "signal": "hook.inline",
+              "source": "prologue",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Fixed libc/libdl entry comparison: at most 32 distinct changed function names in fixed resolution order; empty only after all 32 comparisons succeed. Compare min(16, nonzero symbol size) bytes from immutable executable ELF code with actual RX non-writable mapped addresses via checked own-process reads. Maps limited to 4 MiB/8192-byte lines, library 32 MiB; native ARM/Thumb, AArch64, x86 and x86_64 only. Missing/duplicate/reserved/IFUNC symbols, malformed metadata, text relocations, unavailable resolution, denied/short/stale reads or incomplete coverage produce error with no value and no partial list; unsupported off Android or for an unimplemented build architecture. Raw differences can include authorized instrumentation; matching disk/memory, unlisted/renamed targets, other inline sites, hidden modules and hookable APIs remain limitations, not malware or clean-device verdicts."
             }
           ]
         },
