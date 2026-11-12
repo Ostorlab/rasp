@@ -98,7 +98,7 @@ A check that calls `fork` creates a copy of the app's process. The copy has a si
 
 ### Threads and exit
 
-The app can exit at any moment, and our thread may be in the middle of its work when it does. Our thread never ends on its own: it runs the checks again every minute until the process exits, so the app always exits while it runs. The thread must not hold anything that breaks if the process ends there, and the app must never wait for our thread in order to exit.
+The app can exit at any moment, and our thread may be in the middle of its work when it does. Our thread never ends on its own: it runs the checks again after a random wait of 30 to 90 seconds, until the process exits, so the app always exits while it runs. The thread must not hold anything that breaks if the process ends there, and the app must never wait for our thread in order to exit.
 
 ### System calls
 
