@@ -9,8 +9,8 @@ import java.util.List;
 
 /** Actual production Java/JNI/C gate before a harmless host-owned in-memory operation. */
 public final class PolicyTest {
-    private static native boolean initializeNative(long[] configuration);
-    private static native void publishValuesNative(long[] values);
+    static native boolean initializeNative(long[] configuration);
+    static native void publishValuesNative(long[] values);
     private static void publishNative(int tracer, int status, long tick) {
         publishValuesNative(new long[] {tracer, status, tick});
     }

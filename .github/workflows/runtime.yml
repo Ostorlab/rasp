@@ -36,6 +36,7 @@ jobs:
         run: |
           clang-format --version
           git ls-files -z -- '*.h' '*.cpp' '*.mm' '*.h.in' | xargs -0 clang-format --dry-run --Werror
+          git ls-files -z -- 'host_context/*.c' 'tests/host_context/*.c' | xargs -0 -r clang-format --dry-run --Werror
 
   tidy:
     runs-on: ubuntu-24.04
@@ -65,6 +66,7 @@ jobs:
         run: |
           clang-tidy --version
           run-clang-tidy -quiet -p build/host "^$PWD/(?!build/).*\.cpp$"
+          run-clang-tidy -quiet -p build/host "^$PWD/host_context/src/.*\.c$"
 
   host:
     runs-on: ubuntu-24.04
@@ -221,6 +223,7 @@ jobs:
           file "$binary" | grep -q "Mach-O 64-bit dynamically linked shared library arm64"
           test "$(otool -D "$binary" | tail -n 1)" = "@rpath/RaspRuntime.framework/RaspRuntime"
           ./tests/ios/capture/check_framework.sh build/ios/ios/RaspRuntime.framework "$RUNNER_TEMP/ios-capture-release"
+          bash tests/host_context/check_apple.sh "$PWD/build/ios/ios/RaspRuntime.framework" "$RUNNER_TEMP/ios-context-release"
           xcrun vtool -show-build "$binary" | grep -qxE ' *minos 12\.0'
           test -z "$(otool -L "$binary" | grep 'libc++')"
       - name: Check the framework calls no forbidden function
@@ -263,9 +266,12 @@ jobs:
         run: |
           clang-tidy --version
           run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.(cpp|mm)$"
+          run-clang-tidy -quiet -p "$RUNNER_TEMP/ios-context-release/analysis" "^$PWD/host_context/.*\.c$"
       - name: Check development capture ABI and build the actual UIKit host
         run: |
           ./tests/ios/capture/check_framework.sh build/ios-dev/ios/RaspRuntime.framework "$RUNNER_TEMP/ios-capture-debug"
+          bash tests/host_context/check_apple.sh "$PWD/build/ios-dev/ios/RaspRuntime.framework" "$RUNNER_TEMP/ios-context-debug"
+          run-clang-tidy -quiet -p "$RUNNER_TEMP/ios-context-debug/analysis" "^$PWD/host_context/.*\.c$"
           cmake -S tests/ios/capture/host -B "$RUNNER_TEMP/ios-capture-host" -G "Unix Makefiles" \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
@@ -361,6 +367,10 @@ jobs:
           "$RUNNER_TEMP/build-tools/bin/python" tools/verify_packaging.py "$binary" android '${{ matrix.abi }}'
       - name: Link installed primitive C and C++ policy consumers
         run: bash tests/android/local_policy/check_library.sh "$RUNNER_TEMP/runtime-release" '${{ matrix.abi }}' "$RUNNER_TEMP/policy-release"
+      - name: Compile and link local host context release consumers
+        run: |
+          bash tests/host_context/check_android.sh "$RUNNER_TEMP/runtime-release" '${{ matrix.abi }}' "$RUNNER_TEMP/context-release" Release
+          run-clang-tidy -quiet -p "$RUNNER_TEMP/context-release" "^$PWD/host_context/.*\.c$"
       - name: Configure the development build with the private storage plugin consumer
         run: cmake --preset android-dev -DANDROID_ABI=${{ matrix.abi }} -DRASP_PLUGINS=tests/plugins/private_storage
       - name: Build the development build
@@ -375,6 +385,8 @@ jobs:
         run: |
           cmake --install build/android-dev --prefix "$RUNNER_TEMP/runtime-debug" --component runtime
           bash tests/android/local_policy/check_library.sh "$RUNNER_TEMP/runtime-debug" '${{ matrix.abi }}' "$RUNNER_TEMP/policy-debug"
+          bash tests/host_context/check_android.sh "$RUNNER_TEMP/runtime-debug" '${{ matrix.abi }}' "$RUNNER_TEMP/context-debug" Debug
+          run-clang-tidy -quiet -p "$RUNNER_TEMP/context-debug" "^$PWD/host_context/.*\.c$"
       - name: Build the stub
         run: |
           jar="$(ls -d "$ANDROID_HOME"/platforms/android-*/android.jar | sort -V | tail -1)"
@@ -382,3 +394,4 @@ jobs:
           ANDROID_JAR="$jar" D8="$d8" ./android/stub/build.sh "$RUNNER_TEMP"
           test -s "$RUNNER_TEMP/stub.dex"
           ANDROID_JAR="$jar" ANDROID_BUILD_TOOLS="$(dirname "$d8")" bash tests/android/local_policy/device/build.sh "$RUNNER_TEMP/policy-host" "$RUNNER_TEMP/runtime-bridge-compile-only.jar"
+          ANDROID_JAR="$jar" ANDROID_BUILD_TOOLS="$(dirname "$d8")" bash tests/host_context/android/device/build.sh "$RUNNER_TEMP/context-host" "$RUNNER_TEMP/runtime-bridge-compile-only.jar"
