@@ -120,7 +120,10 @@ During development, write log lines only with `rasp::log`, and only inside `if c
 
 ### Other rules
 
-- **No exported symbols.** CI checks that the framework exports nothing, and that the Android library exports no entry point of its own, at most the JVM's `JNI_OnLoad` hook. Exported names show an attacker where our functions are, and could clash with functions of the same name in the app.
+- **Fixed iOS host API only.** The framework exports exactly the six C capture integration functions in
+  `ios/capture_exports.txt`; its linker allowlist and release/debug artifact gates reject every other export.
+  The public `ios_capture.h` header and actual iOS host linkage are checked together. No C++ objects cross this ABI.
+  CI checks that the Android library exports no entry point of its own, at most the JVM's `JNI_OnLoad` hook. Exported names show an attacker where our functions are, and could clash with functions of the same name in the app.
 - **Treat everything from outside as hostile.** Files and system call results can be forged. Parse with limits and check every value before using it.
 - **No secrets in the source or the binary.** Anything in the binary can be extracted.
 

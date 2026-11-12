@@ -2,7 +2,7 @@
 
 **Android signer observations** are bounded, untrusted reports of SHA-256 certificate digests read from the running app's APK signing block and public PackageManager. They do not prove signature validity, authenticity or malware.
 
-The `identity` group adds four versioned outputs without changing group selection or its five legacy outputs. Benign rotation and parallel signing are controls, not repackaging verdicts. The [canonical catalogue](../packer/src/rasp_packer/checks_manifest.json) defines supported outputs and bindings; [portable fixtures](fixtures/android-signer-observations-v1.json), generated cycle definitions and compiled capability expectations use that same source. Existing identity-only defaults and scalar fields remain intact. The four outputs introduced in revision 5 remain unchanged in schema 1, revision 8: **73 Android / 26 iOS** identities, catalogue `479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a`.
+The `identity` group adds four versioned outputs without changing group selection or its five legacy outputs. Benign rotation and parallel signing are controls, not repackaging verdicts. The [canonical catalogue](../packer/src/rasp_packer/checks_manifest.json) defines supported outputs and bindings; [portable fixtures](fixtures/android-signer-observations-v1.json), generated cycle definitions and compiled capability expectations use that same source. Existing identity-only defaults and scalar fields remain intact. The four outputs introduced in revision 5 remain unchanged in schema 1, revision 9: **73 Android / 52 iOS** identities, catalogue `2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d`.
 
 | Signal | Source | Successful value |
 |---|---|---|

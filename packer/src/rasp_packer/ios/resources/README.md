@@ -17,3 +17,5 @@ staged by `cmake --install ... --component runtime`. The packer validates its by
 before inserting config. It removes the pristine sidecar from the copied, modified framework
 and returns source-artifact provenance to the caller. Invalid present metadata raises
 `InvalidRuntimeError`; missing metadata permits legacy packing with unknown capabilities.
+
+The framework also ships its matching `Headers/ios_capture.h`. Optional UIKit observation requires explicit host calls to these six fixed C exports; packing does not install observers. See [iOS capture integration](../../../../../docs/ios-capture-observations.md). Never exchange C++ objects across the framework ABI.

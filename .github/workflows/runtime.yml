@@ -11,6 +11,8 @@ permissions:
 env:
   LLVM_VERSION: "23"
   CMAKE_VERSION: "4.4.4"
+  CMAKE_BUILD_PARALLEL_LEVEL: "2"
+  CTEST_PARALLEL_LEVEL: "2"
 
 jobs:
   format:
@@ -218,7 +220,7 @@ jobs:
           binary=build/ios/ios/RaspRuntime.framework/RaspRuntime
           file "$binary" | grep -q "Mach-O 64-bit dynamically linked shared library arm64"
           test "$(otool -D "$binary" | tail -n 1)" = "@rpath/RaspRuntime.framework/RaspRuntime"
-          test -z "$(nm -gU "$binary")"
+          ./tests/ios/capture/check_framework.sh build/ios/ios/RaspRuntime.framework "$RUNNER_TEMP/ios-capture-release"
           xcrun vtool -show-build "$binary" | grep -qxE ' *minos 12\.0'
           test -z "$(otool -L "$binary" | grep 'libc++')"
       - name: Check the framework calls no forbidden function
@@ -261,6 +263,14 @@ jobs:
         run: |
           clang-tidy --version
           run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.(cpp|mm)$"
+      - name: Check development capture ABI and build the actual UIKit host
+        run: |
+          ./tests/ios/capture/check_framework.sh build/ios-dev/ios/RaspRuntime.framework "$RUNNER_TEMP/ios-capture-debug"
+          cmake -S tests/ios/capture/host -B "$RUNNER_TEMP/ios-capture-host" -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DRASP_FRAMEWORK="$PWD/build/ios-dev/ios/RaspRuntime.framework"
+          cmake --build "$RUNNER_TEMP/ios-capture-host" --config Debug --parallel 2 -- CODE_SIGNING_ALLOWED=NO
       - name: Check the development build writes logs
         run: nm -u build/ios-dev/ios/RaspRuntime.framework/RaspRuntime | grep -q _os_log
 

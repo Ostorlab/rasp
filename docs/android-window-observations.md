@@ -5,9 +5,9 @@ It counts MotionEvent obscuration flags received by this app. It does not identi
 screens, prevent taps, or prove malware. Legitimate overlays and system windows are context too. Android can block
 some obscured touches before delivery; such touches are outside this observer's coverage.
 
-Introduced in schema 1, revision 6 and retained unchanged in canonical schema 1, revision 8,
-**73 Android/26 iOS** outputs, catalogue
-`479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a`. The ten rows generate both native cycle identities and compiled expectations from the same manifest.
+Introduced in schema 1, revision 6 and retained unchanged in canonical schema 1, revision 9,
+**73 Android/52 iOS** outputs, catalogue
+`2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d`. The ten rows generate both native cycle identities and compiled expectations from the same manifest.
 All prior signer/service/inline/iOS rows are preserved exactly; the temporary selector is removed.
 
 ## Host setup
@@ -164,7 +164,7 @@ PYTHONPATH=src python -m pytest -q tests/rasp_packer/android/window_bridge_integ
 These tests use the SDK-compiled host APK and the repository's real InsecureBankv2 AAB, the actual splitter and
 post-pack verifier, and the built native libraries. They assert one bridge/nested wrapper definition and exact
 native configuration bytes for all four ABIs. These fixture tests also cover the unknown capability path with no sidecars. Release validation additionally builds
-an isolated installed wheel with exact revision 8 sidecars and exercises the public APK/AAB path and real post-pack
+an isolated installed wheel with exact revision 9 sidecars and exercises the public APK/AAB path and real post-pack
 verifier, including mismatched artifacts and malformed staged-output controls. No installed Android behavior is implied by successful archive verification.
 
 

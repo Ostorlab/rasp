@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 8,
+  "revision": 9,
   "plugins": "unmodelled",
   "platforms": {
     "android": {
@@ -1523,6 +1523,382 @@
               ],
               "supported_on": "never",
               "behavior": "Always unsupported; user trust store enumeration is not implemented."
+            }
+          ]
+        },
+        {
+          "name": "screenshot",
+          "required": false,
+          "observations": [
+            {
+              "signal": "capture.screenshot.observer_state",
+              "source": "uiapplication_screenshot",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Availability enum above, independent of scene selection. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.coverage",
+              "source": "uiapplication_screenshot",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. unknown / best_effort / loss_detected. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.session_epoch",
+              "source": "uiapplication_screenshot",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Process-local opt-in epoch; 0 before first start. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.callback_events",
+              "source": "uiapplication_screenshot",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Accepted notifications since last selected screenshot drain, not unique captures. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.ignored_events",
+              "source": "uiapplication_screenshot",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Rejected stale/inactive or invalid ingress in that interval. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.loss_events",
+              "source": "uiapplication_screenshot",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Detected registration/lifecycle/ownership gaps or failures, not missed-screenshot count. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.counter_overflow",
+              "source": "uiapplication_screenshot",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Additional counter increment beyond INT64_MAX attempted. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.interval_ms",
+              "source": "uiapplication_screenshot",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Selected drain-to-drain interval, -1 unavailable. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.heartbeat_age_ms",
+              "source": "uiapplication_screenshot",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Last confirmed main-thread observer/activity age, -1 unavailable. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            }
+          ]
+        },
+        {
+          "name": "screen_recording",
+          "required": false,
+          "observations": [
+            {
+              "signal": "capture.recording.observer_state",
+              "source": "uikit_capture_observer",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Effective selected-path availability, including stale. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.coverage",
+              "source": "uikit_capture_observer",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. unknown / best_effort / loss_detected. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.scope",
+              "source": "uikit_capture_observer",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. none / selected_scene / selected_screen; never device-wide. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.scene_availability",
+              "source": "uikit_scene_trait",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Per-scene-path reason; unsupported below iOS 17, not_selected on legacy path. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.state",
+              "source": "uikit_scene_trait",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Only fresh, actually owned samples have values; unsupported API is unsupported, absent/stale/error state has error with no value. Fresh measured active / inactive / unspecified only. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.screen_availability",
+              "source": "uikit_screen_capture",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Fallback reason, not_selected on modern scene path. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.state",
+              "source": "uikit_screen_capture",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Only fresh, actually owned samples have values; unsupported API is unsupported, absent/stale/error state has error with no value. Fresh sampled selected screen.isCaptured only. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.selection_epoch",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Process-local selected-object segment; 0 before selection; no scene identifier. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.sample_age_ms",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Age of last selected-path sample, -1 unavailable. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.initial_samples",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Initial/resume/selection samples, not transitions. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.callback_events",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Accepted trait/screen change callbacks, including same-state repeats. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.state_changes",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Changes between known states in one open generation, excludes initial/unspecified/gaps. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.resamples",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Timer/explicit refresh reads, not callback events. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.ignored_events",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Rejected old-object/generation/off-main/invalid ingress. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.loss_events",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Detected gaps/failures including selection transfer and resample-discovered change. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.counter_overflow",
+              "source": "uikit_capture_observer",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Saturated interval counter had a further increment. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.interval_ms",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Selected recording drain interval, -1 unavailable. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
             }
           ]
         }

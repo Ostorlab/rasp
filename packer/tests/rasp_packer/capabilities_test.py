@@ -162,7 +162,7 @@ def testCatalogue_whenSourceInventoryCompared_coversEveryBuiltinSignal() -> None
                 filename = "context_exposure"
             if platform == "android" and group["name"] == "root_context":
                 filename = "root_namespace"
-            if platform == "android" and group["name"] in (
+            if group["name"] in (
                 "screenshot",
                 "screen_recording",
             ):
@@ -191,6 +191,9 @@ def testCatalogue_whenSourceInventoryCompared_coversEveryBuiltinSignal() -> None
                 signals = {f"capture.{prefix}.{suffix}" for suffix in suffixes}
             else:
                 signals = set(re.findall(pattern, source))
+            if filename == "capture" and platform == "ios":
+                prefix = "screenshot" if group["name"] == "screenshot" else "recording"
+                signals = set(re.findall(rf'"(capture\.{prefix}\.[a-z_]+)"', source))
             assert signals == {row["signal"] for row in group["observations"]}
 
 
@@ -302,7 +305,7 @@ def testParseCatalogue_whenTimeoutDeclared_roundTripsWithoutChangingProductionCa
     assert capabilities.canonical(parsed) == encoded
     assert capabilities.catalogue_id() == current_id
     assert (
-        current_id == "479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a"
+        current_id == "2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d"
     )
     assert all(
         "timeout" not in output["statuses"]
@@ -384,14 +387,14 @@ def testCatalogue_whenAndroidServiceMetadataRegistered_preservesVersionedContext
     android = document["platforms"]["android"]
     groups = {group["name"]: group for group in android["groups"]}
     assert document["schema_version"] == 1
-    assert document["revision"] == 8
+    assert document["revision"] == 9
     assert sum(len(group["observations"]) for group in android["groups"]) == 73
     assert (
         sum(
             len(group["observations"])
             for group in document["platforms"]["ios"]["groups"]
         )
-        == 26
+        == 52
     )
     contracts = (
         (
@@ -490,7 +493,7 @@ def testCatalogue_whenAndroidSignerSetsRegistered_preservesLegacyScalarsAndCompl
     identity = next(group for group in groups if group["name"] == "identity")
     rows = {(row["signal"], row["source"]): row for row in identity["observations"]}
     assert document["schema_version"] == 1
-    assert document["revision"] == 8
+    assert document["revision"] == 9
     assert len(rows) == 9
     assert identity["required"] is True
     for source in ("apk_signing_block", "package_manager"):
@@ -527,7 +530,7 @@ def testSignerContractFixture_whenCanonicalRegistrationCompared_matchesExactRows
         if group["name"] == "identity"
     )
     rows = {(row["signal"], row["source"]): row for row in identity["observations"]}
-    assert document["registration"] == "schema1_revision8"
+    assert document["registration"] == "schema1_revision9"
     assert document["catalogue_id"] == capabilities.catalogue_id()
     assert len(document["observations"]) == 4
     for row in document["observations"]:
@@ -539,7 +542,7 @@ def testCatalogue_whenWindowObservationRegistered_preservesApprovedRevisionFiveE
 ):
     document = capabilities.catalogue()
     assert document["schema_version"] == 1
-    assert document["revision"] == 8
+    assert document["revision"] == 9
     assert (
         sum(
             len(group["observations"])
@@ -552,7 +555,7 @@ def testCatalogue_whenWindowObservationRegistered_preservesApprovedRevisionFiveE
             len(group["observations"])
             for group in document["platforms"]["ios"]["groups"]
         )
-        == 26
+        == 52
     )
     groups = document["platforms"]["android"]["groups"]
     selected = [group for group in groups if group["name"] == "overlay"]
@@ -563,6 +566,11 @@ def testCatalogue_whenWindowObservationRegistered_preservesApprovedRevisionFiveE
     assert len({(row["signal"], row["source"]) for row in outputs}) == 10
     assert all(row["source"] == "window_callback" for row in outputs)
     previous = copy.deepcopy(document)
+    previous["platforms"]["ios"]["groups"] = [
+        group
+        for group in previous["platforms"]["ios"]["groups"]
+        if group["name"] not in {"screenshot", "screen_recording"}
+    ]
     previous["revision"] = 5
     previous["platforms"]["android"]["groups"] = [
         group
@@ -597,7 +605,7 @@ def testWindowContractFixture_whenCanonicalCompared_matchesExactRegisteredOutput
         for group in capabilities.catalogue()["platforms"]["android"]["groups"]
         if group["name"] == "overlay"
     )
-    assert document["registration"] == "schema1_revision8"
+    assert document["registration"] == "schema1_revision9"
     assert document["catalogue_id"] == capabilities.catalogue_id()
     assert document["observations"] == group["observations"]
     assert [row["value_kind"] for row in group["observations"]] == [
@@ -617,7 +625,7 @@ def testCatalogue_whenRootContextRegistered_preservesApprovedParentAndSixOptIns(
     names = {"root_packages", "root_context", "proxy", "developer_settings"}
     groups = document["platforms"]["android"]["groups"]
     added = [group for group in groups if group["name"] in names]
-    assert document["revision"] == 8
+    assert document["revision"] == 9
     assert len(added) == 4
     assert all(group["required"] is False for group in added)
     assert {group["name"]: len(group["observations"]) for group in added} == {
@@ -632,7 +640,7 @@ def testCatalogue_whenRootContextRegistered_preservesApprovedParentAndSixOptIns(
             len(group["observations"])
             for group in document["platforms"]["ios"]["groups"]
         )
-        == 26
+        == 52
     )
     settings = next(group for group in added if group["name"] == "developer_settings")
     assert all(
@@ -645,6 +653,11 @@ def testCatalogue_whenRootContextRegistered_preservesApprovedParentAndSixOptIns(
         group
         for group in groups
         if group["name"] not in names | {"screenshot", "screen_recording"}
+    ]
+    document["platforms"]["ios"]["groups"] = [
+        group
+        for group in document["platforms"]["ios"]["groups"]
+        if group["name"] not in {"screenshot", "screen_recording"}
     ]
     document["revision"] = 6
     assert (
@@ -661,7 +674,7 @@ def testRootContextFixture_whenCanonicalCompared_preservesExactStatusAndValueKin
         / "docs/fixtures/android-root-context-v1.json"
     )
     document = json.loads(fixture.read_bytes())
-    assert document["registration"] == "schema1_revision8"
+    assert document["registration"] == "schema1_revision9"
     assert document["catalogue_id"] == capabilities.catalogue_id()
     names = {"root_packages", "root_context", "proxy", "developer_settings"}
     outputs = {
@@ -695,7 +708,7 @@ def testCatalogue_whenCaptureRegistered_reconstructsExactRevisionSeven() -> None
         group for group in groups if group["name"] in {"screenshot", "screen_recording"}
     ]
     assert document["schema_version"] == 1
-    assert document["revision"] == 8
+    assert document["revision"] == 9
     assert [len(group["observations"]) for group in added] == [9, 12]
     assert all(group["required"] is False for group in added)
     assert all(
@@ -706,8 +719,94 @@ def testCatalogue_whenCaptureRegistered_reconstructsExactRevisionSeven() -> None
     document["platforms"]["android"]["groups"] = [
         group for group in groups if group not in added
     ]
+    document["platforms"]["ios"]["groups"] = [
+        group
+        for group in document["platforms"]["ios"]["groups"]
+        if group["name"] not in {"screenshot", "screen_recording"}
+    ]
     document["revision"] = 7
     assert (
         hashlib.sha256(capabilities.canonical(document)).hexdigest()
         == "c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf"
     )
+
+
+def testCatalogue_whenIOSCaptureAdded_reconstructsExactRevisionEight() -> None:
+    document = capabilities.catalogue()
+    assert document["revision"] == 9
+    ios_groups = document["platforms"]["ios"]["groups"]
+    added = [
+        group
+        for group in ios_groups
+        if group["name"] in {"screenshot", "screen_recording"}
+    ]
+    assert [len(group["observations"]) for group in added] == [9, 17]
+    assert all(group["required"] is False for group in added)
+    document["platforms"]["ios"]["groups"] = [
+        group for group in ios_groups if group not in added
+    ]
+    document["revision"] = 8
+    assert (
+        hashlib.sha256(capabilities.canonical(document)).hexdigest()
+        == "479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a"
+    )
+
+    assert (
+        hashlib.sha256((json.dumps(document, indent=2) + "\n").encode()).hexdigest()
+        == "128ca89135d46bf7011d842258e6bff795cfeac34049c072fe3cc20c2f51d946"
+    )
+
+
+def testIOSCaptureFixture_whenCanonicalCompared_preservesExactScalarRows() -> None:
+    fixture = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "docs/fixtures/ios-capture-observations-v1.json"
+    )
+    document = json.loads(fixture.read_bytes())
+    assert document["registration"] == "schema1_revision9"
+    assert document["catalogue_id"] == capabilities.catalogue_id()
+    expected = [
+        group
+        for group in capabilities.catalogue()["platforms"]["ios"]["groups"]
+        if group["name"] in {"screenshot", "screen_recording"}
+    ]
+    assert document["groups"] == [
+        {"name": group["name"], "observations": group["observations"]}
+        for group in expected
+    ]
+    assert all(
+        row["supported_on"] == "ios_device" and row["value_cardinality"] == "scalar"
+        for group in expected
+        for row in group["observations"]
+    )
+
+
+def testIOSCaptureHostAPI_whenExportsCompared_hasExactlySixCEntries() -> None:
+    runtime = pathlib.Path(__file__).resolve().parents[3] / "runtime"
+    expected = {
+        "rasp_ios_capture_start",
+        "rasp_ios_capture_select_scene",
+        "rasp_ios_capture_select_legacy_window",
+        "rasp_ios_capture_clear_selection",
+        "rasp_ios_capture_refresh",
+        "rasp_ios_capture_stop",
+    }
+    exports = (runtime / "ios/capture_exports.txt").read_text().splitlines()
+    assert exports == sorted("_" + name for name in expected)
+    header = (runtime / "ios/include/rasp/ios_capture.h").read_text()
+    assert set(re.findall(r"int32_t (rasp_ios_capture_[a-z_]+)\(", header)) == expected
+    probe = (runtime / "tests/ios/capture/host_link.c").read_text()
+    assert set(re.findall(r"(rasp_ios_capture_[a-z_]+)\(", probe)) == expected
+
+
+def testIOSCaptureCI_whenJobBoundariesChecked_keepsAppleStepsOutOfAndroid() -> None:
+    workflow = (
+        pathlib.Path(__file__).resolve().parents[3] / ".github/workflows/runtime.yml"
+    ).read_text()
+    ios_job = workflow.split("\n  ios:\n", 1)[1].split("\n  android:\n", 1)[0]
+    android_job = workflow.split("\n  android:\n", 1)[1]
+    step = "name: Check development capture ABI and build the actual UIKit host"
+    assert ios_job.count(step) == 1
+    assert step not in android_job
+    assert "tests/ios/capture/check_framework.sh" not in android_job
+    assert "build/ios-dev" not in android_job

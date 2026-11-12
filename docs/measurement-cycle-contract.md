@@ -104,8 +104,8 @@ additive backend schema and transport rollout before transmission. Network/DNS
 plugin implementation is coordinated separately; native availability may precede
 it. Legacy metadata remains unavailable. The compiled catalogue includes inline-hook observations, service
 metadata, signer current sets and rotation history, window observations, and root/context observations.
-Canonical schema 1, revision 8 declares 73 Android and 26 iOS identities, with catalogue ID
-`479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a`.
+Canonical schema 1, revision 9 declares 73 Android and 52 iOS identities, with catalogue ID
+`2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d`.
 Identity has nine expected outputs; malformed signer sources remain present error observations. Real-JVM caller
 and attached-worker fixtures exercise the actual identity dispatcher through this immutable cycle handoff. See the durable
 [signer observation contract](android-signer-observations.md) and
@@ -118,8 +118,8 @@ supported compiler CI remain necessary validation; host execution is no device
 health evidence. Session/run generation does not depend on installation storage.
 
 
-The combined runtime preserves RT10's ordinary merge of the exact approved RT09 parent. Canonical schema 1, revision 8 declares **73 Android/26 iOS**
-identities, catalogue `479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a`. The ten opt-in window outputs consume one bounded FIFO drain per selected actual
+The combined runtime preserves RT10's ordinary merge of the exact approved RT09 parent. Canonical schema 1, revision 9 declares **73 Android/52 iOS**
+identities, catalogue `2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d`. The ten opt-in window outputs consume one bounded FIFO drain per selected actual
 measurement cycle through the same production builtin dispatcher; disabled selection does not drain. Legacy and
 additive callbacks retain the same immutable snapshot, including interval/loss metadata and observations, across
 later drains and Context destruction. Real-JVM caller and attached-native-worker tests exercise that handoff.
