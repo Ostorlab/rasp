@@ -146,7 +146,7 @@ Capture rows use source `uikit_capture_observer` except where stated:
 | state | Boolean | Source uikit_screen_capture; fresh selected screen.isCaptured only |
 | selection_epoch | integer | Process-local registration segment; no scene identifier |
 | sample_age_ms | integer | Last selected-path sample age, -1 unavailable |
-| initial_samples | integer | Initial/resume/selection reads, not transitions |
+| initial_samples | integer | Initial/resume/selection and clock/freshness recovery baseline reads, not transitions |
 | callback_events | integer | Accepted actual callbacks including duplicates |
 | state_changes | integer | Known-state changes inside a generation; no initial/unspecified/gap transition |
 | resamples | integer | Timer/explicit refresh reads |
@@ -166,8 +166,12 @@ unavailable_state and unknown coverage; it is never inactive. Non-OK rows contai
 There is no event FIFO or per-event payload. Two fixed reducers coalesce notifications into
 counters and keep only latest current state. Counters saturate at INT64_MAX and set overflow;
 values then are lower bounds. Detected gaps cannot quantify OS-suppressed events or main stalls.
-Callbacks, initial samples and resamples stay distinct. A resample-discovered known-state change
-counts a state change and a gap; no duration or number of missed transitions is inferred.
+Callback and resample counters retain the sample's origin. Initial/resume/selection reads and
+clock/freshness recovery baselines increment `initial_samples`. A recovery baseline can also
+increment `callback_events` or `resamples`; it retains a loss marker and never increments
+`state_changes` across the gap. Within still-fresh registration state, a resample-discovered
+known-state change counts a state change and a callback gap. No duration or number of missed
+transitions is inferred.
 
 A selected source drains once; a disabled source does not drain/reset or consume another enabled
 source's path. Pending bounded deltas survive stop/start. First/invalid/backwards drain intervals
