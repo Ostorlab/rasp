@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "util/direct_syscall.h"
 
 namespace rasp::android::checks {
 
@@ -15,8 +16,8 @@ namespace rasp::android::checks {
 /// On Android, the emulator included, it runs every probe. Anywhere else, such as on a Linux host, every observation
 /// is unsupported instead, so the server still sees that the check ran.
 ///
-/// @return One observation per signal and source, in this order: dbg.tracer_pid through proc_status, then
-/// dbg.java_debugger through jdwp_threads, then dbg.java_debugger through debug_api.
+/// @return One observation per signal and source, in this order: dbg.tracer_pid through proc_status and
+/// proc_status_syscall, then dbg.java_debugger through jdwp_threads, then dbg.java_debugger through debug_api.
 [[nodiscard]] std::vector<Observation> debugger();
 
 /// Reports the process id of the debugger attached to the app, from the status file at `status_path`.
@@ -26,10 +27,12 @@ namespace rasp::android::checks {
 /// through JDWP instead, without ptrace, so this probe doesn't see it. The file is read whole, up to 64 KiB.
 ///
 /// @param status_path The status file to read, `/proc/self/status` on a device.
-/// @return One dbg.tracer_pid observation read through proc_status: the tracer's process id, 0 when nothing is
-/// attached. It has an error status when the file can't be read, is larger than 64 KiB, has no `TracerPid:` line,
-/// or the line doesn't hold a process id.
-[[nodiscard]] Observation observe_tracer_pid(std::string_view status_path);
+/// @param invoke The hookable libc syscall boundary used for the independent second read.
+/// @return Two dbg.tracer_pid observations through proc_status and proc_status_syscall. Each reports a signed-32-bit
+/// nonnegative PID, zero when unattached. A source reports error for unreadable, oversized, null-containing,
+/// incomplete or duplicate-field data. Both independent values/statuses are retained; agreement is not attestation.
+[[nodiscard]] std::vector<Observation> observe_tracer_pid(std::string_view status_path,
+                                                          util::SystemCall invoke = util::libc_syscall);
 
 /// Reports the names of the app's threads that belong to JDWP, the connection of a Java debugger, from the thread
 /// folder at `task_path`.

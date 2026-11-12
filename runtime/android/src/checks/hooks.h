@@ -7,15 +7,17 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "util/direct_syscall.h"
 
 namespace rasp::android::checks {
 
 /// Runs the hooking checks and returns what they observed.
 ///
-/// It reads the process's memory map once and reports two things from it: the mappings that look like a known
-/// instrumentation framework (Frida, Substrate, Xposed and the like), and the mappings that are both writable and
-/// executable. Instrumentation can load code or leave writable-executable memory, and legitimate app code can do the
-/// same. The check reports raw heuristic map lines; it does not determine whether the app is instrumented.
+/// It reads the process's memory map independently through libc file functions and the hookable libc syscall entry: the
+/// mappings that look like a known instrumentation framework (Frida, Substrate, Xposed and the like), and the mappings
+/// that are both writable and executable. Instrumentation can load code or leave writable-executable memory, and
+/// legitimate app code can do the same. The check reports raw heuristic map lines; it does not determine whether the
+/// app is instrumented.
 ///
 /// On Android, the emulator included, it runs the probe. Anywhere else, such as on a Linux host, every observation is
 /// unsupported instead, so the server still sees that the check ran.
@@ -25,7 +27,7 @@ namespace rasp::android::checks {
 /// instrumentation: legitimate names can match, and renaming or hiding threads evades this probe.
 ///
 /// @return One observation per signal and source, in this order: hook.maps_hits then hook.rwx_regions, both read
-/// through proc_maps, then hook.threads, read through proc_task.
+/// through proc_maps, then hook.maps_hits through proc_maps_syscall, then hook.threads through proc_task.
 [[nodiscard]] std::vector<Observation> hooks();
 
 /// Reports the mappings of the memory map at `maps_path` that name a known instrumentation framework, and those that
@@ -37,10 +39,12 @@ namespace rasp::android::checks {
 /// their line breaks.
 ///
 /// @param maps_path The memory map to read, `/proc/self/maps` on a device.
-/// @return Two observations read through proc_maps: hook.maps_hits, the lines that name a framework, then
-/// hook.rwx_regions, the writable-executable lines. Both have an error status when the map can't be read or is larger
-/// than 4 MiB.
-[[nodiscard]] std::vector<Observation> observe_maps(std::string_view maps_path);
+/// @param invoke The hookable libc syscall boundary used for the independent second read.
+/// @return hook.maps_hits and hook.rwx_regions through proc_maps, then hook.maps_hits through proc_maps_syscall.
+/// Each source fails independently on unreadable, empty, truncated, malformed or oversized data (4 MiB maximum,
+/// 8192 bytes per line). Every line is validated before retaining at most 32 matches; divergence is never hidden.
+[[nodiscard]] std::vector<Observation> observe_maps(std::string_view maps_path,
+                                                    util::SystemCall invoke = util::libc_syscall);
 
 /// Reports the threads, among those listed in `task_path`, whose name contains a marker of Frida's agent:
 /// `gum-js-loop` or `frida`, ignoring case.

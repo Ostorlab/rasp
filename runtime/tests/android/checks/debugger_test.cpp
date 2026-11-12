@@ -2,6 +2,7 @@
 
 #include "checks/debugger.h"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -16,6 +17,7 @@
 
 #include "rasp/observation.h"
 #include "support/files.h"
+#include "support/syscall_files.h"
 
 namespace rasp::android::checks {
 namespace {
@@ -49,14 +51,20 @@ constexpr std::string_view kStatusTail =
   return std::string(kStatusHead) + std::string(line) + "\n" + std::string(kStatusTail);
 }
 
-/// The dbg.tracer_pid observation that reports `pid`.
-[[nodiscard]] Observation tracer_pid(std::int64_t pid) {
-  return {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kOk, .value = pid};
+/// The dbg.tracer_pid observations, through proc_status and through proc_status_syscall, that both report `pid`.
+[[nodiscard]] std::vector<Observation> tracer_pid(std::int64_t pid) {
+  return {
+      {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kOk, .value = pid},
+      {.signal = "dbg.tracer_pid", .source = "proc_status_syscall", .status = Status::kOk, .value = pid},
+  };
 }
 
-/// The dbg.tracer_pid observation of a status file that couldn't be read or understood.
-[[nodiscard]] Observation unreadable_tracer_pid() {
-  return {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kError, .value = {}};
+/// The dbg.tracer_pid observations, through both sources, of a status file that couldn't be read or understood.
+[[nodiscard]] std::vector<Observation> unreadable_tracer_pid() {
+  return {
+      {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kError, .value = {}},
+      {.signal = "dbg.tracer_pid", .source = "proc_status_syscall", .status = Status::kError, .value = {}},
+  };
 }
 
 TEST(Debugger, observeTracerPid_whenNothingIsAttached_reportsZero) {
@@ -86,31 +94,31 @@ TEST(Debugger, observeTracerPid_whenTheValueIsAfterSpaces_reportsIt) {
   EXPECT_EQ(observe_tracer_pid(status), tracer_pid(8812));
 }
 
-TEST(Debugger, observeTracerPid_whenTheLineIsLastWithoutALineBreak_reportsIt) {
+TEST(Debugger, observeTracerPid_whenTheLineIsLastWithoutALineBreak_reportsError) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string status = directory.path() + "/status";
   ASSERT_TRUE(write_file(status, std::string(kStatusHead) + "TracerPid:\t8812"));
 
-  EXPECT_EQ(observe_tracer_pid(status), tracer_pid(8812));
+  EXPECT_EQ(observe_tracer_pid(status), unreadable_tracer_pid());
 }
 
-TEST(Debugger, observeTracerPid_whenTheFileHasTwoTracerPidLines_reportsTheFirst) {
+TEST(Debugger, observeTracerPid_whenTheFileHasTwoTracerPidLines_reportsError) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string status = directory.path() + "/status";
   ASSERT_TRUE(write_file(status, status_with("TracerPid:\t8812\nTracerPid:\t0")));
 
-  EXPECT_EQ(observe_tracer_pid(status), tracer_pid(8812));
+  EXPECT_EQ(observe_tracer_pid(status), unreadable_tracer_pid());
 }
 
 TEST(Debugger, observeTracerPid_whenTheProcessIdIsTheLargest32BitValue_reportsIt) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string status = directory.path() + "/status";
-  ASSERT_TRUE(write_file(status, status_with("TracerPid:\t4294967295")));
+  ASSERT_TRUE(write_file(status, status_with("TracerPid:\t2147483647")));
 
-  EXPECT_EQ(observe_tracer_pid(status), tracer_pid(4294967295));
+  EXPECT_EQ(observe_tracer_pid(status), tracer_pid(2147483647));
 }
 
 /// A TracerPid line that doesn't hold a process id.
@@ -128,7 +136,7 @@ TEST_P(DebuggerMalformedTracerPidLine, observeTracerPid_whenTheLineHoldsNoProces
 INSTANTIATE_TEST_SUITE_P(Debugger, DebuggerMalformedTracerPidLine,
                          ::testing::Values("TracerPid:", "TracerPid:\t", "TracerPid:\t-1", "TracerPid:\t+1",
                                            "TracerPid:\tabc", "TracerPid:\t12a", "TracerPid:\t12 ",
-                                           "TracerPid:\t4294967296", "TracerPid:\t0x10"));
+                                           "TracerPid:\t4294967296", "TracerPid:\t2147483648", "TracerPid:\t0x10"));
 
 TEST(Debugger, observeTracerPid_whenTheFileHasNoTracerPidLine_reportsAnError) {
   const TemporaryDirectory directory;
@@ -153,7 +161,7 @@ TEST(Debugger, observeTracerPid_whenTheFileIsExactly64KiB_readsItWhole) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string status = directory.path() + "/status";
-  const std::string last = "TracerPid:\t8812";
+  const std::string last = "TracerPid:\t8812\n";
   const std::string content = std::string(kStatusLimit - last.size() - 1, 'a') + "\n" + last;
   ASSERT_EQ(content.size(), kStatusLimit);
   ASSERT_TRUE(write_file(status, content));
@@ -165,7 +173,7 @@ TEST(Debugger, observeTracerPid_whenTheFileIsLargerThan64KiB_reportsAnError) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string status = directory.path() + "/status";
-  const std::string last = "TracerPid:\t8812";
+  const std::string last = "TracerPid:\t8812\n";
   ASSERT_TRUE(write_file(status, std::string(kStatusLimit - last.size(), 'a') + "\n" + last));
 
   EXPECT_EQ(observe_tracer_pid(status), unreadable_tracer_pid());
@@ -337,12 +345,36 @@ TEST(Debugger, observeDebugApi_whenTheCallFailed_reportsAnError) {
 }
 
 TEST(Debugger, debugger_whenOffAndroid_reportsEveryCheckAsUnsupported) {
-  EXPECT_EQ(debugger(),
-            (std::vector<Observation>{
-                {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kUnsupported, .value = {}},
-                {.signal = "dbg.java_debugger", .source = "jdwp_threads", .status = Status::kUnsupported, .value = {}},
-                {.signal = "dbg.java_debugger", .source = "debug_api", .status = Status::kUnsupported, .value = {}},
-            }));
+  EXPECT_EQ(
+      debugger(),
+      (std::vector<Observation>{
+          {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kUnsupported, .value = {}},
+          {.signal = "dbg.tracer_pid", .source = "proc_status_syscall", .status = Status::kUnsupported, .value = {}},
+          {.signal = "dbg.java_debugger", .source = "jdwp_threads", .status = Status::kUnsupported, .value = {}},
+          {.signal = "dbg.java_debugger", .source = "debug_api", .status = Status::kUnsupported, .value = {}},
+      }));
+}
+
+TEST(Debugger, observeTracerPid_whenSourcesDiverge_preservesBothValues) {
+  const TemporaryDirectory directory;
+  const std::string path = directory.path() + "/status";
+  ASSERT_TRUE(write_file(path, status_with("TracerPid:\t0")));
+  test_support::SyscallFile fixture{.content = "TracerPid:\t1234\n"};
+  test_support::SyscallFile::active = &fixture;
+  EXPECT_EQ(observe_tracer_pid(path, test_support::SyscallFile::invoke),
+            (std::vector<Observation>{observed("dbg.tracer_pid", "proc_status", std::int64_t{0}),
+                                      observed("dbg.tracer_pid", "proc_status_syscall", std::int64_t{1234})}));
+}
+
+TEST(Debugger, observeTracerPid_whenSecondSourceIsDenied_keepsPrimaryValue) {
+  const TemporaryDirectory directory;
+  const std::string path = directory.path() + "/status";
+  ASSERT_TRUE(write_file(path, status_with("TracerPid:\t0")));
+  test_support::SyscallFile fixture{.content = {}, .error = EPERM};
+  test_support::SyscallFile::active = &fixture;
+  EXPECT_EQ(observe_tracer_pid(path, test_support::SyscallFile::invoke),
+            (std::vector<Observation>{observed("dbg.tracer_pid", "proc_status", std::int64_t{0}),
+                                      failed("dbg.tracer_pid", "proc_status_syscall")}));
 }
 
 }  // namespace

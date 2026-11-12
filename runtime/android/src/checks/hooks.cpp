@@ -21,6 +21,8 @@
 
 #include "rasp/observation.h"
 #include "rasp/util/read_file.h"
+#include "util/direct_syscall.h"
+#include "util/proc_text.h"
 
 namespace rasp::android::checks {
 
@@ -42,6 +44,8 @@ constexpr std::string_view kMapsHitsSignal = "hook.maps_hits";
 constexpr std::string_view kRwxRegionsSignal = "hook.rwx_regions";
 /// The source of both memory-map probes.
 constexpr std::string_view kMapsSource = "proc_maps";
+/// The map source using the hookable libc syscall entry.
+constexpr std::string_view kMapsDirectSource = "proc_maps_syscall";
 /// The signal of the probe that reports the app's threads named like an instrumentation framework's.
 constexpr std::string_view kThreadsSignal = "hook.threads";
 /// The source of the thread probe.
@@ -84,15 +88,36 @@ constexpr auto kThreadMarkers = std::to_array<std::string_view>({
     "frida",
 });
 
-/// The permissions field of a memory-map line, the second space-separated field, or empty when the line has none.
-[[nodiscard]] std::string_view permissions_of(std::string_view line) {
-  const std::size_t start = line.find(' ');
-  if (start == std::string_view::npos) {
-    return {};
+/// Whether a maps record has a valid address range, permissions and numeric kernel fields.
+[[nodiscard]] bool valid_map_line(std::string_view line) {
+  std::string_view rest = line;
+  const std::string_view range = util::take_proc_field(rest);
+  const std::size_t dash = range.find('-');
+  if (dash == std::string_view::npos) {
+    return false;
   }
-  const std::string_view rest = line.substr(start + 1);
-  const std::size_t end = rest.find(' ');
-  return rest.substr(0, std::min(end, rest.size()));
+  const auto start = util::proc_number(range.substr(0, dash), 16);
+  const auto end = util::proc_number(range.substr(dash + 1), 16);
+  const std::string_view perms = util::take_proc_field(rest);
+  const auto offset = util::proc_number(util::take_proc_field(rest), 16);
+  const std::string_view device = util::take_proc_field(rest);
+  const std::size_t colon = device.find(':');
+  if (colon == std::string_view::npos) {
+    return false;
+  }
+  const auto major = util::proc_number(device.substr(0, colon), 16);
+  const auto minor = util::proc_number(device.substr(colon + 1), 16);
+  const auto inode = util::proc_number(util::take_proc_field(rest), 10);
+  return start.has_value() && end.has_value() && *start < *end && perms.size() == 4 &&
+         (perms[0] == 'r' || perms[0] == '-') && (perms[1] == 'w' || perms[1] == '-') &&
+         (perms[2] == 'x' || perms[2] == '-') && (perms[3] == 'p' || perms[3] == 's') && offset.has_value() &&
+         major.has_value() && minor.has_value() && inode.has_value();
+}
+
+/// The permissions field of an already validated memory-map line.
+[[nodiscard]] std::string_view permissions_of(std::string_view line) {
+  static_cast<void>(util::take_proc_field(line));
+  return util::take_proc_field(line);
 }
 
 /// Whether `text` contains one of `markers`, ignoring case.
@@ -151,14 +176,22 @@ constexpr auto kThreadMarkers = std::to_array<std::string_view>({
 
 }  // namespace
 
-std::vector<Observation> observe_maps(std::string_view maps_path) {
-  const std::optional<std::string> maps = read_file(maps_path, kMaxMapsSize);
-  if (!maps) {
-    return {failed(kMapsHitsSignal, kMapsSource), failed(kRwxRegionsSignal, kMapsSource)};
+std::vector<Observation> observe_maps(std::string_view maps_path, util::SystemCall invoke) {
+  std::optional<std::string> maps = read_file(maps_path, kMaxMapsSize);
+  std::optional<std::string> direct_maps = util::read_file_direct(maps_path, kMaxMapsSize, invoke);
+  if (maps.has_value() && !util::valid_proc_table(*maps, valid_map_line)) {
+    maps.reset();
+  }
+  if (direct_maps.has_value() && !util::valid_proc_table(*direct_maps, valid_map_line)) {
+    direct_maps.reset();
   }
   return {
-      observed(kMapsHitsSignal, kMapsSource, matching_lines(*maps, names_framework)),
-      observed(kRwxRegionsSignal, kMapsSource, matching_lines(*maps, writable_executable)),
+      maps ? observed(kMapsHitsSignal, kMapsSource, matching_lines(*maps, names_framework))
+           : failed(kMapsHitsSignal, kMapsSource),
+      maps ? observed(kRwxRegionsSignal, kMapsSource, matching_lines(*maps, writable_executable))
+           : failed(kRwxRegionsSignal, kMapsSource),
+      direct_maps ? observed(kMapsHitsSignal, kMapsDirectSource, matching_lines(*direct_maps, names_framework))
+                  : failed(kMapsHitsSignal, kMapsDirectSource),
   };
 }
 
@@ -199,6 +232,7 @@ std::vector<Observation> hooks() {
     return {
         unsupported(kMapsHitsSignal, kMapsSource),
         unsupported(kRwxRegionsSignal, kMapsSource),
+        unsupported(kMapsHitsSignal, kMapsDirectSource),
         unsupported(kThreadsSignal, kTaskSource),
     };
   }

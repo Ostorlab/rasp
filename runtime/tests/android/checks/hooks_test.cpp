@@ -4,6 +4,7 @@
 #include "checks/hooks.h"
 
 #include <array>
+#include <cerrno>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <span>
@@ -21,6 +22,7 @@
 #include <pthread.h>
 #endif
 #include "support/files.h"
+#include "support/syscall_files.h"
 
 namespace rasp::android::checks {
 namespace {
@@ -36,9 +38,9 @@ constexpr std::string_view kCleanMaps =
     "7ffffffdd000-7ffffffff000 rw-p 00000000 00:00 0    [stack]\n"
     "7f0000200000-7f0000400000 rw-p 00000000 00:00 0    [anon:libc_malloc]\n";
 
-/// The hook.maps_hits observation that reports `lines`.
-[[nodiscard]] Observation maps_hits(std::vector<std::string> lines) {
-  return {.signal = "hook.maps_hits", .source = "proc_maps", .status = Status::kOk, .value = std::move(lines)};
+/// The hook.maps_hits observation through `source` that reports `lines`.
+[[nodiscard]] Observation maps_hits(std::vector<std::string> lines, std::string_view source = "proc_maps") {
+  return {.signal = "hook.maps_hits", .source = std::string(source), .status = Status::kOk, .value = std::move(lines)};
 }
 
 /// The hook.rwx_regions observation that reports `lines`.
@@ -46,9 +48,9 @@ constexpr std::string_view kCleanMaps =
   return {.signal = "hook.rwx_regions", .source = "proc_maps", .status = Status::kOk, .value = std::move(lines)};
 }
 
-/// The observation of a memory map that couldn't be read, for `signal`.
-[[nodiscard]] Observation unreadable(std::string_view signal) {
-  return {.signal = std::string(signal), .source = "proc_maps", .status = Status::kError, .value = {}};
+/// The observation through `source` of a memory map that couldn't be read, for `signal`.
+[[nodiscard]] Observation unreadable(std::string_view signal, std::string_view source = "proc_maps") {
+  return {.signal = std::string(signal), .source = std::string(source), .status = Status::kError, .value = {}};
 }
 
 /// Writes `content` to a maps file in `directory` and returns its path.
@@ -89,10 +91,11 @@ TEST(Hooks, observeMaps_whenMapIsClean_reportsEmptyLists) {
   const std::string path = write_maps(directory, kCleanMaps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path), (std::vector<Observation>{maps_hits({}), rwx_regions({})}));
+  EXPECT_EQ(observe_maps(path),
+            (std::vector<Observation>{maps_hits({}), rwx_regions({}), maps_hits({}, "proc_maps_syscall")}));
 }
 
-TEST(Hooks, observeMaps_whenFridaAgentIsMapped_reportsItUnderMapsHits) {
+TEST(Hooks, observeMaps_whenFridaAgentIsMapped_reportsItUnderMapsHitsThroughBothSources) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string line =
@@ -102,7 +105,9 @@ TEST(Hooks, observeMaps_whenFridaAgentIsMapped_reportsItUnderMapsHits) {
 
   const std::vector<Observation> observations = observe_maps(path);
 
-  EXPECT_EQ(observations.at(0), maps_hits({line}));
+  ASSERT_EQ(observations.size(), 3U);
+  EXPECT_EQ(observations[0], maps_hits({line}));
+  EXPECT_EQ(observations[2], maps_hits({line}, "proc_maps_syscall"));
 }
 
 TEST(Hooks, observeMaps_whenAMarkerIsUppercase_matchesCaseInsensitively) {
@@ -112,7 +117,11 @@ TEST(Hooks, observeMaps_whenAMarkerIsUppercase_matchesCaseInsensitively) {
   const std::string path = write_maps(directory, line + "\n");
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(0), maps_hits({line}));
+  const std::vector<Observation> observations = observe_maps(path);
+
+  ASSERT_EQ(observations.size(), 3U);
+  EXPECT_EQ(observations[0], maps_hits({line}));
+  EXPECT_EQ(observations[2], maps_hits({line}, "proc_maps_syscall"));
 }
 
 TEST(Hooks, observeMaps_whenARegionIsWritableExecutable_reportsItUnderRwxRegions) {
@@ -137,12 +146,22 @@ TEST(Hooks, observeMaps_whenARegionIsWritableButNotExecutable_doesNotReportIt) {
   EXPECT_EQ(observe_maps(path).at(1), rwx_regions({}));
 }
 
-TEST(Hooks, observeMaps_whenTheFileIsMissing_reportsAnErrorForBoth) {
+TEST(Hooks, observeMaps_whenTheFileIsMissing_reportsAnErrorForEveryObservation) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
 
   EXPECT_EQ(observe_maps(directory.path() + "/missing"),
-            (std::vector<Observation>{unreadable("hook.maps_hits"), unreadable("hook.rwx_regions")}));
+            (std::vector<Observation>{unreadable("hook.maps_hits"), unreadable("hook.rwx_regions"),
+                                      unreadable("hook.maps_hits", "proc_maps_syscall")}));
+}
+
+TEST(Hooks, observeMaps_whenTheFileCantBeRead_reportsAnErrorForEveryObservation) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+
+  EXPECT_EQ(observe_maps(directory.path()),
+            (std::vector<Observation>{unreadable("hook.maps_hits"), unreadable("hook.rwx_regions"),
+                                      unreadable("hook.maps_hits", "proc_maps_syscall")}));
 }
 
 TEST(Hooks, observeThreads_whenNoThreadIsFrida_reportsAnEmptyList) {
@@ -301,12 +320,13 @@ TEST(Hooks, hooks_whenAndroidBranchRuns_readsOwnThreadsAndPreservesPluginContrac
   const std::vector<Observation> renamed_observations = hooks();
   ASSERT_EQ(pthread_setname_np(pthread_self(), original.data()), 0);
   ASSERT_EQ(renamed, 0);
-  ASSERT_EQ(renamed_observations.size(), 3);
-  EXPECT_EQ(renamed_observations[2], threads({}));
-  ASSERT_EQ(observations.size(), 3);
+  ASSERT_EQ(renamed_observations.size(), 4);
+  EXPECT_EQ(renamed_observations[3], threads({}));
+  ASSERT_EQ(observations.size(), 4);
   EXPECT_EQ(observations[0].signal, "hook.maps_hits");
   EXPECT_EQ(observations[1].signal, "hook.rwx_regions");
-  EXPECT_EQ(observations[2], threads({"gum-js-loop"}));
+  EXPECT_EQ(observations[2].source, "proc_maps_syscall");
+  EXPECT_EQ(observations[3], threads({"gum-js-loop"}));
   plugins::Context context;
   const plugins::Plugin plugin{.init = nullptr, .checks = {}, .on_observations = capture_observations};
   const std::array plugins{&plugin};
@@ -315,15 +335,56 @@ TEST(Hooks, hooks_whenAndroidBranchRuns_readsOwnThreadsAndPreservesPluginContrac
 }
 #else
 TEST(Hooks, hooks_whenOffAndroid_reportsEveryCheckAsUnsupported) {
-  EXPECT_EQ(hooks(),
-            (std::vector<Observation>{
-                {.signal = "hook.maps_hits", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
-                {.signal = "hook.rwx_regions", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
-                {.signal = "hook.threads", .source = "proc_task", .status = Status::kUnsupported, .value = {}},
-            }));
+  EXPECT_EQ(
+      hooks(),
+      (std::vector<Observation>{
+          {.signal = "hook.maps_hits", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
+          {.signal = "hook.rwx_regions", .source = "proc_maps", .status = Status::kUnsupported, .value = {}},
+          {.signal = "hook.maps_hits", .source = "proc_maps_syscall", .status = Status::kUnsupported, .value = {}},
+          {.signal = "hook.threads", .source = "proc_task", .status = Status::kUnsupported, .value = {}},
+      }));
 }
 
 #endif
+
+TEST(Hooks, observeMaps_whenSourcesDiverge_preservesBothThroughPluginCallback) {
+  const TemporaryDirectory directory;
+  const std::string path = write_maps(directory, kCleanMaps);
+  const std::string line = "1000-2000 r-xp 00000000 00:00 0 /frida.so";
+  const std::string syscall_maps = line + "\n";
+  test_support::SyscallFile fixture{.content = syscall_maps};
+  test_support::SyscallFile::active = &fixture;
+  const std::vector<Observation> observations = observe_maps(path, test_support::SyscallFile::invoke);
+  EXPECT_EQ(observations,
+            (std::vector<Observation>{maps_hits({}), rwx_regions({}), maps_hits({line}, "proc_maps_syscall")}));
+  EXPECT_EQ(fixture.close_count, 1);
+  plugins::Context context;
+  const plugins::Plugin plugin{.init = nullptr, .checks = {}, .on_observations = capture_observations};
+  const std::array plugins{&plugin};
+  EXPECT_EQ(plugins::run_plugins(plugins, observations, context), observations);
+  EXPECT_EQ(context.get(kCapturedObservations), observations);
+}
+
+TEST(Hooks, observeMaps_whenSyscallReadIsDenied_keepsPrimaryAndReportsError) {
+  const TemporaryDirectory directory;
+  const std::string path = write_maps(directory, kCleanMaps);
+  test_support::SyscallFile fixture{.content = {}, .error = EACCES};
+  test_support::SyscallFile::active = &fixture;
+  EXPECT_EQ(
+      observe_maps(path, test_support::SyscallFile::invoke),
+      (std::vector<Observation>{maps_hits({}), rwx_regions({}), unreadable("hook.maps_hits", "proc_maps_syscall")}));
+}
+
+TEST(Hooks, observeMaps_whenInputIsMalformedOrTruncated_neverReportsClean) {
+  const TemporaryDirectory directory;
+  for (const std::string_view content :
+       {"", "\n", "garbage\n", "1000-2000 rw", "1000-2000 rwxp 0 00:00 0\ninvalid\n"}) {
+    const std::string path = write_maps(directory, content);
+    EXPECT_EQ(observe_maps(path),
+              (std::vector<Observation>{unreadable("hook.maps_hits"), unreadable("hook.rwx_regions"),
+                                        unreadable("hook.maps_hits", "proc_maps_syscall")}));
+  }
+}
 
 }  // namespace
 }  // namespace rasp::android::checks
