@@ -295,31 +295,37 @@ struct MalformedScheme {};
   return std::nullopt;
 }
 
-/// The result of `read` over the whole file at `apk_path`, memory-mapped read-only for the call, or nothing when the
-/// file can't be opened, is empty, or can't be mapped.
+/// Reads a regular archive through the legacy mapping path, preserving its singular signer and stored-entry parsers.
+/// Invalid paths/nonregular files fail before mapping. Concurrent truncation of a mapped regular file can still fault.
 template <typename Read>
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_mapped(const std::string& apk_path, Read read) {
+  if (apk_path.empty() || apk_path.contains('\0') || apk_path.size() > 4096) {
+    return std::nullopt;
+  }
   // open is a libc variadic function, and its flags come from the included <fcntl.h>.
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
-  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
+  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
   if (descriptor < 0) {
     return std::nullopt;
   }
+  std::optional<std::vector<std::uint8_t>> data;
   struct stat status = {};
-  if (fstat(descriptor, &status) != 0 || status.st_size <= 0 || !std::in_range<std::size_t>(status.st_size)) {
-    close(descriptor);
+  if (fstat(descriptor, &status) == 0 && S_ISREG(status.st_mode) && status.st_size > 0 &&
+      std::in_range<std::size_t>(status.st_size)) {
+    const auto size = static_cast<std::size_t>(status.st_size);
+    // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
+    void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
+    if (mapping != MAP_FAILED) {
+      const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
+      data = read(file);
+      if (munmap(mapping, size) != 0) {
+        data.reset();
+      }
+    }
+  }
+  if (close(descriptor) != 0) {
     return std::nullopt;
   }
-  const auto size = static_cast<std::size_t>(status.st_size);
-  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
-  void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
-  close(descriptor);
-  if (mapping == MAP_FAILED) {
-    return std::nullopt;
-  }
-  const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
-  std::optional<std::vector<std::uint8_t>> data = read(file);
-  munmap(mapping, size);
   return data;
 }
 

@@ -299,6 +299,12 @@ if(Java_FOUND AND JNI_FOUND)
       COMMAND ${identity_java_command} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.IdentityTest
         $<TARGET_FILE:rasp_android_context_bridge_jni> ${CMAKE_CURRENT_SOURCE_DIR}/android/apk/data ${identity_process_alias})
     set_tests_properties(AndroidIdentity.productionDispatch PROPERTIES TIMEOUT 60)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      add_test(NAME AndroidIdentity.legacyArchiveFileTypes
+        COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.LegacyArchiveTest
+          $<TARGET_FILE:rasp_android_context_bridge_jni>)
+      set_tests_properties(AndroidIdentity.legacyArchiveFileTypes PROPERTIES TIMEOUT 30)
+    endif()
     foreach(mode late early concurrent lifetime unavailable)
       add_test(NAME AndroidContextBridge.${mode}
         COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.BridgeTest

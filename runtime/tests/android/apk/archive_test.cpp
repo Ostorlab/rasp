@@ -477,6 +477,35 @@ TEST(Archive, findSigningCertificates_whenEveryArchivePrefixIsTruncated_reportsE
   }
 }
 
+TEST(Archive, readLegacyReaders_whenPathHasAnEmbeddedNull_refuseRatherThanOpenItsPrefix) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/base.apk";
+  ASSERT_TRUE(write_file(path, signed_apk(signing_block(pair(kV2, v2_scheme("legacy certificate"))))));
+  const auto invalid_path = path + '\0' + "ignored";
+  EXPECT_FALSE(read_signing_certificate(invalid_path, 34).has_value());
+  EXPECT_FALSE(read_stored_entry(invalid_path, "classes.dex").has_value());
+}
+
+TEST(Archive, readLegacyReaders_whenFifoHasNoWriter_returnPromptErrorsOnTheCallingThread) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/legacy-fifo.apk";
+  ASSERT_EQ(mkfifo(path.c_str(), 0600), 0);
+  const auto start = std::chrono::steady_clock::now();
+  const auto certificate = read_signing_certificate(path, 34);
+  const auto entry = read_stored_entry(path, "classes.dex");
+  EXPECT_FALSE(certificate.has_value());
+  EXPECT_FALSE(entry.has_value());
+  EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::milliseconds(500));
+}
+
+TEST(Archive, readLegacyReaders_whenDirectoryDeviceEmptyOrOverlongPath_returnErrors) {
+  const TemporaryDirectory directory;
+  for (const auto& path : {directory.path(), std::string("/dev/null"), std::string(), std::string(4097, 'x')}) {
+    EXPECT_FALSE(read_signing_certificate(path, 34).has_value());
+    EXPECT_FALSE(read_stored_entry(path, "classes.dex").has_value());
+  }
+}
+
 TEST(Archive, readSigningCertificates_whenFifoHasNoWriter_returnsPromptErrorWithoutAReaderThread) {
   const TemporaryDirectory directory;
   const auto path = directory.path() + "/fifo.apk";

@@ -14,7 +14,7 @@ import java.util.HexFormat;
 
 /** Real JVM + compiled production dispatcher; simulated Android services are not ART/device verification. */
 public final class IdentityTest {
-    private static native String[] rows();
+    static native String[] rows();
     private static native boolean faults();
     private static native boolean threadReads();
     private static final String CURRENT = "sig.current_sha256.v1/package_manager";
