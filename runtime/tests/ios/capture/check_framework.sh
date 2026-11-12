@@ -6,6 +6,14 @@ work=${2:?isolated output path required}
 root=$(cd "$(dirname "$0")/../../.." && pwd)
 mkdir -p "$work"
 binary="$framework/RaspRuntime"
+# Inspect the actual adapter object as well as the shipped framework: Objective-C
+# containment must not introduce C++ exception or terminate paths, even if linked.
+adapter="$(dirname "$framework")/CMakeFiles/RaspRuntime.dir/src/capture/capture_bridge.mm.o"
+nm -j "$adapter" > "$work/adapter-symbols.txt"
+if grep -E '(___cxa_|___gxx_personality|___clang_call_terminate|__ZSt9terminatev)' "$work/adapter-symbols.txt"; then
+  echo "FAIL: the capture adapter references C++ exception or terminate machinery"
+  exit 1
+fi
 nm -gUj "$binary" | LC_ALL=C sort > "$work/exports.txt"
 diff -u "$root/ios/capture_exports.txt" "$work/exports.txt"
 # PUBLIC_HEADER is part of the framework that is also staged into the packer wheel.

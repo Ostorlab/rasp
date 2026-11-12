@@ -581,14 +581,16 @@ namespace {
              : RASP_IOS_CAPTURE_OK;
 }
 /// Contains Foundation failures within this adapter TU, without C++ exception support.
+/// Explicit success/catch guard cleanup avoids ObjC++ @finally's C++ termination path.
 [[nodiscard]] int32_t perform(bool create, uint32_t affected, int32_t (^operation)(RaspCaptureCoordinator*)) {
   const int32_t status = entry_status();
   if (status != RASP_IOS_CAPTURE_OK) {
     return status;
   }
   @autoreleasepool {
+    RaspCaptureCoordinator* owner = nil;
     @try {
-      RaspCaptureCoordinator* owner = coordinator(create);
+      owner = coordinator(create);
       if (owner == nil) {
         return create ? RASP_IOS_CAPTURE_UNAVAILABLE : RASP_IOS_CAPTURE_NOT_STARTED;
       }
@@ -596,15 +598,13 @@ namespace {
         return RASP_IOS_CAPTURE_UNAVAILABLE;
       }
       owner->entry_in_progress_ = YES;
-      @try {
-        return operation(owner);
-      } @finally {
-        owner->entry_in_progress_ = NO;
-      }
+      const int32_t result = operation(owner);
+      owner->entry_in_progress_ = NO;
+      return result;
     } @catch (NSException* exception) {
       static_cast<void>(exception);
-      RaspCaptureCoordinator* owner = coordinator(false);
       if (owner != nil) {
+        owner->entry_in_progress_ = NO;
         if ((affected & RASP_IOS_CAPTURE_SCREENSHOTS) != 0) {
           capture_events().failure(owner->session_, 0, Availability::kError);
         }
