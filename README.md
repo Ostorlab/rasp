@@ -128,10 +128,10 @@ Each check and the signals it reports are described in [`runtime/README.md`](run
 
 ## Documentation
 
-Optional [embedded local policy](docs/local-policy-contract.md) remains report-only
-by default. A sensitive-operation gate requires explicit host source calls before
-the actual operation; packing alone does not adapt business actions or authorize
-backend transactions.
+[Embedded local policy](docs/local-policy-contract.md) is optional; without it the
+runtime keeps its existing report-only behavior. A sensitive-operation gate requires
+explicit host source calls immediately before the actual operation; packing alone
+does not adapt business actions or authorize backend transactions.
 
 - [`packer/README.md`](packer/README.md): the packer, its options, build ids and checks.
 - [`runtime/README.md`](runtime/README.md): the runtime, each check, building and logs.
