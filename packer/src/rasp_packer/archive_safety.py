@@ -1,50 +1,51 @@
 """An up-front safety check on a built app before the packer opens it.
 
-APKs, AABs and IPAs are all ZIP archives. A crafted archive can carry an entry whose name escapes the
-directory it is extracted into (a ``..`` component or an absolute path), uses a backslash separator,
-or is a symbolic link. A packer step that extracts entries to disk by their name could then write or
-read outside its workspace (a "Zip Slip"). The packer refuses such an archive before any platform
-handling, so the rest of the packer never works on a dangerous app.
+APKs, AABs and IPAs are all ZIP archives. A crafted archive can carry an entry that is encrypted, or
+whose name escapes the directory it is extracted into (an absolute path or a ``..`` segment), which a
+packer step that extracts entries to disk by their name could follow outside its workspace (a "Zip
+Slip"). The packer refuses such an archive before any platform handling, the way the reporting engine
+screens an uploaded archive before extracting it: per member, by name and encryption flag.
 """
 
 import pathlib
-import stat
 import zipfile
-
-# What opening the file as a zip raises when it is not a readable archive. Such a file is not
-# dangerous here: the platform packer reports why it is not a valid app.
-_NOT_A_ZIP = (zipfile.BadZipFile, OSError)
 
 
 def is_dangerous(app: pathlib.Path) -> bool:
-    """Returns whether the app archive holds an entry that is unsafe to extract.
-
-    An entry is unsafe when its name escapes the archive root, by an absolute path, a ``..``
-    component or a backslash separator, or when it is a symbolic link.
+    """Returns whether the app archive is unsafe to extract, so the packer must refuse it.
 
     Args:
         app: Path to the built app: an APK, AAB or IPA.
 
     Returns:
-        True when any entry is unsafe. False when the archive is safe, or when the file is not a
-        readable zip archive: the platform packer reports that the app is invalid.
+        True when the file is a zip with a member that is encrypted or whose name escapes the
+        archive root, or a zip that cannot be read. False when the archive is safe, or the file is
+        not a zip: the platform packer reports that the app is invalid.
     """
+    if zipfile.is_zipfile(app) is False:
+        return False
     try:
         with zipfile.ZipFile(app) as archive:
-            entries = archive.infolist()
-    except _NOT_A_ZIP:
-        return False
-    return any(_is_entry_dangerous(entry) is True for entry in entries)
+            return any(_is_member_dangerous(info) for info in archive.infolist())
+    except zipfile.BadZipFile:
+        return True
 
 
-def _is_entry_dangerous(entry: zipfile.ZipInfo) -> bool:
-    """Returns whether one archive entry escapes the archive root or is a symbolic link."""
-    name = entry.filename
-    if "\\" in name:
+def _is_member_dangerous(info: zipfile.ZipInfo) -> bool:
+    """Returns whether a zip member is encrypted or its name escapes the archive root."""
+    if info.flag_bits & 0x1 != 0:
         return True
-    path = pathlib.PurePosixPath(name)
-    if path.is_absolute() is True:
+    return _is_unsafe_path(info.filename)
+
+
+def _is_unsafe_path(name: str) -> bool:
+    """Returns whether a member name is absolute or traverses outside the root.
+
+    Rejects POSIX, Windows and UNC absolute paths and any ``..`` traversal segment.
+    """
+    if pathlib.PureWindowsPath(name).is_absolute() is True:
         return True
-    if ".." in path.parts:
+    normalized = name.replace("\\", "/")
+    if normalized.startswith("/") is True:
         return True
-    return stat.S_ISLNK(entry.external_attr >> 16) is True
+    return ".." in pathlib.PurePosixPath(normalized).parts

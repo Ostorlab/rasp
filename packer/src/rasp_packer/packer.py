@@ -78,7 +78,7 @@ def pack(
     Raises:
         InvalidBuildIdError: The build id is empty or has control characters.
         OutputExistsError: `output` already exists.
-        DangerousAppError: The app archive holds an entry that escapes its root, or a symlink.
+        DangerousAppError: The app archive holds an entry that is encrypted or escapes its root.
         InvalidAppError: The app file cannot be read.
         Error: The app cannot be packed; see the platform's packer.
     """
@@ -88,7 +88,7 @@ def pack(
         raise errors.OutputExistsError(f"{output} already exists")
     if archive_safety.is_dangerous(app) is True:
         raise errors.DangerousAppError(
-            f"{app} holds an entry that escapes the archive root or is a symbolic link"
+            f"{app} holds an entry that is encrypted or escapes the archive root"
         )
     config = runtime_config.RuntimeConfig(
         build_id=build_id, checks=resolved_checks.checks
