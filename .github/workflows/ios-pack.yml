@@ -8,7 +8,7 @@ on:
     branches: ["wip/zakaria-ios-rasp-loop"]
 
 env:
-  CMAKE_VERSION: "4.4.1"
+  CMAKE_VERSION: "4.4.4"
 
 jobs:
   pack:
