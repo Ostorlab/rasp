@@ -28,6 +28,7 @@
 #include "rasp/observation.h"
 #include "rasp/util/read_file.h"
 #include "util/direct_syscall.h"
+#include "util/proc_text.h"
 
 namespace rasp::android::checks {
 
@@ -111,12 +112,6 @@ constexpr std::string_view kDebugApiSource = "debug_api";
   return pid;
 }
 
-/// Whether `name`, a folder entry under the thread folder, is a thread id: only digits.
-[[nodiscard]] bool is_thread_id(std::string_view name) {
-  return !name.empty() &&
-         std::ranges::all_of(name, [](char character) { return character >= '0' && character <= '9'; });
-}
-
 /// Whether `name` is the name of a thread of a JDWP connection.
 [[nodiscard]] bool is_jdwp_thread(std::string_view name) {
   return std::ranges::any_of(kJdwpThreadPrefixes, [name](std::string_view prefix) { return name.starts_with(prefix); });
@@ -140,7 +135,7 @@ constexpr std::string_view kDebugApiSource = "debug_api";
   std::set<std::string> names;
   std::size_t threads = 0;
   for (; !error && entries != std::filesystem::directory_iterator(); entries.increment(error)) {
-    if (!is_thread_id(entries->path().filename().string())) {
+    if (!util::is_thread_id(entries->path().filename().string())) {
       continue;
     }
     ++threads;

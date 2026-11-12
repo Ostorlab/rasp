@@ -1,7 +1,7 @@
 # Optional Application Context integration
 
-**`RuntimeBridge.initialize(Context)` supplies the process's attached Application Context to the native
-PackageManager signer reader and the opt-in public service metadata collectors.** This source integration is optional. Binary-only packing still works and does not
+**`RuntimeBridge.initialize(Context)`** is the optional API that supplies the process's attached Application Context
+to the native PackageManager signer reader and the opt-in public service metadata collectors. Binary-only packing still works and does not
 automatically provide a supported Application Context.
 
 Without integration, the signer reader retains the existing best-effort, private ActivityThread lookup (at most
@@ -65,7 +65,7 @@ Call after Application attachment, normally in the existing Application's `onCre
 }
 ```
 
-No call is made from `instantiateApplication`, before attachment, or through ActivityThread by this public API.
+Call the public API only after Application attachment. It never calls `instantiateApplication` or goes through ActivityThread.
 [Application.onCreate](https://developer.android.com/reference/android/app/Application#onCreate()) is an appropriate
 post-attachment callback and should remain quick. A Context/Activity/wrapper input is normalized using public
 [Context.getApplicationContext](https://developer.android.com/reference/android/content/Context#getApplicationContext());
@@ -74,7 +74,7 @@ returns no usable application Context and must be retried after attachment.
 
 ## Initialization results
 
-`RuntimeBridge.initialize` returns one of these result codes:
+**`RuntimeBridge.initialize` returns one of these result codes:**
 
 | Result | Meaning |
 |---|---|
@@ -116,7 +116,7 @@ arguments are passed to CMake configuration, for example `-DCMAKE_CXX_COMPILER=/
 The runner accepts Linux and macOS hosts; other hosts, including Windows, are explicitly unsupported. Linux execution
 is validated locally. Actual macOS runner execution remains a CI gate; Linux validation does not establish a macOS
 pass. The Runtime workflow's macOS iOS job runs this same runner under `/bin/bash`, with Java set up explicitly and
-the existing CMake installation; its result must be checked after publication. The script uses CMake's host discovery rather than hardcoding Linux JNI includes or using GNU path resolution
+the existing CMake installation; that job's result establishes a macOS pass. The script uses CMake's host discovery rather than hardcoding Linux JNI includes or using GNU path resolution
 and Bash 4 builtins. Missing Java/JNI targets or an empty test selection fail the runner.
 
 The ordinary host preset and manual runner execute all five real-JVM modes (late, early, concurrent, lifetime and

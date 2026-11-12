@@ -33,7 +33,9 @@ void init_plugins(std::span<const Plugin* const> plugins, const Config& config, 
 /// built-in ones and those of the plugins' checks.
 ///
 /// Direct callers have no monitor metadata. Dispatch is serialized on Context and clears any cycle key.
-/// Monitor consumers retain the owning snapshot from rasp/cycle.h during their callback.
+/// Monitor-run on_observations callbacks receive only bounded retained observations; oversized observations
+/// are dropped whole. Their span carries no drop/coverage accounting. Prefer Plugin::on_cycle and retain its
+/// owning snapshot from rasp/cycle.h for observations together with completeness/drop metadata.
 /// @param plugins The plugins, in the order their checks run.
 /// @param observations The observations of the built-in checks.
 /// @param context The values the plugins share, which every check and `on_observations` receives. It must be the one

@@ -335,8 +335,8 @@ jobs:
           python3 tools/capabilities.py verify "$binary" android '${{ matrix.abi }}' 31
           "$RUNNER_TEMP/build-tools/bin/pip" install 'lief==1.0.0'
           "$RUNNER_TEMP/build-tools/bin/python" tools/verify_packaging.py "$binary" android '${{ matrix.abi }}'
-      - name: Configure the development build
-        run: cmake --preset android-dev -DANDROID_ABI=${{ matrix.abi }}
+      - name: Configure the development build with the private storage plugin consumer
+        run: cmake --preset android-dev -DANDROID_ABI=${{ matrix.abi }} -DRASP_PLUGINS=tests/plugins/private_storage
       - name: Build the development build
         run: cmake --build --preset android-dev --parallel
       - name: Check the Android development code

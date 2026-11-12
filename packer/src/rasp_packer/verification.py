@@ -66,16 +66,28 @@ def staged_output(output: pathlib.Path) -> collections.abc.Iterator[pathlib.Path
 
     A hard link in the same directory provides atomic create-without-overwrite.
     Temporary files are removed on both verification and packing failures.
+    Unusable output parents and failed hard links raise OutputError; no copy or
+    replacement fallback can weaken atomic no-overwrite publication.
     """
     if output.exists() is True:
         raise errors.OutputExistsError(f"{output} already exists")
-    with tempfile.TemporaryDirectory(prefix=".rasp-", dir=output.parent) as directory:
+    try:
+        temporary = tempfile.TemporaryDirectory(prefix=".rasp-", dir=output.parent)
+    except OSError as error:
+        raise errors.OutputError(
+            f"cannot create output staging directory in {output.parent}: {error}"
+        ) from error
+    with temporary as directory:
         staged = pathlib.Path(directory) / output.name
         yield staged
         try:
             os.link(staged, output)
         except FileExistsError as error:
             raise errors.OutputExistsError(f"{output} already exists") from error
+        except OSError as error:
+            raise errors.OutputError(
+                f"cannot publish {output} atomically with a hard link: {error}"
+            ) from error
 
 
 def verify(

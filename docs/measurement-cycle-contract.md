@@ -39,21 +39,22 @@ makes no claim about their expected cardinality or transport delivery.
 Known catalogue groups carry an optional `enabled` state: false is disabled,
 null is unavailable config. Empty configured groups are known/disabled; a missing
 list is unknown. Unknown configured group names are counted and prevent complete.
+
 Expected/seen/missing/extra refer only to builtin signal/source identities, counted
 before plugin checks. Missing identities are listed; duplicates, disabled and
 foreign builtin outputs count as extra. Plugin outputs cannot repair missing
 builtins even if they use the same identity. Plugin outputs are counted separately
-and remain unmodelled. An absent/oversized catalogue makes coverage unknown.
+and remain unmodelled. An absent, invalid (including duplicate identities) or oversized catalogue makes coverage unknown: `catalogue_known` is false and `complete` cannot be true. Duplicate identities are invalid, not truncated; `catalogue_truncated` is reserved for representation bounds.
 
 Bounds: 256 catalogue identities, 64 groups, 96 bytes per identity/group name;
 256 retained observations; 1024 bytes per string value, 64 list entries, and
 64 KiB total observation text per snapshot. An oversized observation is dropped
 whole (never rewritten into benign evidence). Drops count builtin and plugin
 observations, invalidate complete, and are distinct from missing execution.
-RT08 service collectors may return up to 128 list entries. The cycle limit remains
+The accessibility, input-method and notification service collectors may return up to 128 list entries. The cycle limit remains
 64: a 65..128 entry list is dropped whole, `dropped` increments and `complete` is
 false even when the builtin identity was present. A finite production-path fixture
-checks exactly 128 entries and the legacy callback's empty retained span. The integrated real-JVM fixture also exercises the approved RT08 accessibility
+checks exactly 128 entries and the legacy callback's empty retained span. The integrated real-JVM fixture also exercises the accessibility
 collector through this cycle path at 64 and 128 entries. These are simulated
 Android services on a real JVM, not device evidence.
 
@@ -95,16 +96,18 @@ serialization must downgrade delivery completeness, never mutate the snapshot.
 
 ## Cross-repository rollout
 
-`docs/fixtures/measurement-cycle-v1.json` is consumer-readable semantic fixture
+[docs/fixtures/measurement-cycle-v1.json](fixtures/measurement-cycle-v1.json) is consumer-readable semantic fixture
 data, not a GraphQL input. BE03 accepts only optional `sessionId`, `runId`,
 `batchId`, `observedAt` (RFC3339 conversion required). This change emits no network
 fields. Sequence, duration, catalogue/config and health require an explicit
 additive backend schema and transport rollout before transmission. Network/DNS
 plugin implementation is coordinated separately; native availability may precede
-it. Legacy metadata remains unavailable. RT07 introduced this contract by ordinary-merging approved RT08 parent
-`d2deaf39961b292e247a17e8209d01e6e987bf35`, including RT06 `hook.inline` and
-RT08 service outputs. RT09 ordinary-merges the approved RT07 combined parent `70d938b2cc33edea6bba3f715b32cd286c94d592`, retaining those histories and actual collectors. The approved RT09 integration registers schema1/revision5,36 Android/26 iOS rows,
-and catalogue ID `c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5`. Identity now has nine expected outputs; malformed signer sources remain present error observations. Real-JVM caller and attached-worker fixtures exercise the actual identity dispatcher through this immutable cycle handoff.
+it. Legacy metadata remains unavailable. The compiled catalogue includes inline-hook observations, service
+metadata, signer current sets and rotation history, window observations, and root/context observations.
+Canonical schema 1, revision 7 declares 52 Android and 26 iOS identities, with catalogue ID
+`c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`.
+Identity has nine expected outputs; malformed signer sources remain present error observations. Real-JVM caller
+and attached-worker fixtures exercise the actual identity dispatcher through this immutable cycle handoff.
 Cycle metadata adds no observation rows or catalogue revision. Every later builtin
 source change still requires an exact catalogue update.
 
@@ -113,7 +116,7 @@ supported compiler CI remain necessary validation; host execution is no device
 health evidence. Session/run generation does not depend on installation storage.
 
 
-The combined runtime preserves RT10's ordinary merge of the exact approved RT09 parent. Canonical schema1/revision7 declares **52 Android/26 iOS**
+The combined runtime preserves RT10's ordinary merge of the exact approved RT09 parent. Canonical schema 1, revision 7 declares **52 Android/26 iOS**
 identities, catalogue `c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`. The ten opt-in window outputs consume one bounded FIFO drain per selected actual
 measurement cycle through the same production builtin dispatcher; disabled selection does not drain. Legacy and
 additive callbacks retain the same immutable snapshot, including interval/loss metadata and observations, across

@@ -4,12 +4,16 @@
 #include <cstdint>
 #include <expected>
 #include <fcntl.h>
+#include <filesystem>
 #include <gtest/gtest.h>
+#include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "rasp/install_id.h"
 #include "rasp/posix/private_storage.h"
 #include "rasp/private_storage.h"
 #include "support/files.h"
@@ -32,6 +36,7 @@ enum class Fault : std::uint8_t {
   kChangedInode,
   kReadOnly,
   kLock,
+  kBusy,
   kUnlink,
   kCompetingIdentity,
   kPublishedCleanup,
@@ -41,6 +46,11 @@ enum class Fault : std::uint8_t {
 Fault& active_fault() {
   thread_local Fault fault = Fault::kNone;
   return fault;
+}
+/// Counts actual lock syscalls while the test exercises legacy retries or a single provider attempt.
+int& lock_calls() {
+  thread_local int calls = 0;
+  return calls;
 }
 /// Captures the actual competing inode before linkat returns EEXIST.
 struct stat& competing_inode() {
@@ -179,6 +189,11 @@ int wrap_fstatat(int descriptor, const char* name, struct stat* info, int flags)
 }
 /// Makes interrupted/failed locking explicit rather than treating it as ownership.
 int wrap_flock(int descriptor, int operation) {
+  ++lock_calls();
+  if (active_fault() == Fault::kBusy) {
+    errno = EWOULDBLOCK;
+    return -1;
+  }
   if (active_fault() == Fault::kLock) {
     errno = EINTR;
     return -1;
@@ -209,6 +224,52 @@ namespace {
   auto result = posix::acquire_private_storage_at(path);
   active_fault() = Fault::kNone;
   return result;
+}
+
+/// The Linux process's actual open descriptor count, including this temporary enumeration handle.
+[[nodiscard]] std::ptrdiff_t descriptor_count() {
+  return std::distance(std::filesystem::directory_iterator("/proc/self/fd"), std::filesystem::directory_iterator());
+}
+
+TEST(PrivateStorageFault, legacy_whenBusyBudgetExpires_closesEveryAttemptAndParent) {
+  const test_support::TemporaryDirectory directory;
+  const auto before = descriptor_count();
+  lock_calls() = 0;
+  active_fault() = Fault::kBusy;
+  const auto result = load_or_create_install_id(directory.path());
+  active_fault() = Fault::kNone;
+  EXPECT_FALSE(result.has_value());
+  EXPECT_EQ(lock_calls(), 11);
+  EXPECT_EQ(descriptor_count(), before);
+  EXPECT_EQ(access((directory.path() + "/rasp_install_id").c_str(), F_OK), -1);
+}
+
+TEST(PrivateStorageFault, acquire_whenLockIsBusy_staysNonblockingAndDoesNotRetry) {
+  const test_support::TemporaryDirectory directory;
+  lock_calls() = 0;
+  const auto result = acquire_fault(directory.path(), Fault::kBusy);
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error(), StorageError::kBusy);
+  EXPECT_EQ(lock_calls(), 1);
+}
+
+/// Verifies a nonbusy error cannot trigger retries or leak a descriptor in the legacy API.
+void check_legacy_error(Fault fault) {
+  const test_support::TemporaryDirectory directory;
+  const auto before = descriptor_count();
+  lock_calls() = 0;
+  active_fault() = fault;
+  const auto result = load_or_create_install_id(directory.path());
+  active_fault() = Fault::kNone;
+  EXPECT_FALSE(result.has_value());
+  EXPECT_EQ(lock_calls(), 1);
+  EXPECT_EQ(descriptor_count(), before);
+}
+
+TEST(PrivateStorageFault, legacy_whenLockIoReadOrRandomFails_doesNotRetryOtherErrors) {
+  check_legacy_error(Fault::kLock);
+  check_legacy_error(Fault::kRead);
+  check_legacy_error(Fault::kRandom);
 }
 
 /// Validates one failing persistence boundary and its retry without nesting assertions inside a fault loop.

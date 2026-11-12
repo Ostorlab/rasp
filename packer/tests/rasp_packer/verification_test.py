@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import collections.abc
+import errno
+import os
 import pathlib
+import tempfile
 import zipfile
 
 import pytest
@@ -372,3 +375,71 @@ def testStagedOutput_whenDestinationAppears_preservesExistingFile(
         publish()
     assert output.read_bytes() == b"another caller"
     assert list(tmp_path.glob(".rasp-*")) == []
+
+
+@pytest.mark.parametrize("parent_kind", ["missing", "file"])
+def testStagedOutput_whenParentIsUnusable_raisesCleanErrorWithoutOutput(
+    tmp_path: pathlib.Path, parent_kind: str
+) -> None:
+    parent = tmp_path / parent_kind
+    if parent_kind == "file":
+        parent.write_bytes(b"keep")
+    output = parent / "protected.apk"
+    with (
+        pytest.raises(errors.Error, match="cannot create output staging directory"),
+        verification.staged_output(output),
+    ):
+        pytest.fail("packing must not start without staging")
+    assert output.exists() is False
+    assert list(tmp_path.glob(".rasp-*")) == []
+    if parent_kind == "file":
+        assert parent.read_bytes() == b"keep"
+
+
+def testStagedOutput_whenParentIsNotWritable_raisesCleanError(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def denied(*args: object, **kwargs: object) -> None:
+        raise PermissionError(errno.EACCES, "staging denied")
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", denied)
+    with (
+        pytest.raises(errors.Error, match="cannot create output staging directory"),
+        verification.staged_output(tmp_path / "protected.apk"),
+    ):
+        pytest.fail("packing must not start without staging")
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "error_number", [errno.EOPNOTSUPP, errno.EACCES, errno.EPERM, errno.EXDEV]
+)
+@pytest.mark.parametrize("racing_output", [False, True])
+def testStagedOutput_whenHardLinkFails_raisesCleanErrorAndNeverOverwrites(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_number: int,
+    racing_output: bool,
+) -> None:
+    output = tmp_path / "protected.apk"
+
+    def fail_link(source: pathlib.Path, destination: pathlib.Path) -> None:
+        assert source.read_bytes() == b"verified"
+        assert destination == output
+        if racing_output is True:
+            destination.write_bytes(b"another caller")
+        raise OSError(error_number, "hard link denied")
+
+    monkeypatch.setattr(os, "link", fail_link)
+    with (
+        pytest.raises(
+            errors.Error, match=r"cannot publish.*atomically with a hard link"
+        ),
+        verification.staged_output(output) as staged,
+    ):
+        staged.write_bytes(b"verified")
+    assert list(tmp_path.glob(".rasp-*")) == []
+    if racing_output is True:
+        assert output.read_bytes() == b"another caller"
+    else:
+        assert output.exists() is False

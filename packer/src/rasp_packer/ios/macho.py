@@ -27,13 +27,13 @@ FRAMEWORKS_RPATH = "@executable_path/Frameworks"
 def add_runtime(executable: pathlib.Path) -> None:
     """Makes the executable load the runtime, and removes its code signature.
 
-    The file is rewritten in place, and only when every arm64 slice can take the change.
+    The file is rewritten in place only when every slice is arm64 and can take the change.
 
     Args:
         executable: The app's main executable.
 
     Raises:
-        UnsupportedBinaryError: The file is not a Mach-O, has no arm64 slice, or has an encrypted
+        UnsupportedBinaryError: The file is not a Mach-O, has a non-arm64 slice, or has an encrypted
             slice.
         AlreadyProtectedError: The executable already loads the runtime.
         HeaderPaddingError: The new load commands do not fit in a slice.
@@ -50,6 +50,10 @@ def add_runtime(executable: pathlib.Path) -> None:
     ]
     if len(slices) == 0:
         raise errors.UnsupportedBinaryError(f"{executable.name} has no arm64 slice")
+    if len(slices) != fat.size:
+        raise errors.UnsupportedBinaryError(
+            f"{executable.name} has an unsupported Mach-O architecture: only arm64 slices are supported"
+        )
     for binary in slices:
         _check(binary)
     for binary in fat:

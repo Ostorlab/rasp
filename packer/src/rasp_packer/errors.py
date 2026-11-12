@@ -33,6 +33,10 @@ class UnsupportedAbiError(Error):
     """The app ships native libraries for an ABI the runtime is not built for."""
 
 
+class OutputError(Error):
+    """The destination cannot stage or atomically publish the protected app."""
+
+
 class OutputExistsError(Error):
     """The path to write the protected app to already exists."""
 

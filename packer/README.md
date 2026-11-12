@@ -118,7 +118,9 @@ An empty choice, such as `checks=[]`, runs only the required groups. Without `--
 
 ## Post-pack verification
 
-Before creating the requested output file, `packer.pack` and `rasp pack` verify the staged archive. The platform packers use the same verification path when called directly. Packing writes to a temporary directory beside the destination, verifies that archive, then atomically creates the destination without overwriting an existing file. Failed packing or verification removes the staging files. The destination filesystem must support hard links.
+Post-pack verification catches lost or replaced protection artifacts, including the manifest, injected runtime and encrypted payload, before the output is created.
+
+Before creating the requested output file, `packer.pack` and `rasp pack` verify the staged archive. The platform packers use the same verification path when called directly. Packing writes to a temporary directory beside the destination, verifies that archive, then atomically creates the destination without overwriting an existing file. Failed packing or verification removes the staging files. The destination filesystem must support hard links. A missing or unusable output parent, or a failed hard link, produces a clean packer error; publication never falls back to replacement or copying.
 
 The CLI reports `unsigned, structurally verified` on success. A verification failure raises `errors.VerificationError` in the library and exits with status 1 and a diagnostic on stderr in the CLI.
 
@@ -142,7 +144,7 @@ The checks are deliberately structural:
 
 Read limits:
 
-- ZIP: at most 4 GiB on disk, 100,000 members and 4 GiB total uncompressed. Individual members cannot exceed the archive limit; APK/AAB readers retain their stricter 1 GiB total.
+- ZIP: at most 4 GiB on disk, 100,000 members and 4 GiB total uncompressed. Each member is limited to 4 GiB uncompressed; APK/AAB readers retain their stricter 1 GiB total.
 - Manifests/plists: at most 4 MiB; runtime binaries: at most 256 MiB.
 - Embedded config sections: entirely inside the binary, at most 64 KiB and zero-terminated.
 - Encrypted Android class map: at most 16 MiB.
