@@ -1,4 +1,4 @@
-/// Closed semantic registry pinned to BE13 and native canonical revision 7; never generated from a future catalogue.
+/// Closed BE13-compatible semantics with explicitly unregistered RT15 capture rows; no future catalogue fallback.
 #pragma once
 #include <array>
 #include <cstdint>
@@ -26,6 +26,7 @@ enum class Predicate : std::uint8_t {
   kBaselineDigests,
   kThreads,
   kInline,
+  kUnregistered,
 };
 /// One explicit platform/source/group contract.
 struct Rule {
@@ -38,8 +39,8 @@ struct Rule {
   LocalSeverity severity;
 };
 /// Explicit adoption pin: future catalogues cannot silently inherit predicates.
-inline constexpr std::string_view kCatalogueId = "c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf";
-/// All 78 canonical observation tuples; modifications require semantic review.
+inline constexpr std::string_view kCatalogueId = "479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a";
+/// All 99 adopted canonical tuples; 21 capture rows deliberately have no semantic predicate.
 inline constexpr auto kRules = std::to_array<Rule>({
     {
         .platform = "android",
@@ -742,6 +743,195 @@ inline constexpr auto kRules = std::to_array<Rule>({
         .rule_id = "native.ios.mitm.user_cas.trust_store",
         .predicate = Predicate::kUnavailable,
         .severity = LocalSeverity::kInfo,
+    },
+    {
+        .platform = "android",
+        .group = "screenshot",
+        .signal = "capture.screenshot.observer_state",
+        .source = "activity_screen_capture",
+        .rule_id = "local.android.capture.screenshot.observer_state.activity_screen_capture",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screenshot",
+        .signal = "capture.screenshot.permission",
+        .source = "activity_screen_capture",
+        .rule_id = "local.android.capture.screenshot.permission.activity_screen_capture",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screenshot",
+        .signal = "capture.screenshot.coverage",
+        .source = "activity_screen_capture",
+        .rule_id = "local.android.capture.screenshot.coverage.activity_screen_capture",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screenshot",
+        .signal = "capture.screenshot.active_activities",
+        .source = "activity_screen_capture",
+        .rule_id = "local.android.capture.screenshot.active_activities.activity_screen_capture",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screenshot",
+        .signal = "capture.screenshot.callback_events",
+        .source = "activity_screen_capture",
+        .rule_id = "local.android.capture.screenshot.callback_events.activity_screen_capture",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screenshot",
+        .signal = "capture.screenshot.lost_registrations",
+        .source = "activity_screen_capture",
+        .rule_id = "local.android.capture.screenshot.lost_registrations.activity_screen_capture",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screenshot",
+        .signal = "capture.screenshot.invalid_events",
+        .source = "activity_screen_capture",
+        .rule_id = "local.android.capture.screenshot.invalid_events.activity_screen_capture",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screenshot",
+        .signal = "capture.screenshot.counter_overflow",
+        .source = "activity_screen_capture",
+        .rule_id = "local.android.capture.screenshot.counter_overflow.activity_screen_capture",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screenshot",
+        .signal = "capture.screenshot.interval_ms",
+        .source = "activity_screen_capture",
+        .rule_id = "local.android.capture.screenshot.interval_ms.activity_screen_capture",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screen_recording",
+        .signal = "capture.recording.observer_state",
+        .source = "window_manager_recording",
+        .rule_id = "local.android.capture.recording.observer_state.window_manager_recording",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screen_recording",
+        .signal = "capture.recording.permission",
+        .source = "window_manager_recording",
+        .rule_id = "local.android.capture.recording.permission.window_manager_recording",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screen_recording",
+        .signal = "capture.recording.coverage",
+        .source = "window_manager_recording",
+        .rule_id = "local.android.capture.recording.coverage.window_manager_recording",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screen_recording",
+        .signal = "capture.recording.active_activities",
+        .source = "window_manager_recording",
+        .rule_id = "local.android.capture.recording.active_activities.window_manager_recording",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screen_recording",
+        .signal = "capture.recording.visibility",
+        .source = "window_manager_recording",
+        .rule_id = "local.android.capture.recording.visibility.window_manager_recording",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screen_recording",
+        .signal = "capture.recording.initial_samples",
+        .source = "window_manager_recording",
+        .rule_id = "local.android.capture.recording.initial_samples.window_manager_recording",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screen_recording",
+        .signal = "capture.recording.callback_events",
+        .source = "window_manager_recording",
+        .rule_id = "local.android.capture.recording.callback_events.window_manager_recording",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screen_recording",
+        .signal = "capture.recording.visibility_changes",
+        .source = "window_manager_recording",
+        .rule_id = "local.android.capture.recording.visibility_changes.window_manager_recording",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screen_recording",
+        .signal = "capture.recording.lost_registrations",
+        .source = "window_manager_recording",
+        .rule_id = "local.android.capture.recording.lost_registrations.window_manager_recording",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screen_recording",
+        .signal = "capture.recording.invalid_events",
+        .source = "window_manager_recording",
+        .rule_id = "local.android.capture.recording.invalid_events.window_manager_recording",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screen_recording",
+        .signal = "capture.recording.counter_overflow",
+        .source = "window_manager_recording",
+        .rule_id = "local.android.capture.recording.counter_overflow.window_manager_recording",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
+    },
+    {
+        .platform = "android",
+        .group = "screen_recording",
+        .signal = "capture.recording.interval_ms",
+        .source = "window_manager_recording",
+        .rule_id = "local.android.capture.recording.interval_ms.window_manager_recording",
+        .predicate = Predicate::kUnregistered,
+        .severity = LocalSeverity::kUnknown,
     },
 });
 }  // namespace rasp::decision_internal

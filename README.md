@@ -45,6 +45,10 @@ Each completed check run gives plugins a snapshot of the results, timing and che
 - **The packer** (`packer/`, Python) adds the runtime to the app and returns it unsigned.
 - **The runtime** (`runtime/`, C++) runs inside the protected app and runs the checks.
 
+Optional Android host source integration can observe [screenshot notifications and recording
+visibility](docs/android-capture-observations.md), with separate permissions, API34/35 availability
+and explicit lifecycle/loss metadata. These observations do not prevent capture or classify malware.
+
 ## Quick start
 
 1. **Build the runtime** for your platform ([details](runtime/README.md#build)):

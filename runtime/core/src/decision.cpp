@@ -347,6 +347,7 @@ constexpr auto kInlineNames = std::to_array<std::string_view>({
       return !text->empty();
     }
     case Predicate::kUnavailable:
+    case Predicate::kUnregistered:
       return std::nullopt;
     case Predicate::kStrings:
     case Predicate::kContextStrings:
@@ -389,6 +390,10 @@ constexpr auto kInlineNames = std::to_array<std::string_view>({
   result.status = observation.status;
   if (observation.status != Status::kOk || rule.predicate == Predicate::kUnavailable) {
     result.reason = LocalReason::kStatusUnavailable;
+    return result;
+  }
+  if (rule.predicate == Predicate::kUnregistered) {
+    result.reason = LocalReason::kUnregisteredRule;
     return result;
   }
   const std::optional<bool> present = indicator(rule, observation.value);

@@ -152,7 +152,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(rasp_android_archive_fault_test PRIVATE
     RASP_TEST_CERTIFICATE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/android/apk/data")
   target_link_options(rasp_android_archive_fault_test PRIVATE
-    -Wl,--wrap=pread -Wl,--wrap=fstat -Wl,--wrap=stat -Wl,--wrap=close -Wl,--wrap=mmap)
+    -Wl,--wrap=pread -Wl,--wrap=fstat -Wl,--wrap=stat -Wl,--wrap=close)
   gtest_discover_tests(rasp_android_archive_fault_test)
 endif()
 
@@ -244,7 +244,7 @@ foreach(platform android ios)
       ${expectations_dir}/capability_expectations.h ${platform}
     COMMAND_ERROR_IS_FATAL ANY)
   if(platform STREQUAL "android")
-    set(capability_checks debugger emulator hooks identity integrity mitm root service_exposure overlay context_exposure root_namespace)
+    set(capability_checks debugger emulator hooks identity integrity mitm root service_exposure overlay context_exposure root_namespace capture)
     set(capability_util events/window_events.cpp util/signing_certificates.cpp util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp
       util/elf.cpp util/service_components.cpp)
   else()
@@ -303,6 +303,9 @@ if(Java_FOUND AND JNI_FOUND)
       ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/include ${PROJECT_SOURCE_DIR}/android/src)
     target_link_libraries(rasp_android_identity_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
     add_library(rasp_android_context_bridge_jni SHARED android/context_bridge/driver.cpp android/events/driver.cpp
+      android/events/capture_driver.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/events/capture_bridge.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/events/capture_events.cpp
       ${PROJECT_SOURCE_DIR}/android/src/events/window_bridge.cpp
       ${PROJECT_SOURCE_DIR}/android/src/events/window_events.cpp
       ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
@@ -330,6 +333,12 @@ if(Java_FOUND AND JNI_FOUND)
     target_include_directories(rasp_android_overlay_dispatch PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
     target_link_libraries(rasp_android_overlay_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
     target_sources(rasp_android_context_bridge_jni PRIVATE $<TARGET_OBJECTS:rasp_android_overlay_dispatch>)
+    add_library(rasp_android_capture_dispatch OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/capture.cpp)
+    target_compile_definitions(rasp_android_capture_dispatch PRIVATE __ANDROID__)
+    target_include_directories(rasp_android_capture_dispatch PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/include)
+    target_link_libraries(rasp_android_capture_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
+    target_sources(rasp_android_context_bridge_jni PRIVATE $<TARGET_OBJECTS:rasp_android_capture_dispatch>)
     target_link_libraries(rasp_android_context_bridge_jni PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language JNI::JVM Threads::Threads ${CMAKE_DL_LIBS})
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
       target_link_options(rasp_android_context_bridge_jni PRIVATE -Wl,--no-undefined)
@@ -346,6 +355,12 @@ if(Java_FOUND AND JNI_FOUND)
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.WindowTest
         $<TARGET_FILE:rasp_android_context_bridge_jni>)
     set_tests_properties(AndroidWindowBridge.lifecycle PROPERTIES TIMEOUT 30)
+    foreach(api 31 33 34 35)
+      add_test(NAME AndroidCaptureBridge.api${api}
+        COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.CaptureTest
+          $<TARGET_FILE:rasp_android_context_bridge_jni> ${api})
+      set_tests_properties(AndroidCaptureBridge.api${api} PROPERTIES TIMEOUT 30)
+    endforeach()
     set(identity_java_command ${Java_JAVA_EXECUTABLE})
     set(identity_process_alias "")
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -465,6 +480,7 @@ target_link_libraries(rasp_android_service_components_test PRIVATE rasp_core ras
 gtest_discover_tests(rasp_android_service_components_test)
 
 add_library(rasp_android_builtin_support OBJECT ${PROJECT_SOURCE_DIR}/android/src/builtin.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/capture.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/overlay.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/emulator.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp
@@ -532,6 +548,11 @@ target_include_directories(rasp_android_window_events_test PRIVATE ${PROJECT_SOU
 target_link_libraries(rasp_android_window_events_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_window_events_test)
 
+add_executable(rasp_android_capture_events_test android/events/capture_events_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/events/capture_events.cpp)
+target_include_directories(rasp_android_capture_events_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_capture_events_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_capture_events_test)
 add_executable(rasp_android_root_namespace_test android/checks/root_namespace_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/root_namespace.cpp)
 target_include_directories(rasp_android_root_namespace_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src ${CMAKE_CURRENT_SOURCE_DIR})

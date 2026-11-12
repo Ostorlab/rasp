@@ -29,6 +29,415 @@ public final class RuntimeBridge {
 
     private static Session windows;
 
+    public static final int ACTIVITY_LIMIT = 11;
+    public static final int PERMISSION_REQUIRED = 12;
+    public static final int PARTIAL = 13;
+    public static final int INVALID_OPTIONS = 14;
+    private static CaptureSession captures;
+
+    /** Opts in independently to resumed-Activity screenshots and UID-scoped recording visibility.
+     * Call after initialize(application), on the main thread. Selection and manifest permissions are separate.
+     */
+    public static int startCaptureObservation(Application application, boolean screenshots, boolean recording) {
+        if (Looper.myLooper() != Looper.getMainLooper()) return WRONG_THREAD;
+        if (application == null) return INVALID_CONTEXT;
+        if (!screenshots && !recording) return INVALID_OPTIONS;
+        if (captures != null) {
+            if (captures.application != application) return DIFFERENT_APPLICATION;
+            if (captures.active) return captures.screenshots == screenshots && captures.recording == recording
+                    ? ALREADY_INITIALIZED : INVALID_OPTIONS;
+            if (!captures.cleanup()) return JNI_ERROR;
+            captures = null;
+        }
+        CaptureSession session = null;
+        try {
+            long epoch = startCaptureNative(application, screenshots, recording);
+            if (epoch <= 0) return (int) -epoch;
+            session = new CaptureSession(application, epoch, screenshots, recording);
+            captures = session;
+            int result = session.permissions();
+            session.lifecycle = true;
+            application.registerActivityLifecycleCallbacks(session);
+            return result;
+        } catch (RuntimeException | LinkageError error) {
+            if (session != null) { session.stop(); session.failSource(0); session.failSource(1); return JNI_ERROR; }
+            return error instanceof LinkageError ? UNAVAILABLE : JNI_ERROR;
+        }
+    }
+
+    /** Attaches an already resumed host Activity; no Activity inventory is queried. Main thread only. */
+    public static int attachCaptureActivity(Activity activity) {
+        if (Looper.myLooper() != Looper.getMainLooper()) return WRONG_THREAD;
+        if (captures == null || !captures.active) return NOT_INITIALIZED;
+        return captures.attach(activity);
+    }
+
+    /** Invalidates Activity callback generations before public removal. Main thread only. */
+    public static int detachCaptureActivity(Activity activity) {
+        if (Looper.myLooper() != Looper.getMainLooper()) return WRONG_THREAD;
+        if (captures == null || !captures.active) return NOT_INITIALIZED;
+        return captures.detach(activity);
+    }
+
+    /** Stops capture only; unresolved inert registrations remain bounded across restarts. Main thread only. */
+    public static int stopCaptureObservation() {
+        if (Looper.myLooper() != Looper.getMainLooper()) return WRONG_THREAD;
+        if (captures == null) return ALREADY_INITIALIZED;
+        return captures.stop();
+    }
+
+    private static native long startCaptureNative(Application application, boolean screenshots, boolean recording);
+    private static native void stopCaptureNative(long epoch);
+    private static native boolean captureEventNative(long epoch, int source, int token, int kind, int value);
+
+    private static final class CaptureEntry {
+        final WeakReference<Activity> activity;
+        final int token;
+        Object shot;
+        boolean eligible = true;
+        boolean shotOpen;
+        boolean recordingOpen;
+        boolean shotFailed;
+        CaptureEntry(Activity activity, int token) { this.activity = new WeakReference<>(activity); this.token = token; }
+    }
+
+    private static final class CaptureSession implements Application.ActivityLifecycleCallbacks {
+        final Application application;
+        final long epoch;
+        final boolean screenshots;
+        final boolean recording;
+        final CaptureEntry[] entries = new CaptureEntry[32];
+        final int[] permissionStates = new int[2];
+        int nextToken = 1;
+        volatile boolean active = true;
+        boolean lifecycle;
+        boolean nativeStopped;
+        volatile boolean screenshotFault;
+        volatile boolean recordingFault;
+        RecordCallback recorder;
+        CaptureEntry recordingOwner;
+        WeakReference<WindowManager> recordingManager;
+
+        CaptureSession(Application application, long epoch, boolean screenshots, boolean recording) {
+            this.application = application; this.epoch = epoch; this.screenshots = screenshots; this.recording = recording;
+        }
+        boolean supported(int source) { return Build.VERSION.SDK_INT >= (source == 0 ? 34 : 35); }
+        boolean requested(int source) { return source == 0 ? screenshots : recording; }
+        boolean emit(int source, int token, int kind, int value) {
+            if (nativeStopped && kind == 2) return true;
+            try { return captureEventNative(epoch, source, token, kind, value); }
+            catch (RuntimeException | LinkageError error) { return false; }
+        }
+        void state(int source, int value) { if (supported(source) && requested(source)) emit(source, 0, 5, value); }
+        void loss(int source) { if (supported(source) && requested(source)) emit(source, 0, 7, 0); }
+        void failSource(int source) {
+            if (source == 0) screenshotFault = true; else recordingFault = true;
+            state(source, 11); loss(source);
+        }
+        int permission(int source) {
+            if (!supported(source) || !requested(source)) return permissionStates[source] = 1;
+            int result = 0;
+            try {
+                String permission = source == 0 ? "android.permission.DETECT_SCREEN_CAPTURE" : "android.permission.DETECT_SCREEN_RECORDING";
+                android.content.pm.PackageInfo info = application.getPackageManager().getPackageInfo(
+                        application.getPackageName(), android.content.pm.PackageManager.GET_PERMISSIONS);
+                if (info == null) throw new IllegalStateException("own manifest unavailable");
+                String[] declared = info.requestedPermissions;
+                if (declared != null && declared.length > 1024) throw new IllegalStateException("permission bound");
+                result = 2;
+                if (declared != null) for (String name : declared) if (permission.equals(name)) {
+                    result = application.checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED ? 4 : 3;
+                    break;
+                }
+                boolean removed = true;
+                if (result != 4) {
+                    if (source == 0) {
+                        for (CaptureEntry entry : entries) if (entry != null && !removeShot(entry)) removed = false;
+                    } else removed = removeRecording();
+                }
+                emit(source, 0, 6, result);
+                if (!removed) state(source, 10);
+            } catch (android.content.pm.PackageManager.NameNotFoundException | RuntimeException | LinkageError error) {
+                result = 0;
+                if (source == 0) { for (CaptureEntry entry : entries) if (entry != null) removeShot(entry); }
+                else removeRecording();
+                emit(source, 0, 6, 0); state(source, 11); loss(source);
+            }
+            permissionStates[source] = result;
+            return result;
+        }
+        int permissions() {
+            int usable = 0, asked = 0, supported = 0;
+            boolean failed = false;
+            for (int source = 0; source < 2; source++) if (requested(source)) {
+                asked++;
+                if (supported(source)) {
+                    supported++; int checked = permission(source);
+                    if (checked == 4) usable++;
+                    else if (checked == 0) failed = true;
+                }
+            }
+            return usable == asked ? INITIALIZED : usable > 0 ? PARTIAL : supported == 0 ? UNSUPPORTED
+                    : failed ? JNI_ERROR : PERMISSION_REQUIRED;
+        }
+        boolean granted(int source) {
+            try {
+                String permission = source == 0 ? "android.permission.DETECT_SCREEN_CAPTURE" : "android.permission.DETECT_SCREEN_RECORDING";
+                if (application.checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED) return true;
+            } catch (RuntimeException | LinkageError error) { state(source, 11); }
+            loss(source); return false;
+        }
+        void summarizeShots() {
+            if (!screenshots || !supported(0)) return;
+            if (screenshotFault) { state(0, 11); return; }
+            if (permissionStates[0] != 4) return;
+            int good = 0, failed = 0, quarantined = 0;
+            for (CaptureEntry entry : entries) if (entry != null) {
+                if (entry.shotOpen) good++;
+                else if (entry.shot != null || (entry.eligible && entry.shotFailed)) {
+                    failed++; if (entry.shot != null) quarantined++;
+                }
+            }
+            if (good > 0) state(0, failed > 0 ? 8 : 7);
+            else if (failed > 0) state(0, quarantined > 0 ? 10 : 9);
+            else state(0, 6);
+        }
+        int attach(Activity activity) {
+            if (!active || activity == null) return INVALID_CONTEXT;
+            try {
+                if (activity.getApplication() != application) return DIFFERENT_APPLICATION;
+                CaptureEntry entry = null;
+                int empty = -1;
+                for (int index = 0; index < entries.length; index++) {
+                    CaptureEntry candidate = entries[index];
+                    if (candidate != null && candidate.activity.get() == null) { release(index); candidate = entries[index]; }
+                    if (candidate == null && empty < 0) empty = index;
+                    else if (candidate != null && candidate.activity.get() == activity) entry = candidate;
+                }
+                if (entry == null) {
+                    if (empty < 0 || nextToken == Integer.MAX_VALUE) { loss(0); loss(1); return ACTIVITY_LIMIT; }
+                    entry = new CaptureEntry(activity, nextToken++); entries[empty] = entry;
+                }
+                entry.eligible = true;
+                if (screenshotFault) {
+                    boolean removed = true;
+                    for (CaptureEntry other : entries) if (other != null) {
+                        other.shotOpen = false;
+                        if (!removeShot(other)) removed = false;
+                    }
+                    if (!removed) return JNI_ERROR;
+                    screenshotFault = false;
+                }
+                if (recordingFault) {
+                    for (CaptureEntry other : entries) if (other != null) other.recordingOpen = false;
+                    if (!removeRecording()) return JNI_ERROR;
+                    recordingFault = false;
+                }
+                int result = permissions();
+                if (screenshots && supported(0) && permissionStates[0] == 4 && !entry.shotOpen) {
+                    if (entry.shot == null || removeShot(entry)) {
+                        Object callback = Api34.callback(this, entry.token);
+                        entry.shot = callback;
+                        try {
+                            Api34.add(activity, callback, this);
+                            if (screenshotFault) throw new IllegalStateException("capture executor rejected");
+                            if (!emit(0, entry.token, 1, 0)) throw new IllegalStateException("native capture unavailable");
+                            entry.shotOpen = true; entry.shotFailed = false; Api34.enable(callback);
+                        } catch (RuntimeException | LinkageError error) {
+                            entry.shotFailed = true; loss(0); removeShot(entry); result = JNI_ERROR;
+                        }
+                    } else result = JNI_ERROR;
+                    summarizeShots();
+                }
+                if (recording && supported(1) && permissionStates[1] == 4) {
+                    if (recorder == null) startRecording();
+                    else if (recorder.enabled && !entry.recordingOpen) entry.recordingOpen = emit(1, entry.token, 1, 0);
+                    if (recorder == null || !recorder.enabled || !entry.recordingOpen) {
+                        return entry.shotOpen ? PARTIAL : JNI_ERROR;
+                    }
+                }
+                if (result == JNI_ERROR && entry.recordingOpen) return PARTIAL;
+                return result;
+            } catch (RuntimeException | LinkageError error) { state(0, 11); state(1, 11); loss(0); loss(1); return JNI_ERROR; }
+        }
+        boolean removeShot(CaptureEntry entry) {
+            Object callback = entry.shot;
+            if (callback == null) return true;
+            Api34.disable(callback);
+            if (entry.shotOpen) { emit(0, entry.token, 2, 0); entry.shotOpen = false; }
+            Activity activity = entry.activity.get();
+            if (activity == null) { loss(0); return false; }
+            try { Api34.remove(activity, callback); entry.shot = null; return true; }
+            catch (RuntimeException | LinkageError error) { loss(0); state(0, 10); return false; }
+        }
+        void startRecording() {
+            if (!active || recorder != null) return;
+            CaptureEntry owner = null;
+            for (CaptureEntry entry : entries) if (entry != null && entry.eligible && entry.activity.get() != null) { owner = entry; break; }
+            if (owner == null) return;
+            try {
+                Activity activity = owner.activity.get();
+                if (activity == null) throw new IllegalStateException("recording owner collected");
+                WindowManager manager = activity.getWindowManager();
+                if (manager == null) throw new IllegalStateException("window manager unavailable");
+                recordingManager = new WeakReference<>(manager); recordingOwner = owner;
+                recorder = new RecordCallback(this, owner.token);
+                int initial = Api35.add(manager, this, recorder);
+                if (recordingFault) throw new IllegalStateException("capture executor rejected");
+                if (initial != 0 && initial != 1) throw new IllegalStateException("unknown recording state");
+                for (CaptureEntry entry : entries) if (entry != null && entry.eligible) {
+                    if (!emit(1, entry.token, 1, 0)) throw new IllegalStateException("native capture unavailable");
+                    entry.recordingOpen = true;
+                }
+                if (!emit(1, owner.token, 4, initial)) throw new IllegalStateException("initial state rejected");
+                RecordCallback callback = recorder;
+                callback.preparing = false; callback.enabled = true;
+                if (callback.pendingCount > 1) loss(1);
+                if (callback.pendingCount > 0) callback.accept(callback.pending);
+            } catch (RuntimeException | LinkageError error) { loss(1); state(1, removeRecording() ? 9 : 10); }
+        }
+        boolean removeRecording() {
+            if (recorder == null) return true;
+            recorder.enabled = false; recorder.preparing = false; recorder.live = false;
+            if (recordingOwner != null && recordingOwner.recordingOpen) {
+                emit(1, recordingOwner.token, 2, 0); recordingOwner.recordingOpen = false;
+            }
+            for (CaptureEntry entry : entries) if (entry != null && entry.recordingOpen) {
+                emit(1, entry.token, 2, 0); entry.recordingOpen = false;
+            }
+            WindowManager manager = recordingManager == null ? null : recordingManager.get();
+            if (manager == null) { loss(1); state(1, 10); return false; }
+            try {
+                Api35.remove(manager, recorder); recorder = null; recordingOwner = null; recordingManager = null; return true;
+            } catch (RuntimeException | LinkageError error) { loss(1); state(1, 10); return false; }
+        }
+        boolean release(int index) {
+            CaptureEntry entry = entries[index];
+            if (entry == null) return true;
+            entry.eligible = false;
+            boolean owner = recordingOwner == entry;
+            boolean removed = removeShot(entry);
+            if (owner) { if (!removeRecording()) removed = false; }
+            else if (entry.recordingOpen) { emit(1, entry.token, 2, 0); entry.recordingOpen = false; }
+            if (removed) entries[index] = null;
+            return removed;
+        }
+        int detach(Activity activity) {
+            if (activity == null) return INVALID_CONTEXT;
+            for (int index = 0; index < entries.length; index++) {
+                CaptureEntry entry = entries[index];
+                if (entry != null && entry.activity.get() == activity) {
+                    boolean owner = recordingOwner == entry;
+                    boolean result = release(index);
+                    summarizeShots();
+                    if (owner && active && recorder == null) {
+                        boolean remaining = false;
+                        for (CaptureEntry other : entries) if (other != null && other.eligible) remaining = true;
+                        if (remaining) { loss(1); startRecording(); }
+                    }
+                    return result ? INITIALIZED : JNI_ERROR;
+                }
+            }
+            return ALREADY_INITIALIZED;
+        }
+        boolean cleanup() {
+            boolean success = removeRecording();
+            for (int index = 0; index < entries.length; index++) if (!release(index)) success = false;
+            if (lifecycle) try { application.unregisterActivityLifecycleCallbacks(this); lifecycle = false; }
+            catch (RuntimeException | LinkageError error) { state(0, 10); state(1, 10); loss(0); loss(1); success = false; }
+            return success;
+        }
+        int stop() {
+            active = false;
+            for (CaptureEntry entry : entries) if (entry != null && entry.shot != null) Api34.disable(entry.shot);
+            if (recorder != null) { recorder.enabled = false; recorder.preparing = false; recorder.live = false; }
+            try { stopCaptureNative(epoch); nativeStopped = true; }
+            catch (RuntimeException | LinkageError error) { cleanup(); return JNI_ERROR; }
+            boolean success = cleanup();
+            if (!success) {
+                // Native generation is already inert; stopped failures are kept in the interval loss counters.
+                return JNI_ERROR;
+            }
+            if (captures == this) captures = null;
+            return INITIALIZED;
+        }
+        @Override public void onActivityPostResumed(Activity activity) { if (active) attach(activity); }
+        @Override public void onActivityPrePaused(Activity activity) { if (active) detach(activity); }
+        @Override public void onActivityStopped(Activity activity) { if (active) detach(activity); }
+        @Override public void onActivityDestroyed(Activity activity) { if (active) detach(activity); }
+        @Override public void onActivityCreated(Activity activity, Bundle state) {}
+        @Override public void onActivityStarted(Activity activity) {}
+        @Override public void onActivityResumed(Activity activity) {}
+        @Override public void onActivityPaused(Activity activity) {}
+        @Override public void onActivitySaveInstanceState(Activity activity, Bundle state) {}
+    }
+
+    private static final class Api34 {
+        static Object callback(CaptureSession session, int token) { return new ShotCallback(session, token); }
+        static void add(Activity activity, Object callback, CaptureSession session) {
+            activity.registerScreenCaptureCallback(new CaptureExecutor(session, 0, (ShotCallback) callback), (Activity.ScreenCaptureCallback) callback);
+        }
+        static void remove(Activity activity, Object callback) { activity.unregisterScreenCaptureCallback((Activity.ScreenCaptureCallback) callback); }
+        static void enable(Object callback) { ((ShotCallback) callback).enabled = true; }
+        static void disable(Object callback) { ((ShotCallback) callback).enabled = false; ((ShotCallback) callback).live = false; }
+        private static final class ShotCallback extends CaptureGate implements Activity.ScreenCaptureCallback {
+            final CaptureSession session;
+            final int token;
+            boolean enabled;
+            ShotCallback(CaptureSession session, int token) { this.session = session; this.token = token; }
+            @Override public void onScreenCaptured() {
+                if (!enabled || !session.active || session.screenshotFault) return;
+                if (session.granted(0)) {
+                    if (!session.emit(0, token, 3, 0)) { enabled = false; session.failSource(0); }
+                } else {
+                    for (CaptureEntry entry : session.entries) if (entry != null) session.removeShot(entry);
+                    session.permission(0);
+                }
+            }
+        }
+    }
+    private static final class RecordCallback extends CaptureGate implements java.util.function.Consumer<Integer> {
+        final CaptureSession session;
+        final int token;
+        boolean preparing = true;
+        boolean enabled;
+        int pending;
+        int pendingCount;
+        RecordCallback(CaptureSession session, int token) { this.session = session; this.token = token; }
+        @Override public void accept(Integer value) {
+            if (preparing) { pending = value == null ? -1 : value; if (pendingCount < 2) pendingCount++; return; }
+            if (!enabled || !session.active || session.recordingFault) return;
+            if (!session.granted(1)) { session.removeRecording(); session.permission(1); return; }
+            if (!session.emit(1, token, 3, value == null ? -1 : value)) {
+                enabled = false;
+                for (CaptureEntry entry : session.entries) if (entry != null) entry.recordingOpen = false;
+                session.removeRecording(); session.failSource(1);
+            }
+        }
+    }
+    private static final class Api35 {
+        static int add(WindowManager manager, CaptureSession session, RecordCallback callback) {
+            return manager.addScreenRecordingCallback(new CaptureExecutor(session, 1, callback), callback);
+        }
+        static void remove(WindowManager manager, RecordCallback callback) { manager.removeScreenRecordingCallback(callback); }
+    }
+
+    private static class CaptureGate { volatile boolean live = true; }
+    private static final class CaptureExecutor implements java.util.concurrent.Executor {
+        final CaptureSession session;
+        final int source;
+        final java.util.concurrent.Executor main;
+        final CaptureGate gate;
+        CaptureExecutor(CaptureSession session, int source, CaptureGate gate) {
+            this.session = session; this.source = source; this.gate = gate; this.main = session.application.getMainExecutor();
+        }
+        @Override public void execute(Runnable command) {
+            if (!gate.live || !session.active) return;
+            try { main.execute(command); }
+            catch (RuntimeException | LinkageError error) { if (gate.live && session.active) session.failSource(source); }
+        }
+    }
+
     private RuntimeBridge() {}
 
     /**

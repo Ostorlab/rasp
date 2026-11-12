@@ -12,7 +12,6 @@
 #include <ios>
 #include <string>
 #include <string_view>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -66,8 +65,6 @@ ReadSize real_pread(int descriptor, void* bytes, std::size_t count, FileOffset o
 int real_fstat(int descriptor, struct stat* status) asm("__real_fstat");
 int real_stat(const char* path, struct stat* status) asm("__real_stat");
 int real_close(int descriptor) asm("__real_close");
-void* real_mmap(void* address, std::size_t length, int protection, int flags, int descriptor,
-                FileOffset offset) asm("__real_mmap");
 
 ReadSize wrap_pread(int descriptor, void* bytes, std::size_t count, FileOffset offset) asm("__wrap_pread");
 
@@ -152,17 +149,6 @@ int wrap_close(int descriptor) {
     injection().fired = true;
     errno = EIO;
     return -1;
-  }
-  return result;
-}
-
-void* wrap_mmap(void* address, std::size_t length, int protection, int flags, int descriptor,
-                FileOffset offset) asm("__wrap_mmap");
-
-void* wrap_mmap(void* address, std::size_t length, int protection, int flags, int descriptor, FileOffset offset) {
-  void* const result = real_mmap(address, length, protection, flags, descriptor, offset);
-  if (descriptor == injection().descriptor && injection().fault == Fault::kTruncate && result != MAP_FAILED) {
-    injection().fired = truncate(injection().path, 0) == 0;
   }
   return result;
 }

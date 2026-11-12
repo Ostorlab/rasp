@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 7,
+  "revision": 8,
   "plugins": "unmodelled",
   "platforms": {
     "android": {
@@ -810,6 +810,306 @@
               ],
               "supported_on": "never",
               "behavior": "Always unsupported with no value: current public DEVELOPMENT_SETTINGS_ENABLED contract sanitizes third-party reads tozero. No settings lookup/zero default or disabled inference; no historical OS truth guarantee."
+            }
+          ]
+        },
+        {
+          "name": "screenshot",
+          "required": false,
+          "observations": [
+            {
+              "signal": "capture.screenshot.observer_state",
+              "source": "activity_screen_capture",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Availability enum below, final snapshot."
+            },
+            {
+              "signal": "capture.screenshot.permission",
+              "source": "activity_screen_capture",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Permission enum below, last checked state."
+            },
+            {
+              "signal": "capture.screenshot.coverage",
+              "source": "activity_screen_capture",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "`unknown`, `best_effort`, `loss_detected`."
+            },
+            {
+              "signal": "capture.screenshot.active_activities",
+              "source": "activity_screen_capture",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Successful currently owned screenshot registrations, 0..32; never number of captured Activities."
+            },
+            {
+              "signal": "capture.screenshot.callback_events",
+              "source": "activity_screen_capture",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Accepted notifications in all segments since previous selected source drain. Not unique screenshots."
+            },
+            {
+              "signal": "capture.screenshot.lost_registrations",
+              "source": "activity_screen_capture",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Detected loss/failure counter for that interval."
+            },
+            {
+              "signal": "capture.screenshot.invalid_events",
+              "source": "activity_screen_capture",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Rejected native inputs for that interval."
+            },
+            {
+              "signal": "capture.screenshot.counter_overflow",
+              "source": "activity_screen_capture",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "A source interval counter saturated and an additional increment was attempted."
+            },
+            {
+              "signal": "capture.screenshot.interval_ms",
+              "source": "activity_screen_capture",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Checked monotonic drain-to-drain duration, or -1 when unavailable."
+            }
+          ]
+        },
+        {
+          "name": "screen_recording",
+          "required": false,
+          "observations": [
+            {
+              "signal": "capture.recording.observer_state",
+              "source": "window_manager_recording",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Availability enum below, final snapshot."
+            },
+            {
+              "signal": "capture.recording.permission",
+              "source": "window_manager_recording",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Permission enum below, last checked state."
+            },
+            {
+              "signal": "capture.recording.coverage",
+              "source": "window_manager_recording",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "`unknown`, `best_effort`, `loss_detected`."
+            },
+            {
+              "signal": "capture.recording.active_activities",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Eligible resumed host Activities while the shared recording registration is healthy, 0..32; zero on failure/no registration. Not recorded-Activity count."
+            },
+            {
+              "signal": "capture.recording.visibility",
+              "source": "window_manager_recording",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "`visible`, `not_visible`, `unknown`; UID visibility from current registration's initial/latest accepted state. Unknown after registration-owner/final eligible detach or registration failure."
+            },
+            {
+              "signal": "capture.recording.initial_samples",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Successful initial state returns accepted since previous source drain."
+            },
+            {
+              "signal": "capture.recording.callback_events",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Accepted later callbacks, including repeated identical states. Initial return is excluded."
+            },
+            {
+              "signal": "capture.recording.visibility_changes",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Accepted later states differing from the current known state within the same registration. Reattachment's initial state is not a transition."
+            },
+            {
+              "signal": "capture.recording.lost_registrations",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Detected loss/failure/handover counter for that interval."
+            },
+            {
+              "signal": "capture.recording.invalid_events",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Rejected native inputs for that interval."
+            },
+            {
+              "signal": "capture.recording.counter_overflow",
+              "source": "window_manager_recording",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Counter increment exceeded signed-int64 capacity in this interval."
+            },
+            {
+              "signal": "capture.recording.interval_ms",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Checked monotonic drain-to-drain duration, or -1 when unavailable."
             }
           ]
         }

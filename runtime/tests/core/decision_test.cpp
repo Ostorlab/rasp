@@ -51,7 +51,7 @@ const rasp::LocalDecision* row(const rasp::LocalDecisionReport& report, std::str
 TEST(LocalDecision, evaluate_whenSelectionEmpty_emitsUnknownRowsWithoutEvaluatedPredicates) {
   const auto snapshot = run("android", {}, {});
   EXPECT_EQ(snapshot->local_decisions.predicates_evaluated, 0U);
-  ASSERT_EQ(snapshot->local_decisions.rows.size(), 54U);
+  ASSERT_EQ(snapshot->local_decisions.rows.size(), 75U);
   for (const auto& decision : snapshot->local_decisions.rows) {
     EXPECT_EQ(decision.verdict, rasp::LocalVerdict::kUnknown);
     EXPECT_EQ(decision.reason, rasp::LocalReason::kConfigDisabled);
@@ -250,6 +250,10 @@ TEST(LocalDecision, evaluate_whenCatalogueSyntheticFutureOrForeign_refusesFallba
   catalogue.catalogue_id = "future";
   EXPECT_EQ(rasp::evaluate_local_decisions(snapshot->metadata, {}, catalogue).reason,
             rasp::LocalReason::kCatalogueUnknown);
+  auto metadata = snapshot->metadata;
+  metadata.catalogue_id = "c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf";
+  catalogue.catalogue_id = metadata.catalogue_id;
+  EXPECT_EQ(rasp::evaluate_local_decisions(metadata, {}, catalogue).reason, rasp::LocalReason::kCatalogueUnknown);
   EXPECT_EQ(run("future", {}, {})->local_decisions.reason, rasp::LocalReason::kCatalogueUnknown);
 }
 TEST(LocalDecision, evaluate_whenConfigUnknownOrOutputMissing_emitsExplicitUnknownRows) {
@@ -414,7 +418,7 @@ TEST(LocalDecision, evaluate_whenEveryCanonicalTupleEnumerated_hasClosedFiniteIn
       EXPECT_LE(decision.evidence.capacity(), 10U);
     }
   }
-  EXPECT_EQ(total, 78U);
+  EXPECT_EQ(total, 99U);
 }
 /// Owning callback handoff used by a real plugin consumer.
 constexpr rasp::plugins::Key<std::shared_ptr<const rasp::CycleSnapshot>> kRetained{"test.decision.retained"};
@@ -494,5 +498,49 @@ TEST(LocalDecision, evaluate_whenNativeThreadMarkerCaseVaries_preservesNativeCas
   const auto* decision = row(snapshot->local_decisions, "local.android.hook.threads.proc_task");
   ASSERT_NE(decision, nullptr);
   EXPECT_EQ(decision->reason, rasp::LocalReason::kIndicatorPresent);
+}
+TEST(LocalDecision,
+     evaluate_whenApprovedCaptureRowsEmitPositivePayloads_keepsAllTwentyOneUnregisteredWithoutEvaluation) {
+  std::vector<rasp::Observation> inputs;
+  for (const auto& output : rasp::cycle_catalogue("android").outputs) {
+    if (output.group == "screenshot" || output.group == "screen_recording") {
+      inputs.push_back(rasp::observed(output.signal, output.source, true));
+    }
+  }
+  ASSERT_EQ(inputs.size(), 21U);
+  const auto snapshot = run("android", {"screenshot", "screen_recording"}, inputs);
+  EXPECT_EQ(snapshot->local_decisions.predicates_evaluated, 0U);
+  EXPECT_EQ(snapshot->local_decisions.coverage, rasp::LocalCoverage::kComplete);
+  for (const auto& input : inputs) {
+    const auto* decision = row(snapshot->local_decisions, "local.android." + input.signal + "." + input.source);
+    ASSERT_NE(decision, nullptr);
+    EXPECT_EQ(decision->reason, rasp::LocalReason::kUnregisteredRule);
+    EXPECT_EQ(decision->verdict, rasp::LocalVerdict::kUnknown);
+    EXPECT_EQ(decision->confidence, rasp::LocalConfidence::kUnavailable);
+    EXPECT_FALSE(decision->predicate_evaluated);
+  }
+}
+TEST(LocalDecision,
+     evaluate_whenCaptureMissingDisabledOrUnavailable_preservesEligibilityBeforeUnregisteredDisposition) {
+  const std::string rule_id = "local.android.capture.screenshot.callback_events.activity_screen_capture";
+  const auto missing = run("android", {"screenshot"}, {});
+  const auto* missing_row = row(missing->local_decisions, rule_id);
+  ASSERT_NE(missing_row, nullptr);
+  EXPECT_EQ(missing_row->reason, rasp::LocalReason::kMissingObservation);
+  for (const auto status : {rasp::Status::kUnsupported, rasp::Status::kError, rasp::Status::kTimeout}) {
+    const auto snapshot = run("android", {"screenshot"},
+                              {
+                                  {
+                                      .signal = "capture.screenshot.callback_events",
+                                      .source = "activity_screen_capture",
+                                      .status = status,
+                                      .value = std::int64_t{99},
+                                  },
+                              });
+    const auto* decision = row(snapshot->local_decisions, rule_id);
+    ASSERT_NE(decision, nullptr);
+    EXPECT_EQ(decision->reason, rasp::LocalReason::kStatusUnavailable);
+    EXPECT_EQ(snapshot->local_decisions.predicates_evaluated, 0U);
+  }
 }
 }  // namespace

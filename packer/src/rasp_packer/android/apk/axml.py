@@ -36,6 +36,8 @@ import dataclasses
 import struct
 from typing import Self
 
+from rasp_packer.android import capture_permissions
+
 RES_STRING_POOL_TYPE = 0x0001
 RES_XML_TYPE = 0x0003
 RES_XML_RESOURCE_MAP_TYPE = 0x0180
@@ -691,6 +693,161 @@ def _assemble(pool: _StringPool, region: bytearray) -> bytes:
     total = _ROOT_HEADER_SIZE + len(pool_bytes) + len(region)
     header = struct.pack("<HHI", RES_XML_TYPE, _ROOT_HEADER_SIZE, total)
     return header + pool_bytes + bytes(region)
+
+
+def _permission_region(data: bytes) -> tuple[_StringPool, bytearray]:
+    """Validate bounded chunk/attribute traversal before editing direct manifest children."""
+    if len(data) < 36 or len(data) > capture_permissions.MAX_MANIFEST_BYTES:
+        raise AxmlError("capture manifest size is outside bounds")
+    try:
+        pool_size = _u32(data, 12)
+        count = _u32(data, 16)
+        if pool_size < 28 or pool_size > len(data) - 8 or 28 + count * 4 > pool_size:
+            raise AxmlError("invalid capture manifest string pool")
+        pool, raw = _split(data)
+        region = bytearray(raw)
+        offset = 0
+        while offset < len(region):
+            if len(region) - offset < 8:
+                raise AxmlError("truncated capture manifest chunk")
+            size = _u32(region, offset + 4)
+            header = _u16(region, offset + 2)
+            if size < 8 or header < 8 or header > size or size > len(region) - offset:
+                raise AxmlError("invalid capture manifest chunk size")
+            kind = _u16(region, offset)
+            if kind == RES_XML_START_ELEMENT_TYPE:
+                if header != 16 or size < 36:
+                    raise AxmlError("invalid capture manifest start element")
+                attributes = _u16(region, offset + 24)
+                attribute_size = _u16(region, offset + 26)
+                attribute_count = _u16(region, offset + 28)
+                if (
+                    attributes < 20
+                    or attribute_size != 20
+                    or 16 + attributes + attribute_count * 20 > size
+                ):
+                    raise AxmlError("invalid capture manifest attribute bounds")
+            elif kind == RES_XML_END_ELEMENT_TYPE and (header != 16 or size < 24):
+                raise AxmlError("invalid capture manifest end element")
+            offset += size
+        for _ in _query_nodes(region, pool):
+            pass
+        return pool, region
+    except (IndexError, struct.error, UnicodeError, ValueError) as error:
+        raise AxmlError("malformed capture manifest") from error
+
+
+def _has_unrestricted_permission(
+    region: bytearray, pool: _StringPool, permission: str
+) -> bool:
+    """Check literal direct-child declarations and reject selected conditional/duplicate attributes."""
+    depth = 0
+    found = False
+    offset = 0
+    while offset < len(region):
+        kind = _u16(region, offset)
+        size = _u32(region, offset + 4)
+        if kind == RES_XML_START_ELEMENT_TYPE:
+            name = _string(pool, _u32(region, offset + 20))
+            if depth == 0 and name != MANIFEST_ELEMENT:
+                raise AxmlError("capture manifest root is not manifest")
+            if depth == 1 and name in (
+                "uses-permission",
+                "uses-permission-sdk-23",
+                "uses-permission-sdk-m",
+            ):
+                attribute_count = _u16(region, offset + 28)
+                start = offset + 16 + _u16(region, offset + 24)
+                for index in range(attribute_count):
+                    attribute = start + index * 20
+                    if _string(pool, _u32(region, attribute + 4)) != "name":
+                        continue
+                    if (
+                        _string(pool, _u32(region, attribute)) != ANDROID_NAMESPACE
+                        or region[attribute + 15] != _TYPE_STRING
+                    ):
+                        raise AxmlError(
+                            "capture permission name is not a literal android:name"
+                        )
+                    if _string(pool, _u32(region, attribute + 16)) == permission:
+                        if name != "uses-permission" or attribute_count != 1:
+                            raise AxmlError(
+                                f"selected capture permission is restricted: {permission}"
+                            )
+                        found = True
+            depth += 1
+        elif kind == RES_XML_END_ELEMENT_TYPE:
+            depth -= 1
+            if depth < 0:
+                raise AxmlError("unbalanced capture manifest")
+        offset += size
+    if depth != 0:
+        raise AxmlError("unbalanced capture manifest")
+    return found
+
+
+def ensure_uses_permission(data: bytes, permission: str) -> bytes:
+    """Insert one unrestricted capture permission in AXML, preserving host declarations and policy."""
+    if permission not in tuple(value for _, value in capture_permissions.PERMISSIONS):
+        raise AxmlError("unsupported capture permission")
+    pool, region = _permission_region(data)
+    try:
+        if _has_unrestricted_permission(region, pool, permission) is True:
+            return data
+        resource_map = _resource_map(region)
+        name_index = _attribute_name_index(resource_map, ATTR_NAME_RESOURCE_ID)
+        if name_index is None:
+            name_index = len(resource_map)
+            _shift_string_references(region, name_index)
+            if len(resource_map) == 0:
+                region[:0] = struct.pack(
+                    "<HHII", RES_XML_RESOURCE_MAP_TYPE, 8, 12, ATTR_NAME_RESOURCE_ID
+                )
+            else:
+                _insert_resource_map_entry(region, name_index, ATTR_NAME_RESOURCE_ID)
+            pool.insert(name_index, "name")
+        namespace_index = pool.index(ANDROID_NAMESPACE)
+        if namespace_index is None:
+            raise AxmlError("capture manifest has no android namespace")
+        tag_index = pool.index("uses-permission")
+        if tag_index is None:
+            tag_index = pool.append("uses-permission")
+        value_index = pool.index(permission)
+        if value_index is None:
+            value_index = pool.append(permission)
+        manifest = _find_element(region, pool, MANIFEST_ELEMENT)
+        if manifest is None:
+            raise AxmlError("capture manifest has no manifest element")
+        start = struct.pack("<HHIII", RES_XML_START_ELEMENT_TYPE, 16, 56, 0, _NO_ENTRY)
+        start += struct.pack("<IIHHHHHH", _NO_ENTRY, tag_index, 20, 20, 1, 0, 0, 0)
+        start += struct.pack(
+            "<IIIHBBI",
+            namespace_index,
+            name_index,
+            value_index,
+            8,
+            0,
+            _TYPE_STRING,
+            value_index,
+        )
+        end = struct.pack(
+            "<HHIIIII",
+            RES_XML_END_ELEMENT_TYPE,
+            16,
+            24,
+            0,
+            _NO_ENTRY,
+            _NO_ENTRY,
+            tag_index,
+        )
+        at = manifest.offset + _u32(region, manifest.offset + 4)
+        region[at:at] = start + end
+        result = _assemble(pool, region)
+        if len(result) > capture_permissions.MAX_MANIFEST_BYTES:
+            raise AxmlError("edited capture manifest exceeds bounds")
+        return result
+    except (IndexError, struct.error, UnicodeError, ValueError) as error:
+        raise AxmlError("malformed capture manifest") from error
 
 
 def _query_nodes(

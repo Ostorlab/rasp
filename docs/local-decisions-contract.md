@@ -73,8 +73,9 @@ counts against retained evidence. Forged API arguments grant no authority.
 
 ## Explicit semantic adoption
 
-The registry adopts canonical schema 1 revision 7, 52 Android / 26 iOS outputs,
-digest `c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`.
+The registry explicitly adopts canonical schema 1 revision 8, 73 Android / 26 iOS outputs,
+digest `479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a`,
+from approved RT15 `2d396b83292dcd978cc1f7675afade24b45859d4`.
 `core/src/decision_registry.h` pins it independently from generated definitions.
 Future/unsupported catalogues cannot inherit fallback predicates; adoption needs
 explicit semantic review and fixtures.
@@ -92,6 +93,15 @@ The other 35 tuples have explicit local dispositions: 7 typed second sources,
 context fields, 2 always-unavailable developer-setting outputs, 8 uninterpreted
 context outputs. They do not claim server registry coverage. No client result,
 severity, version or platform can override backend-owned application assessment.
+
+The 21 added Android screenshot/recording identities have explicit unknown /
+`unregistered_rule` dispositions. They have no semantic predicate, severity or
+available confidence and never increment `predicates_evaluated`, even for positive
+or malformed bounded OK payloads. Disabled/config-unknown/missing/duplicate and
+non-OK eligibility is checked first. They do not enter source comparisons or imply
+capture, malware, active control or sensitive exposure. The original 78 rule
+semantics and BE13 fixture bytes are preserved. Other digests, including the older
+revision 7, and definition mismatches still refuse the entire report.
 
 SHA-256 requires exactly 64 lowercase ASCII hex characters; CDHash requires 40.
 Unique OK same-cycle file/memory digests yield a separate mismatch observation
@@ -121,7 +131,7 @@ whole; direct oversized pure-API input returns unavailable. Metadata is bounded 
 64 groups and 256 missing identities. No recursion, unbounded pair expansion,
 counter wrapping, effects or independent monitor is introduced.
 
-The adopted tables produce at most 54 rows, 8 Android / 3 iOS source relations,
+The adopted tables produce at most 75 rows, 8 Android / 3 iOS source relations,
 and 7 coverage issues. Native rows reference one input, integrity two, overlay ten.
 Heap allocations and work are bounded by fixed tables and checked input sizes.
 Same-process allocation failure is not crash isolation.
