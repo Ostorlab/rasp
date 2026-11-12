@@ -2,6 +2,12 @@
 
 Adds the RASP runtime to a built app: an APK or an AAB for Android, an IPA for iOS. The packer returns the protected app unsigned: you sign it before you ship it.
 
+Android APK/AAB packing rejects class maps above 8 MiB of UTF-8 plaintext and
+individual business DEX files above 64 MiB before encryption/publication. These
+are operational compatibility limits, not format maxima. See the
+[native archive contract](../docs/android-archive-reads.md), including the
+external AAB-to-APK metadata limitation.
+
 The packer is a library. `rasp_packer.packer.pack` is its entry point, and the `rasp` command line is a thin client of it, so a job can pack an app without starting a process.
 
 ```python

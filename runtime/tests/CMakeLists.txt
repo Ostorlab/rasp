@@ -135,6 +135,24 @@ target_compile_definitions(rasp_android_archive_test PRIVATE
   RASP_TEST_CERTIFICATE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/android/apk/data")
 gtest_discover_tests(rasp_android_archive_test)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(rasp_android_archive_fault_test android/apk/archive_fault_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/signing_certificates.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
+  target_include_directories(rasp_android_archive_fault_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_android_archive_fault_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
+    GTest::gtest_main)
+  target_compile_definitions(rasp_android_archive_fault_test PRIVATE
+    RASP_TEST_CERTIFICATE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/android/apk/data")
+  target_link_options(rasp_android_archive_fault_test PRIVATE
+    -Wl,--wrap=pread -Wl,--wrap=fstat -Wl,--wrap=stat -Wl,--wrap=close -Wl,--wrap=mmap)
+  gtest_discover_tests(rasp_android_archive_fault_test)
+endif()
+
 add_executable(rasp_android_apk_file_test android/util/apk_file_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
 target_include_directories(rasp_android_apk_file_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
@@ -171,6 +189,18 @@ target_include_directories(rasp_android_dex_store_test PRIVATE ${PROJECT_SOURCE_
 target_link_libraries(rasp_android_dex_store_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
   GTest::gtest_main)
 gtest_discover_tests(rasp_android_dex_store_test)
+
+add_executable(rasp_android_archive_probe android/apk/archive_probe.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/payload/dex_store.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/signing_certificates.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
+target_include_directories(rasp_android_archive_probe PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_android_archive_probe PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language)
 
 add_executable(rasp_android_cipher_test android/payload/cipher_test.cpp ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp)
 target_include_directories(rasp_android_cipher_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)

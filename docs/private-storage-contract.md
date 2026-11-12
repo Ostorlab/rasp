@@ -24,7 +24,7 @@ Android uses only the retained public Application supplied through RuntimeBridge
 
 The Application's directory selects the Android user/work profile and storage domain. Only Application Context is retained; a device-protected component Context does not override it. Credential-protected storage may remain inaccessible until unlock. Global process aliases do not change directory selection. Shared UIDs cannot be distinguished by Unix ownership; this capability does not attest identity or defend against code already running as the same UID.
 
-iOS uses a Foundation Application Support URL, creates the fixed private child, applies protection and excludes the child from backup before returning a queue capability. Failed backup exclusion is unavailable; protected-data errors can be retried after unlock. No environment mutation or main-thread-owned global state is used, and the deployment floor remains iOS 12.
+iOS uses a Foundation Application Support URL, creates the fixed private child, applies protection and excludes the child from backup before returning a queue capability. A failed backup exclusion returns `kBackupExclusionFailed`; protected-data errors can be retried after unlock. No environment mutation or main-thread-owned global state is used, and the deployment floor remains iOS 12.
 
 Standard sandbox Application Support is the same physical parent as the legacy HOME plus `/Library/Application Support` route, so an existing valid identity there is retained in place. The provider never reads or migrates a custom/overridden legacy HOME. If that startup route selected another parent, its identity can differ; transport must pair the provider identity with its own queue.
 

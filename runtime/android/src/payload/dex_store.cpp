@@ -54,7 +54,8 @@ void index_map(std::string_view text, DexStore& store) {
 }  // namespace
 
 std::optional<DexStore> open_dex_store(std::string apk, std::span<const std::uint8_t> key) {
-  const std::optional<std::vector<std::uint8_t>> frame = rasp::android::apk::read_stored_entry(apk, kMapEntry);
+  const std::optional<std::vector<std::uint8_t>> frame =
+      rasp::android::apk::read_stored_entry(apk, kMapEntry, kMaxMapFrameBytes);
   if (!frame.has_value()) {
     return std::nullopt;
   }
@@ -80,7 +81,8 @@ const EncryptedDex* dex_of(const DexStore& store, const std::string& class_name)
 }
 
 std::optional<std::vector<std::uint8_t>> decrypt_dex(const DexStore& store, const EncryptedDex& dex) {
-  const std::optional<std::vector<std::uint8_t>> frame = rasp::android::apk::read_stored_entry(store.apk, dex.entry);
+  const std::optional<std::vector<std::uint8_t>> frame =
+      rasp::android::apk::read_stored_entry(store.apk, dex.entry, kMaxDexFrameBytes);
   if (!frame.has_value()) {
     return std::nullopt;
   }

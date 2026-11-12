@@ -2,11 +2,14 @@
 
 #include "apk/archive.h"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <initializer_list>
+#include <ios>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -283,7 +286,197 @@ TEST(Archive, readStoredEntry_whenTheApkIsSigned_stillReadsTheEntry) {
   const std::string path = directory.path() + "/base.apk";
   ASSERT_TRUE(write_file(path, signed_apk(signing_block(pair(kV2, v2_scheme("v2 certificate"))))));
 
-  EXPECT_EQ(read_stored_entry(path, "classes.dex"), bytes_of("dex"));
+  EXPECT_EQ(read_stored_entry(path, "classes.dex", 1024), bytes_of("dex"));
+}
+
+TEST(Archive, readStoredEntry_whenTargetIsDuplicated_refusesAmbiguousEntry) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/base.apk";
+  const std::array entries = {
+      test_support::StoredEntry{.name = "classes.dex", .content = "first"},
+      test_support::StoredEntry{.name = "classes.dex", .content = "second"},
+  };
+  ASSERT_TRUE(write_file(path, test_support::zip_with_stored_entries(entries)));
+  EXPECT_FALSE(read_stored_entry(path, "classes.dex", 1024).has_value());
+}
+
+TEST(Archive, readStoredEntry_whenLocalNameDisagrees_refusesEntry) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/base.apk";
+  auto apk = zip_with_stored_entry("classes.dex", "dex");
+  apk[30] = 'X';
+  ASSERT_TRUE(write_file(path, apk));
+  EXPECT_FALSE(read_stored_entry(path, "classes.dex", 1024).has_value());
+}
+
+TEST(Archive, readStoredEntry_whenLocalSizeDisagrees_refusesEntry) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/base.apk";
+  auto apk = zip_with_stored_entry("classes.dex", "dex");
+  apk[18] = 4;
+  ASSERT_TRUE(write_file(path, apk));
+  EXPECT_FALSE(read_stored_entry(path, "classes.dex", 1024).has_value());
+}
+
+/// Changes one little-endian field without rebuilding the rest of a deliberately malformed archive.
+void replace_field(std::string& archive, std::size_t offset, Field field) {
+  std::string bytes;
+  append_le(bytes, field);
+  archive.replace(offset, bytes.size(), bytes);
+}
+
+TEST(Archive, readStoredEntry_whenZipMetadataIsMalformed_rejectsEveryVariant) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/base.apk";
+  const auto valid = zip_with_stored_entry("classes.dex", "dex");
+  const std::size_t central = 44;
+  const std::size_t end = valid.size() - 22;
+  struct Mutation {
+    std::size_t offset = 0;
+    Field field;
+  };
+  const std::array changes = {
+      Mutation{.offset = 0, .field = {.value = 0, .width = 4}},
+      Mutation{.offset = 6, .field = {.value = 1, .width = 2}},
+      Mutation{.offset = 8, .field = {.value = 8, .width = 2}},
+      Mutation{.offset = 14, .field = {.value = 1, .width = 4}},
+      Mutation{.offset = 22, .field = {.value = 4, .width = 4}},
+      Mutation{.offset = 26, .field = {.value = 10, .width = 2}},
+      Mutation{.offset = 28, .field = {.value = 65535, .width = 2}},
+      Mutation{.offset = central, .field = {.value = 0, .width = 4}},
+      Mutation{.offset = central + 8, .field = {.value = 8, .width = 2}},
+      Mutation{.offset = central + 8, .field = {.value = 1, .width = 2}},
+      Mutation{.offset = central + 10, .field = {.value = 8, .width = 2}},
+      Mutation{.offset = central + 16, .field = {.value = 1, .width = 4}},
+      Mutation{.offset = central + 20, .field = {.value = 0xffffffffU, .width = 4}},
+      Mutation{.offset = central + 24, .field = {.value = 4, .width = 4}},
+      Mutation{.offset = central + 28, .field = {.value = 65535, .width = 2}},
+      Mutation{.offset = central + 30, .field = {.value = 65535, .width = 2}},
+      Mutation{.offset = central + 32, .field = {.value = 65535, .width = 2}},
+      Mutation{.offset = central + 34, .field = {.value = 1, .width = 2}},
+      Mutation{.offset = central + 42, .field = {.value = 0xffffffffU, .width = 4}},
+      Mutation{.offset = central + 42, .field = {.value = 1, .width = 4}},
+      Mutation{.offset = central + 46, .field = {.value = 0, .width = 1}},
+      Mutation{.offset = end + 4, .field = {.value = 1, .width = 2}},
+      Mutation{.offset = end + 6, .field = {.value = 1, .width = 2}},
+      Mutation{.offset = end + 8, .field = {.value = 2, .width = 2}},
+      Mutation{.offset = end + 10, .field = {.value = 65535, .width = 2}},
+      Mutation{.offset = end + 12, .field = {.value = 0xffffffffU, .width = 4}},
+      Mutation{.offset = end + 16, .field = {.value = 0xffffffffU, .width = 4}},
+      Mutation{.offset = end + 20, .field = {.value = 1, .width = 2}},
+  };
+  for (const auto& change : changes) {
+    SCOPED_TRACE(change.offset);
+    auto malformed = valid;
+    replace_field(malformed, change.offset, change.field);
+    ASSERT_TRUE(write_file(path, malformed));
+    EXPECT_FALSE(read_stored_entry(path, "classes.dex", 1024).has_value());
+  }
+}
+
+TEST(Archive, readStoredEntry_whenMetadataAfterTargetIsAmbiguous_rejectsWholeDirectory) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/base.apk";
+  for (const auto* const name : {"../alias", "a//b", "a/./b", "/absolute", "a\\b", "a:b", ""}) {
+    const std::array entries = {
+        test_support::StoredEntry{.name = "classes.dex", .content = "dex"},
+        test_support::StoredEntry{.name = name, .content = "unrelated"},
+    };
+    ASSERT_TRUE(write_file(path, test_support::zip_with_stored_entries(entries)));
+    EXPECT_FALSE(read_stored_entry(path, "classes.dex", 1024).has_value());
+  }
+  const std::array entries = {
+      test_support::StoredEntry{.name = "classes.dex", .content = "dex"},
+      test_support::StoredEntry{.name = "parent", .content = "file"},
+      test_support::StoredEntry{.name = "parent/child", .content = "file"},
+  };
+  ASSERT_TRUE(write_file(path, test_support::zip_with_stored_entries(entries)));
+  EXPECT_FALSE(read_stored_entry(path, "classes.dex", 1024).has_value());
+}
+
+TEST(Archive, readStoredEntry_whenLocalPaddingDiffersFromCentral_acceptsPackerZeroAlignment) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/base.apk";
+  const std::array extras = {
+      std::string(1, '\0'),
+      std::string(2, '\0'),
+      std::string(3, '\0'),
+      std::string(16383, '\0'),
+      std::string(65528, '\0') + std::string("\x02\0\0\0", 4),
+  };
+  for (const auto& extra : extras) {
+    auto archive = zip_with_stored_entry("classes.dex", "dex");
+    archive.insert(41, extra);
+    replace_field(archive, 28, {.value = extra.size(), .width = 2});
+    replace_field(archive, archive.size() - 6, {.value = 44 + extra.size(), .width = 4});
+    ASSERT_TRUE(write_file(path, archive));
+    EXPECT_EQ(read_stored_entry(path, "classes.dex", 3), bytes_of("dex"));
+  }
+}
+
+TEST(Archive, readStoredEntry_whenExtraFieldIsZip64OrMalformed_rejectsTarget) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/base.apk";
+  for (const auto& extra : {std::string("\x01\0\0\0", 4), std::string("\x02\0\x01\0", 4), std::string("\x02\0\0", 3)}) {
+    auto archive = zip_with_stored_entry("classes.dex", "dex");
+    archive.insert(41, extra);
+    replace_field(archive, 28, {.value = extra.size(), .width = 2});
+    replace_field(archive, archive.size() - 6, {.value = 44 + extra.size(), .width = 4});
+    ASSERT_TRUE(write_file(path, archive));
+    EXPECT_FALSE(read_stored_entry(path, "classes.dex", 1024).has_value());
+  }
+}
+
+/// A sparse real ZIP32 with valid bounded metadata, without constructing the payload in a test vector.
+[[nodiscard]] bool sparse_entry(const std::string& path, std::size_t size) {
+  auto skeleton = zip_with_stored_entry("payload", "");
+  constexpr std::size_t kLocalBytes = 37;
+  replace_field(skeleton, 18, {.value = size, .width = 4});
+  replace_field(skeleton, 22, {.value = size, .width = 4});
+  replace_field(skeleton, kLocalBytes + 20, {.value = size, .width = 4});
+  replace_field(skeleton, kLocalBytes + 24, {.value = size, .width = 4});
+  replace_field(skeleton, skeleton.size() - 6, {.value = kLocalBytes + size, .width = 4});
+  std::ofstream stream(path, std::ios::binary);
+  stream.write(skeleton.data(), static_cast<std::streamsize>(kLocalBytes));
+  stream.seekp(static_cast<std::streamoff>(kLocalBytes + size));
+  const auto suffix = std::string_view(skeleton).substr(kLocalBytes);
+  stream.write(suffix.data(), static_cast<std::streamsize>(suffix.size()));
+  return stream.good();
+}
+
+void expect_exact_payload(const std::string& path, std::size_t limit) {
+  ASSERT_TRUE(sparse_entry(path, limit));
+  const auto read = read_stored_entry(path, "payload", limit);
+  ASSERT_TRUE(read.has_value());
+  EXPECT_EQ(read->size(), limit);
+  EXPECT_EQ(read->front(), 0);
+  EXPECT_EQ(read->back(), 0);
+}
+
+void expect_over_payload(const std::string& path, std::size_t limit) {
+  EXPECT_FALSE(read_stored_entry(path, "payload", limit - 1).has_value());
+  ASSERT_TRUE(sparse_entry(path, limit + 1));
+  EXPECT_FALSE(read_stored_entry(path, "payload", limit).has_value());
+}
+
+TEST(Archive, readStoredEntry_whenPayloadIsAtOrAboveCallerLimit_boundsAllocationBeforeCopying) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/base.apk";
+  for (const std::size_t limit : {32U, 8388636U, 67108892U}) {
+    expect_exact_payload(path, limit);
+    expect_over_payload(path, limit);
+  }
+  EXPECT_FALSE(read_stored_entry(path, "payload", 67108893).has_value());
+}
+
+TEST(Archive, readStoredEntry_whenPathIsRegularSymlink_preservesFollowingPolicy) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/base.apk";
+  const auto link = directory.path() + "/link.apk";
+  ASSERT_TRUE(write_file(path, zip_with_stored_entry("classes.dex", "dex")));
+  ASSERT_EQ(symlink(path.c_str(), link.c_str()), 0);
+  EXPECT_EQ(read_stored_entry(link, "classes.dex", 3), bytes_of("dex"));
+  EXPECT_FALSE(read_stored_entry(link, "classes.dex", 2).has_value());
 }
 
 /// Reads a public DER fixture used only for parser and digest tests; private keys are not shipped in this repository.
@@ -483,7 +676,7 @@ TEST(Archive, readLegacyReaders_whenPathHasAnEmbeddedNull_refuseRatherThanOpenIt
   ASSERT_TRUE(write_file(path, signed_apk(signing_block(pair(kV2, v2_scheme("legacy certificate"))))));
   const auto invalid_path = path + '\0' + "ignored";
   EXPECT_FALSE(read_signing_certificate(invalid_path, 34).has_value());
-  EXPECT_FALSE(read_stored_entry(invalid_path, "classes.dex").has_value());
+  EXPECT_FALSE(read_stored_entry(invalid_path, "classes.dex", 1024).has_value());
 }
 
 TEST(Archive, readLegacyReaders_whenFifoHasNoWriter_returnPromptErrorsOnTheCallingThread) {
@@ -492,7 +685,7 @@ TEST(Archive, readLegacyReaders_whenFifoHasNoWriter_returnPromptErrorsOnTheCalli
   ASSERT_EQ(mkfifo(path.c_str(), 0600), 0);
   const auto start = std::chrono::steady_clock::now();
   const auto certificate = read_signing_certificate(path, 34);
-  const auto entry = read_stored_entry(path, "classes.dex");
+  const auto entry = read_stored_entry(path, "classes.dex", 1024);
   EXPECT_FALSE(certificate.has_value());
   EXPECT_FALSE(entry.has_value());
   EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::milliseconds(500));
@@ -502,7 +695,7 @@ TEST(Archive, readLegacyReaders_whenDirectoryDeviceEmptyOrOverlongPath_returnErr
   const TemporaryDirectory directory;
   for (const auto& path : {directory.path(), std::string("/dev/null"), std::string(), std::string(4097, 'x')}) {
     EXPECT_FALSE(read_signing_certificate(path, 34).has_value());
-    EXPECT_FALSE(read_stored_entry(path, "classes.dex").has_value());
+    EXPECT_FALSE(read_stored_entry(path, "classes.dex", 1024).has_value());
   }
 }
 
@@ -560,6 +753,50 @@ TEST(Archive, readSigningCertificates_whenArchiveIsOverLimit_reportsErrorWithout
   ASSERT_TRUE(write_file(path, "sparse"));
   ASSERT_EQ(truncate(path.c_str(), static_cast<off_t>(2147483648ULL)), 0);
   EXPECT_FALSE(read_signing_certificates(path, 34));
+  EXPECT_FALSE(read_signing_certificate(path, 34).has_value());
+  EXPECT_FALSE(read_stored_entry(path, "classes.dex", 32).has_value());
+}
+
+TEST(Archive, readSigningCertificate_whenLegacySelectionDiffers_retainsScalarParserResults) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/base.apk";
+  const auto pairs = pair(kV2, v2_scheme("v2 first certificate")) +
+                     pair(kV3, v3_scheme({{.certificate = "v3 first certificate", .min_level = 31, .max_level = 32}})) +
+                     pair(kV31, v3_scheme({{.certificate = "v31 first certificate", .min_level = 34}}));
+  const auto archive = signed_apk(signing_block(pairs));
+  ASSERT_TRUE(write_file(path, archive));
+  for (const std::uint32_t api : {31U, 32U, 33U, 34U}) {
+    EXPECT_EQ(read_signing_certificate(path, api), certificate_of(archive, api));
+  }
+}
+
+TEST(Archive, readSigningCertificate_whenSigningBlockExceedsLimit_refusesBeforeCopying) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/base.apk";
+  const auto certificate = der_fixture("signer_a.der");
+  const auto signers = pair(kV2, prefixed(complete_signer({certificate})));
+  const auto padding = 1048576 - 32 - 12 - signers.size();
+  ASSERT_TRUE(write_file(path, signed_apk(signing_block(signers + pair(kPadding, std::string(padding, 'x'))))));
+  EXPECT_EQ(read_signing_certificate(path, 34), bytes_of(certificate));
+  EXPECT_TRUE(read_signing_certificates(path, 34).has_value());
+  ASSERT_TRUE(write_file(path, signed_apk(signing_block(signers + pair(kPadding, std::string(padding + 1, 'x'))))));
+  EXPECT_FALSE(read_signing_certificate(path, 34).has_value());
+  EXPECT_FALSE(read_signing_certificates(path, 34).has_value());
+}
+
+TEST(Archive, readStoredEntry_whenDirectoryExceedsOperationalLimit_refusesMetadataAllocation) {
+  const TemporaryDirectory directory;
+  const auto path = directory.path() + "/base.apk";
+  auto end = zip_with_stored_entry("classes.dex", "dex").substr(101);
+  replace_field(end, 12, {.value = 16777217, .width = 4});
+  replace_field(end, 16, {.value = 0, .width = 4});
+  {
+    std::ofstream stream(path, std::ios::binary);
+    stream.seekp(16777217);
+    stream.write(end.data(), static_cast<std::streamsize>(end.size()));
+    ASSERT_TRUE(stream.good());
+  }
+  EXPECT_FALSE(read_stored_entry(path, "classes.dex", 32).has_value());
 }
 
 TEST(Archive, findSigningCertificates_whenSdkIsOutsideSignedPlatformRange_neverReturnsAnEmptySuccessfulSet) {

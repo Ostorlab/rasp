@@ -107,7 +107,9 @@ metadata, signer current sets and rotation history, window observations, and roo
 Canonical schema 1, revision 7 declares 52 Android and 26 iOS identities, with catalogue ID
 `c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`.
 Identity has nine expected outputs; malformed signer sources remain present error observations. Real-JVM caller
-and attached-worker fixtures exercise the actual identity dispatcher through this immutable cycle handoff.
+and attached-worker fixtures exercise the actual identity dispatcher through this immutable cycle handoff. See the durable
+[signer observation contract](android-signer-observations.md) and
+[capability/binding rules](check-capabilities.md).
 Cycle metadata adds no observation rows or catalogue revision. Every later builtin
 source change still requires an exact catalogue update.
 

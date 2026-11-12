@@ -62,6 +62,10 @@ AAB_KEY_ENTRY = f"{_AAB_BASE}{KEY_ENTRY}"
 AAB_MAP_ENTRY = f"{_AAB_BASE}{MAP_ENTRY}"
 AAB_ASSET_PREFIX = f"{_AAB_BASE}{ASSET_PREFIX}"
 
+# Operational runtime allocation limits, not DEX/ZIP format maxima. Frames add 28 bytes.
+_MAX_MAP_BYTES = 8 * 1024 * 1024
+_MAX_DEX_BYTES = 64 * 1024 * 1024
+
 type Splitter = collections.abc.Callable[[pathlib.Path, str], split_module.Split]
 type AabSplitter = collections.abc.Callable[[dict[str, bytes], str], split_module.Split]
 
@@ -131,6 +135,21 @@ def _is_aab(app: pathlib.Path) -> bool:
         return False
 
 
+def _payload_map(business: tuple[split_module.BusinessDex, ...]) -> bytes:
+    """Check APK/AAB payload compatibility before encryption or output publication."""
+    for dex in business:
+        if len(dex.data) > _MAX_DEX_BYTES:
+            raise errors.InvalidAppError(
+                f"business DEX {dex.path} exceeds the 64 MiB runtime payload limit"
+            )
+    encoded = loader_map.build(business).encode("utf-8")
+    if len(encoded) > _MAX_MAP_BYTES:
+        raise errors.InvalidAppError(
+            "UTF-8 class map exceeds the 8 MiB runtime payload limit"
+        )
+    return encoded
+
+
 def _pack_apk(
     *,
     app: pathlib.Path,
@@ -164,7 +183,7 @@ def _pack_apk(
             patched_manifest, resources_module.ROOT_MANAGER_PACKAGES_V1
         )
     key = cipher.new_key()
-    map_frame = cipher.encrypt(key, loader_map.build(result.business).encode("utf-8"))
+    map_frame = cipher.encrypt(key, _payload_map(result.business))
     business_entries = {
         ASSET_PREFIX + dex.path: cipher.encrypt(key, dex.data)
         for dex in result.business
@@ -240,7 +259,7 @@ def _pack_aab(
             patched_manifest, resources_module.ROOT_MANAGER_PACKAGES_V1
         )
     key = cipher.new_key()
-    map_frame = cipher.encrypt(key, loader_map.build(result.business).encode("utf-8"))
+    map_frame = cipher.encrypt(key, _payload_map(result.business))
     business_entries = {
         AAB_ASSET_PREFIX + dex.path: cipher.encrypt(key, dex.data)
         for dex in result.business
