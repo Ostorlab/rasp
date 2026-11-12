@@ -5,8 +5,9 @@ The runtime is a set of C++ libraries that the packer adds to a protected app. T
 Owned monitor snapshots include [typed local decision evidence](../docs/local-decisions-contract.md).
 The existing `on_cycle` callback receives the same immutable observations, coverage and report-only
 results. Disabled/missing/unavailable rows remain unknown; evaluated predicate counts are separate
-from row counts. An optional [local policy host gate](../docs/local-policy-contract.md) uses that owned
-report immediately before an explicitly adapted operation; report-only remains the default.
+from row counts. Each completed native cycle owns an immutable `LocalDecisionReport`.
+An optional [local policy host gate](../docs/local-policy-contract.md) reads that report
+immediately before an explicitly adapted operation; without an embedded policy the runtime remains report-only.
 These client observations grant no backend authorization. The gate never terminates the app.
 The primitive C API adds exactly two versioned policy exports alongside the six iOS capture exports;
 Android retains JNI_OnLoad and the same two policy exports.
