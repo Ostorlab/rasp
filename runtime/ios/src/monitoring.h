@@ -19,12 +19,13 @@ namespace rasp::ios {
 /// them again after a random wait from check_interval, 30 to 90 seconds, drawn again before each wait. No group runs
 /// when the config has no `checks` list or the list is empty. A development build logs each observation and each wait.
 ///
-/// The thread beats the heartbeat of monitor_heartbeat when it starts, and before and after each run. Each run also
-/// reports the heartbeat's integ.monitor_alive observation with the built-in checks'.
+/// The thread beats the heartbeat of monitor_heartbeat when it starts, and before and after each run, so code on
+/// another thread can tell when it stopped. The thread doesn't observe the heartbeat itself: a thread that stopped
+/// can't report it.
 ///
-/// When the built-in checks or the heartbeat detect something, a release build ends the process a few seconds later,
-/// through panic_on_detection. The plugins still receive that run's observations in the meantime, but the end doesn't
-/// wait for them. A development build never ends the process: it logs what would have ended it.
+/// When the built-in checks detect something, a release build ends the process a few seconds later, through
+/// panic_on_detection. The plugins still receive that run's observations in the meantime, but the end doesn't wait for
+/// them. A development build never ends the process: it logs what would have ended it.
 ///
 /// Nothing is checked when the thread can't be started, and the heartbeat then never beats. Otherwise the thread never
 /// ends: it runs until the process exits, and iOS suspends it while the app is in the background. The thread is
