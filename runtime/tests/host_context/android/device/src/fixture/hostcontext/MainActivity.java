@@ -47,58 +47,86 @@ public final class MainActivity extends Activity {
         super.onResume();
         beginFlow();
     }
+    private void unavailable() {
+        pending = false; consumed = false;
+        if (owner != null) owner.close();
+        session = null; action = null;
+        status.setText("Demo flow unavailable; receipts: " + receipts);
+    }
     private void beginFlow() {
+        pending = false; consumed = false;
         if (owner != null) owner.close();
         try {
-            session = fresh(); action = fresh(); sequence = 1; attempt = 1; pending = true; consumed = false;
             owner = new HostOperationContext(new HostOperationContext.Binding("append_demo_receipt", HASH, true));
-            owner.apply(new HostOperationContext.Event(1,0,0,1,0,0,1,sequence,session,new byte[16]));
-            owner.apply(new HostOperationContext.Event(2,2,HostOperationContext.secureEntry(selected),0,attempt,0,1,++sequence,session,action));
             final HostOperationContext captured = owner;
             begin.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View view) { if (owner == captured) beginFlow(); }
             });
+            byte[] nextSession = fresh();
+            HostOperationContext.View started = owner.apply(new HostOperationContext.Event(1,0,0,1,0,0,1,1,nextSession,new byte[16]));
+            if (started.status != 0) { unavailable(); return; }
+            session = nextSession; sequence = started.sequence; attempt = started.attempt;
+            byte[] nextAction = fresh();
+            HostOperationContext.View begun = owner.apply(new HostOperationContext.Event(2,2,
+                HostOperationContext.secureEntry(selected),0,1,0,1,sequence+1,session,nextAction));
+            if (begun.status != 0) { unavailable(); return; }
+            action = nextAction; sequence = begun.sequence; attempt = begun.attempt; pending = true;
             append.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View view) { append(captured); }
             });
             retry.setOnClickListener(new View.OnClickListener() {
-                @Override public void onClick(View view) {
-                if (owner != captured || !pending || !consumed || attempt >= 3) return;
-                HostOperationContext.View result = owner.apply(new HostOperationContext.Event(7,2,
-                    HostOperationContext.secureEntry(selected),0,attempt+1,0,1,sequence+1,session,action));
-                if (result.status == 0) { attempt++; sequence++; consumed = false; }
-                }
+                @Override public void onClick(View view) { retry(captured); }
             });
             cancel.setOnClickListener(new View.OnClickListener() {
-                @Override public void onClick(View view) {
-                if (owner != captured || !pending) return;
-                owner.apply(new HostOperationContext.Event(6,0,0,0,attempt,0,1,++sequence,session,action));
-                pending = false; owner.close();
-                }
+                @Override public void onClick(View view) { cancel(captured); }
             });
-        } catch (RuntimeException | LinkageError error) {
-            pending = false; if (owner != null) owner.close(); status.setText("Demo flow unavailable");
-        }
+            status.setText("Demo ready; receipts: " + receipts);
+        } catch (RuntimeException | LinkageError error) { unavailable(); }
+    }
+    private void retry(HostOperationContext captured) {
+        if (owner != captured || !pending || !consumed) return;
+        if (attempt >= 3 || sequence == Long.MAX_VALUE) { unavailable(); return; }
+        HostOperationContext.View result = owner.apply(new HostOperationContext.Event(7,2,
+            HostOperationContext.secureEntry(selected),0,attempt+1,0,1,sequence+1,session,action));
+        if (result.status != 0) { unavailable(); return; }
+        attempt = result.attempt; sequence = result.sequence; consumed = false;
+        status.setText("Demo retry ready; receipts: " + receipts);
+    }
+    private void cancel(HostOperationContext captured) {
+        if (owner != captured || !pending) return;
+        if (sequence == Long.MAX_VALUE) { unavailable(); return; }
+        HostOperationContext.View result = owner.apply(new HostOperationContext.Event(6,0,0,0,attempt,0,1,sequence+1,session,action));
+        if (result.status != 0) { unavailable(); return; }
+        sequence = result.sequence; attempt = result.attempt; pending = false; consumed = false;
+        owner.close(); session = null; action = null;
+        status.setText("Demo canceled; receipts: " + receipts);
     }
     private void append(HostOperationContext captured) {
-        if (owner != captured || !pending || consumed || sequence == Long.MAX_VALUE) return;
+        if (owner != captured || !pending || consumed) return;
+        if (sequence == Long.MAX_VALUE) { unavailable(); return; }
         HostOperationContext.View input = owner.apply(new HostOperationContext.Event(3,2,
-            HostOperationContext.secureEntry(selected),0,attempt,0,1,++sequence,session,action));
-        if (input.status != 0) return;
+            HostOperationContext.secureEntry(selected),0,attempt,0,1,sequence+1,session,action));
+        if (input.status != 0) { unavailable(); return; }
+        sequence = input.sequence; attempt = input.attempt;
         HostOperationContext.GateResult result = owner.gate(1,sequence,attempt);
         consumed = result.context.state == 9;
         RuntimeBridge.PolicyDecision nativeDecision = result.nativeDecision;
+        if (!consumed) { unavailable(); return; }
         if (result.context.status != 0 || nativeDecision == null || !nativeDecision.allows()) {
+            if (attempt >= 3) { unavailable(); return; }
             status.setText("Demo denied/unavailable; receipts: " + receipts); return;
         }
         receipts++;
-        owner.apply(new HostOperationContext.Event(5,0,0,0,attempt,1,1,++sequence,session,action));
-        pending = false;
+        if (sequence == Long.MAX_VALUE) { unavailable(); return; }
+        HostOperationContext.View ended = owner.apply(new HostOperationContext.Event(5,0,0,0,attempt,1,1,sequence+1,session,action));
+        if (ended.status != 0) { unavailable(); return; }
+        sequence = ended.sequence; attempt = ended.attempt; pending = false; consumed = false;
+        owner.close(); session = null; action = null;
         status.setText("Local demo receipts: " + receipts);
     }
     @Override public void onPause() {
         append.setOnClickListener(null); retry.setOnClickListener(null); cancel.setOnClickListener(null); begin.setOnClickListener(null);
-        if (owner != null) owner.close(); owner = null; session = null; action = null; pending = false;
+        if (owner != null) owner.close(); owner = null; session = null; action = null; pending = false; consumed = false;
         super.onPause();
     }
 }

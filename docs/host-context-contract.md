@@ -22,10 +22,10 @@ accepts no timestamps, text, arbitrary labels, raw URLs or variable-length blobs
 | secure_entry | UNKNOWN0, CONFIGURED1, NOT_CONFIGURED2, UNSUPPORTED3, NOT_APPLICABLE4 |
 | lifecycle | UNKNOWN0, FOREGROUND_ACTIVE1, INACTIVE2, BACKGROUND3, DESTROYED4 |
 | completion | NONE0; END only local FINISHED1 or FAILED2 |
-| refs | Exactly16 random opaque bytes each for session/action; zero when unused |
-| generation/sequence | Nonzero1..INT64_MAX, never wrapped or wall clocks |
+| refs | Exactly 16 random opaque bytes each for session/action; zero when unused |
+| generation/sequence | Nonzero 1..INT64_MAX, never wrapped or wall clocks |
 | attempts |1..3, initial BEGIN1, explicit RETRY increments |
-| ages | Session300s; action120s from original BEGIN; last meaningful event30s. Equality accepted; +1ns expires. |
+| ages | Session 300 s; action 120 s from original BEGIN; last meaningful event 30 s. Equality accepted; +1 ns expires. |
 
 Use fresh UUID/SecureRandom references, scoped to this app and selected tenant.
 They must not be customer/account IDs, real auth sessions, challenges, cookies,
@@ -33,8 +33,8 @@ keys, transaction IDs, amounts, beneficiaries or hashes of business content.
 They confer no authority. The host replaces/disposes owners on logout or scope
 change. The SDK cannot authenticate the host's claimed scope.
 
-The host compiles an immutable binding: existing gate operation name1..32 ASCII
-bytes, exact64-lowercase-hex policy expectation, and `require_secure_input`0/1.
+The host compiles an immutable binding: existing gate operation name of 1..32 ASCII
+bytes, exact 64-lowercase-hex policy expectation, and `require_secure_input`0/1.
 Never learn the expectation from runtime policy info. The optional requirement
 accepts only CREDENTIAL/OTP with CONFIGURED at gate time; default0 does not add
 a secure-entry denial. UNKNOWN purpose cannot begin an action. NOT_APPLICABLE
@@ -51,10 +51,10 @@ explicit host handoff; no automatic scene/window selection is performed.
 
 C entry points in `rasp/host_events.h` initialize a zeroed caller-owned owner,
 apply one finite event, synchronously gate a current tuple, and dispose. Native
-state is at most512 bytes with no heap allocation. The header/implementation are
+state is at most 512 bytes with no heap allocation. The header/implementation are
 compiled together; internal owner layout is not an inter-binary ABI. Event/View/
-Binding sizes are80/120/116 bytes with natural alignment. Event/View align to4
-on Android x86 and8 on arm64/armv7/x86_64; Binding aligns to4. No packing or forced
+Binding sizes are 80/120/116 bytes with natural alignment. Event/View align to 4
+on Android x86 and 8 on arm64/armv7/x86_64; Binding aligns to 4. No packing or forced
 alignment is used. Real compiler gates check these layouts on supported targets.
 
 Java `HostOperationContext.Binding`, `Event`, `View` and `GateResult` are owned
@@ -78,7 +78,7 @@ The caller supplies valid, aligned, distinct storage for the exact-sized C
 arguments. Non-OK status never permits an operation. The C ABI cannot contain
 arbitrary invalid pointers, OOM or a compromised host process.
 
-## State and admission
+## Flow transitions and attempt admission
 
 START explicitly replaces a session using the next generation and a fresh ref.
 A repeated exact START is NO_CHANGE, not refresh/repair. BEGIN starts a fresh
@@ -130,7 +130,7 @@ framing/duplicate short circuits do not alter clock health or extend lifetime.
 The host checks context status OK **and** native status OK and known action at
 the actual side-effect boundary. ALLOW may perform one immediate adapted effect.
 REPORT is advisory and requires an explicit separate host branch. DENY/error/
-unknown/null produces no effect. For a C native call not made, gate ABI/size0,
+unknown/null produces no effect. For a C native call not made, gate ABI/size 0,
 status NOT_READY/action DENY are an unavailable sentinel, not a valid native reason.
 Java uses null. A returned result is historical evidence, never a reusable token.
 
@@ -190,7 +190,7 @@ physical erasure. Caller-owned copies and crash dumps cannot be revoked. Java
 immutable input objects may remain with the caller; dropping SDK references is
 logical cleanup, not forensic zeroization. Existing deletion scope is unchanged.
 
-Catalogue revision9,20 selectors, gate ABI/export set, telemetry and report-only
+Catalogue revision 9, 20 selectors, gate ABI/export set, telemetry and report-only
 defaults are unchanged. There is no producer or server-admission protocol for
 these facts. Any future transport/persistence requires separate consent, finite
 queue/lifetime limits, exact native/transport/backend parents, catalogue admission

@@ -363,6 +363,7 @@ if(Java_FOUND AND JNI_FOUND)
     file(GLOB_RECURSE bridge_test_java CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/java/*.java)
     set(bridge_java ${PROJECT_SOURCE_DIR}/android/stub/co/ostorlab/rasp/RuntimeBridge.java)
     list(APPEND bridge_java ${PROJECT_SOURCE_DIR}/host_context/android/co/ostorlab/rasp/host/HostOperationContext.java)
+    list(APPEND bridge_java ${CMAKE_CURRENT_SOURCE_DIR}/host_context/android/device/src/fixture/hostcontext/MainActivity.java)
     set(bridge_test_classes ${CMAKE_CURRENT_BINARY_DIR}/context-bridge-classes)
     add_custom_command(OUTPUT ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class
       COMMAND ${Java_JAVAC_EXECUTABLE} -d ${bridge_test_classes} ${bridge_java} ${bridge_test_java}
@@ -389,6 +390,13 @@ if(Java_FOUND AND JNI_FOUND)
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.HostContextTest
         $<TARGET_FILE:rasp_android_context_bridge_jni> ${CMAKE_CURRENT_SOURCE_DIR}/host_context/vectors.tsv report_only)
     set_tests_properties(AndroidHostContext.reportOnlyAdmission PROPERTIES TIMEOUT 30)
+    foreach(scenario start_clock begin_clock input_expiry input_clock retry_expiry retry_action_age
+        retry_clock gate_clock end_clock cancel_expiry cancel_ok benign deny_retry deny_limit pause recovery)
+      add_test(NAME AndroidHostContext.activity_${scenario}
+        COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.HostActivityTest
+          $<TARGET_FILE:rasp_android_context_bridge_jni> ${scenario})
+      set_tests_properties(AndroidHostContext.activity_${scenario} PROPERTIES TIMEOUT 30)
+    endforeach()
     add_test(NAME AndroidWindowBridge.lifecycle
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.WindowTest
         $<TARGET_FILE:rasp_android_context_bridge_jni>)

@@ -29,13 +29,17 @@ clock and main-thread identity. The provided platform files implement them. A ho
 port must supply those exact boundaries; it cannot supply public event timestamps
 or a replacement native decision. There are no host callbacks in the reducer.
 
-Harmless examples are in `../tests/host_context/{android/device,ios}/`; native
-consumers and shared C/Java transition vectors are in `../tests/host_context/`.
-The source APK/Swift app starts a flow explicitly in its selected Activity/legacy
-single-window application, closes it on pause/inactive, and changes only an
-in-memory demo receipt count after actual native ALLOW. Its input can stay empty.
-It never reads it. These examples deliberately do not execute a REPORT branch.
+Harmless examples are in `../tests/host_context/{android/device,ios}/`:
+
+- Start a flow explicitly in the selected Activity or legacy single-window app.
+- Close the flow on pause/inactive.
+- Increment an in-memory demo receipt count only after actual native ALLOW.
+- Keep the input empty; its contents are never read.
+
+The examples deliberately do not execute a REPORT branch.
 Production apps that choose advisory execution must code that branch explicitly.
+
+Native consumers and shared C/Java transition vectors are in `../tests/host_context/`.
 
 Unsupported input frameworks and custom controls return UNSUPPORTED. This slice
 has no Compose/WebView/Flutter/React Native adapter, auto observers, permissions,

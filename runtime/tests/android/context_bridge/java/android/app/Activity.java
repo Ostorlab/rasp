@@ -1,5 +1,9 @@
 package android.app;
 public class Activity {
+    public void onCreate(android.os.Bundle saved) {}
+    public void onResume() {}
+    public void onPause() {}
+    public void setContentView(android.view.View view) {}
     public Application application;
     public Application getApplication() { return application; }
     public final android.view.WindowManager manager = new android.view.WindowManager();
