@@ -46,7 +46,8 @@ function(rasp_obfuscate_ios target)
   target_compile_options(${target} PRIVATE -fpass-plugin=${RASP_OMVLL_IOS_RESOLVED_PLUGIN})
   set_target_properties(${target} PROPERTIES
     C_COMPILER_LAUNCHER "${RASP_OMVLL_IOS_LAUNCHER}"
-    CXX_COMPILER_LAUNCHER "${RASP_OMVLL_IOS_LAUNCHER}")
+    CXX_COMPILER_LAUNCHER "${RASP_OMVLL_IOS_LAUNCHER}"
+    OBJCXX_COMPILER_LAUNCHER "${RASP_OMVLL_IOS_LAUNCHER}")
   message(STATUS "O-MVLL on; ${target} is obfuscated with ${RASP_OMVLL_IOS_RESOLVED_PLUGIN}")
 endfunction()
 

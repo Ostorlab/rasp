@@ -13,6 +13,7 @@
 #include "checks/identity.h"
 #include "checks/integrity.h"
 #include "checks/mitm.h"
+#include "checks/overlay.h"
 #include "checks/root.h"
 #include "checks/root_namespace.h"
 #include "checks/service_exposure.h"
@@ -56,6 +57,9 @@ std::vector<Observation> run_checks(const Config& config) {
   }
   if (is_check_enabled(config, "notification_access")) {
     std::ranges::move(checks::notification_access(), std::back_inserter(observations));
+  }
+  if (is_check_enabled(config, "overlay")) {
+    std::ranges::move(checks::overlay(), std::back_inserter(observations));
   }
   if (is_check_enabled(config, "root_packages")) {
     std::ranges::move(checks::root_packages(), std::back_inserter(observations));

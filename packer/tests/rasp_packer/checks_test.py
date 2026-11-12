@@ -130,6 +130,16 @@ def testRequiredChecks_whenCatalogueRead_matchesSelectedPlatform(
     assert frozenset({"identity"}) == checks.REQUIRED_CHECKS
 
 
+def testResolveChecks_whenOverlaySelected_isOptInAndroidOnly() -> None:
+    assert checks.resolve_checks(platforms.Platform.ANDROID, []).checks == ("identity",)
+    selected = checks.resolve_checks(platforms.Platform.ANDROID, ["overlay"])
+    assert selected.checks == ("identity", "overlay")
+    assert selected.skipped == ()
+    assert checks.resolve_checks(platforms.Platform.IOS, ["overlay"]).skipped == (
+        "overlay",
+    )
+
+
 def testResolveChecks_whenAndroidServiceGroupsSelected_preservesOptInGroups() -> None:
     resolved = checks.resolve_checks(
         platforms.Platform.ANDROID,

@@ -47,14 +47,12 @@
         {
           "signal": "debug.adb_enabled_v1",
           "source": "settings_global",
-          "status": "unsupported",
-          "value": null
+          "status": "unsupported"
         },
         {
           "signal": "debug.developer_options_enabled_v1",
           "source": "settings_global",
-          "status": "unsupported",
-          "value": null
+          "status": "unsupported"
         }
       ]
     },
@@ -105,14 +103,12 @@
         {
           "signal": "debug.adb_enabled_v1",
           "source": "settings_global",
-          "status": "unsupported",
-          "value": null
+          "status": "unsupported"
         },
         {
           "signal": "debug.developer_options_enabled_v1",
           "source": "settings_global",
-          "status": "unsupported",
-          "value": null
+          "status": "unsupported"
         }
       ]
     },
@@ -125,38 +121,32 @@
         {
           "signal": "root.manager_packages_v1",
           "source": "package_manager",
-          "status": "error",
-          "value": null
+          "status": "error"
         },
         {
           "signal": "root.mountinfo_context_v1",
           "source": "proc_self_mountinfo",
-          "status": "error",
-          "value": null
+          "status": "error"
         },
         {
           "signal": "root.mount_namespace_v1",
           "source": "proc_self_ns_mnt",
-          "status": "error",
-          "value": null
+          "status": "error"
         },
         {
           "signal": "net.default_proxy_v1",
           "source": "connectivity_manager",
-          "status": "error",
-          "value": null
+          "status": "error"
         },
         {
           "signal": "debug.adb_enabled_v1",
           "source": "settings_global",
-          "status": "unsupported",
-          "value": null
+          "status": "unsupported"
         },
         {
           "signal": "debug.developer_options_enabled_v1",
           "source": "settings_global",
-          "status": "unsupported",
-          "value": null
+          "status": "unsupported"
         }
       ]
     },
@@ -205,16 +195,16 @@
         {
           "signal": "debug.adb_enabled_v1",
           "source": "settings_global",
-          "status": "unsupported",
-          "value": null
+          "status": "unsupported"
         },
         {
           "signal": "debug.developer_options_enabled_v1",
           "source": "settings_global",
-          "status": "unsupported",
-          "value": null
+          "status": "unsupported"
         }
       ]
     }
-  ]
+  ],
+  "registration": "schema1_revision7",
+  "catalogue_id": "c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf"
 }

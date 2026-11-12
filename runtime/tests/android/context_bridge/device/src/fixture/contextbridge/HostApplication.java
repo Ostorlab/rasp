@@ -17,6 +17,11 @@ public final class HostApplication extends Application {
                 if (first != RuntimeBridge.INITIALIZED || repeated != RuntimeBridge.ALREADY_INITIALIZED) {
                     throw new AssertionError("bridge results " + first + "/" + repeated);
                 }
+                int started = RuntimeBridge.startWindowObservation(HostApplication.this);
+                if (started != RuntimeBridge.INITIALIZED || RuntimeBridge.startWindowObservation(HostApplication.this) != RuntimeBridge.ALREADY_INITIALIZED) {
+                    throw new AssertionError("window start result " + started);
+                }
+                Log.i("WindowBridgeFixture", "window adapter started");
                 Log.i("ContextBridgeFixture", "initialized after attachment");
             }
         }, 10000);

@@ -152,11 +152,20 @@ def testCatalogue_whenSourceInventoryCompared_coversEveryBuiltinSignal() -> None
                 "input_method",
                 "notification_access",
             )
+            context_group = platform == "android" and group["name"] in (
+                "root_packages",
+                "proxy",
+                "developer_settings",
+            )
             filename = "service_exposure" if service_group is True else group["name"]
+            if context_group is True:
+                filename = "context_exposure"
+            if platform == "android" and group["name"] == "root_context":
+                filename = "root_namespace"
             source = (
                 runtime / platform / "src" / "checks" / f"{filename}.cpp"
             ).read_text()
-            if service_group is True:
+            if service_group is True or context_group is True:
                 source = source.split(
                     f"std::vector<Observation> {group['name']}() {{", 1
                 )[1].split("\n}\n", 1)[0]
@@ -165,6 +174,10 @@ def testCatalogue_whenSourceInventoryCompared_coversEveryBuiltinSignal() -> None
                 if service_group is True
                 else r'constexpr std::string_view k\w*Signal = "([^"]+)";'
             )
+            if context_group is True:
+                pattern = r'"((?:root|net|debug)\.[a-z0-9_]+)"'
+            if platform == "android" and group["name"] == "overlay":
+                pattern = r'"(overlay\.[a-z_]+)"'
             signals = set(re.findall(pattern, source))
             assert signals == {row["signal"] for row in group["observations"]}
 
@@ -277,7 +290,7 @@ def testParseCatalogue_whenTimeoutDeclared_roundTripsWithoutChangingProductionCa
     assert capabilities.canonical(parsed) == encoded
     assert capabilities.catalogue_id() == current_id
     assert (
-        current_id == "eaac77e3bdbf7f21af2abfb79a7868ccf516e5c3f758d25c90127550e3e7db7c"
+        current_id == "c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf"
     )
     assert all(
         "timeout" not in output["statuses"]
@@ -359,8 +372,8 @@ def testCatalogue_whenAndroidServiceMetadataRegistered_preservesVersionedContext
     android = document["platforms"]["android"]
     groups = {group["name"]: group for group in android["groups"]}
     assert document["schema_version"] == 1
-    assert document["revision"] == 4
-    assert sum(len(group["observations"]) for group in android["groups"]) == 32
+    assert document["revision"] == 7
+    assert sum(len(group["observations"]) for group in android["groups"]) == 52
     assert (
         sum(
             len(group["observations"])
@@ -455,3 +468,205 @@ def testParseCatalogue_whenAndroidTruthIsUnavailable_acceptsUnsupportedWithNoVal
         supported_on="never",
     )
     assert capabilities.parse_catalogue(capabilities.canonical(document)) == document
+
+
+def testCatalogue_whenAndroidSignerSetsRegistered_preservesLegacyScalarsAndCompleteSets() -> (
+    None
+):
+    document = capabilities.catalogue()
+    groups = document["platforms"]["android"]["groups"]
+    identity = next(group for group in groups if group["name"] == "identity")
+    rows = {(row["signal"], row["source"]): row for row in identity["observations"]}
+    assert document["schema_version"] == 1
+    assert document["revision"] == 7
+    assert len(rows) == 9
+    assert identity["required"] is True
+    for source in ("apk_signing_block", "package_manager"):
+        assert rows[("sig.cert_sha256", source)]["value_kind"] == "string"
+        assert rows[("sig.cert_sha256", source)]["value_cardinality"] == "scalar"
+    contracts = (
+        ("id.package.v1", "application_context", "string"),
+        ("sig.current_sha256.v1", "apk_signing_block", "string_list"),
+        ("sig.current_sha256.v1", "package_manager", "string_list"),
+        ("sig.history_sha256.v1", "package_manager", "string_list"),
+    )
+    for signal, source, kind in contracts:
+        row = rows[(signal, source)]
+        assert row["value_kind"] == kind
+        assert row["cardinality"] == "one"
+        assert row["value_cardinality"] == (
+            "scalar" if kind == "string" else "variable"
+        )
+        assert set(row["statuses"]) == {"ok", "error", "unsupported"}
+        assert row["supported_on"] == "android"
+
+
+def testSignerContractFixture_whenCanonicalRegistrationCompared_matchesExactRowsAndIdentity() -> (
+    None
+):
+    fixture = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "docs/fixtures/android-signer-observations-v1.json"
+    )
+    document = json.loads(fixture.read_bytes())
+    identity = next(
+        group
+        for group in capabilities.catalogue()["platforms"]["android"]["groups"]
+        if group["name"] == "identity"
+    )
+    rows = {(row["signal"], row["source"]): row for row in identity["observations"]}
+    assert document["registration"] == "schema1_revision7"
+    assert document["catalogue_id"] == capabilities.catalogue_id()
+    assert len(document["observations"]) == 4
+    for row in document["observations"]:
+        assert row == rows[(row["signal"], row["source"])]
+
+
+def testCatalogue_whenWindowObservationRegistered_preservesApprovedRevisionFiveExactly() -> (
+    None
+):
+    document = capabilities.catalogue()
+    assert document["schema_version"] == 1
+    assert document["revision"] == 7
+    assert (
+        sum(
+            len(group["observations"])
+            for group in document["platforms"]["android"]["groups"]
+        )
+        == 52
+    )
+    assert (
+        sum(
+            len(group["observations"])
+            for group in document["platforms"]["ios"]["groups"]
+        )
+        == 26
+    )
+    groups = document["platforms"]["android"]["groups"]
+    selected = [group for group in groups if group["name"] == "overlay"]
+    assert len(selected) == 1
+    assert selected[0]["required"] is False
+    outputs = selected[0]["observations"]
+    assert len(outputs) == 10
+    assert len({(row["signal"], row["source"]) for row in outputs}) == 10
+    assert all(row["source"] == "window_callback" for row in outputs)
+    previous = copy.deepcopy(document)
+    previous["revision"] = 5
+    previous["platforms"]["android"]["groups"] = [
+        group
+        for group in previous["platforms"]["android"]["groups"]
+        if group["name"]
+        not in {
+            "overlay",
+            "root_packages",
+            "root_context",
+            "proxy",
+            "developer_settings",
+        }
+    ]
+    assert (
+        hashlib.sha256(capabilities.canonical(previous)).hexdigest()
+        == "c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5"
+    )
+
+
+def testWindowContractFixture_whenCanonicalCompared_matchesExactRegisteredOutputs() -> (
+    None
+):
+    fixture = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "docs/fixtures/android-window-observations-v1.json"
+    )
+    document = json.loads(fixture.read_bytes())
+    group = next(
+        group
+        for group in capabilities.catalogue()["platforms"]["android"]["groups"]
+        if group["name"] == "overlay"
+    )
+    assert document["registration"] == "schema1_revision7"
+    assert document["catalogue_id"] == capabilities.catalogue_id()
+    assert document["observations"] == group["observations"]
+    assert [row["value_kind"] for row in group["observations"]] == [
+        "string",
+        "string",
+        *(["integer"] * 8),
+    ]
+    assert all(
+        row["statuses"] == ["ok", "unsupported"] for row in group["observations"]
+    )
+
+
+def testCatalogue_whenRootContextRegistered_preservesApprovedParentAndSixOptIns() -> (
+    None
+):
+    document = capabilities.catalogue()
+    names = {"root_packages", "root_context", "proxy", "developer_settings"}
+    groups = document["platforms"]["android"]["groups"]
+    added = [group for group in groups if group["name"] in names]
+    assert document["revision"] == 7
+    assert len(added) == 4
+    assert all(group["required"] is False for group in added)
+    assert {group["name"]: len(group["observations"]) for group in added} == {
+        "root_packages": 1,
+        "root_context": 2,
+        "proxy": 1,
+        "developer_settings": 2,
+    }
+    assert sum(len(group["observations"]) for group in groups) == 52
+    assert (
+        sum(
+            len(group["observations"])
+            for group in document["platforms"]["ios"]["groups"]
+        )
+        == 26
+    )
+    settings = next(group for group in added if group["name"] == "developer_settings")
+    assert all(
+        row["value_kind"] == "none"
+        and row["supported_on"] == "never"
+        and row["statuses"] == ["unsupported"]
+        for row in settings["observations"]
+    )
+    document["platforms"]["android"]["groups"] = [
+        group for group in groups if group["name"] not in names
+    ]
+    document["revision"] = 6
+    assert (
+        hashlib.sha256(capabilities.canonical(document)).hexdigest()
+        == "28b4aec16ad42aacb089d0a7d47fac6468a4d6823641f0713939d2bcd4cc78d4"
+    )
+
+
+def testRootContextFixture_whenCanonicalCompared_preservesExactStatusAndValueKinds() -> (
+    None
+):
+    fixture = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "docs/fixtures/android-root-context-v1.json"
+    )
+    document = json.loads(fixture.read_bytes())
+    assert document["registration"] == "schema1_revision7"
+    assert document["catalogue_id"] == capabilities.catalogue_id()
+    names = {"root_packages", "root_context", "proxy", "developer_settings"}
+    outputs = {
+        (row["signal"], row["source"]): row
+        for group in capabilities.catalogue()["platforms"]["android"]["groups"]
+        if group["name"] in names
+        for row in group["observations"]
+    }
+    for case in document["cases"]:
+        assert {(row["signal"], row["source"]) for row in case["observations"]} == set(
+            outputs
+        )
+        assert len(case["observations"]) == 6
+        for observation in case["observations"]:
+            contract = outputs[(observation["signal"], observation["source"])]
+            assert observation["status"] in contract["statuses"]
+            if observation["status"] != "ok":
+                assert "value" not in observation
+            elif contract["value_kind"] == "string":
+                assert isinstance(observation["value"], str)
+            else:
+                assert contract["value_kind"] == "string_list"
+                assert isinstance(observation["value"], list)
+                assert all(isinstance(value, str) for value in observation["value"])

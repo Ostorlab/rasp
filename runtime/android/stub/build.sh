@@ -18,5 +18,6 @@ javac -source 8 -target 8 -bootclasspath "$android_jar" -Xlint:-options -d "$wor
 
 mkdir -p "$out"
 mv "$work/classes.dex" "$out/stub.dex"
-jar cf "$out/runtime-bridge-compile-only.jar" -C "$work/classes" co/ostorlab/rasp/RuntimeBridge.class
+(cd "$work/classes" && jar cf "$work/runtime-bridge-compile-only.jar" co/ostorlab/rasp/RuntimeBridge*.class)
+mv "$work/runtime-bridge-compile-only.jar" "$out/runtime-bridge-compile-only.jar"
 echo "wrote $out/stub.dex"

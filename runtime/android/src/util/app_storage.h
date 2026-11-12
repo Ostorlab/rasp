@@ -28,6 +28,7 @@ namespace rasp::android::util {
 /// @return The folder's path.
 [[nodiscard]] std::string no_backup_directory(std::string_view package, std::uint32_t uid);
 
+/// Legacy startup-only path inference; durable consumers must instead query rasp::acquire_private_storage().
 /// Finds the `no_backup` folder of this app, from the process's command line and uid, and creates it when it doesn't
 /// exist yet, as Android does the first time the app asks for it.
 ///

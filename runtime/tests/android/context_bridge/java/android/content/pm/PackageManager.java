@@ -1,6 +1,9 @@
 package android.content.pm;
 
 public class PackageManager {
+    public static boolean fail;
+    public static boolean nullInfo;
+    public static boolean nullSigningInfo;
     public static class NameNotFoundException extends Exception {}
     public java.util.Set<String> visible = new java.util.HashSet<>();
     public int calls;
@@ -16,6 +19,10 @@ public class PackageManager {
             return new PackageInfo();
         }
         if (!name.equals("fixture.app") || flags != 0x08000000) throw new AssertionError();
-        return new PackageInfo();
+        if (fail) throw new SecurityException("own package denied");
+        if (nullInfo) return null;
+        PackageInfo info = new PackageInfo();
+        if (nullSigningInfo) info.signingInfo = null;
+        return info;
     }
 }

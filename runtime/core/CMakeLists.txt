@@ -22,6 +22,7 @@ add_library(rasp_core STATIC
   src/config.cpp
   src/embedded_config.cpp
   src/install_id.cpp
+  src/private_storage.cpp
   src/observation.cpp
   src/parse_config.cpp
   src/plugins/init_plugins.cpp
@@ -29,9 +30,14 @@ add_library(rasp_core STATIC
   src/util/read_file.cpp)
 # The host suite exercises the POSIX clock used by its native platform too.
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR APPLE)
-  target_sources(rasp_core PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/cycle_clock.cpp)
+  target_link_libraries(rasp_core PRIVATE "$<LINK_LIBRARY:FRAMEWORK,Security>")
+  target_include_directories(rasp_core PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+  target_sources(rasp_core PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/cycle_clock.cpp
+    ${PROJECT_SOURCE_DIR}/ios/src/util/storage_flags.cpp)
 else()
-  target_sources(rasp_core PRIVATE ${PROJECT_SOURCE_DIR}/android/src/util/cycle_clock.cpp)
+  target_include_directories(rasp_core PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+  target_sources(rasp_core PRIVATE ${PROJECT_SOURCE_DIR}/android/src/util/cycle_clock.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/storage_flags.cpp)
 endif()
 target_include_directories(rasp_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/posix/include)
 target_include_directories(rasp_core PUBLIC
