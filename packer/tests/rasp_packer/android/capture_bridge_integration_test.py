@@ -13,6 +13,8 @@ import zipfile
 
 import pytest
 
+from rasp_packer import checks
+from rasp_packer import platforms
 from rasp_packer import runtime_config
 from rasp_packer.android import packer
 from rasp_packer.android import resources
@@ -53,7 +55,8 @@ def testCaptureBridge_whenActualArtifactsPacked_preservesOwnershipAndSelectedPer
     if artifact_format == "aab":
         source = pathlib.Path(__file__).parents[2] / "apps/android/InsecureBankv2.aab"
     config = runtime_config.RuntimeConfig(
-        build_id="capture-sdk-fixture", checks=("identity", *groups)
+        build_id="capture-sdk-fixture",
+        checks=checks.resolve_checks(platforms.Platform.ANDROID, groups).checks,
     )
     output = tmp_path / ("protected." + artifact_format)
     result = packer.pack(app=source, output=output, config=config, artifacts=artifacts)
