@@ -572,3 +572,6 @@ gtest_discover_tests(rasp_ios_capture_events_test)
 
 target_sources(rasp_ios_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/checks/capture.cpp
   ${PROJECT_SOURCE_DIR}/ios/src/capture/capture_events.cpp)
+
+# Stage A collectors exist only in tests; no production target or catalogue references them.
+add_subdirectory(provenance)

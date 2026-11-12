@@ -1,0 +1,195 @@
+# Collector sources are deliberately linked only into these test/compile-probe targets.
+cmake_minimum_required(VERSION 4.4)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  project(rasp_provenance_tests LANGUAGES CXX)
+  set(CMAKE_CXX_STANDARD 23)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+  set(CMAKE_CXX_EXTENSIONS OFF)
+  set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+  get_filename_component(PROJECT_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+  add_library(rasp_warnings INTERFACE)
+  target_compile_options(rasp_warnings INTERFACE -Wall -Wextra -Werror -Wpedantic -Wshadow -Wconversion
+    -Wsign-conversion -Wold-style-cast -Wnon-virtual-dtor)
+  add_library(rasp_language INTERFACE)
+  target_compile_options(rasp_language INTERFACE -fno-exceptions -fno-rtti)
+  add_library(rasp_core STATIC ${PROJECT_SOURCE_DIR}/core/src/observation.cpp)
+  target_include_directories(rasp_core PUBLIC ${PROJECT_SOURCE_DIR}/core/include)
+  target_link_libraries(rasp_core PRIVATE rasp_warnings rasp_language)
+  option(RASP_PROVENANCE_COMPILE_ONLY "Compile inactive native adapters without host tests" OFF)
+  if(NOT RASP_PROVENANCE_COMPILE_ONLY)
+    include(FetchContent)
+    FetchContent_Declare(googletest
+      URL https://github.com/google/googletest/releases/download/v1.17.0/googletest-1.17.0.tar.gz
+      URL_HASH SHA256=65fab701d9829d38cb77c14acdc431d2108bfdbf8979e40eb8ae567edf10b27c SYSTEM)
+    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+    set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+    target_compile_options(gtest PRIVATE -fno-rtti)
+    target_compile_options(gtest_main PRIVATE -fno-rtti)
+    enable_testing()
+    include(GoogleTest)
+  endif()
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Android")
+  set(rasp_provenance_jni ON)
+else()
+  find_package(Java QUIET COMPONENTS Runtime Development)
+  find_package(JNI QUIET COMPONENTS JVM)
+  set(rasp_provenance_jni ${JNI_FOUND})
+endif()
+if(rasp_provenance_jni)
+  enable_language(C)
+  add_library(rasp_provenance_jni_handles STATIC ${PROJECT_SOURCE_DIR}/android/src/checks/loader_provenance_jni.c)
+  target_include_directories(rasp_provenance_jni_handles PRIVATE ${JNI_INCLUDE_DIRS})
+  target_compile_options(rasp_provenance_jni_handles PRIVATE -Wall -Wextra -Werror -Wpedantic)
+  add_library(rasp_provenance_loader OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/loader_provenance.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
+  target_include_directories(rasp_provenance_loader PRIVATE ${JNI_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/android/src
+    ${PROJECT_SOURCE_DIR}/posix/include)
+  target_link_libraries(rasp_provenance_loader PRIVATE rasp_core rasp_warnings rasp_language)
+  target_compile_options(rasp_provenance_loader PRIVATE -Wframe-larger-than=4096 -Wglobal-constructors -Wexit-time-destructors)
+  if(NOT RASP_PROVENANCE_COMPILE_ONLY AND NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
+    add_executable(rasp_loader_boundary_test loader_boundary_test.cpp $<TARGET_OBJECTS:rasp_provenance_loader>)
+    target_include_directories(rasp_loader_boundary_test PRIVATE ${JNI_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/android/src
+      ${PROJECT_SOURCE_DIR}/posix/include)
+    target_link_libraries(rasp_loader_boundary_test PRIVATE rasp_core rasp_warnings rasp_language rasp_provenance_jni_handles JNI::JVM GTest::gtest_main)
+    gtest_discover_tests(rasp_loader_boundary_test)
+  endif()
+  if(NOT RASP_PROVENANCE_COMPILE_ONLY AND Java_FOUND AND NOT CMAKE_CXX_FLAGS MATCHES "fsanitize=")
+    set(rasp_provenance_classes ${CMAKE_CURRENT_BINARY_DIR}/java)
+    add_custom_command(OUTPUT ${rasp_provenance_classes}/fixture/provenance/LoaderFixture.class
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${rasp_provenance_classes}
+      COMMAND ${Java_JAVAC_EXECUTABLE} -d ${rasp_provenance_classes}
+        ${CMAKE_CURRENT_SOURCE_DIR}/java/android/content/pm/ApplicationInfo.java
+        ${CMAKE_CURRENT_SOURCE_DIR}/java/fixture/provenance/LoaderFixture.java
+      DEPENDS java/fixture/provenance/LoaderFixture.java java/android/content/pm/ApplicationInfo.java VERBATIM)
+    add_custom_target(rasp_provenance_java DEPENDS ${rasp_provenance_classes}/fixture/provenance/LoaderFixture.class)
+    add_executable(rasp_loader_provenance_test loader_provenance_test.cpp $<TARGET_OBJECTS:rasp_provenance_loader>)
+    target_include_directories(rasp_loader_provenance_test PRIVATE ${JNI_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/android/src
+      ${PROJECT_SOURCE_DIR}/posix/include)
+    target_compile_definitions(rasp_loader_provenance_test PRIVATE RASP_PROVENANCE_CLASSES="${rasp_provenance_classes}")
+    target_link_libraries(rasp_loader_provenance_test PRIVATE rasp_core rasp_warnings rasp_language rasp_provenance_jni_handles JNI::JVM GTest::gtest_main)
+    add_dependencies(rasp_loader_provenance_test rasp_provenance_java)
+    gtest_discover_tests(rasp_loader_provenance_test PROPERTIES TIMEOUT 30)
+  endif()
+endif()
+
+add_library(rasp_provenance_ios OBJECT ${PROJECT_SOURCE_DIR}/ios/src/checks/module_provenance.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/util/macho.cpp)
+target_include_directories(rasp_provenance_ios PRIVATE ${PROJECT_SOURCE_DIR}/ios/src ${PROJECT_SOURCE_DIR}/posix/include)
+target_link_libraries(rasp_provenance_ios PRIVATE rasp_core rasp_warnings rasp_language)
+target_compile_options(rasp_provenance_ios PRIVATE -Wframe-larger-than=4096 -Wglobal-constructors -Wexit-time-destructors)
+if(APPLE)
+  enable_language(OBJCXX)
+  target_sources(rasp_provenance_ios PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/provenance_bundle.mm)
+  target_compile_options(rasp_provenance_ios PRIVATE
+    $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc> $<$<COMPILE_LANGUAGE:OBJCXX>:-fno-objc-exceptions>)
+  target_link_libraries(rasp_provenance_ios PRIVATE "$<LINK_LIBRARY:FRAMEWORK,Foundation>")
+endif()
+if(NOT RASP_PROVENANCE_COMPILE_ONLY)
+  add_test(NAME ProvenanceDormancy.exactInheritedBytes COMMAND ${CMAKE_COMMAND}
+    -DRASP_SOURCE_ROOT=${PROJECT_SOURCE_DIR}/.. -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dormancy.cmake)
+  add_executable(rasp_ios_module_provenance_test ios_module_provenance_test.cpp $<TARGET_OBJECTS:rasp_provenance_ios>)
+  target_include_directories(rasp_ios_module_provenance_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src ${PROJECT_SOURCE_DIR}/posix/include)
+  target_link_libraries(rasp_ios_module_provenance_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  if(APPLE)
+    target_link_libraries(rasp_ios_module_provenance_test PRIVATE "$<LINK_LIBRARY:FRAMEWORK,Foundation>")
+  endif()
+  gtest_discover_tests(rasp_ios_module_provenance_test)
+endif()
+
+foreach(platform android ios)
+  if(TARGET rasp_${platform}_capabilities_test)
+    target_sources(rasp_${platform}_capabilities_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/dormancy_test.cpp)
+  endif()
+endforeach()
+
+set(RASP_PROVENANCE_PL03_SOURCE "" CACHE PATH "Task-owned immutable PL03 e5f3ec3 source evidence for actual sink tests")
+if(RASP_PROVENANCE_PL03_SOURCE AND TARGET rasp_yyjson AND TARGET rasp_tfpsacrypto)
+  set(pl03 ${RASP_PROVENANCE_PL03_SOURCE})
+  file(READ "${pl03}/source-identities.json" source_identity)
+  string(JSON pl03_commit GET "${source_identity}" commit)
+  if(NOT pl03_commit STREQUAL "e5f3ec3df0cd3e34dfad43bdc15e6533578f22d7")
+    message(FATAL_ERROR "Sink fixture must use exact immutable PL03 e5f3ec3")
+  endif()
+  string(JSON pinned_file_count LENGTH "${source_identity}" files)
+  math(EXPR pinned_file_last "${pinned_file_count} - 1")
+  foreach(index RANGE 0 ${pinned_file_last})
+    string(JSON path MEMBER "${source_identity}" files ${index})
+    string(JSON expected GET "${source_identity}" files "${path}")
+    file(SHA256 "${pl03}/${path}" actual)
+    if(NOT actual STREQUAL expected)
+      message(FATAL_ERROR "Frozen PL03 fixture mismatch: ${path}")
+    endif()
+  endforeach()
+  set(sink_sources)
+  foreach(name collection_authority cycle_payload cycle_delivery hash http json json_value mailbox outbox sender)
+    set(path plugins/reporting/src/${name}.cpp)
+    string(JSON expected GET "${source_identity}" files "${path}")
+    file(SHA256 "${pl03}/${path}" actual)
+    if(NOT actual STREQUAL expected)
+      message(FATAL_ERROR "Frozen PL03 source mismatch: ${path}")
+    endif()
+    list(APPEND sink_sources "${pl03}/${path}")
+  endforeach()
+  add_library(rasp_provenance_sinks STATIC ${sink_sources}
+    ${pl03}/plugins/reporting/src/hash_island.c ${pl03}/plugins/reporting/src/outbox_posix.c
+    ${pl03}/plugins/dns_reporting/src/cycle_dns.cpp ${pl03}/plugins/dns_reporting/src/cbor.cpp
+    ${pl03}/plugins/dns_reporting/src/dns_frame.cpp ${pl03}/plugins/dns_reporting/src/base32hex.cpp)
+  set_source_files_properties(${pl03}/plugins/reporting/src/hash_island.c PROPERTIES
+    COMPILE_DEFINITIONS MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS)
+  target_include_directories(rasp_provenance_sinks PUBLIC ${pl03}/plugins/reporting/src
+    ${pl03}/plugins/reporting/include ${pl03}/plugins/dns_reporting/src)
+  target_include_directories(rasp_provenance_sinks SYSTEM PRIVATE
+    ${CMAKE_BINARY_DIR}/tf-psa-crypto/tf-psa-crypto-1.1.1/drivers/builtin/include)
+  target_compile_definitions(rasp_provenance_sinks PRIVATE RASP_DNS_REPORTING_ZONE="r.example"
+    RASP_DNS_REPORTING_COLLECTION_POLICY="default")
+  target_link_libraries(rasp_provenance_sinks PRIVATE rasp_core rasp_yyjson rasp_tfpsacrypto)
+  foreach(platform android ios)
+    target_sources(rasp_${platform}_capabilities_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sink_dormancy_test.cpp)
+    target_include_directories(rasp_${platform}_capabilities_test PRIVATE ${PROJECT_SOURCE_DIR}/posix/include
+      ${PROJECT_SOURCE_DIR}/tests)
+    target_link_libraries(rasp_${platform}_capabilities_test PRIVATE rasp_provenance_sinks)
+  endforeach()
+endif()
+
+enable_language(C)
+add_library(rasp_provenance_io STATIC ${PROJECT_SOURCE_DIR}/android/src/checks/module_provenance_io.c)
+target_compile_options(rasp_provenance_io PRIVATE -Wall -Wextra -Werror -Wpedantic)
+add_library(rasp_provenance_android OBJECT
+  ${PROJECT_SOURCE_DIR}/android/src/checks/module_provenance.cpp)
+target_include_directories(rasp_provenance_android PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+  ${PROJECT_SOURCE_DIR}/posix/include)
+target_link_libraries(rasp_provenance_android PRIVATE rasp_core rasp_warnings rasp_language)
+target_compile_options(rasp_provenance_android PRIVATE -Wframe-larger-than=4096 -Wglobal-constructors -Wexit-time-destructors)
+if(NOT RASP_PROVENANCE_COMPILE_ONLY)
+  add_executable(rasp_module_provenance_test module_provenance_test.cpp
+    $<TARGET_OBJECTS:rasp_provenance_android>)
+  target_include_directories(rasp_module_provenance_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+    ${PROJECT_SOURCE_DIR}/posix/include)
+  target_link_libraries(rasp_module_provenance_test PRIVATE rasp_provenance_io rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_module_provenance_test)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CXX_FLAGS MATCHES "fsanitize=thread")
+    # Linker interposition runs before TSan initialization; ASan/UBSan exercise these real guard-page fixtures.
+    add_executable(rasp_native_module_name_test native_module_name_test.cpp $<TARGET_OBJECTS:rasp_provenance_android>)
+    target_include_directories(rasp_native_module_name_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src ${PROJECT_SOURCE_DIR}/posix/include)
+    target_link_libraries(rasp_native_module_name_test PRIVATE rasp_provenance_io rasp_core rasp_warnings rasp_language GTest::gtest_main)
+    target_link_options(rasp_native_module_name_test PRIVATE -Wl,--wrap=dl_iterate_phdr)
+    gtest_discover_tests(rasp_native_module_name_test)
+  endif()
+endif()
+
+if(TARGET rasp_provenance_sinks AND TARGET rasp_provenance_loader)
+  add_executable(rasp_provenance_sink_exposure_test sink_exposure_test.cpp
+    $<TARGET_OBJECTS:rasp_provenance_ios> $<TARGET_OBJECTS:rasp_provenance_android> $<TARGET_OBJECTS:rasp_provenance_loader>)
+  target_include_directories(rasp_provenance_sink_exposure_test PRIVATE ${JNI_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/android/src ${PROJECT_SOURCE_DIR}/posix/include ${PROJECT_SOURCE_DIR}/tests)
+  target_link_libraries(rasp_provenance_sink_exposure_test PRIVATE rasp_provenance_io rasp_provenance_sinks
+    rasp_core rasp_warnings rasp_language rasp_provenance_jni_handles JNI::JVM GTest::gtest_main)
+  if(APPLE)
+    target_link_libraries(rasp_provenance_sink_exposure_test PRIVATE "$<LINK_LIBRARY:FRAMEWORK,Foundation>")
+  endif()
+  gtest_discover_tests(rasp_provenance_sink_exposure_test)
+endif()
