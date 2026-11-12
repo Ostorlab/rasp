@@ -1,5 +1,7 @@
 /// Real-JVM integration of the shipped bridge and PackageManager consumer, with JNI allocation/lookup fault injection.
 
+#include "android/events/driver.h"
+
 #include <array>
 #include <cstdint>
 #include <jni.h>
@@ -8,6 +10,7 @@
 #include <thread>
 #include <vector>
 
+#include "events/window_bridge.h"
 #include "util/application_context.h"
 #include "util/jni.h"
 #include "util/package_manager.h"
@@ -129,6 +132,9 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
   if (!rasp::android::util::register_context_bridge(env)) {
     return JNI_ERR;
   }
+  if (!rasp::android::events::register_window_bridge(env)) {
+    return JNI_ERR;
+  }
   jclass test = env->FindClass("co/ostorlab/rasp/BridgeTest");
   auto read_name = std::to_array("readCertificate");
   auto has_name = std::to_array("hasContext");
@@ -180,5 +186,5 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     return JNI_ERR;
   }
   env->DeleteLocalRef(test);
-  return JNI_VERSION_1_6;
+  return register_window_test(env) ? JNI_VERSION_1_6 : JNI_ERR;
 }

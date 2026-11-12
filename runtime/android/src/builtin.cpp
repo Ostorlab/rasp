@@ -12,6 +12,7 @@
 #include "checks/identity.h"
 #include "checks/integrity.h"
 #include "checks/mitm.h"
+#include "checks/overlay.h"
 #include "checks/root.h"
 #include "rasp/config.h"
 #include "rasp/observation.h"
@@ -45,6 +46,9 @@ namespace rasp::android {
   }
   if (is_check_enabled(config, "emulator")) {
     std::ranges::move(checks::emulator(), std::back_inserter(observations));
+  }
+  if (is_check_enabled(config, "overlay")) {
+    std::ranges::move(checks::overlay(), std::back_inserter(observations));
   }
   return observations;
 }

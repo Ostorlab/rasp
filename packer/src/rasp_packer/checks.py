@@ -20,6 +20,12 @@ CHECKS: collections.abc.Mapping[platforms.Platform, tuple[str, ...]] = {
 }
 """Current built-in groups; legacy artifacts use these only for config, without capability claims."""
 
+# Independent RT10 implementation; fold into the canonical manifest on the approved combined parent.
+CHECKS = {
+    platform: groups + (("overlay",) if platform is platforms.Platform.ANDROID else ())
+    for platform, groups in CHECKS.items()
+}
+
 REQUIRED_CHECKS_BY_PLATFORM: collections.abc.Mapping[
     platforms.Platform, frozenset[str]
 ] = {

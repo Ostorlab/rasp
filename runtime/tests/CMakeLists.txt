@@ -199,9 +199,9 @@ foreach(platform android ios)
       ${expectations_dir}/capability_expectations.h ${platform}
     COMMAND_ERROR_IS_FATAL ANY)
   if(platform STREQUAL "android")
-    set(capability_checks debugger emulator hooks identity integrity mitm root)
-    set(capability_util util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp
-      util/elf.cpp)
+    set(capability_checks debugger emulator hooks identity integrity mitm root overlay)
+    set(capability_util events/window_events.cpp util/system_property.cpp util/app_storage.cpp util/apk_file.cpp
+      util/direct_syscall.cpp util/elf.cpp)
   else()
     set(capability_checks debugger emulator hooks identity integrity jailbreak mitm virtualizer)
     set(capability_util util/macho.cpp util/sha256.cpp util/process_query.cpp)
@@ -213,6 +213,10 @@ foreach(platform android ios)
   foreach(source IN LISTS capability_util)
     list(APPEND capability_sources ${PROJECT_SOURCE_DIR}/${platform}/src/${source})
   endforeach()
+  if(platform STREQUAL "android")
+    set(android_builtin_jvm_sources ${capability_sources})
+    list(REMOVE_ITEM android_builtin_jvm_sources ${PROJECT_SOURCE_DIR}/android/src/checks/overlay.cpp)
+  endif()
   add_executable(rasp_${platform}_capabilities_test capabilities_test.cpp ${capability_sources}
     ${expectations_dir}/capability_expectations.h)
   target_include_directories(rasp_${platform}_capabilities_test PRIVATE ${PROJECT_SOURCE_DIR}/${platform}/src
@@ -244,13 +248,21 @@ if(Java_FOUND AND JNI_FOUND)
   if(CMAKE_CXX_FLAGS MATCHES "fsanitize=")
     message(STATUS "Real-JVM integration runs in the host preset; native Application Context tests run with sanitizers")
   else()
-    add_library(rasp_android_context_bridge_jni SHARED android/context_bridge/driver.cpp
+    add_library(rasp_android_context_bridge_jni SHARED android/context_bridge/driver.cpp android/events/driver.cpp
+      ${android_builtin_jvm_sources}
       ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/events/window_bridge.cpp
       ${PROJECT_SOURCE_DIR}/android/src/util/package_manager.cpp
       ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
     target_include_directories(rasp_android_context_bridge_jni PRIVATE ${JNI_INCLUDE_DIRS}
-      ${PROJECT_SOURCE_DIR}/android/src)
-    target_link_libraries(rasp_android_context_bridge_jni PRIVATE rasp_warnings rasp_language JNI::JVM Threads::Threads)
+      ${PROJECT_SOURCE_DIR}/android/src ${CMAKE_CURRENT_SOURCE_DIR})
+    add_library(rasp_android_overlay_dispatch OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/overlay.cpp)
+    target_compile_definitions(rasp_android_overlay_dispatch PRIVATE __ANDROID__)
+    target_include_directories(rasp_android_overlay_dispatch PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+    target_link_libraries(rasp_android_overlay_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
+    target_sources(rasp_android_context_bridge_jni PRIVATE $<TARGET_OBJECTS:rasp_android_overlay_dispatch>)
+    target_link_libraries(rasp_android_context_bridge_jni PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
+      JNI::JVM Threads::Threads)
     file(GLOB_RECURSE bridge_test_java CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/java/*.java)
     set(bridge_java ${PROJECT_SOURCE_DIR}/android/stub/co/ostorlab/rasp/RuntimeBridge.java)
     set(bridge_test_classes ${CMAKE_CURRENT_BINARY_DIR}/context-bridge-classes)
@@ -259,6 +271,10 @@ if(Java_FOUND AND JNI_FOUND)
       DEPENDS ${bridge_java} ${bridge_test_java} VERBATIM)
     add_custom_target(rasp_android_context_bridge_java ALL
       DEPENDS ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class)
+    add_test(NAME AndroidWindowBridge.lifecycle
+      COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.WindowTest
+        $<TARGET_FILE:rasp_android_context_bridge_jni>)
+    set_tests_properties(AndroidWindowBridge.lifecycle PROPERTIES TIMEOUT 30)
     foreach(mode late early concurrent lifetime unavailable)
       add_test(NAME AndroidContextBridge.${mode}
         COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.BridgeTest
@@ -313,3 +329,9 @@ add_executable(rasp_ios_process_query_test ios/util/process_query_test.cpp
 target_include_directories(rasp_ios_process_query_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
 target_link_libraries(rasp_ios_process_query_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_ios_process_query_test)
+
+add_executable(rasp_android_window_events_test android/events/window_events_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/events/window_events.cpp)
+target_include_directories(rasp_android_window_events_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_window_events_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_window_events_test)

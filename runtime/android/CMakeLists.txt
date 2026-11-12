@@ -1,5 +1,8 @@
 add_library(rasp SHARED
   src/builtin.cpp
+  src/events/window_bridge.cpp
+  src/events/window_events.cpp
+  src/checks/overlay.cpp
   src/entry.cpp
   src/monitoring.cpp
   src/apk/archive.cpp

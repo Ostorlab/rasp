@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "group": "overlay",
+  "source": "window_callback",
+  "publication": "pending approved combined parent; not a capability catalogue",
+  "outputs": [
+    {
+      "signal": "overlay.observer_state",
+      "type": "string",
+      "android_status": "ok",
+      "off_android_status": "unsupported"
+    },
+    {
+      "signal": "overlay.coverage",
+      "type": "string",
+      "android_status": "ok",
+      "off_android_status": "unsupported"
+    },
+    {
+      "signal": "overlay.active_windows",
+      "type": "integer",
+      "android_status": "ok",
+      "off_android_status": "unsupported"
+    },
+    {
+      "signal": "overlay.touch_events",
+      "type": "integer",
+      "android_status": "ok",
+      "off_android_status": "unsupported"
+    },
+    {
+      "signal": "overlay.obscured_touch_events",
+      "type": "integer",
+      "android_status": "ok",
+      "off_android_status": "unsupported"
+    },
+    {
+      "signal": "overlay.partially_obscured_touch_events",
+      "type": "integer",
+      "android_status": "ok",
+      "off_android_status": "unsupported"
+    },
+    {
+      "signal": "overlay.dropped_events",
+      "type": "integer",
+      "android_status": "ok",
+      "off_android_status": "unsupported"
+    },
+    {
+      "signal": "overlay.lost_windows",
+      "type": "integer",
+      "android_status": "ok",
+      "off_android_status": "unsupported"
+    },
+    {
+      "signal": "overlay.invalid_events",
+      "type": "integer",
+      "android_status": "ok",
+      "off_android_status": "unsupported"
+    },
+    {
+      "signal": "overlay.interval_ms",
+      "type": "integer",
+      "android_status": "ok",
+      "off_android_status": "unsupported"
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "no_adapter",
+      "observer_state": "never_started",
+      "coverage": "unknown",
+      "active_windows": 0,
+      "touch_events": 0
+    },
+    {
+      "name": "normal_received",
+      "observer_state": "active",
+      "coverage": "best_effort",
+      "active_windows": 1,
+      "touch_events": 1,
+      "obscured_touch_events": 0,
+      "partially_obscured_touch_events": 0
+    },
+    {
+      "name": "legitimate_or_unattributed_obscuration",
+      "observer_state": "active",
+      "coverage": "best_effort",
+      "active_windows": 1,
+      "touch_events": 3,
+      "obscured_touch_events": 2,
+      "partially_obscured_touch_events": 2
+    },
+    {
+      "name": "ownership_lost",
+      "observer_state": "active",
+      "coverage": "loss_detected",
+      "active_windows": 0,
+      "lost_windows": 1
+    },
+    {
+      "name": "queue_overflow_after_drained_open",
+      "observer_state": "active",
+      "coverage": "loss_detected",
+      "touch_events": 128,
+      "dropped_events": 72
+    },
+    {
+      "name": "registration_failure",
+      "observer_state": "error",
+      "coverage": "unknown",
+      "active_windows": 0
+    },
+    {
+      "name": "stopped",
+      "observer_state": "deactivated",
+      "coverage": "unknown",
+      "active_windows": 0
+    },
+    {
+      "name": "old_sdk",
+      "observer_state": "unsupported",
+      "coverage": "unknown",
+      "active_windows": 0
+    }
+  ],
+  "counter_interval": "delta since previous selected drain, including session transitions; first duration -1; no touches never proves absence"
+}

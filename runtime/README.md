@@ -286,3 +286,5 @@ contradictory values and errors; agreement is not cryptographic attestation or p
 Hosts can optionally supply their attached Application Context through `RuntimeBridge.initialize(Context)`.
 See [integration, compile-only packaging, lifecycle and failure behavior](android/stub/README.md).
 Binary-only apps retain existing best-effort measurements; a supported Context is not automatically available.
+
+Android API31+ hosts can opt in to [bounded Activity/window touch observations](../docs/android-window-observations.md) through RuntimeBridge after supported Context initialization.
