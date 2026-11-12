@@ -182,6 +182,10 @@ completeness is independent of observer continuity and source loss; retain the s
 rows. RT07 retention drops invalidate cycle completeness and are separate from reducer loss.
 The [semantic fixture](fixtures/ios-capture-observations-v1.json) and canonical manifest define
 all 26 additional identities in schema 1 / revision 9 (73 Android / 52 iOS).
+The owned [local decision report](local-decisions-contract.md) explicitly adopts these 26 as
+unknown/unregistered, with unknown severity and no predicate count. Disabled/config-unknown,
+missing/duplicate and non-OK eligibility takes precedence; capture evidence does not become
+a threat/benign predicate. All earlier 99 rules and the 289 assessment-vector bytes are preserved.
 
 ## Verification
 

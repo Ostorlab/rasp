@@ -810,3 +810,32 @@ def testIOSCaptureCI_whenJobBoundariesChecked_keepsAppleStepsOutOfAndroid() -> N
     assert step not in android_job
     assert "tests/ios/capture/check_framework.sh" not in android_job
     assert "build/ios-dev" not in android_job
+
+
+def testIOSCaptureDecisionRegistry_whenAdopted_preservesAllPriorRulesExactly() -> None:
+    registry = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "runtime/core/src/decision_registry.h"
+    ).read_text()
+    assert f'kCatalogueId = "{capabilities.catalogue_id()}"' in registry
+    blocks = re.findall(r"    \{\n.*?    \},\n", registry, re.S)
+    assert len(blocks) == 125
+    assert (
+        hashlib.sha256("".join(blocks[:99]).encode()).hexdigest()
+        == "84e8894b5aa01e9a52a217dafc1c219736a7950a428b8f37b0ae15db397dbe8d"
+    )
+    expected = {
+        (group["name"], row["signal"], row["source"])
+        for group in capabilities.catalogue()["platforms"]["ios"]["groups"]
+        if group["name"] in {"screenshot", "screen_recording"}
+        for row in group["observations"]
+    }
+    actual = set()
+    for block in blocks[99:]:
+        assert '.platform = "ios"' in block
+        assert ".predicate = Predicate::kUnregistered" in block
+        assert ".severity = LocalSeverity::kUnknown" in block
+        fields = dict(re.findall(r'\.(group|signal|source) = "([^"]+)"', block))
+        actual.add((fields["group"], fields["signal"], fields["source"]))
+    assert actual == expected
+    assert len(actual) == 26

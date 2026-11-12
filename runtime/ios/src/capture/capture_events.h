@@ -38,21 +38,37 @@ enum class Scope : std::uint8_t { kNone, kScene, kScreen };
 enum class SampleKind : std::uint8_t { kInitial, kCallback, kResample };
 /// Owned scalar snapshot of one source, with counters since its last selected drain.
 struct SourceSnapshot {
+  /// Effective producer ownership/activity reason, with consumer freshness added at the cut.
   Availability availability = Availability::kNeverStarted;
+  /// Actual selected API scope, never a device-wide state.
   Scope scope = Scope::kNone;
+  /// Local session or registration ordinal, not a scene identifier.
   std::int64_t epoch = 0;
+  /// Scene inactive/active/unspecified (0/1/2), screen flag (0/1), or unavailable (-1).
   int state = -1;
+  /// Public registration ownership actually confirmed by the main-thread adapter.
   bool registered = false;
+  /// Checked producer tick, never device wall time or capture time.
   std::optional<std::int64_t> sampled_ns;
+  /// Last accepted sample order, preventing older reentrant reads from winning.
   std::int64_t serial = 0;
+  /// Accepted notifications, not unique captures.
   std::int64_t callbacks = 0;
+  /// Rejected stale, inactive or invalid ingress.
   std::int64_t ignored = 0;
+  /// Detected gaps or failures, not exact missed captures.
   std::int64_t lost = 0;
+  /// Initial/resume reads, excluded from transitions.
   std::int64_t initial = 0;
+  /// Changes between known states in one registration generation.
   std::int64_t changes = 0;
+  /// Main-thread timer/explicit reads, separate from callbacks.
   std::int64_t resamples = 0;
+  /// A further increment exceeded the finite counter ceiling.
   bool overflow = false;
+  /// Selected drain interval; -1 is unavailable, measured zero stays zero.
   std::int64_t interval_ms = -1;
+  /// Last checked producer age at the cut, -1 unavailable.
   std::int64_t age_ms = -1;
 };
 /// One atomic cut of independently selected reducers.

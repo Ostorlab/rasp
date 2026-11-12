@@ -73,9 +73,9 @@ counts against retained evidence. Forged API arguments grant no authority.
 
 ## Explicit semantic adoption
 
-The registry explicitly adopts canonical schema 1 revision 8, 73 Android / 26 iOS outputs,
-digest `479cfeb318a4ddaa70fa7be5986d0f46ec45dcc9377b281da811a5dae667466a`,
-from approved RT15 `2d396b83292dcd978cc1f7675afade24b45859d4`.
+The registry explicitly adopts canonical schema 1 revision 9, 73 Android / 52 iOS outputs,
+digest `2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d`,
+with the 26 opt-in iOS capture identities explicitly adopted after the earlier 99 tuples.
 `core/src/decision_registry.h` pins it independently from generated definitions.
 Future/unsupported catalogues cannot inherit fallback predicates; adoption needs
 explicit semantic review and fixtures.
@@ -94,14 +94,14 @@ context fields, 2 always-unavailable developer-setting outputs, 8 uninterpreted
 context outputs. They do not claim server registry coverage. No client result,
 severity, version or platform can override backend-owned application assessment.
 
-The 21 added Android screenshot/recording identities have explicit unknown /
+The 21 Android and 26 iOS screenshot/recording identities have explicit unknown /
 `unregistered_rule` dispositions. They have no semantic predicate, severity or
 available confidence and never increment `predicates_evaluated`, even for positive
 or malformed bounded OK payloads. Disabled/config-unknown/missing/duplicate and
 non-OK eligibility is checked first. They do not enter source comparisons or imply
 capture, malware, active control or sensitive exposure. The original 78 rule
-semantics and BE13 fixture bytes are preserved. Other digests, including the older
-revision 7, and definition mismatches still refuse the entire report.
+semantics, all prior 99 tuple definitions and BE13 fixture bytes are preserved. Other digests, including the older
+revisions 7 and 8, and definition mismatches still refuse the entire report.
 
 SHA-256 requires exactly 64 lowercase ASCII hex characters; CDHash requires 40.
 Unique OK same-cycle file/memory digests yield a separate mismatch observation

@@ -9,6 +9,7 @@ set(CMAKE_OBJCXX_VISIBILITY_PRESET hidden)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/omvll_ios.cmake)
 
 add_library(RaspRuntime SHARED
+  include/rasp/ios_capture.h
   src/builtin.cpp
   src/entry.cpp
   src/monitoring.cpp

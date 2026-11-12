@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <memory>
@@ -116,6 +117,20 @@ void capture_legacy(std::span<const Observation> rows, plugins::Context& context
   const auto snapshot = context.get(plugins::kCycleSnapshot);
   ASSERT_TRUE(snapshot.has_value());
   EXPECT_EQ(rows.data(), (*snapshot)->observations.data());
+  EXPECT_EQ((*snapshot)->local_decisions.reason, LocalReason::kNone);
+  EXPECT_EQ((*snapshot)->local_decisions.builtin_observations, rows.size());
+  EXPECT_EQ((*snapshot)->local_decisions.predicates_evaluated, 0U);
+  std::size_t capture_rules = 0;
+  for (const auto& decision : (*snapshot)->local_decisions.rows) {
+    if (decision.rule_id.starts_with("local.ios.capture.")) {
+      ++capture_rules;
+      EXPECT_EQ(decision.verdict, LocalVerdict::kUnknown);
+      EXPECT_EQ(decision.severity, LocalSeverity::kUnknown);
+      EXPECT_FALSE(decision.predicate_evaluated);
+    }
+  }
+  EXPECT_EQ(capture_rules, 26U);
+
   context.put(kCaptureLegacy, *snapshot);
 }
 /// Additive callback verifies the shared immutable owner during actual dispatch.
@@ -158,6 +173,45 @@ TEST(Builtin, monitor_whenCaptureDrainsAgain_retainsEarlierOwnedCycleAfterContex
   events.stop(session);
   EXPECT_EQ(capture_value(retained->observations, "capture.screenshot.callback_events", "uiapplication_screenshot"),
             Value(std::int64_t{1}));
+}
+
+TEST(Builtin, monitor_whenMeasuredCaptureGroupIsEnabled_preservesUnknownDecisionAndDisabledDrain) {
+  capture::CaptureEvents events(capture_clock);
+  const auto session = events.start(true, true);
+  events.screenshot_ready(session, true);
+  events.screenshot(session);
+  const auto generation = events.open(session, capture::Scope::kScene);
+  events.registered(session, generation);
+  events.sample(session, generation, events.ticket(session, generation), capture::SampleKind::kInitial, 1);
+  const capture::Input input{.events = &events, .platform = capture::Platform::kScene};
+  CycleMonitor monitor;
+  plugins::Context context;
+  Config config;
+  config.checks = {"screenshot"};
+  const auto builtin = [](const Config& selection, const void* state) {
+    return run_checks(selection, "", static_cast<const capture::Input*>(state));
+  };
+  const auto disabled = monitor.run(config, cycle_catalogue("ios"), {}, context, builtin, &input);
+  ASSERT_EQ(disabled->local_decisions.reason, LocalReason::kNone);
+  const std::string capture_rule = "local.ios.capture.recording.state.uikit_scene_trait";
+  const auto first = std::ranges::find(disabled->local_decisions.rows, capture_rule, &LocalDecision::rule_id);
+  ASSERT_NE(first, disabled->local_decisions.rows.end());
+  EXPECT_EQ(first->reason, LocalReason::kConfigDisabled);
+  config.checks = {"screen_recording"};
+  const auto measured = monitor.run(config, cycle_catalogue("ios"), {}, context, builtin, &input);
+  ASSERT_EQ(measured->local_decisions.reason, LocalReason::kNone);
+  EXPECT_TRUE(measured->metadata.complete);
+  EXPECT_EQ(capture_value(measured->observations, "capture.recording.state", "uikit_scene_trait"),
+            Value(std::string("active")));
+  EXPECT_EQ(capture_value(measured->observations, "capture.recording.initial_samples", "uikit_capture_observer"),
+            Value(std::int64_t{1}));
+  const auto second = std::ranges::find(measured->local_decisions.rows, capture_rule, &LocalDecision::rule_id);
+  ASSERT_NE(second, measured->local_decisions.rows.end());
+  EXPECT_EQ(second->reason, LocalReason::kUnregisteredRule);
+  EXPECT_EQ(second->verdict, LocalVerdict::kUnknown);
+  EXPECT_EQ(second->severity, LocalSeverity::kUnknown);
+  EXPECT_FALSE(second->predicate_evaluated);
+  EXPECT_EQ(measured->local_decisions.predicates_evaluated, 0U);
 }
 TEST(Builtin, runChecks_whenNoChecksSelected_returnsNoObservations) { EXPECT_TRUE(run_checks(Config{}, "").empty()); }
 TEST(Builtin, runChecks_whenOwnedMonitorDispatchesRealIntegrity_preservesUnsupportedWithoutCleanVerdict) {

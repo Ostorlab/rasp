@@ -37,6 +37,12 @@ __attribute__((visibility("hidden")))
   std::array<id, 7> lifecycle_tokens_;
   NSTimer* timer_;
 }
+/// Installs only the shared application lifecycle/timer slots.
+- (BOOL)install_process;
+/// Installs the one independent screenshot subscription.
+- (BOOL)install_screenshot;
+/// Installs the selected trait/screen observer and confirms ownership before initial sampling.
+- (int32_t)install_selected:(id)object modern:(BOOL)modern screen:(UIScreen*)screen;
 /// Starts or safely repeats explicit opt-in.
 - (int32_t)start:(uint32_t)options;
 /// Selects a validated live UIKit object, invalidating prior ownership first.
@@ -145,24 +151,8 @@ __attribute__((visibility("hidden")))
   }
   return clean;
 }
-- (int32_t)start:(uint32_t)options {
-  if (running_) {
-    return options_ == options ? RASP_IOS_CAPTURE_NO_CHANGE : RASP_IOS_CAPTURE_OPTIONS_CONFLICT;
-  }
-  const int32_t cleanup = [self stop];
-  if (cleanup == RASP_IOS_CAPTURE_CLEANUP_ERROR) {
-    return cleanup;
-  }
-  session_ = capture_events().start((options & RASP_IOS_CAPTURE_SCREENSHOTS) != 0,
-                                    (options & RASP_IOS_CAPTURE_RECORDING) != 0);
-  if (session_ <= 0) {
-    return RASP_IOS_CAPTURE_EXHAUSTED;
-  }
-  options_ = options;
-  running_ = YES;
-  application_active_ = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+- (BOOL)install_process {
   BOOL healthy = YES;
-  BOOL screenshot_healthy = YES;
   @try {
     healthy = [self observe:UIApplicationDidBecomeActiveNotification slot:0 scene:NO];
     if (![self observe:UIApplicationWillResignActiveNotification slot:1 scene:NO]) {
@@ -170,25 +160,6 @@ __attribute__((visibility("hidden")))
     }
     if (![self observe:UIApplicationDidEnterBackgroundNotification slot:2 scene:NO]) {
       healthy = NO;
-    }
-    if ((options_ & RASP_IOS_CAPTURE_SCREENSHOTS) != 0) {
-      const std::int64_t session = session_;
-      @try {
-        screenshot_token_ =
-            [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationUserDidTakeScreenshotNotification
-                                                            object:nil
-                                                             queue:nil
-                                                        usingBlock:^(NSNotification* notification) {
-                                                          static_cast<void>(notification);
-                                                          capture_events().screenshot(session);
-                                                        }];
-        if (screenshot_token_ == nil) {
-          screenshot_healthy = NO;
-        }
-      } @catch (NSException* exception) {
-        static_cast<void>(exception);
-        screenshot_healthy = NO;
-      }
     }
     __weak RaspCaptureCoordinator* weak_self = self;
     const std::int64_t session = session_;
@@ -222,13 +193,49 @@ __attribute__((visibility("hidden")))
     static_cast<void>(exception);
     healthy = NO;
   }
+  return healthy;
+}
+- (BOOL)install_screenshot {
+  const std::int64_t session = session_;
+  @try {
+    screenshot_token_ =
+        [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationUserDidTakeScreenshotNotification
+                                                        object:nil
+                                                         queue:nil
+                                                    usingBlock:^(NSNotification* notification) {
+                                                      static_cast<void>(notification);
+                                                      capture_events().screenshot(session);
+                                                    }];
+    return screenshot_token_ != nil;
+  } @catch (NSException* exception) {
+    static_cast<void>(exception);
+    return NO;
+  }
+}
+- (int32_t)start:(uint32_t)options {
+  if (running_) {
+    return options_ == options ? RASP_IOS_CAPTURE_NO_CHANGE : RASP_IOS_CAPTURE_OPTIONS_CONFLICT;
+  }
+  const int32_t cleanup = [self stop];
+  if (cleanup == RASP_IOS_CAPTURE_CLEANUP_ERROR) {
+    return cleanup;
+  }
+  session_ = capture_events().start((options & RASP_IOS_CAPTURE_SCREENSHOTS) != 0,
+                                    (options & RASP_IOS_CAPTURE_RECORDING) != 0);
+  if (session_ <= 0) {
+    return RASP_IOS_CAPTURE_EXHAUSTED;
+  }
+  options_ = options;
+  running_ = YES;
+  application_active_ = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+  const BOOL healthy = [self install_process];
   infrastructure_ready_ = healthy;
   if (!healthy) {
     capture_events().failure(session_, 0, Availability::kRegistrationError);
     capture_events().failure(session_, 1, Availability::kRegistrationError);
     return RASP_IOS_CAPTURE_REGISTRATION_ERROR;
   }
-  if (!screenshot_healthy) {
+  if ((options_ & RASP_IOS_CAPTURE_SCREENSHOTS) != 0 && ![self install_screenshot]) {
     capture_events().failure(session_, 0, Availability::kRegistrationError);
     return RASP_IOS_CAPTURE_REGISTRATION_ERROR;
   }
@@ -403,6 +410,9 @@ __attribute__((visibility("hidden")))
     capture_events().failure(session_, 1, Availability::kError);
     return RASP_IOS_CAPTURE_UNAVAILABLE;
   }
+  return [self install_selected:object modern:modern screen:screen];
+}
+- (int32_t)install_selected:(id)object modern:(BOOL)modern screen:(UIScreen*)screen {
   generation_ = capture_events().open(session_, modern ? Scope::kScene : Scope::kScreen);
   if (generation_ <= 0) {
     return RASP_IOS_CAPTURE_EXHAUSTED;
