@@ -18,7 +18,8 @@ cmake -S runtime/tests/ios/local_policy/host -B runtime/build/ios-policy-host -G
 cmake --build runtime/build/ios-policy-host --parallel 2
 ```
 
-CI checks the resulting PolicyHost.app minos12 and compares its copied runtime bytes.
+CI checks that the resulting PolicyHost.app declares the iOS 12.0 minimum platform
+version and compares its copied runtime bytes.
 The ObjC++ host uses only system C headers and UIKit, so -nostdinc++ preserves the
 reviewed iOS12 header search behavior on Xcode27. This build validates linkage; its
 app already loads and embeds RaspRuntime and is not an unprotected packer input.

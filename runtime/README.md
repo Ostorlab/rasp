@@ -8,7 +8,7 @@ results. Disabled/missing/unavailable rows remain unknown; evaluated predicate c
 from row counts. An optional [local policy host gate](../docs/local-policy-contract.md) uses that owned
 report immediately before an explicitly adapted operation; report-only remains the default.
 These client observations grant no backend authorization. The gate never terminates the app.
-Its primitive C API adds exactly two versioned policy exports alongside the six iOS capture exports;
+The primitive C API adds exactly two versioned policy exports alongside the six iOS capture exports;
 Android retains JNI_OnLoad and the same two policy exports.
 
 Android signing-block and key/map/DEX reads use bounded descriptors; see the
@@ -191,7 +191,7 @@ cmake --preset android
 cmake --build --preset android
 ```
 
-The library is written to `build/android/android/librasp.so`. It exports exactly the JVM's `JNI_OnLoad` hook, `rasp_local_policy_gate_v1` and `rasp_local_policy_info_v1`. The checks start from a load-time constructor, and `JNI_OnLoad` binds the stub's native method with `RegisterNatives`, so the library exports no `Java_...` symbol. A release build is also stripped (`-Wl,--strip-all`), so it carries no symbol table and no debug sections. Every other symbol, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 12 (API 31) and later.
+The library is written to `build/android/android/librasp.so`. It exports exactly the JVM's `JNI_OnLoad` hook, `rasp_local_policy_gate_v1` and `rasp_local_policy_info_v1`. The checks start from a load-time constructor, and `JNI_OnLoad` binds the stub's native method with `RegisterNatives`, so the library exports no `Java_...` symbol. A release build is also stripped (`-Wl,--strip-all`), so it carries no static symbol table and no debug sections; the three exports above remain in the dynamic symbol table. Every other symbol, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 12 (API 31) and later.
 
 The payload decryption uses ChaCha20-Poly1305 from TF-PSA-Crypto, the cryptography library of the Mbed TLS project, and some checks use its SHA-256. Its source is committed as an archive under `third_party/tf-psa-crypto/`, and `cmake/tf_psa_crypto.cmake` checks the archive's hash, extracts it and builds it as a static library, for Android, for iOS and for the builds with tests. Its symbols are hidden like every other one. Why it is built this way, its configuration, and the CI job that proves the archive is the official release are described in `third_party/tf-psa-crypto/README.md`.
 
