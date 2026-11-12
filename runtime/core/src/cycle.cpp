@@ -20,6 +20,7 @@
 #include "plugins/dispatch.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
+#include "rasp/decision.h"
 #include "rasp/observation.h"
 #include "rasp/plugin.h"
 #include "rasp/util/uuid.h"
@@ -154,9 +155,11 @@ void finish_cycle(CycleDispatch& cycle, std::vector<Observation> observations) {
                       !metadata.overflow;
   LocalDecisionReport decisions = evaluate_local_decisions(
       metadata, std::span<const Observation>(observations).first(cycle.builtin_observations), cycle.catalogue);
-  cycle.snapshot = std::make_shared<const CycleSnapshot>(CycleSnapshot{.metadata = std::move(metadata),
-                                                                       .observations = std::move(observations),
-                                                                       .local_decisions = std::move(decisions)});
+  cycle.snapshot = std::make_shared<const CycleSnapshot>(CycleSnapshot{
+      .metadata = std::move(metadata),
+      .observations = std::move(observations),
+      .local_decisions = std::move(decisions),
+  });
 }
 
 CycleCatalogue cycle_catalogue(std::string_view platform) {

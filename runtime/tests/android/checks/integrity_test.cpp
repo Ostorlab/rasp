@@ -16,6 +16,7 @@
 #include <string_view>
 #include <vector>
 
+#include "rasp/decision.h"
 #include "rasp/observation.h"
 #include "support/decision.h"
 #include "support/files.h"

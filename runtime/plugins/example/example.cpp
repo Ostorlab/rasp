@@ -93,6 +93,10 @@ constexpr std::array<Check, 3> kChecks{build_id, runs, seen};
 
 /// The example plugin.
 extern constexpr Plugin kPlugin{
-    .init = remember, .checks = kChecks, .on_observations = count, .on_cycle = retain_cycle};
+    .init = remember,
+    .checks = kChecks,
+    .on_observations = count,
+    .on_cycle = retain_cycle,
+};
 
 }  // namespace rasp::plugins::example

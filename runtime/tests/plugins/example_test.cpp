@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/cycle.h"
 #include "rasp/observation.h"

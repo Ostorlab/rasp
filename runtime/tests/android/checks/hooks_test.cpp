@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "rasp/context.h"
+#include "rasp/decision.h"
 #include "rasp/observation.h"
 #include "rasp/plugin.h"
 #include "rasp/plugins/registry.h"

@@ -2,7 +2,6 @@
 
 #include "builtin.h"
 
-#include <array>
 #include <gtest/gtest.h>
 #include <vector>
 
@@ -45,7 +44,8 @@ TEST(Builtin, runChecks_whenOwnedMonitorDispatchesRealServices_publishesUnavaila
   plugins::Context context;
   const Config config{
       .build_id = "test",
-      .checks = std::vector<std::string>{"root_packages", "root_context", "proxy", "developer_settings"}};
+      .checks = std::vector<std::string>{"root_packages", "root_context", "proxy", "developer_settings"},
+  };
   const auto snapshot = monitor.run(config, cycle_catalogue("android"), {}, context,
                                     [](const Config& selection, const void*) { return run_checks(selection); });
   EXPECT_EQ(snapshot->observations.size(), 6U);
