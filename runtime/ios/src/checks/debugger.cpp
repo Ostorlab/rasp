@@ -103,7 +103,7 @@ constexpr std::array kProbes = {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
-    result = static_cast<int>(syscall(SYS_sysctl, name.data(), length, &info, &size, nullptr, 0));
+    result = syscall(SYS_sysctl, name.data(), length, &info, &size, nullptr, 0);
 #pragma clang diagnostic pop
   } else {
     result = sysctl(name.data(), length, &info, &size, nullptr, 0);
