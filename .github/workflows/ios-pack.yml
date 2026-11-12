@@ -30,20 +30,20 @@ jobs:
           "$RUNNER_TEMP/build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
           echo "$RUNNER_TEMP/build-tools/bin" >> "$GITHUB_PATH"
 
-      - name: Configure (obfuscation on)
+      - name: Configure (dev: logging ON)
         working-directory: runtime
-        run: cmake --preset ios -DRASP_OBFUSCATE_IOS=ON
+        run: cmake --preset ios-dev
 
-      - name: Build the obfuscated framework
+      - name: Build the framework (dev)
         working-directory: runtime
-        run: cmake --build --preset ios --parallel
+        run: cmake --build --preset ios-dev --parallel
 
       - name: Embed the framework in the packer
         working-directory: runtime
         run: |
           dest="../packer/src/rasp_packer/ios/resources"
           rm -rf "$dest/RaspRuntime.framework"
-          cp -R build/ios/ios/RaspRuntime.framework "$dest/RaspRuntime.framework"
+          cp -R build/ios-dev/ios/RaspRuntime.framework "$dest/RaspRuntime.framework"
 
       - name: Install the packer
         working-directory: packer
