@@ -279,6 +279,8 @@ if(Java_FOUND AND JNI_FOUND)
       ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp ${PROJECT_SOURCE_DIR}/android/src/apk/location.cpp
       ${PROJECT_SOURCE_DIR}/android/src/util/elf.cpp
       ${PROJECT_SOURCE_DIR}/android/src/checks/service_exposure.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/checks/context_exposure.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/checks/root_namespace.cpp
       ${PROJECT_SOURCE_DIR}/android/src/util/service_components.cpp
       ${PROJECT_SOURCE_DIR}/android/src/builtin.cpp
       ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/emulator.cpp
@@ -296,6 +298,9 @@ if(Java_FOUND AND JNI_FOUND)
     target_link_libraries(rasp_android_overlay_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
     target_sources(rasp_android_context_bridge_jni PRIVATE $<TARGET_OBJECTS:rasp_android_overlay_dispatch>)
     target_link_libraries(rasp_android_context_bridge_jni PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language JNI::JVM Threads::Threads ${CMAKE_DL_LIBS})
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      target_link_options(rasp_android_context_bridge_jni PRIVATE -Wl,--no-undefined)
+    endif()
     file(GLOB_RECURSE bridge_test_java CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/java/*.java)
     set(bridge_java ${PROJECT_SOURCE_DIR}/android/stub/co/ostorlab/rasp/RuntimeBridge.java)
     set(bridge_test_classes ${CMAKE_CURRENT_BINARY_DIR}/context-bridge-classes)
