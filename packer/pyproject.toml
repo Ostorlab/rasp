@@ -1,6 +1,6 @@
 [project]
 name = "rasp-packer"
-version = "0.4.2"
+version = "0.4.3"
 description = "Adds the RASP runtime to a built Android or iOS app"
 readme = "README.md"
 license = "Apache-2.0"
