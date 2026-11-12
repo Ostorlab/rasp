@@ -55,6 +55,20 @@ TEST(Debugger, observeParent_whenCalled_reportsTheParentProcessId) {
 }
 
 #ifdef __APPLE__
+TEST(Debugger, observeParentSysctl_whenCalled_reportsTheSameParentProcessIdAsGetppid) {
+  EXPECT_EQ(observe_parent_sysctl(), (Observation{.signal = "dbg.parent",
+                                                  .source = "sysctl",
+                                                  .status = Status::kOk,
+                                                  .value = static_cast<std::int64_t>(getppid())}));
+}
+#else
+TEST(Debugger, observeParentSysctl_whenTheSystemHasNoProcessEntries_reportsUnsupported) {
+  EXPECT_EQ(observe_parent_sysctl(),
+            (Observation{.signal = "dbg.parent", .source = "sysctl", .status = Status::kUnsupported, .value = {}}));
+}
+#endif
+
+#ifdef __APPLE__
 TEST(Debugger, observeExceptionPorts_whenABreakpointPortIsSet_addsTheBreakpointMaskAndReleasesThePortRight) {
   mach_port_t port = MACH_PORT_NULL;
   ASSERT_EQ(mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &port), KERN_SUCCESS);
@@ -101,6 +115,7 @@ TEST(Debugger, debugger_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
                             {.signal = "dbg.traced", .source = "sysctl", .status = Status::kUnsupported, .value = {}},
                             {.signal = "dbg.traced", .source = "syscall", .status = Status::kUnsupported, .value = {}},
                             {.signal = "dbg.parent", .source = "getppid", .status = Status::kUnsupported, .value = {}},
+                            {.signal = "dbg.parent", .source = "sysctl", .status = Status::kUnsupported, .value = {}},
                             {.signal = "dbg.exception_ports",
                              .source = "task_get_exception_ports",
                              .status = Status::kUnsupported,

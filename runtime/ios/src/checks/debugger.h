@@ -15,7 +15,8 @@ namespace rasp::ios::checks {
 /// observation is unsupported instead, so the result still shows that the check ran.
 ///
 /// @return One observation per signal and source, in this order: dbg.traced through sysctl, dbg.traced through
-/// syscall, dbg.parent through getppid, then dbg.exception_ports through task_get_exception_ports.
+/// syscall, dbg.parent through getppid, dbg.parent through sysctl, then dbg.exception_ports through
+/// task_get_exception_ports.
 [[nodiscard]] std::vector<Observation> debugger();
 
 /// Reports whether the kernel marks the app's process as traced by a debugger.
@@ -52,6 +53,18 @@ namespace rasp::ios::checks {
 ///
 /// @return One dbg.parent observation read through getppid, with the parent's process id as an integer.
 [[nodiscard]] Observation observe_parent();
+
+/// Reports the same parent process id as observe_parent, read a second way to catch a hook on getppid.
+///
+/// The parent id read through the libc `getppid` function can be lied to: a hook on `getppid` returns 1, the id of
+/// `launchd`, while a debugger started the app. This probe reads the parent id from the process's own `kinfo_proc`
+/// entry through sysctl instead, which a hook on `getppid` never runs, so a hook that reports 1 from one source leaves
+/// the two sources disagreeing.
+///
+/// @return One dbg.parent observation read through sysctl, with the parent's process id as an integer. It has an error
+/// status when sysctl fails or doesn't return a whole `kinfo_proc` entry, and the unsupported status on a system
+/// without these process entries.
+[[nodiscard]] Observation observe_parent_sysctl();
 
 /// Reports the exceptions for which the app's task has an exception port set.
 ///

@@ -48,8 +48,11 @@ constexpr std::string_view kTracedSource = "sysctl";
 constexpr std::string_view kTracedSyscallSource = "syscall";
 /// The signal of the parent-process probe.
 constexpr std::string_view kParentSignal = "dbg.parent";
-/// The source of the parent-process probe.
+/// The source of the parent-process probe's first read, the libc getppid.
 constexpr std::string_view kParentSource = "getppid";
+/// The source of the parent-process probe's second read, the `kinfo_proc` entry through sysctl, which a hook on
+/// getppid never runs.
+constexpr std::string_view kParentSysctlSource = "sysctl";
 /// The signal of the exception-port probe.
 constexpr std::string_view kExceptionPortsSignal = "dbg.exception_ports";
 /// The source of the exception-port probe.
@@ -65,13 +68,14 @@ struct Probe {
   Observation (*observe)();
 };
 
-/// The probes the debugger checks run, in the order their observations are reported. The traced signal that one
-/// libc function can hide is read through a second, independent source, so a hook on one source leaves the two
-/// disagreeing.
+/// The probes the debugger checks run, in the order their observations are reported. The traced and parent signals
+/// that one libc function can hide are each read through a second, independent source, so a hook on one source leaves
+/// the two disagreeing.
 constexpr std::array kProbes = {
     Probe{.signal = kTracedSignal, .source = kTracedSource, .observe = observe_traced},
     Probe{.signal = kTracedSignal, .source = kTracedSyscallSource, .observe = observe_traced_syscall},
     Probe{.signal = kParentSignal, .source = kParentSource, .observe = observe_parent},
+    Probe{.signal = kParentSignal, .source = kParentSysctlSource, .observe = observe_parent_sysctl},
     Probe{.signal = kExceptionPortsSignal, .source = kExceptionPortsSource, .observe = observe_exception_ports},
 };
 
@@ -139,6 +143,18 @@ Observation observe_traced_syscall() {
 }
 
 Observation observe_parent() { return observed(kParentSignal, kParentSource, static_cast<std::int64_t>(getppid())); }
+
+Observation observe_parent_sysctl() {
+#ifdef __APPLE__
+  kinfo_proc info{};
+  if (!read_process_info(info, false)) {
+    return failed(kParentSignal, kParentSysctlSource);
+  }
+  return observed(kParentSignal, kParentSysctlSource, static_cast<std::int64_t>(info.kp_eproc.e_ppid));
+#else
+  return unsupported(kParentSignal, kParentSysctlSource);
+#endif
+}
 
 Observation observe_exception_ports() {
 #ifdef __APPLE__
