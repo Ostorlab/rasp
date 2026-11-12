@@ -12,6 +12,7 @@ add_library(rasp SHARED
   src/checks/root.cpp
   src/loader/loader.cpp
   src/loader/loader_dex.cpp
+  src/panic/end_process.cpp
   src/payload/cipher.cpp
   src/payload/dex_store.cpp
   src/util/apk_file.cpp
