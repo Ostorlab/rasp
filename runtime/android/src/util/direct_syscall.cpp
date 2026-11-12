@@ -68,9 +68,15 @@ constexpr std::size_t kMaxInterrupts = 8;
 }  // namespace
 
 SyscallResult libc_syscall(long number, const std::array<std::uintptr_t, 4>& arguments) {
+#ifdef __linux__
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): the libc syscall entry is variadic.
   const long value = syscall(number, arguments[0], arguments[1], arguments[2], arguments[3]);
   return {.value = value, .error = errno};
+#else
+  static_cast<void>(number);
+  static_cast<void>(arguments);
+  return {.value = -1, .error = ENOSYS};
+#endif
 }
 
 std::optional<std::string> read_file_direct(std::string_view path, std::size_t limit, SystemCall invoke) {
