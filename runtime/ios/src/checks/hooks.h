@@ -51,6 +51,20 @@ struct MemoryRegion {
 /// through getenv, hook.frida_port read through connect, then hook.rwx_regions read through vm_region.
 [[nodiscard]] std::vector<Observation> hooks(std::string_view inserted_libraries);
 
+/// Runs the hooking checks that read only the process's own state, and returns what they observed.
+///
+/// They are the first two checks of hooks: the loaded images and `inserted_libraries`. They neither connect to a port
+/// nor walk the app's memory.
+///
+/// On a physical iOS device it runs the probes. Anywhere else, on a simulator, a Mac or a Linux host, every observation
+/// is unsupported instead, so the result still shows that the check ran.
+///
+/// @param inserted_libraries The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, as read_inserted_libraries
+/// returns it.
+/// @return One observation per signal and source, in this order: hook.maps_hits read through dyld, then hook.dyld_env
+/// read through getenv.
+[[nodiscard]] std::vector<Observation> fast_hooks(std::string_view inserted_libraries);
+
 /// Reports the paths of `image_paths` that name a known instrumentation or hooking framework.
 ///
 /// A path names a framework when its file name, the last component of the path, contains a known marker, such as

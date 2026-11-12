@@ -53,7 +53,7 @@ constexpr std::string_view kInstallIdDirectory = "/Library/Application Support";
 /// and enter it.
 constexpr mode_t kPrivateDirectoryMode = 0700;
 
-/// What the thread reads from the app's environment, once, while the runtime loads.
+/// What the runtime read from the app's environment, once, while it loaded, for the thread.
 struct Environment {
   /// The value of `DYLD_INSERT_LIBRARIES`.
   std::string inserted_libraries;
@@ -176,9 +176,9 @@ void* monitor(void* argument) {
 
 }  // namespace
 
-void start_monitoring() noexcept {
+void start_monitoring(std::string inserted_libraries) noexcept {
   auto environment = std::make_unique<Environment>(Environment{
-      .inserted_libraries = checks::read_inserted_libraries(),
+      .inserted_libraries = std::move(inserted_libraries),
       .install_id_directory = read_install_id_directory(),
   });
   pthread_attr_t attributes{};

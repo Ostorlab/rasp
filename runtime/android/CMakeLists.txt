@@ -15,6 +15,7 @@ add_library(rasp SHARED
   src/panic/end_process.cpp
   src/payload/cipher.cpp
   src/payload/dex_store.cpp
+  src/startup.cpp
   src/util/apk_file.cpp
   src/util/app_storage.cpp
   src/util/jni.cpp
