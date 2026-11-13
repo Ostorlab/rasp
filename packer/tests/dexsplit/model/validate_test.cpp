@@ -1288,5 +1288,879 @@ TEST(Validate, validate_whenValuesNest65Levels_reportsIt)
     EXPECT_TRUE(reports(dex, "values nest too deeply"));
 }
 
+const Label kLabel{0};
+const Label kOtherLabel{1};
+const Label kThirdLabel{2};
+const Label kUnplacedLabel{9};
+
+Code &code(Dex &dex) { return *dex.classes[0].methods[0].code; }
+
+Dex with_items(std::vector<Item> items, Reg registers = 4)
+{
+    Dex dex = valid();
+    code(dex).registers = registers;
+    code(dex).items = std::move(items);
+    return dex;
+}
+
+Dex with_insn(Insn insn, Reg registers = 4)
+{
+    return with_items({std::move(insn), kLabel, Insn{ReturnVoid{}}}, registers);
+}
+
+Dex with_try(std::vector<Item> items, TryRange range)
+{
+    Dex dex = with_items(std::move(items));
+    code(dex).tries = {std::move(range)};
+    return dex;
+}
+
+CallSite call_site()
+{
+    CallSite site;
+    site.bootstrap =
+        MethodHandle{MethodHandleKind::InvokeStatic, MethodId{"LT;", "bootstrap", "()V"}};
+    site.method_name = "run";
+    site.method_type = "()V";
+    return site;
+}
+
+TEST(Validate, validate_whenRegistersEqualTheArgumentWords_returnsNoProblems)
+{
+    Dex dex = valid();
+    method(dex).proto = "(JJ)V";
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenRegistersAreFewerThanTheArgumentWords_reportsIt)
+{
+    Dex dex = valid();
+    method(dex).proto = "(JJI)V";
+
+    EXPECT_TRUE(reports(dex, "4 registers cannot hold the 5 argument words"));
+}
+
+TEST(Validate, validate_whenAnInstanceMethodHasNoRegisterForThis_reportsIt)
+{
+    Dex dex = valid();
+    method(dex).access = AccessFlags::Public;
+    code(dex).registers = 0;
+
+    EXPECT_TRUE(reports(dex, "0 registers cannot hold the 1 argument words"));
+}
+
+TEST(Validate, validate_whenThePrototypeIsInvalid_doesNotCountItsArgumentWords)
+{
+    Dex dex = valid();
+    method(dex).proto = "(JJI";
+    code(dex).registers = 0;
+
+    EXPECT_FALSE(reports(dex, "argument words"));
+}
+
+TEST(Validate, validate_whenCodeHasNoItems_reportsNoInstructions)
+{
+    Dex dex = with_items({});
+
+    EXPECT_EQ(where_reported(dex, "the code has no instructions"),
+              (std::vector<std::string>{"LT;->m()V"}));
+}
+
+TEST(Validate, validate_whenCodeHasOnlyLabelsAndDebugItems_reportsNoInstructions)
+{
+    Dex dex = with_items({kLabel, LineNumber{1}});
+
+    EXPECT_TRUE(reports(dex, "the code has no instructions"));
+}
+
+TEST(Validate, validate_whenABranchTargetIsNotPlaced_reportsIt)
+{
+    Dex dex = with_items({Insn{Goto{kLabel}}});
+
+    EXPECT_TRUE(reports(dex, "label 0 is not placed"));
+}
+
+TEST(Validate, validate_whenAnInstructionBreaksARule_namesItsItemInWhere)
+{
+    Dex dex = with_items({Insn{Nop{}}, Insn{Goto{kLabel}}});
+
+    EXPECT_EQ(where_reported(dex, "label 0 is not placed"),
+              (std::vector<std::string>{"LT;->m()V, item 1"}));
+}
+
+TEST(Validate, validate_whenALabelIsPlacedTwice_reportsIt)
+{
+    Dex dex = with_items({kLabel, kLabel, Insn{Goto{kLabel}}});
+
+    EXPECT_EQ(where_reported(dex, "label 0 is placed twice"),
+              (std::vector<std::string>{"LT;->m()V, item 1"}));
+}
+
+TEST(Validate, validate_whenABranchTargetIsNotFollowedByAnInstruction_reportsIt)
+{
+    Dex dex = with_items({Insn{Goto{kLabel}}, kLabel});
+
+    EXPECT_TRUE(reports(dex, "label 0 is not followed by an instruction"));
+}
+
+TEST(Validate, validate_whenABranchTargetIsFollowedOnlyByDebugItems_reportsIt)
+{
+    Dex dex = with_items({Insn{Goto{kLabel}}, kLabel, LineNumber{1}});
+
+    EXPECT_TRUE(reports(dex, "label 0 is not followed by an instruction"));
+}
+
+TEST(Validate, validate_whenABranchGoesBackToAPlacedLabel_returnsNoProblems)
+{
+    Dex dex = with_items({kLabel, Insn{Goto{kLabel}}});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenALabelNoBranchUsesEndsTheCode_returnsNoProblems)
+{
+    Dex dex = with_items({Insn{ReturnVoid{}}, kLabel});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAnIfTargetIsNotPlaced_reportsIt)
+{
+    Dex dex = with_insn(Insn{If{Condition::Eq, 0, 1, kUnplacedLabel}});
+
+    EXPECT_TRUE(reports(dex, "label 9 is not placed"));
+}
+
+TEST(Validate, validate_whenAnIfZeroTargetIsNotPlaced_reportsIt)
+{
+    Dex dex = with_insn(Insn{IfZero{Condition::Eq, 0, kUnplacedLabel}});
+
+    EXPECT_TRUE(reports(dex, "label 9 is not placed"));
+}
+
+TEST(Validate, validate_whenATryRangeIsWellFormed_returnsNoProblems)
+{
+    Dex dex = with_try({kLabel, Insn{Nop{}}, kOtherLabel, Insn{ReturnVoid{}}, kThirdLabel,
+                        Insn{MoveException{0}}, Insn{ReturnVoid{}}},
+                       TryRange{kLabel, kOtherLabel, {Catch{"LE;", kThirdLabel}}, kThirdLabel});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenATryRangeEndsAtTheEndOfTheCode_returnsNoProblems)
+{
+    Dex dex = with_try({kLabel, Insn{Nop{}}, kThirdLabel, Insn{ReturnVoid{}}, kOtherLabel},
+                       TryRange{kLabel, kOtherLabel, {}, kThirdLabel});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenATryRangeStartIsNotPlaced_reportsItForThatTryRange)
+{
+    Dex dex =
+        with_try({Insn{ReturnVoid{}}, kOtherLabel}, TryRange{kUnplacedLabel, kOtherLabel, {}, {}});
+
+    EXPECT_EQ(where_reported(dex, "a try range label is not placed"),
+              (std::vector<std::string>{"LT;->m()V, try range 0"}));
+}
+
+TEST(Validate, validate_whenATryRangeEndIsNotPlaced_reportsIt)
+{
+    Dex dex = with_try({kLabel, Insn{ReturnVoid{}}}, TryRange{kLabel, kUnplacedLabel, {}, {}});
+
+    EXPECT_TRUE(reports(dex, "a try range label is not placed"));
+}
+
+TEST(Validate, validate_whenATryRangeEndsBeforeItStarts_reportsIt)
+{
+    Dex dex =
+        with_try({kOtherLabel, Insn{ReturnVoid{}}, kLabel}, TryRange{kLabel, kOtherLabel, {}, {}});
+
+    EXPECT_TRUE(reports(dex, "the try range ends before it starts"));
+}
+
+TEST(Validate, validate_whenACatchTypeIsNotAClassDescriptor_reportsIt)
+{
+    Dex dex = with_try({kLabel, Insn{Nop{}}, kOtherLabel, Insn{ReturnVoid{}}},
+                       TryRange{kLabel, kOtherLabel, {Catch{"I", kLabel}}, {}});
+
+    EXPECT_TRUE(reports(dex, "invalid class descriptor \"I\""));
+}
+
+TEST(Validate, validate_whenACatchHandlerIsNotPlaced_reportsIt)
+{
+    Dex dex = with_try({kLabel, Insn{Nop{}}, kOtherLabel, Insn{ReturnVoid{}}},
+                       TryRange{kLabel, kOtherLabel, {Catch{"LE;", kUnplacedLabel}}, {}});
+
+    EXPECT_TRUE(reports(dex, "label 9 is not placed"));
+}
+
+TEST(Validate, validate_whenACatchHandlerIsNotFollowedByAnInstruction_reportsIt)
+{
+    Dex dex = with_try({kLabel, Insn{ReturnVoid{}}, kOtherLabel},
+                       TryRange{kLabel, kOtherLabel, {Catch{"LE;", kOtherLabel}}, {}});
+
+    EXPECT_TRUE(reports(dex, "label 1 is not followed by an instruction"));
+}
+
+TEST(Validate, validate_whenACatchAllHandlerIsNotPlaced_reportsIt)
+{
+    Dex dex = with_try({kLabel, Insn{Nop{}}, kOtherLabel, Insn{ReturnVoid{}}},
+                       TryRange{kLabel, kOtherLabel, {}, kUnplacedLabel});
+
+    EXPECT_TRUE(reports(dex, "label 9 is not placed"));
+}
+
+TEST(Validate, validate_whenDebugItemsAreWellFormed_returnsNoProblems)
+{
+    Dex dex = with_items({
+        LineNumber{1},
+        PrologueEnd{},
+        LocalStart{0, LocalVariable{"a", "I", "TT;"}},
+        Insn{Nop{}},
+        LocalEnd{0},
+        LocalRestart{0},
+        EpilogueBegin{},
+        SetSourceFile{"T.java"},
+        Insn{ReturnVoid{}},
+    });
+    code(dex).parameter_names = {std::nullopt, "name"};
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAParameterNameIsNotValidUtf8_reportsIt)
+{
+    Dex dex = valid();
+    code(dex).parameter_names = {kInvalidUtf8};
+
+    EXPECT_EQ(where_reported(dex, "a parameter name is not valid UTF-8 / WTF-8"),
+              (std::vector<std::string>{"LT;->m()V"}));
+}
+
+TEST(Validate, validate_whenALocalVariableNameIsNotValidUtf8_reportsIt)
+{
+    Dex dex = with_items(
+        {LocalStart{0, LocalVariable{kInvalidUtf8, "I", std::nullopt}}, Insn{ReturnVoid{}}});
+
+    EXPECT_TRUE(reports(dex, "a local variable name is not valid UTF-8 / WTF-8"));
+}
+
+TEST(Validate, validate_whenALocalVariableTypeIsVoid_reportsIt)
+{
+    Dex dex =
+        with_items({LocalStart{0, LocalVariable{"a", "V", std::nullopt}}, Insn{ReturnVoid{}}});
+
+    EXPECT_TRUE(reports(dex, "invalid field type \"V\""));
+}
+
+TEST(Validate, validate_whenALocalVariableSignatureIsNotValidUtf8_reportsIt)
+{
+    Dex dex =
+        with_items({LocalStart{0, LocalVariable{"a", "I", kInvalidUtf8}}, Insn{ReturnVoid{}}});
+
+    EXPECT_TRUE(reports(dex, "a local variable signature is not valid UTF-8 / WTF-8"));
+}
+
+TEST(Validate, validate_whenALocalVariableHasNoNameTypeOrSignature_returnsNoProblems)
+{
+    Dex dex = with_items({LocalStart{0, LocalVariable{std::nullopt, std::nullopt, std::nullopt}},
+                          Insn{ReturnVoid{}}});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenASourceFileMarkerIsNotValidUtf8_reportsIt)
+{
+    Dex dex = with_items({SetSourceFile{kInvalidUtf8}, Insn{ReturnVoid{}}});
+
+    EXPECT_TRUE(reports(dex, "a source file name is not valid UTF-8 / WTF-8"));
+}
+
+TEST(Validate, validate_whenARegisterIsOutsideTheFrame_reportsIt)
+{
+    Dex dex = with_insn(Insn{Const{4, 0}});
+
+    EXPECT_TRUE(reports(dex, "v4 is outside the 4 registers of the frame"));
+}
+
+TEST(Validate, validate_whenTheLastRegisterOfTheFrameIsUsed_returnsNoProblems)
+{
+    Dex dex = with_insn(Insn{Const{3, 0}});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenTheSecondHalfOfAPairIsOutsideTheFrame_reportsIt)
+{
+    Dex dex = with_insn(Insn{ConstWide{3, 0}});
+
+    EXPECT_TRUE(reports(dex, "v3 (pair) is outside the 4 registers of the frame"));
+}
+
+TEST(Validate, validate_whenAPairEndsOnTheLastRegisterOfTheFrame_returnsNoProblems)
+{
+    Dex dex = with_insn(Insn{ConstWide{2, 0}});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAFourBitOperandIsV16_reportsIt)
+{
+    const FieldId some_field{"LT;", "f", "I"};
+    const std::vector<Insn> insns{
+        InstanceOf{16, 0, "LT;"},
+        InstanceOf{0, 16, "LT;"},
+        ArrayLength{16, 0},
+        ArrayLength{0, 16},
+        NewArray{16, 0, "[I"},
+        NewArray{0, 16, "[I"},
+        If{Condition::Eq, 16, 0, kLabel},
+        If{Condition::Eq, 0, 16, kLabel},
+        InstanceGet{ValueKind::Normal, 16, 0, some_field},
+        InstanceGet{ValueKind::Normal, 0, 16, some_field},
+        InstancePut{ValueKind::Normal, 16, 0, some_field},
+        InstancePut{ValueKind::Normal, 0, 16, some_field},
+        Unary{UnaryOp::NegInt, 16, 0},
+        Unary{UnaryOp::NegInt, 0, 16},
+        BinaryLiteral{LiteralOp::Add, 16, 0, 300},
+        BinaryLiteral{LiteralOp::Add, 0, 16, 300},
+    };
+    for (std::size_t i = 0; i < insns.size(); ++i) {
+        Dex dex = with_insn(insns[i], 40);
+
+        EXPECT_TRUE(reports(dex, "v16 does not fit the instruction (needs v15 or lower)"))
+            << "instruction " << i;
+    }
+}
+
+TEST(Validate, validate_whenAnEightBitOperandIsV256_reportsIt)
+{
+    const FieldId some_field{"LT;", "f", "I"};
+    const std::vector<Insn> insns{
+        MoveResult{ValueKind::Normal, 256},
+        MoveException{256},
+        Return{ValueKind::Normal, 256},
+        Const{256, 0},
+        ConstWide{256, 0},
+        ConstString{256, "text"},
+        ConstClass{256, "LT;"},
+        ConstMethodHandle{
+            256, MethodHandle{MethodHandleKind::InvokeStatic, MethodId{"LT;", "m", "()V"}}},
+        ConstMethodType{256, "()V"},
+        MonitorEnter{256},
+        MonitorExit{256},
+        CheckCast{256, "LT;"},
+        NewInstance{256, "LT;"},
+        FillArrayData{256, 1, {}},
+        Throw{256},
+        Switch{256, {}},
+        Compare{CompareOp::CmplFloat, 256, 0, 0},
+        Compare{CompareOp::CmplFloat, 0, 256, 0},
+        Compare{CompareOp::CmplFloat, 0, 0, 256},
+        IfZero{Condition::Eq, 256, kLabel},
+        ArrayGet{ValueKind::Normal, 256, 0, 0},
+        ArrayGet{ValueKind::Normal, 0, 256, 0},
+        ArrayGet{ValueKind::Normal, 0, 0, 256},
+        ArrayPut{ValueKind::Normal, 256, 0, 0},
+        ArrayPut{ValueKind::Normal, 0, 256, 0},
+        ArrayPut{ValueKind::Normal, 0, 0, 256},
+        StaticGet{ValueKind::Normal, 256, some_field},
+        StaticPut{ValueKind::Normal, 256, some_field},
+        Binary{BinaryOp::AddInt, 256, 0, 0},
+        Binary{BinaryOp::AddInt, 0, 256, 0},
+        Binary{BinaryOp::AddInt, 0, 0, 256},
+        BinaryLiteral{LiteralOp::Add, 256, 0, 1},
+        BinaryLiteral{LiteralOp::Add, 0, 256, 1},
+    };
+    for (std::size_t i = 0; i < insns.size(); ++i) {
+        Dex dex = with_insn(insns[i], 300);
+
+        EXPECT_TRUE(reports(dex, "v256 does not fit the instruction (needs v255 or lower)"))
+            << "instruction " << i;
+    }
+}
+
+TEST(Validate, validate_whenAMoveUsesRegistersAboveV255_returnsNoProblems)
+{
+    Dex dex = with_insn(Insn{Move{ValueKind::Normal, 299, 298}}, 300);
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAnAddOfAnEightBitLiteralUsesV16_returnsNoProblems)
+{
+    Dex dex = with_insn(Insn{BinaryLiteral{LiteralOp::Add, 16, 17, 127}}, 40);
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAShiftLiteralDoesNotFitEightBits_reportsIt)
+{
+    Dex dex = with_insn(Insn{BinaryLiteral{LiteralOp::Shl, 0, 1, 300}});
+
+    EXPECT_TRUE(reports(dex, "a shift by a literal takes an 8-bit literal"));
+}
+
+TEST(Validate, validate_whenAMoverTakesAKindOtherThanNormalWideOrObject_reportsIt)
+{
+    const std::vector<Insn> insns{
+        Move{ValueKind::Byte, 0, 1},
+        MoveResult{ValueKind::Boolean, 0},
+        Return{ValueKind::Char, 0},
+    };
+    for (std::size_t i = 0; i < insns.size(); ++i) {
+        Dex dex = with_insn(insns[i]);
+
+        EXPECT_TRUE(reports(dex, "this instruction only takes the Normal, Wide or Object kind"))
+            << "instruction " << i;
+    }
+}
+
+TEST(Validate, validate_whenAWideOperandStartsOnTheLastRegister_reportsThePair)
+{
+    const FieldId some_field{"LT;", "f", "J"};
+    const std::vector<Insn> insns{
+        Move{ValueKind::Wide, 3, 0},
+        Move{ValueKind::Wide, 0, 3},
+        MoveResult{ValueKind::Wide, 3},
+        Return{ValueKind::Wide, 3},
+        Compare{CompareOp::CmpLong, 0, 3, 0},
+        Compare{CompareOp::CmpgDouble, 0, 0, 3},
+        ArrayGet{ValueKind::Wide, 3, 0, 1},
+        ArrayPut{ValueKind::Wide, 3, 0, 1},
+        InstanceGet{ValueKind::Wide, 3, 0, some_field},
+        InstancePut{ValueKind::Wide, 3, 0, some_field},
+        StaticGet{ValueKind::Wide, 3, some_field},
+        StaticPut{ValueKind::Wide, 3, some_field},
+        Unary{UnaryOp::IntToLong, 3, 0},
+        Unary{UnaryOp::LongToInt, 0, 3},
+        Unary{UnaryOp::NegDouble, 3, 0},
+        Binary{BinaryOp::AddLong, 3, 0, 0},
+        Binary{BinaryOp::AddLong, 0, 3, 0},
+        Binary{BinaryOp::AddLong, 0, 0, 3},
+        Binary{BinaryOp::MulDouble, 0, 0, 3},
+        Binary{BinaryOp::ShlLong, 3, 0, 0},
+    };
+    for (std::size_t i = 0; i < insns.size(); ++i) {
+        Dex dex = with_insn(insns[i]);
+
+        EXPECT_TRUE(reports(dex, "v3 (pair) is outside the 4 registers of the frame"))
+            << "instruction " << i;
+    }
+}
+
+TEST(Validate, validate_whenANarrowOperandIsTheLastRegister_returnsNoProblems)
+{
+    const std::vector<Insn> insns{
+        Compare{CompareOp::CmplFloat, 3, 3, 3}, Compare{CompareOp::CmpLong, 3, 0, 0},
+        Unary{UnaryOp::LongToInt, 3, 0},        Unary{UnaryOp::IntToLong, 0, 3},
+        Binary{BinaryOp::AddInt, 3, 3, 3},      Binary{BinaryOp::ShlLong, 0, 0, 3},
+        Binary{BinaryOp::UshrLong, 0, 0, 3},    ArrayGet{ValueKind::Wide, 0, 3, 3},
+    };
+    for (std::size_t i = 0; i < insns.size(); ++i) {
+        Dex dex = with_insn(insns[i]);
+
+        EXPECT_TRUE(validate(dex).empty()) << "instruction " << i;
+    }
+}
+
+TEST(Validate, validate_whenSixArgumentRegistersAreNotARun_reportsIt)
+{
+    Dex dex = with_insn(
+        Insn{Invoke{Invoke::Kind::Static, {1, 3, 5, 7, 9, 11}, MethodId{"LT;", "m", "()V"}}}, 40);
+
+    EXPECT_TRUE(
+        reports(dex, "argument registers must be at most five below v16, or a run of at most 255"));
+}
+
+TEST(Validate, validate_whenSixArgumentRegistersAreARun_returnsNoProblems)
+{
+    Dex dex = with_insn(
+        Insn{Invoke{Invoke::Kind::Static, RegList::range(20, 6), MethodId{"LT;", "m", "()V"}}}, 40);
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenFiveArgumentRegistersBelowV16AreNotARun_returnsNoProblems)
+{
+    Dex dex = with_insn(
+        Insn{Invoke{Invoke::Kind::Static, {1, 3, 5, 7, 9}, MethodId{"LT;", "m", "()V"}}}, 40);
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAnArgumentRegisterAboveV15IsNotPartOfARun_reportsIt)
+{
+    Dex dex =
+        with_insn(Insn{Invoke{Invoke::Kind::Static, {1, 20}, MethodId{"LT;", "m", "()V"}}}, 40);
+
+    EXPECT_TRUE(reports(dex, "argument registers must be at most five below v16"));
+}
+
+TEST(Validate, validate_whenARunHas255ArgumentRegisters_returnsNoProblems)
+{
+    Dex dex = with_insn(
+        Insn{Invoke{Invoke::Kind::Static, RegList::range(0, 255), MethodId{"LT;", "m", "()V"}}},
+        300);
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenARunHas256ArgumentRegisters_reportsIt)
+{
+    Dex dex = with_insn(
+        Insn{Invoke{Invoke::Kind::Static, RegList::range(0, 256), MethodId{"LT;", "m", "()V"}}},
+        300);
+
+    EXPECT_TRUE(reports(dex, "argument registers must be at most five below v16"));
+}
+
+TEST(Validate, validate_whenAnArgumentRegisterIsOutsideTheFrame_reportsIt)
+{
+    Dex dex = with_insn(Insn{Invoke{Invoke::Kind::Static, {5}, MethodId{"LT;", "m", "()V"}}});
+
+    EXPECT_TRUE(reports(dex, "v5 is outside the 4 registers of the frame"));
+}
+
+TEST(Validate, validate_whenFilledNewArrayRegistersAreNotEncodable_reportsIt)
+{
+    Dex dex = with_insn(Insn{FilledNewArray{{1, 3, 5, 7, 9, 11}, "[I"}}, 40);
+
+    EXPECT_TRUE(reports(dex, "argument registers must be at most five below v16"));
+}
+
+TEST(Validate, validate_whenAnInvokeKindIsUnknown_reportsIt)
+{
+    Dex dex =
+        with_insn(Insn{Invoke{static_cast<Invoke::Kind>(5), {}, MethodId{"LT;", "m", "()V"}}});
+
+    EXPECT_TRUE(reports(dex, "bad invoke kind"));
+}
+
+TEST(Validate, validate_whenAnInvokeNamesAPrimitiveClass_reportsIt)
+{
+    Dex dex = with_insn(Insn{Invoke{Invoke::Kind::Static, {}, MethodId{"I", "m", "()V"}}});
+
+    EXPECT_TRUE(reports(dex, "invalid method class \"I\""));
+}
+
+TEST(Validate, validate_whenAnInvokeHasAnInvalidPrototype_reportsIt)
+{
+    Dex dex = with_insn(Insn{Invoke{Invoke::Kind::Static, {}, MethodId{"LT;", "m", "(V)V"}}});
+
+    EXPECT_TRUE(reports(dex, "invalid prototype \"(V)V\""));
+}
+
+TEST(Validate, validate_whenAStringConstantIsNotValidUtf8_reportsIt)
+{
+    Dex dex = with_insn(Insn{ConstString{0, kInvalidUtf8}});
+
+    EXPECT_TRUE(reports(dex, "the string constant is not valid UTF-8 / WTF-8"));
+}
+
+TEST(Validate, validate_whenTwoInstructionsShareAnInvalidOperand_reportsItOnce)
+{
+    const Shared<std::string> shared = kInvalidUtf8;
+    Dex dex = with_items(
+        {Insn{ConstString{0, shared}}, Insn{ConstString{1, shared}}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(where_reported(dex, "the string constant is not valid UTF-8 / WTF-8"),
+              (std::vector<std::string>{"LT;->m()V, item 0"}));
+}
+
+TEST(Validate, validate_whenAConstClassTypeIsNotAFieldType_reportsIt)
+{
+    Dex dex = with_insn(Insn{ConstClass{0, "Q"}});
+
+    EXPECT_TRUE(reports(dex, "invalid field type \"Q\""));
+}
+
+TEST(Validate, validate_whenACheckCastTypeIsNotAFieldType_reportsIt)
+{
+    Dex dex = with_insn(Insn{CheckCast{0, "Q"}});
+
+    EXPECT_TRUE(reports(dex, "invalid field type \"Q\""));
+}
+
+TEST(Validate, validate_whenAnInstanceOfTypeIsNotAFieldType_reportsIt)
+{
+    Dex dex = with_insn(Insn{InstanceOf{0, 1, "Q"}});
+
+    EXPECT_TRUE(reports(dex, "invalid field type \"Q\""));
+}
+
+TEST(Validate, validate_whenNewInstanceNamesAnArrayType_reportsIt)
+{
+    Dex dex = with_insn(Insn{NewInstance{0, "[I"}});
+
+    EXPECT_TRUE(reports(dex, "invalid class descriptor \"[I\""));
+}
+
+TEST(Validate, validate_whenNewArrayNamesANonArrayType_reportsIt)
+{
+    Dex dex = with_insn(Insn{NewArray{0, 1, "I"}});
+
+    EXPECT_TRUE(reports(dex, "invalid array type \"I\""));
+}
+
+TEST(Validate, validate_whenFilledNewArrayNamesANonArrayType_reportsIt)
+{
+    Dex dex = with_insn(Insn{FilledNewArray{{0}, "LT;"}});
+
+    EXPECT_TRUE(reports(dex, "invalid array type \"LT;\""));
+}
+
+TEST(Validate, validate_whenAnInstanceFieldAccessNamesAnInvalidClass_reportsIt)
+{
+    Dex dex = with_insn(Insn{InstanceGet{ValueKind::Normal, 0, 1, FieldId{"T", "f", "I"}}});
+
+    EXPECT_TRUE(reports(dex, "invalid class descriptor \"T\""));
+}
+
+TEST(Validate, validate_whenAStaticFieldAccessNamesAVoidField_reportsIt)
+{
+    Dex dex = with_insn(Insn{StaticPut{ValueKind::Normal, 0, FieldId{"LT;", "f", "V"}}});
+
+    EXPECT_TRUE(reports(dex, "invalid field type \"V\""));
+}
+
+TEST(Validate, validate_whenFillArrayDataHasAnElementWidthOfThree_reportsIt)
+{
+    Dex dex = with_insn(Insn{FillArrayData{0, 3, {1, 2, 3}}});
+
+    EXPECT_TRUE(reports(dex, "fill-array-data elements must be 1, 2, 4 or 8 bytes wide"));
+}
+
+TEST(Validate, validate_whenFillArrayDataHoldsAPartialElement_reportsIt)
+{
+    Dex dex = with_insn(Insn{FillArrayData{0, 4, {1, 2, 3, 4, 5, 6}}});
+
+    EXPECT_TRUE(reports(dex, "fill-array-data holds a partial element"));
+}
+
+TEST(Validate, validate_whenFillArrayDataHoldsWholeElements_returnsNoProblems)
+{
+    Dex dex = with_insn(Insn{FillArrayData{0, 2, {1, 2, 3, 4}}});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenASwitchIsWellFormed_returnsNoProblems)
+{
+    Dex dex = with_insn(Insn{Switch{0, {{1, kLabel}, {-5, kLabel}}}});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenASwitchListsAKeyTwice_reportsIt)
+{
+    Dex dex = with_insn(Insn{Switch{0, {{1, kLabel}, {1, kLabel}}}});
+
+    EXPECT_TRUE(reports(dex, "switch key 1 is listed twice"));
+}
+
+TEST(Validate, validate_whenASwitchCaseTargetIsNotPlaced_reportsIt)
+{
+    Dex dex = with_insn(Insn{Switch{0, {{1, kUnplacedLabel}}}});
+
+    EXPECT_TRUE(reports(dex, "label 9 is not placed"));
+}
+
+TEST(Validate, validate_whenASwitchHas65536Cases_reportsIt)
+{
+    Switch big{0, {}};
+    for (int32_t key = 0; key < 65536; ++key)
+        big.cases.push_back({key, kLabel});
+    Dex dex = with_insn(Insn{big});
+
+    EXPECT_TRUE(reports(dex, "a switch has at most 65535 cases"));
+}
+
+TEST(Validate, requiredVersion_whenCodeHasInvokePolymorphic_returns38)
+{
+    Dex dex = with_insn(Insn{InvokePolymorphic{{0}, MethodId{"LT;", "m", "()V"}, "()V"}});
+
+    EXPECT_EQ(required_version(dex), 38u);
+}
+
+TEST(Validate, validate_whenInvokePolymorphicIsWellFormed_returnsNoProblems)
+{
+    Dex dex = with_insn(Insn{InvokePolymorphic{{0}, MethodId{"LT;", "m", "()V"}, "()V"}});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenInvokePolymorphicNamesAnInvalidMethod_reportsIt)
+{
+    Dex dex = with_insn(Insn{InvokePolymorphic{{0}, MethodId{"LT;", "a.b", "()V"}, "()V"}});
+
+    EXPECT_TRUE(reports(dex, "invalid member name \"a.b\""));
+}
+
+TEST(Validate, validate_whenInvokePolymorphicHasAnInvalidCallPrototype_reportsIt)
+{
+    Dex dex = with_insn(Insn{InvokePolymorphic{{0}, MethodId{"LT;", "m", "()V"}, "(V)V"}});
+
+    EXPECT_TRUE(reports(dex, "invalid prototype \"(V)V\""));
+}
+
+TEST(Validate, validate_whenInvokePolymorphicRegistersAreNotEncodable_reportsIt)
+{
+    Dex dex = with_insn(
+        Insn{InvokePolymorphic{{1, 3, 5, 7, 9, 11}, MethodId{"LT;", "m", "()V"}, "()V"}}, 40);
+
+    EXPECT_TRUE(reports(dex, "argument registers must be at most five below v16"));
+}
+
+TEST(Validate, requiredVersion_whenCodeHasInvokeCustom_returns38)
+{
+    Dex dex = with_insn(Insn{InvokeCustom{{}, call_site()}});
+
+    EXPECT_EQ(required_version(dex), 38u);
+}
+
+TEST(Validate, validate_whenInvokeCustomIsWellFormed_returnsNoProblems)
+{
+    Dex dex = with_insn(Insn{InvokeCustom{{}, call_site()}});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenACallSiteBootstrapIsABadMethodHandle_reportsIt)
+{
+    CallSite site = call_site();
+    site.bootstrap = MethodHandle{MethodHandleKind::StaticGet, MethodId{"LT;", "m", "()V"}};
+    Dex dex = with_insn(Insn{InvokeCustom{{}, site}});
+
+    EXPECT_TRUE(reports(dex, "a field method handle names a method"));
+}
+
+TEST(Validate, validate_whenACallSiteMethodNameIsNotAMemberName_reportsIt)
+{
+    CallSite site = call_site();
+    site.method_name = "a.b";
+    Dex dex = with_insn(Insn{InvokeCustom{{}, site}});
+
+    EXPECT_TRUE(reports(dex, "invalid member name \"a.b\""));
+}
+
+TEST(Validate, validate_whenACallSiteMethodTypeIsNotAPrototype_reportsIt)
+{
+    CallSite site = call_site();
+    site.method_type = "(V)V";
+    Dex dex = with_insn(Insn{InvokeCustom{{}, site}});
+
+    EXPECT_TRUE(reports(dex, "invalid prototype \"(V)V\""));
+}
+
+TEST(Validate, validate_whenACallSiteExtraArgumentIsAnInvalidValue_reportsIt)
+{
+    CallSite site = call_site();
+    site.extra_args = {Value{Value::Type{"Q"}}};
+    Dex dex = with_insn(Insn{InvokeCustom{{}, site}});
+
+    EXPECT_TRUE(reports(dex, "invalid type descriptor \"Q\""));
+}
+
+TEST(Validate, validate_whenInvokeCustomRegistersAreNotEncodable_reportsIt)
+{
+    Dex dex = with_insn(Insn{InvokeCustom{{1, 3, 5, 7, 9, 11}, call_site()}}, 40);
+
+    EXPECT_TRUE(reports(dex, "argument registers must be at most five below v16"));
+}
+
+TEST(Validate, requiredVersion_whenCodeHasConstMethodHandle_returns39)
+{
+    Dex dex = with_insn(Insn{ConstMethodHandle{
+        0, MethodHandle{MethodHandleKind::InvokeStatic, MethodId{"LT;", "m", "()V"}}}});
+
+    EXPECT_EQ(required_version(dex), 39u);
+}
+
+TEST(Validate, validate_whenConstMethodHandleHoldsABadMethodHandle_reportsIt)
+{
+    Dex dex = with_insn(Insn{ConstMethodHandle{
+        0, MethodHandle{MethodHandleKind::InvokeStatic, FieldId{"LT;", "f", "I"}}}});
+
+    EXPECT_TRUE(reports(dex, "an invoke method handle names a field"));
+}
+
+TEST(Validate, requiredVersion_whenCodeHasConstMethodType_returns39)
+{
+    Dex dex = with_insn(Insn{ConstMethodType{0, "()V"}});
+
+    EXPECT_EQ(required_version(dex), 39u);
+}
+
+TEST(Validate, validate_whenConstMethodTypeIsNotAPrototype_reportsIt)
+{
+    Dex dex = with_insn(Insn{ConstMethodType{0, "(V)V"}});
+
+    EXPECT_TRUE(reports(dex, "invalid prototype \"(V)V\""));
+}
+
+TEST(Validate, requiredVersion_whenCodeAndValuesNeedDifferentVersions_returnsTheHighest)
+{
+    Dex dex = with_insn(Insn{ConstMethodType{0, "()V"}});
+    cls(dex).annotations = {annotation("LA;", {{"x", Value{Value::MethodType{"()V"}}}})};
+
+    EXPECT_EQ(required_version(dex), 39u);
+}
+
+TEST(Validate, check_whenAnInstructionNeedsANewerVersion_returnsItsItemAndItsName)
+{
+    Dex dex = with_items({Insn{Nop{}}, Insn{ConstMethodType{0, "()V"}}, Insn{ReturnVoid{}}});
+
+    detail::Checked checked = detail::check(dex);
+
+    EXPECT_EQ(checked.needed_version, 39u);
+    EXPECT_EQ(checked.needed_reason, "LT;->m()V, item 1: const-method-type");
+}
+
+TEST(Validate, check_whenTwoInstructionsNeedTheSameVersion_returnsTheFirstAsTheReason)
+{
+    Dex dex = with_items({Insn{InvokeCustom{{}, call_site()}},
+                          Insn{InvokePolymorphic{{0}, MethodId{"LT;", "m", "()V"}, "()V"}},
+                          Insn{ReturnVoid{}}});
+
+    detail::Checked checked = detail::check(dex);
+
+    EXPECT_EQ(checked.needed_version, 38u);
+    EXPECT_EQ(checked.needed_reason, "LT;->m()V, item 0: invoke-custom");
+}
+
+class ValidateFixture : public ::testing::TestWithParam<std::string>
+{
+};
+
+TEST_P(ValidateFixture, validate_whenModelIsReadFromAWellFormedFile_returnsNoProblems)
+{
+    auto dex = read(support::load_fixture(GetParam()));
+    ASSERT_TRUE(dex.has_value()) << dex.error().message;
+
+    std::vector<Problem> problems = validate(*dex);
+
+    for (const Problem &p : problems)
+        ADD_FAILURE() << p.where << ": " << p.message;
+}
+
+TEST_P(ValidateFixture, requiredVersion_whenModelIsReadFromAFile_isNotAboveTheFileVersion)
+{
+    auto dex = read(support::load_fixture(GetParam()));
+    ASSERT_TRUE(dex.has_value()) << dex.error().message;
+
+    EXPECT_LE(required_version(*dex), dex->version);
+}
+
+INSTANTIATE_TEST_SUITE_P(AllDexFiles, ValidateFixture,
+                         ::testing::Values("annotated.dex", "casts.dex", "classes.dex",
+                                           "fibonacci.dex", "inherit.dex", "multistring.dex",
+                                           "polymorphic.dex", "shapes.dex", "trycatch.dex"),
+                         [](const ::testing::TestParamInfo<ValidateFixture::ParamType> &info) {
+                             return info.param.substr(0, info.param.rfind('.'));
+                         });
+
 } // namespace
 } // namespace dexsplit::model
