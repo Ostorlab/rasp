@@ -19,6 +19,10 @@
 #include <variant>
 #include <vector>
 
+#ifdef __APPLE__
+#include <net/if_var.h>
+#endif
+
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/cycle.h"

@@ -11,6 +11,10 @@
 #include <sys/socket.h>
 #include <vector>
 
+#ifdef __APPLE__
+#include <net/if_var.h>
+#endif
+
 namespace rasp::test {
 /// One allocated synthetic API record with nullable name/address controls.
 struct InterfaceNode {

@@ -29,6 +29,7 @@
 #include <CoreFoundation/CFNumber.h>
 #include <CoreFoundation/CFString.h>
 #include <TargetConditionals.h>
+#include <net/if_var.h>
 #endif
 
 namespace rasp::ios::checks {
