@@ -53,10 +53,14 @@ or used to revoke a returned signature.
 
 Namespaces bind one exact application, public signing scope, purpose, named gate
 operation/hash, advisory/mandatory mode and minimum key profile. The application
-identity is obtained from the attached platform. Callers cannot select arbitrary
+identity is obtained from the attached platform.
+
+Callers cannot select arbitrary
 existing aliases, access groups, packages or another app's keys. Handles and request
 tokens are process/session-local lookup identities, not secrets or capabilities
-against a compromised host. Public KeyIds reopen only exact owned manifest entries;
+against a compromised host.
+
+Public KeyIds reopen only exact owned manifest entries;
 missing keys are never silently regenerated or adopted after restore/reinstall.
 
 The only algorithm is P-256 ECDSA over a complete message using SHA256, with strict
