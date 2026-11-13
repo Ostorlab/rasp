@@ -9,6 +9,8 @@
 rasp protects an app you have already built. It adds a small runtime to the APK, AAB or IPA, and the protected app
 checks the device it runs on and itself while it is in use. No change to the app's source code is needed.
 
+https://github.com/user-attachments/assets/a43d48ed-75ec-43b1-ad76-77fc08826493
+
 ## Features
 
 - **Android and iOS:** APK, AAB and IPA.
@@ -17,6 +19,8 @@ checks the device it runs on and itself while it is in use. No change to the app
 - **Detects:** root and jailbreak, debuggers, Frida and other hooking, emulators, app virtualizers, network
   interception (VPN tunnels and proxies), tampering with the runtime's code, and repackaged copies.
 - **Runs all the time:** the checks run when the app starts, then every 60 seconds.
+- **Events on the Ostorlab platform:** protect apps and see their events in
+  [Mobile ADR](#use-adr-on-the-ostorlab-platform) (Mobile Application Detection & Response).
 
 ## How it works
 
@@ -119,6 +123,27 @@ Each check and the signals it reports are described in [`runtime/README.md`](run
 - [`packer/README.md`](packer/README.md): the packer, its options, build ids and checks.
 - [`runtime/README.md`](runtime/README.md): the runtime, each check, building and logs.
 - [`TODO.md`](TODO.md): known work that isn't done yet.
+
+## Use ADR on the Ostorlab platform
+
+Don't want to build the runtime yourself, or want to see what your protected apps find on real devices? Mobile ADR
+(Mobile Application Detection & Response) on the [Ostorlab platform](https://report.ostorlab.co) protects your
+apps with rasp and shows their events:
+
+1. Create an account on the [Ostorlab platform](https://report.ostorlab.co) and open **Mobile ADR**.
+2. Upload your APK or IPA, choose the checks, and download the protected app
+   ([Protect an app](https://docs.ostorlab.co/mobile_adr/protect_an_app.html)).
+
+   ![Protect an app: choose the checks](docs/images/mobile_adr/protect_an_app.png)
+3. Sign it and ship it as usual.
+4. See the events in the **Events** tab: each check run on a device, what it found (root files, Frida, a VPN
+   tunnel…), and whether the check could run ([Events](https://docs.ostorlab.co/mobile_adr/events.html)).
+
+   ![The events of the protected apps](docs/images/mobile_adr/events.png)
+5. Find every protected version of your app, with its checks and RASP release
+   ([Applications and builds](https://docs.ostorlab.co/mobile_adr/applications_and_builds.html)).
+
+   ![An app and its protected builds](docs/images/mobile_adr/applications_and_builds.png)
 
 ## Contributing
 

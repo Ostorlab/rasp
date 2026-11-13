@@ -17,6 +17,8 @@
 
 #ifdef __ANDROID__
 #include <jni.h>
+
+#include "util/jni.h"
 #endif
 
 #include "rasp/observation.h"
@@ -122,34 +124,8 @@ constexpr int kMaxAliases = 4096;
 /// The local references a pass of ca_store_aliases makes, outside the loop over the aliases, which frees its own.
 constexpr jint kLocalFrameCapacity = 16;
 
-/// Whether the last JNI call threw. The exception is cleared, so it never reaches the app.
-///
-/// @param env The thread's JNI environment.
-/// @return `true` when the call threw.
-[[nodiscard]] bool threw(JNIEnv* env) {
-  if (env->ExceptionCheck() == JNI_FALSE) {
-    return false;
-  }
-  env->ExceptionClear();
-  return true;
-}
-
-/// The JNI environment of the calling thread, which is attached to the app's Java VM the first time and stays attached:
-/// the runtime's thread never ends, so it never has to detach.
-///
-/// @return The environment, or null when there is no Java VM or the thread can't be attached.
-[[nodiscard]] JNIEnv* attached_env() {
-  JavaVM* vm = nullptr;
-  jsize count = 0;
-  if (JNI_GetCreatedJavaVMs(&vm, 1, &count) != JNI_OK || count < 1 || vm == nullptr) {
-    return nullptr;
-  }
-  JNIEnv* env = nullptr;
-  if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
-    return nullptr;
-  }
-  return env;
-}
+using util::attached_env;
+using util::threw;
 
 /// Reads the aliases of the `AndroidCAStore` KeyStore, inside a local frame that the caller pops.
 ///
