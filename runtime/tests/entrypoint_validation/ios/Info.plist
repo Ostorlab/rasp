@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>fixture.entryhost</string>
+<key>CFBundleName</key><string>EntryHost</string>
+<key>CFBundleExecutable</key><string>EntryHost</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>MinimumOSVersion</key><string>12.0</string>
+<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLSchemes</key><array><string>app.raspdemo</string></array></dict></array>
+<key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><true/></dict>
+<key>UILaunchScreen</key><dict/>
+</dict></plist>

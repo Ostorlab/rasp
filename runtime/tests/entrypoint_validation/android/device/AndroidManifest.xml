@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="fixture.entrypoints" android:versionCode="1" android:versionName="1.0">
+<uses-sdk android:minSdkVersion="31" android:targetSdkVersion="35"/>
+<permission android:name="fixture.entrypoints.CALL_DEMO" android:protectionLevel="signature"/>
+<queries><package android:name="fixture.entrycaller"/></queries>
+<application android:theme="@android:style/Theme.Material.Light.NoActionBar" android:label="Entry demo">
+<activity android:name=".MainActivity" android:exported="true">
+<intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+<intent-filter android:autoVerify="true"><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="https" android:host="links.example.invalid"/></intent-filter>
+<intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="app.raspdemo" android:host="links.example.invalid"/></intent-filter>
+</activity>
+<service android:name=".DemoService" android:exported="true" android:permission="fixture.entrypoints.CALL_DEMO"/>
+<provider android:name=".StatusProvider" android:authorities="fixture.entrypoints.status" android:exported="true" android:readPermission="fixture.entrypoints.CALL_DEMO" android:writePermission="fixture.entrypoints.CALL_DEMO" android:grantUriPermissions="false"/>
+</application></manifest>

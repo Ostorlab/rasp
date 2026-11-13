@@ -367,6 +367,9 @@ if(Java_FOUND AND JNI_FOUND)
     set(bridge_java ${PROJECT_SOURCE_DIR}/android/stub/co/ostorlab/rasp/RuntimeBridge.java)
     list(APPEND bridge_java ${PROJECT_SOURCE_DIR}/host_context/android/co/ostorlab/rasp/host/HostOperationContext.java)
     list(APPEND bridge_java ${CMAKE_CURRENT_SOURCE_DIR}/host_context/android/device/src/fixture/hostcontext/MainActivity.java)
+    list(APPEND bridge_java ${PROJECT_SOURCE_DIR}/entrypoint_validation/android/co/ostorlab/rasp/entry/EntryPointValidation.java)
+    file(GLOB entry_host_java CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/entrypoint_validation/android/device/src/fixture/entrypoints/*.java)
+    list(APPEND bridge_java ${entry_host_java} ${CMAKE_CURRENT_SOURCE_DIR}/entrypoint_validation/android/java/EntryParserTest.java)
     set(bridge_test_classes ${CMAKE_CURRENT_BINARY_DIR}/context-bridge-classes)
     add_custom_command(OUTPUT ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class
       COMMAND ${Java_JAVAC_EXECUTABLE} -d ${bridge_test_classes} ${bridge_java} ${bridge_test_java}
@@ -635,3 +638,26 @@ add_executable(rasp_host_context_c_host host_context/c_host.c host_context/clock
 target_link_libraries(rasp_host_context_c_host PRIVATE rasp_host_context rasp_core rasp_language)
 target_compile_options(rasp_host_context_c_host PRIVATE -Wall -Wextra -Werror -Wpedantic -Wconversion)
 add_test(NAME HostContextConsumer.actualC COMMAND rasp_host_context_c_host)
+
+# The entry-point classifier is host source; no shipping runtime consumes this target.
+add_subdirectory(${PROJECT_SOURCE_DIR}/entrypoint_validation ${CMAKE_CURRENT_BINARY_DIR}/entrypoint-validation)
+add_executable(rasp_entrypoint_classify_test entrypoint_validation/classify_test.c)
+target_link_libraries(rasp_entrypoint_classify_test PRIVATE rasp_entrypoint_validation rasp_language)
+add_test(NAME EntryPoint.classify COMMAND rasp_entrypoint_classify_test ${CMAKE_CURRENT_SOURCE_DIR}/entrypoint_validation/vectors.tsv)
+if(TARGET rasp_android_context_bridge_java)
+  add_test(NAME EntryPoint.missingBridge COMMAND ${Java_JAVA_EXECUTABLE} -cp ${bridge_test_classes}
+    co.ostorlab.rasp.EntryMissingBridgeTest ${bridge_test_classes})
+  set_tests_properties(EntryPoint.missingBridge PROPERTIES TIMEOUT 30)
+  add_test(NAME EntryPoint.androidBoundaries COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes}
+    co.ostorlab.rasp.EntryBoundaryTest $<TARGET_FILE:rasp_android_context_bridge_jni>)
+  set_tests_properties(EntryPoint.androidBoundaries PROPERTIES TIMEOUT 30)
+  add_test(NAME EntryPoint.javaVectors COMMAND ${Java_JAVA_EXECUTABLE} -cp ${bridge_test_classes}
+    EntryParserTest ${CMAKE_CURRENT_SOURCE_DIR}/entrypoint_validation/vectors.tsv)
+  set_tests_properties(EntryPoint.javaVectors PROPERTIES TIMEOUT 30)
+endif()
+add_executable(rasp_entrypoint_gate_test entrypoint_validation/gate_test.cpp entrypoint_validation/c_host.c
+  ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp)
+target_include_directories(rasp_entrypoint_gate_test PRIVATE ${PROJECT_SOURCE_DIR}/core/src ${PROJECT_SOURCE_DIR}/core/include/rasp ${CMAKE_CURRENT_SOURCE_DIR}/entrypoint_validation)
+target_link_libraries(rasp_entrypoint_gate_test PRIVATE rasp_entrypoint_validation rasp_core rasp_warnings rasp_language)
+add_test(NAME EntryPoint.realCGate COMMAND rasp_entrypoint_gate_test)
+add_test(NAME EntryPoint.realCReportOnly COMMAND rasp_entrypoint_gate_test report_only)

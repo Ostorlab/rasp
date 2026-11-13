@@ -51,6 +51,11 @@ and explicit lifecycle/loss metadata. These observations do not prevent capture 
 
 Optional iOS host source integration observes [post-capture screenshot notifications and capture state](docs/ios-capture-observations.md), with explicit opt-in, display-scoped legacy fallback and independent source availability.
 
+Optional host source integration provides [explicit entry-point validation](docs/entrypoint-validation.md)
+for selected Android IPC/Intent and UIKit URL/scene handlers before their adapted
+effects. Packing alone does not adapt those handlers, and links cannot directly
+authorize sensitive or replay-sensitive business actions.
+
 ## Quick start
 
 1. **Build the runtime** for your platform ([details](runtime/README.md#build)):
@@ -135,6 +140,7 @@ does not adapt business actions or authorize backend transactions.
 
 - [`packer/README.md`](packer/README.md): the packer, its options, build ids and checks.
 - [`runtime/README.md`](runtime/README.md): the runtime, each check, building and logs.
+- [Explicit entry-point validation](docs/entrypoint-validation.md): optional host source adapters for selected IPC/Intent and URL/scene handlers.
 - [`TODO.md`](TODO.md): known work that isn't done yet.
 
 ## Use ADR on the Ostorlab platform

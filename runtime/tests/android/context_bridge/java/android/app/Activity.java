@@ -1,5 +1,18 @@
 package android.app;
-public class Activity {
+public class Activity extends android.content.Context {
+    public android.content.Intent intent;
+    public ComponentCaller initialCaller=new ComponentCaller(),currentCaller=new ComponentCaller();
+    public int initialCallerReads,currentCallerReads;
+    public android.content.Intent getIntent(){return intent;}
+    public void onNewIntent(android.content.Intent input){}
+    public void onDestroy(){}
+    public ComponentCaller getCaller(){initialCallerReads++;return initialCaller;}
+    public ComponentCaller getCurrentCaller(){currentCallerReads++;return currentCaller;}
+    public android.content.ComponentName getComponentName(){return new android.content.ComponentName(getPackageName(),getClass().getName());}
+    public android.content.Context getApplicationContext(){return application;}
+    public android.content.pm.PackageManager getPackageManager(){return application.getPackageManager();}
+    public String getPackageName(){return application.getPackageName();}
+    public int checkPermission(String permission,int pid,int uid){return application.checkPermission(permission,pid,uid);}
     public void onCreate(android.os.Bundle saved) {}
     public void onResume() {}
     public void onPause() {}
