@@ -244,11 +244,28 @@ DELETE/RESET admission invalidates targeted key use in memory. Reservation
 durability must precede OS generation; verified live durability precedes a usable
 handle.
 
+A failed CREATE with a KEY_CREATED effect may receive at most one automatic
+cleanup worker acknowledgment. Successful cleanup does not change its reported
+terminal failure.
+
 DELETE/RESET must acknowledge durable tombstones before OS deletion. Actual absence
 plus durable retirement is required before confirming deletion.
 
+A terminal DELETE/RESET request reporting CLEANUP_PENDING is not automatically
+redispatched. Durable tombstones keep CREATE/REOPEN/DESCRIBE/SIGN blocked in the
+affected namespace while cleanup remains pending.
+
+The host must explicitly retry the original scoped DELETE/RESET or close and
+reopen the client for recovery of only the actual recorded identities. Neither
+route widens the original targets or bypasses ownership checks; a mismatched
+public point remains pending.
+
 Ambiguous publication/effects stay UNKNOWN. Any uncertain write latches the client,
 refuses further key admissions/uses, and closes without rewriting stale memory.
+
+The storage-fault latch also refuses in-process DELETE/RESET retries. Close and
+reopen the client to validate the actual durable file; this cannot reconstruct
+lost undurable intent or authorize broader deletion.
 
 Reopen validates the actual durable file and retries only its recorded
 reservation/tombstone identities; cancel/expiry never fabricates rollback. Cleanup
