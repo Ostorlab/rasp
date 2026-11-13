@@ -7,6 +7,8 @@ import io
 import json
 import os
 import pathlib
+import py_compile
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -345,3 +347,281 @@ class LauncherTest(unittest.TestCase):
                 assert result.returncode == expected, result.stderr
                 if expected == 1:
                     assert self.state.exists() is False
+
+    def run_command(
+        self, digest: str, command: list[str]
+    ) -> subprocess.CompletedProcess[str]:
+        """Run an actual driver diagnostic or harmless root-import child."""
+        return subprocess.run(
+            [
+                sys.executable,
+                "-E",
+                "-s",
+                "-B",
+                str(SCRIPT),
+                "run",
+                "--state",
+                str(self.state),
+                "--sha256",
+                digest,
+                "--",
+                *command,
+            ],
+            cwd=self.root,
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def testLauncher_whenDriverRewritesArguments_refusesBeforeActualDriver(
+        self,
+    ) -> None:
+        clang = shutil.which("clang")
+        if clang is None and pathlib.Path("/usr/lib/llvm-20/bin/clang").is_file():
+            clang = "/usr/lib/llvm-20/bin/clang"
+        assert clang is not None, "real Clang command-printing control requires Clang"
+        directory = tempfile.TemporaryDirectory(prefix="omvll-driver-")
+        self.addCleanup(directory.cleanup)
+        plugin_bytes = self.plugin.read_bytes()
+        self.plugin = pathlib.Path(directory.name) / "identity-plugin"
+        self.plugin.write_bytes(plugin_bytes)
+        digest = self.freeze()
+        command = [
+            clang,
+            "-###",
+            "-x",
+            "c",
+            "-c",
+            os.devnull,
+            f"-fpass-plugin={self.plugin}",
+        ]
+        baseline = self.run_command(digest, command)
+        assert baseline.returncode == 0, baseline.stderr
+        assert f"-fpass-plugin={self.plugin}" in baseline.stderr
+        self.environment["CCC_OVERRIDE_OPTIONS"] = f"x-fpass-plugin={self.plugin}"
+        direct = subprocess.run(
+            command, env=self.environment, capture_output=True, text=True, check=False
+        )
+        assert direct.returncode == 0, direct.stderr
+        assert "Deleting argument -fpass-plugin=" in direct.stderr
+        assert '"-fpass-plugin=' not in direct.stderr
+        guarded = self.run_command(digest, command)
+        assert_refused(guarded)
+        assert "Deleting argument" not in guarded.stderr
+
+    def testLauncher_whenDriverConfigEnvironmentInherited_neutralizesDefaults(
+        self,
+    ) -> None:
+        digest = self.freeze()
+        self.environment["CLANG_NO_DEFAULT_CONFIG"] = ""
+        result = self.run_command(
+            digest,
+            [
+                sys.executable,
+                "-c",
+                "import os; print(os.environ['CLANG_NO_DEFAULT_CONFIG'])",
+                f"-fpass-plugin={self.plugin}",
+            ],
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "1\n"
+        for name in ("CL", "_CL_"):
+            self.environment[name] = "/clang:-fpass-plugin=unbound"
+            assert_refused(self.launch(digest))
+            self.environment.pop(name)
+
+    def testLauncher_whenRootPackageAppears_refusesWithoutRunningIt(self) -> None:
+        self.config.write_text('IDENTITY="captured source"\n')
+        digest = self.freeze()
+        code = (
+            "import sys,pathlib,importlib,json; p=pathlib.Path(sys.argv[1]); "
+            "sys.path.insert(0,str(p.parent)); m=importlib.import_module(p.stem); "
+            "print(json.dumps({'loaded':m.__file__,'identity':m.IDENTITY}))"
+        )
+        command = [
+            sys.executable,
+            "-B",
+            "-c",
+            code,
+            str(self.config),
+            f"-fpass-plugin={self.plugin}",
+        ]
+        ordinary = self.run_command(digest, command)
+        assert ordinary.returncode == 0, ordinary.stderr
+        assert json.loads(ordinary.stdout) == {
+            "loaded": str(self.config),
+            "identity": "captured source",
+        }
+        package = self.config.with_suffix("")
+        package.mkdir()
+        marker = self.root / "package-executed"
+        (package / "__init__.py").write_text(
+            f"from pathlib import Path; Path({str(marker)!r}).touch(); IDENTITY='unbound package'\n"
+        )
+        assert_refused(self.run_command(digest, command))
+        assert marker.exists() is False
+
+    def testLauncher_whenNativeRootOrHelperAppears_refusesAllRelevantSuffixes(
+        self,
+    ) -> None:
+        digest = self.freeze()
+        for stem in (self.config.stem, "omvll_seed"):
+            for suffix in (".so", ".abi3.so", ".cpython-310-darwin.so", ".pyc"):
+                with self.subTest(stem=stem, suffix=suffix):
+                    candidate = self.root / (stem + suffix)
+                    candidate.write_bytes(b"non-executable loader ambiguity fixture")
+                    assert_refused(self.launch(digest))
+                    candidate.unlink()
+        helper_package = self.root / "omvll_seed"
+        helper_package.mkdir()
+        (helper_package / "__init__.py").write_text(
+            "raise RuntimeError('must not execute')\n"
+        )
+        assert_refused(self.launch(digest))
+
+    def testLauncher_whenRootStemIsUnsupported_refusesDuringCapture(self) -> None:
+        for name in (
+            "sys.py",
+            "pathlib.py",
+            "omvll.py",
+            "omvll_seed.py",
+            "json.py",
+            "_sha256.py",
+            "audioop.py",
+            "time.py",
+            "dotted.config.py",
+            "config.pyc",
+        ):
+            with self.subTest(name=name):
+                self.state.unlink(missing_ok=True)
+                config = self.root / name
+                config.write_text(
+                    "raise RuntimeError('validation must not execute config')\n"
+                )
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-E",
+                        "-s",
+                        "-B",
+                        str(SCRIPT),
+                        "freeze",
+                        "--state",
+                        str(self.state),
+                        "--yaml",
+                        str(self.yaml),
+                        "--config",
+                        str(config),
+                        "--plugin",
+                        str(self.plugin),
+                        "--pythonpath",
+                        str(self.pythonpath),
+                    ],
+                    cwd=self.root,
+                    env=self.environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                assert_refused(result)
+                assert self.state.exists() is False
+
+    def testLauncher_whenSharedHelperPackageShadowsBootstrap_refusesBeforeImport(
+        self,
+    ) -> None:
+        bootstrap = self.root / "bootstrap"
+        bootstrap.mkdir()
+        for name in ("omvll_launcher.py", "omvll_seed.py"):
+            shutil.copyfile(SCRIPT.with_name(name), bootstrap / name)
+        package = bootstrap / "omvll_seed"
+        package.mkdir()
+        marker = self.root / "helper-executed"
+        (package / "__init__.py").write_text(
+            f"from pathlib import Path; Path({str(marker)!r}).touch()\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-E", "-s", "-B", str(bootstrap / SCRIPT.name), "--help"],
+            cwd=self.root,
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert_refused(result)
+        assert marker.exists() is False
+
+    def testLauncher_whenExplicitDefaultSeedPairProvided_refusesLaunchAndRetry(
+        self,
+    ) -> None:
+        digest = self.freeze(None, "default")
+        self.environment.update(RASP_OMVLL_SEED="1", RASP_OMVLL_SEED_MODE="default")
+        assert_refused(self.launch(digest))
+        retry = subprocess.run(
+            [
+                sys.executable,
+                "-E",
+                "-s",
+                "-B",
+                str(SCRIPT),
+                "freeze",
+                "--state",
+                str(self.state),
+                "--previous-sha256",
+                digest,
+                "--yaml",
+                str(self.yaml),
+                "--config",
+                str(self.config),
+                "--plugin",
+                str(self.plugin),
+                "--pythonpath",
+                str(self.pythonpath),
+            ],
+            cwd=self.root,
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert_refused(retry)
+
+    def testLauncher_whenBootstrapHelperBytecodeIsStale_readsOwnedSource(self) -> None:
+        bootstrap = self.root / "bytecode-bootstrap"
+        bootstrap.mkdir()
+        for name in ("omvll_launcher.py", "omvll_seed.py"):
+            shutil.copyfile(SCRIPT.with_name(name), bootstrap / name)
+        helper = bootstrap / "omvll_seed.py"
+        source = helper.read_bytes()
+        marker = self.root / "stale-helper-executed"
+        poison = f"open({str(marker)!r}, 'w').close()\n".encode()
+        helper.write_bytes(poison + b"#" * (len(source) - len(poison)))
+        info = helper.stat()
+        py_compile.compile(str(helper), doraise=True)
+        helper.write_bytes(source)
+        os.utime(helper, ns=(info.st_atime_ns, info.st_mtime_ns))
+        result = subprocess.run(
+            [sys.executable, "-E", "-s", "-B", str(bootstrap / SCRIPT.name), "--help"],
+            cwd=self.root,
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert marker.exists() is False
+
+    def testLauncher_whenHelperIsPreimported_refusesCachedModule(self) -> None:
+        code = (
+            "import sys,pathlib,runpy; sys.modules['omvll_seed']=pathlib; "
+            "sys.argv=[sys.argv[1],'--help']; runpy.run_path(sys.argv[0],run_name='__main__')"
+        )
+        result = subprocess.run(
+            [sys.executable, "-E", "-s", "-B", "-c", code, str(SCRIPT)],
+            cwd=self.root,
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert_refused(result)

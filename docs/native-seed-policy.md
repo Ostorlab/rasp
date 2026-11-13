@@ -44,6 +44,24 @@ configuration. Inherited `OMVLL_CONFIG`/`OMVLL_PYTHONPATH` must agree with the
 captured paths. Inherited seed/mode settings, if supplied, must agree with the
 frozen values; absent settings are supplied from the captured policy. The default
 mode passes an absent seed plus `default`, which the shared parser resolves to 1.
+An explicitly supplied seed together with `default` is invalid on initial
+configuration, reconfiguration and launch, even when the supplied seed is 1.
+
+The pinned plugin imports the config by its filename stem, not by exact file
+location. Validation therefore requires a single `.py` root and refuses dotted,
+reserved/preimported names and same-stem package/native/bytecode candidates before
+the child runs. It uses a standard file finder without executing custom config.
+Native suffix checks include foreign-ABI candidates rather than assuming the
+host interpreter's suffix list describes embedded Python3.10. The same checks
+cover candidates for the shared `omvll_seed` helper; its launcher bootstrap
+executes only the owned helper source, bypassing preimports and stale `.pyc`.
+Custom config dependencies remain trusted and outside this root-only check.
+Reserved names include CPython3.10.7's standard-module names (including platform
+and version-specific builtins), the plugin's known `sys`, `pathlib`, `omvll`
+preimports, and the launcher's loaded/builtin/frozen/stdlib names and names in
+the selected stdlib source directory. This is a fixed root-name reservation,
+not custom dependency discovery. Python3.14 controls do not establish actual
+embedded Python3.10 behavior; the genuine Apple load remains a CI gate.
 
 The default extracted dylib must match `omvll-xcode.dylib` in the archive already
 SHA-verified by CMake. Existing explicit `RASP_OMVLL_PLUGIN`,
@@ -57,8 +75,14 @@ profiles need separately approved immutable inputs and actual target validation.
 The launcher retains child argv, working directory and exit status without a
 shell. It rejects a second/different pass plugin and indirect response/config or
 working-directory arguments, whose contents/search boundary it cannot verify.
+Inherited `CCC_OVERRIDE_OPTIONS`, `CL` and `_CL_` are refused before the driver
+can rewrite its checked argv. The compiler child receives
+`CLANG_NO_DEFAULT_CONFIG=1`, disabling automatic Clang config files; explicit
+config-file arguments remain refused. These are targeted driver channels, not
+a complete compiler/process custody or dynamic-library-loader sandbox.
 It removes inherited Python import-path/home/startup injection from the compiler
-child and uses a fresh temporary bytecode-cache prefix with bytecode writing off.
+child, clears `PYTHONCASEOK`, and uses a fresh temporary bytecode-cache prefix
+with bytecode writing off.
 Actual embedded Python behavior remains an Apple validation gate. The launcher
 does not sandbox custom config or protect against an attacker controlling the
 build process and all its trusted files; hashes establish correspondence within
