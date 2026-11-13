@@ -120,6 +120,12 @@ Server authorization, challenge expiry and replay defense remain server-owned.
 
 ## What are the ownership, bounds and durability limits?
 
+**The companion bounds native ownership and resources**: four namespaces, 16 handles,
+eight retained requests/callback leases, two physical jobs, one auth prompt,
+a 131072-byte registry ceiling and a fixed 8192-byte manifest.
+Durable progress depends on the required platform acknowledgments; ambiguous
+publication or effects remain UNKNOWN.
+
 One constinit, explicitly `clang::no_destroy` process-stable registry owns the
 single service, native full-entry read/write lock, active pointer, never-reset
 optional service and one 4096-byte child adapter reservation. Its complete `sizeof`
@@ -149,10 +155,11 @@ Reclaimed data-arena capacity does not permit uncontrolled allocation or relabel
 Java/Objective-C objects as payload. SDK-created carriers, reference tables, copies
 and allocator metadata remain charged to their applicable limits.
 
-SHA-256 uses the exact pinned TF-PSA-Crypto stateless primitive, without PSA wrapper
-heap copies, key slots or RNG initialization; its existing configuration is
-unchanged. Each signing job arena has typed disjoint 4960-byte message, 2104-byte
-gate, 32-byte hash, 72-byte DER and 1024-byte context fields.
+SHA-256 uses the exact pinned TF-PSA-Crypto (the Mbed TLS project's PSA Crypto
+library) stateless primitive, without PSA wrapper heap copies, key slots or RNG
+initialization; its existing configuration is unchanged. Each signing job arena
+has typed disjoint 4960-byte message, 2104-byte gate, 32-byte hash, 72-byte DER and
+1024-byte context fields.
 
 Each job uses an explicit two-alternative variant for file or signing phases; its
 finite discriminator counts as metadata. File bytes never alias a live typed
@@ -196,9 +203,12 @@ Main-thread open remains refused, and replacement/detach waits for quiescence.
 CLOSE returns DRAINING while jobs, OS/UI continuations, native entries, callback
 leases or cleanup retain ownership. Repeated control observes progress; a hung
 borrower can keep the same bounded owner draining indefinitely. Replacement opens
-are refused. CLOSED means quiescence, not key deletion. Release/close retain live
-persistent keys. Cancellation cannot retract an already delivered signature or
-guarantee a physical primitive was aborted; results report actual/unknown effects.
+are refused.
+
+CLOSED means quiescence, not key deletion. Release/close retain live persistent keys.
+
+Cancellation cannot retract an already delivered signature or guarantee a physical
+primitive was aborted; results report actual/unknown effects.
 
 Persistent KeyIds and installation generations use full 16-byte CSPRNG outputs.
 Key allocation checks current records and rejects after at most four zero/collision
