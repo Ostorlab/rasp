@@ -18,13 +18,9 @@
 #include <array>
 #include <bit>
 #include <mach-o/dyld.h>
-#include <mach/kern_return.h>
-#include <mach/mach_init.h>
-#include <mach/mach_port.h>
-#include <mach/mach_vm.h>
-#include <mach/vm_region.h>
 
 #include "util/provenance_bundle.h"
+#include "util/provenance_vm.h"
 #endif
 
 namespace rasp::ios::checks {
@@ -123,44 +119,11 @@ Result<Declared> declared(const ProvenanceImage& image, Budget& budget) {
 #ifdef __APPLE__
 /// Copies only exact own-task bytes; VM errors are unknown/error, never benign.
 Result<void> copy_memory(std::uintptr_t address, std::span<std::uint8_t> bytes, Budget& budget) {
-  if (!budget.step()) {
-    return std::unexpected(budget.error());
-  }
-  if (address == 0 || bytes.size() > std::numeric_limits<std::uintptr_t>::max() - address) {
-    return std::unexpected(Error::kMalformed);
-  }
-  mach_vm_size_t copied = 0;
-  const auto result = mach_vm_read_overwrite(mach_task_self(), address, bytes.size(),
-                                             std::bit_cast<mach_vm_address_t>(bytes.data()), &copied);
-  if (result != KERN_SUCCESS || copied != bytes.size()) {
-    return std::unexpected(result == KERN_PROTECTION_FAILURE ? Error::kDenied : Error::kIo);
-  }
-  return {};
+  return util::provenance_vm::copy<util::provenance_vm::Native>(address, bytes, budget);
 }
 /// Returns at most the current readable region extent, releasing every returned port right exactly once.
 Result<std::size_t> region_bytes(std::uintptr_t pointer, Budget& budget) {
-  if (!budget.step()) {
-    return std::unexpected(budget.error());
-  }
-  mach_vm_address_t address = pointer;
-  mach_vm_size_t size = 0;
-  vm_region_basic_info_data_64_t info{};
-  auto count = static_cast<mach_msg_type_number_t>(VM_REGION_BASIC_INFO_COUNT_64);
-  mach_port_t object = MACH_PORT_NULL;
-  const auto result = mach_vm_region(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64,
-                                     static_cast<vm_region_info_t>(static_cast<void*>(&info)), &count, &object);
-  bool released = true;
-  if (object != MACH_PORT_NULL && object != MACH_PORT_DEAD) {
-    released = mach_port_deallocate(mach_task_self(), object) == KERN_SUCCESS;
-  }
-  if (!released) {
-    return std::unexpected(Error::kCleanup);
-  }
-  if (result != KERN_SUCCESS || count != VM_REGION_BASIC_INFO_COUNT_64 || address > pointer ||
-      size > UINT64_MAX - address || pointer >= address + size || (info.protection & VM_PROT_READ) == 0) {
-    return std::unexpected(Error::kIo);
-  }
-  return static_cast<std::size_t>(std::min<std::uint64_t>(256, address + size - pointer));
+  return util::provenance_vm::region_bytes<util::provenance_vm::Native>(pointer, budget);
 }
 /// Copies bounded dyld-owned C-string bytes without assuming a valid borrowed pointer or page boundary.
 Result<std::string> copied_name(std::uintptr_t pointer, Budget& budget) {

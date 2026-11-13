@@ -181,3 +181,11 @@ if(TARGET rasp_android_capabilities_test)
   add_test(NAME ProvenanceIntegration.historyAndPolicy COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/verify_integration.py ${PROJECT_SOURCE_DIR}/..)
 endif()
+
+# The same production VM validation, with only typed kernel I/O replaced. This is not an Apple SDK probe.
+if(NOT RASP_PROVENANCE_COMPILE_ONLY)
+  add_executable(rasp_ios_provenance_vm_test ios_provenance_vm_test.cpp)
+  target_include_directories(rasp_ios_provenance_vm_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src ${PROJECT_SOURCE_DIR}/posix/include)
+  target_link_libraries(rasp_ios_provenance_vm_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_ios_provenance_vm_test)
+endif()

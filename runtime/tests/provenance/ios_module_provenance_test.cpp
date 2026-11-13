@@ -167,4 +167,20 @@ TEST(IosModuleProvenance, collect_whenAggregateHeaderBudgetExceeded_rejectsCompl
   EXPECT_EQ(result[0].status, rasp::Status::kError);
   EXPECT_NE(rasp::describe(result[1]).find("reason=input_limit"), std::string::npos);
 }
+#ifdef __APPLE__
+TEST(IosModuleProvenance, native_whenPublicAdaptersReadOwnMainImage_returnsOwnedHeaderAndName) {
+  const auto calls = rasp::ios::checks::native_dyld_calls();
+  ASSERT_NE(calls.count, nullptr);
+  ASSERT_NE(calls.image, nullptr);
+  rasp::provenance::Budget budget(clock);
+  const auto count = calls.count(calls.context, budget);
+  ASSERT_TRUE(count.has_value());
+  ASSERT_GT(*count, 0U);
+  const auto copied = calls.image(calls.context, 0, budget);
+  ASSERT_TRUE(copied.has_value());
+  EXPECT_NE(copied->header_address, 0U);
+  EXPECT_FALSE(copied->name.empty());
+  EXPECT_GE(copied->bytes.size(), 32U);
+}
+#endif
 }  // namespace

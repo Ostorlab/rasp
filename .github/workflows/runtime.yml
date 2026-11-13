@@ -182,6 +182,13 @@ jobs:
         run: |
           /bin/bash --version
           /bin/bash ./tests/android/context_bridge/run.sh
+      - name: Check public own-task VM adapters with the actual macOS SDK and kernel
+        run: |
+          cmake --preset host -B "$RUNNER_TEMP/ios-vm-host"
+          cmake --build "$RUNNER_TEMP/ios-vm-host" --parallel 2 \
+            --target rasp_ios_provenance_vm_test rasp_ios_module_provenance_test
+          ctest --test-dir "$RUNNER_TEMP/ios-vm-host" --parallel 2 --output-on-failure \
+            --no-tests=error -R '^(IosVm|IosModuleProvenance)'
       - name: Configure
         # pipefail so a cmake failure fails this step with its own error, rather than tee masking it as exit 0
         # and the failure resurfacing later in Build or the canary with a misleading message.
@@ -223,6 +230,8 @@ jobs:
           test "$(otool -D "$binary" | tail -n 1)" = "@rpath/RaspRuntime.framework/RaspRuntime"
           ./tests/ios/capture/check_framework.sh build/ios/ios/RaspRuntime.framework "$RUNNER_TEMP/ios-capture-release"
           xcrun vtool -show-build "$binary" | grep -qxE ' *minos 12\.0'
+          nm -u "$binary" | awk '{ print $NF }' > "$RUNNER_TEMP/ios-vm-imports.txt"
+          test -z "$(grep -xE '_mach_vm_(read_overwrite|region)' "$RUNNER_TEMP/ios-vm-imports.txt")"
           test -z "$(otool -L "$binary" | grep 'libc++')"
       - name: Check the framework calls no forbidden function
         run: |
@@ -308,6 +317,8 @@ jobs:
             framework="$stage/rasp_packer/ios/resources/RaspRuntime.framework"
             binary="$framework/RaspRuntime"
             ./tests/ios/capture/check_framework.sh "$framework" "$stage/abi"
+            nm -u "$binary" | awk '{ print $NF }' > "$stage/vm-imports.txt"
+            test -z "$(grep -xE '_mach_vm_(read_overwrite|region)' "$stage/vm-imports.txt")"
             xcrun vtool -show-build "$binary" | grep -qxE ' *minos 12\.0'
             python3 tools/capabilities.py verify "$binary" ios arm64 12.0
             "$RUNNER_TEMP/build-tools/bin/python" tools/verify_packaging.py "$binary" ios arm64

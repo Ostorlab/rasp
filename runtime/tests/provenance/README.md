@@ -93,3 +93,12 @@ unchanged 125 semantic rule blocks, 13/7 selector digests, and the original
 3 Android/8 iOS exports. The Apple workflow checks actual SDK sources, obfuscation,
 framework exports/minOS12, packer consumer and UIKit hosts, including pinned PL05.
 Linux/portable fixtures do not close Apple SDK or physical-device gates.
+
+The public iOS VM binding uses `vm_read_overwrite` and `vm_region_64` from the
+supported SDK headers, with 64-bit address/size assertions and exact own-task
+copy lengths. `ios_provenance_vm_test.cpp` runs the same production validation
+with controlled kernel returns, plus real guarded-page kernel reads on Linux
+and Apple. Linux checks are portable I/O evidence, not Apple SDK or Darwin ABI
+proof. The Apple job separately runs real macOS VM/dyld access and builds the
+actual iPhoneOS framework; private `mach_vm_*` imports are rejected. Every valid
+region object right is released even on errors, before returning failed data.
