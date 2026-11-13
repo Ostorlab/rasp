@@ -20,16 +20,15 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
-#include "apk/archive.h"
 #include "apk/location.h"
 #include "checks/debugger.h"
 #include "checks/hooks.h"
 #include "checks/root.h"
 #include "loader/loader_dex.h"
 #include "panic/end_process.h"
-#include "payload/assets.h"
 #include "payload/cipher.h"
 #include "payload/dex_store.h"
 #include "payload/key_schedule.h"

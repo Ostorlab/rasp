@@ -645,8 +645,9 @@ constexpr char kAnchor = 0;
 }  // namespace
 
 std::vector<Observation> integrity() {
-  static constexpr std::array kObfuscatedLiterals = {kTextHashSignal, kFileSource, kMemorySource, kTextSectionName,
-                                                     kConfigSectionName};
+  static constexpr std::array kObfuscatedLiterals = {
+      kTextHashSignal, kFileSource, kMemorySource, kTextSectionName, kConfigSectionName,
+  };
   rasp::util::anchor_literals(kObfuscatedLiterals);
   const std::optional<LoadedLibrary> library = find_own_library();
   if (!library || library->path.empty()) {
