@@ -88,7 +88,7 @@ bool is_valid_simple_name(std::string_view name, uint32_t dex_version) {
       std::size_t after = pos;
       uint32_t lo = mutf8::next_code_point(name, after);
       if (is_low_surrogate(lo)) {
-        cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+        cp = 0x10000U + ((cp - 0xD800U) << 10U) + (lo - 0xDC00U);
         pos = after;
       }
     }

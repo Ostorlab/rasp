@@ -117,12 +117,12 @@ class Validator {
 
   budget::Vector<Problem> run() {
     if (dex_.classes.size() > budget::kClasses) {
-      problem(kWholeFile, "DEX class compatibility limit exceeded");
+      problem(whole_file_, "DEX class compatibility limit exceeded");
       return std::move(problems_);
     }
 
     if (!supported_version(dex_.version)) {
-      problem(kWholeFile, budget::format("unsupported DEX version {} (use 35, 37, 38, 39 or 40)", dex_.version));
+      problem(whole_file_, budget::format("unsupported DEX version {} (use 35, 37, 38, 39 or 40)", dex_.version));
     }
     budget::UnorderedSet<std::string_view> types;
     for (const ClassDef& c : dex_.classes) {
@@ -159,7 +159,7 @@ class Validator {
   enum Check : uint8_t { kString, kFieldType, kClassType, kArrayType, kProto, kMember, kChecks };
   bool first_check(Check check, const void* shared) { return checked_[check].insert(shared).second; }
 
-  static inline const budget::String kWholeFile{budget::Allocator<char>{nullptr}};
+  const budget::String whole_file_{budget::Allocator<char>{nullptr}};
 
   // ----- names, descriptors, references -----
 

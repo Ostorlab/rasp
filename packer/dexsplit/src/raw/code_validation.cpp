@@ -75,7 +75,7 @@ std::expected<CodeStructure, ParseError> validate_code_structure(const CodeItem&
   budget::Vector<uint8_t> boundary(words.size() + 1, 0);
   for (uint32_t at = 0; at < size;) {
     budget::visit();
-    if ((words[at] & 255) == 0 && words[at] != 0) {
+    if ((words[at] & 255U) == 0U && words[at] != 0U) {
       auto length = payload_units(words, at);
       if (!length || *length > size - at || at % 2 != 0) {
         return fail("invalid code payload boundary", at);
@@ -89,7 +89,7 @@ std::expected<CodeStructure, ParseError> validate_code_structure(const CodeItem&
         for (uint32_t i = 0; i < words[at + 1]; ++i) {
           budget::visit();
           uint32_t pos = at + 2 + 2 * i;
-          int32_t key = static_cast<int32_t>(words[pos] | (uint32_t{words[pos + 1]} << 16));
+          int32_t key = static_cast<int32_t>(words[pos] | (uint32_t{words[pos + 1U]} << 16U));
           if (key <= previous) {
             return fail("unsorted sparse-switch payload keys", at);
           }
@@ -97,7 +97,7 @@ std::expected<CodeStructure, ParseError> validate_code_structure(const CodeItem&
         }
       }
       if (words[at] == PACKED_SWITCH_PAYLOAD && words[at + 1] != 0) {
-        int32_t first = static_cast<int32_t>(words[at + 2] | (uint32_t{words[at + 3]} << 16));
+        int32_t first = static_cast<int32_t>(words[at + 2U] | (uint32_t{words[at + 3U]} << 16U));
         if (int64_t{first} + words[at + 1] - 1 > INT32_MAX) {
           return fail("packed-switch payload keys overflow", at);
         }
@@ -159,7 +159,7 @@ std::expected<CodeStructure, ParseError> validate_code_structure(const CodeItem&
         uint32_t first = payload + (ident == PACKED_SWITCH_PAYLOAD ? 4 : 2 + 2 * count);
         for (uint32_t i = 0; i < count; ++i) {
           budget::visit();
-          int32_t offset = static_cast<int32_t>(words[first + 2 * i] | (uint32_t{words[first + 2 * i + 1]} << 16));
+          int32_t offset = static_cast<int32_t>(words[first + 2U * i] | (uint32_t{words[first + 2U * i + 1U]} << 16U));
           if (!target(at, offset)) {
             return fail("switch case target is not an instruction boundary", at);
           }

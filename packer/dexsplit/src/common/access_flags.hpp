@@ -8,7 +8,8 @@ namespace dexsplit {
 /** Bitmask of DEX access flags, applicable to classes, methods, and fields.
  *  Values mirror the DEX specification (JVMS §4.1, §4.6, §4.7 extended by
  *  the Android runtime for Annotation, Enum, Constructor, and DeclaredSynchronized). */
-enum class AccessFlags : uint32_t {
+enum class [[clang::flag_enum]] AccessFlags : uint32_t {
+  None = 0,
   Public = 0x0001,
   Private = 0x0002,
   Protected = 0x0004,

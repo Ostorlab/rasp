@@ -188,7 +188,7 @@ std::span<const Instruction> AnalysisContextImpl::get_instructions(DexIndex dex_
   for (uint32_t i = 0; i < units; ++i) {
     budget::visit();
     const auto at = start + 2 * static_cast<std::size_t>(i);
-    words[i] = static_cast<uint16_t>(bytes[at] | (uint16_t{bytes[at + 1]} << 8));
+    words[i] = static_cast<uint16_t>(bytes[at] | (uint32_t{bytes[at + 1U]} << 8U));
   }
   auto [ins_it, ok] = slot.instructions_cache.emplace(code_off, decode_instructions(words));
   return ins_it->second;
@@ -201,7 +201,7 @@ const budget::String& AnalysisContextImpl::proto_descriptor_of(DexIndex dex_idx,
     return kEmpty;
   }
 
-  uint64_t key = (static_cast<uint64_t>(dex_idx.value) << 32) | proto_idx;
+  uint64_t key = (static_cast<uint64_t>(dex_idx.value) << 32U) | proto_idx;
   {
     std::lock_guard<std::mutex> lock(proto_cache_mutex);
     if (auto it = proto_descriptor_cache.find(key); it != proto_descriptor_cache.end()) {

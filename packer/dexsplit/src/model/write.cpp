@@ -27,8 +27,10 @@ using detail::has;
 // on limits validate() can't see (pool sizes) or on internal errors.  Like
 // the reader it reports them with an exception that write() turns into an
 // Error.
-struct WriteFailure {
+struct WriteFailure : std::exception {
   Error error;
+  explicit WriteFailure(Error value) : error(std::move(value)) {}
+  const char* what() const noexcept override { return error.message.c_str(); }
 };
 
 [[noreturn]] void fail(Error::Kind kind, budget::String message) {
@@ -603,8 +605,8 @@ uint32_t signed_size(int64_t v) {
   uint32_t n = 1;
   while (n < 8) {
     dexsplit::budget::visit();
-    int64_t lo = -(int64_t{1} << (8 * n - 1));
-    int64_t hi = (int64_t{1} << (8 * n - 1)) - 1;
+    int64_t lo = -static_cast<int64_t>(uint64_t{1} << (8U * n - 1U));
+    int64_t hi = static_cast<int64_t>(uint64_t{1} << (8U * n - 1U)) - 1;
     if (v >= lo && v <= hi) {
       break;
     }
@@ -658,7 +660,7 @@ class ValueEncoder {
 
  private:
   static void header(raw::ByteWriter& out, uint8_t type, uint32_t arg) {
-    out.u8(static_cast<uint8_t>((arg << 5) | type));
+    out.u8(static_cast<uint8_t>((arg << 5U) | type));
   }
   static void bytes(raw::ByteWriter& out, std::pair<uint64_t, uint32_t> encoded) {
     auto [v, n] = encoded;
@@ -685,7 +687,7 @@ class ValueEncoder {
     auto [bits, width] = encoded;
     auto type = static_cast<uint8_t>(tag);
     uint32_t n = width;
-    while (n > 1 && ((bits >> (8 * (width - n))) & 0xFF) == 0) {
+    while (n > 1U && ((bits >> (8U * (width - n))) & 0xFFU) == 0U) {
       dexsplit::budget::visit();
       --n;
     }
@@ -922,9 +924,9 @@ raw::InsnFields CodeEncoder::fields_of(const Insn& insn, uint32_t item) {
           } else if (x.value >= -32768 && x.value <= 32767) {
             f.opcode = 0x13;
             f.literal = x.value;
-          } else if ((x.value & 0xFFFF) == 0) {
+          } else if ((std::bit_cast<uint32_t>(x.value) & 0xFFFFU) == 0U) {
             f.opcode = 0x15;
-            f.literal = static_cast<int16_t>(x.value >> 16);
+            f.literal = static_cast<int16_t>(std::bit_cast<uint32_t>(x.value) >> 16U);
           } else {
             f.opcode = 0x14;
             f.literal = x.value;
@@ -934,9 +936,9 @@ raw::InsnFields CodeEncoder::fields_of(const Insn& insn, uint32_t item) {
           if (x.value >= -32768 && x.value <= 32767) {
             f.opcode = 0x16;
             f.literal = x.value;
-          } else if ((x.value & 0xFFFFFFFFFFFFLL) == 0) {
+          } else if ((std::bit_cast<uint64_t>(x.value) & UINT64_C(0xFFFFFFFFFFFF)) == 0U) {
             f.opcode = 0x19;
-            f.literal = static_cast<int16_t>(x.value >> 48);
+            f.literal = static_cast<int16_t>(std::bit_cast<uint64_t>(x.value) >> 48U);
           } else if (x.value >= INT32_MIN && x.value <= INT32_MAX) {
             f.opcode = 0x17;
             f.literal = x.value;
@@ -1209,12 +1211,12 @@ CodeOut CodeEncoder::encode(const MethodDef& method, const Code& code, bool debu
       payloads.push_back(raw::FILL_ARRAY_DATA_PAYLOAD);
       payloads.push_back(fill->element_width);
       payloads.push_back(static_cast<uint16_t>(count));
-      payloads.push_back(static_cast<uint16_t>(count >> 16));
+      payloads.push_back(static_cast<uint16_t>(count >> 16U));
       for (std::size_t b = 0; b < fill->data.size(); b += 2) {
         dexsplit::budget::visit();
         uint16_t lo = fill->data[b];
-        uint16_t hi = b + 1 < fill->data.size() ? fill->data[b + 1] : 0;
-        payloads.push_back(static_cast<uint16_t>(lo | (hi << 8)));
+        uint32_t hi = b + 1 < fill->data.size() ? fill->data[b + 1] : 0;
+        payloads.push_back(static_cast<uint16_t>(lo | (hi << 8U)));
       }
       slots[k].fields.offset = static_cast<int32_t>(payload_addr[k] - addr[s.item]);
       continue;
@@ -1228,7 +1230,7 @@ CodeOut CodeEncoder::encode(const MethodDef& method, const Code& code, bool debu
     auto rel = [&](Label l) { return static_cast<uint32_t>(int64_t{label_addr(l)} - here); };
     auto put32 = [&](uint32_t v) {
       payloads.push_back(static_cast<uint16_t>(v));
-      payloads.push_back(static_cast<uint16_t>(v >> 16));
+      payloads.push_back(static_cast<uint16_t>(v >> 16U));
     };
     const uint64_t n = cases.size();
     const uint64_t range = n == 0 ? 0 : uint64_t(int64_t{cases.back().key} - cases.front().key) + 1;
@@ -2215,7 +2217,7 @@ budget::Vector<uint8_t> Writer::run() {
     out_.put_u32(at_proto + 8, proto_params_off[i]);
   }
   auto put_u16_pair = [&](std::size_t at_item, uint32_t lo, uint32_t hi) {
-    out_.put_u32(at_item, (lo & 0xFFFF) | (hi << 16));
+    out_.put_u32(at_item, (lo & 0xFFFFU) | (hi << 16U));
   };
   for (std::size_t i = 0; i < fields.size(); ++i) {
     dexsplit::budget::visit();
@@ -2308,7 +2310,7 @@ budget::Vector<uint8_t> Writer::run() {
   uint32_t checksum = *raw::parser::compute_checksum(bytes);
   for (int i = 0; i < 4; ++i) {
     dexsplit::budget::visit();
-    bytes[8 + i] = static_cast<uint8_t>(checksum >> (8 * i));
+    bytes[8U + i] = static_cast<uint8_t>(checksum >> (8U * i));
   }
   return bytes;
 }

@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <bit>
 
 #include "analysis/instruction.hpp"
+#include "common/access_flags.hpp"
 #include "common/budget.hpp"
 #include "raw/byte_writer.hpp"
 #include "raw/mutf8.hpp"
@@ -177,5 +179,122 @@ TEST(Raw, allocate_whenBothPoolsOutliveScope_preservesChargesAndReleasesRetained
   EXPECT_FALSE(owner.expired());
   retained.reset();
   EXPECT_TRUE(owner.expired());
+}
+}  // namespace dexsplit::test
+
+namespace dexsplit::test {
+TEST(Raw, sleb_whenSignedBoundaryValues_preservesExactBytesAndSignExtension) {
+  budget::Scope scope;
+  const std::array<int32_t, 8> values{INT32_MIN, -65, -64, -1, 0, 63, 64, INT32_MAX};
+  const std::array<budget::Vector<uint8_t>, 8> expected{{{0x80, 0x80, 0x80, 0x80, 0x78},
+                                                         {0xbf, 0x7f},
+                                                         {0x40},
+                                                         {0x7f},
+                                                         {0x00},
+                                                         {0x3f},
+                                                         {0xc0, 0x00},
+                                                         {0xff, 0xff, 0xff, 0xff, 0x07}}};
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    raw::ByteWriter writer;
+    writer.sleb128(values[i]);
+    EXPECT_EQ(writer.bytes(), expected[i]);
+    uint32_t offset = 0;
+    const auto value = raw::parse_utils::read_sleb128(writer.bytes(), offset);
+    ASSERT_TRUE(value.has_value());
+    EXPECT_EQ(*value, values[i]);
+    EXPECT_EQ(offset, expected[i].size());
+  }
+  raw::ByteWriter writer;
+  writer.uleb128(UINT32_MAX);
+  EXPECT_EQ(writer.bytes(), (budget::Vector<uint8_t>{0xff, 0xff, 0xff, 0xff, 0x0f}));
+}
+TEST(Raw, opcode_whenNegativeLiteralsAndWideBitPatterns_roundTripsGoldenWords) {
+  budget::Scope scope;
+  const std::array<int64_t, 4> literals{-8, -1, 0, 7};
+  const std::array<uint16_t, 4> words{0x8f12, 0xff12, 0x0f12, 0x7f12};
+  for (std::size_t i = 0; i < literals.size(); ++i) {
+    const std::array<uint16_t, 1> input{words[i]};
+    auto decoded = raw::decode_insn(input, 0);
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_EQ(decoded->a, 15U);
+    EXPECT_EQ(decoded->literal, literals[i]);
+    budget::Vector<uint16_t> output;
+    EXPECT_TRUE(raw::encode_insn(*decoded, output));
+    EXPECT_EQ(output, (budget::Vector<uint16_t>{words[i]}));
+  }
+  const std::array<uint16_t, 5> wide{0x0018, 0xcdef, 0x89ab, 0x4567, 0x8123};
+  auto decoded = raw::decode_insn(wide, 0);
+  ASSERT_TRUE(decoded.has_value());
+  EXPECT_EQ(std::bit_cast<uint64_t>(decoded->literal), UINT64_C(0x8123456789abcdef));
+  budget::Vector<uint16_t> output;
+  EXPECT_TRUE(raw::encode_insn(*decoded, output));
+  EXPECT_EQ(output, (budget::Vector<uint16_t>(wide.begin(), wide.end())));
+}
+TEST(Raw, encodedValue_whenNegativeAndDoubleBits_preservesExactSignedInterpretation) {
+  budget::Scope scope;
+  for (uint32_t size = 1; size <= 8; ++size) {
+    budget::Vector<uint8_t> input(size + 1, 0xff);
+    input[0] = static_cast<uint8_t>(0x06U + (size - 1U) * 32U);
+    uint32_t offset = 0;
+    const auto parsed = raw::parser::parse_encoded_value(input, offset);
+    ASSERT_TRUE(parsed.has_value());
+    const auto* integer = std::get_if<int64_t>(&parsed->value);
+    ASSERT_NE(integer, nullptr);
+    EXPECT_EQ(*integer, -1);
+    EXPECT_EQ(offset, input.size());
+  }
+  const std::array<uint8_t, 9> minimum{0xe6, 0, 0, 0, 0, 0, 0, 0, 0x80};
+  uint32_t offset = 0;
+  auto parsed = raw::parser::parse_encoded_value(minimum, offset);
+  ASSERT_TRUE(parsed.has_value());
+  const auto* integer = std::get_if<int64_t>(&parsed->value);
+  ASSERT_NE(integer, nullptr);
+  EXPECT_EQ(*integer, INT64_MIN);
+  const std::array<uint8_t, 2> negative_zero{0x11, 0x80};
+  offset = 0;
+  parsed = raw::parser::parse_encoded_value(negative_zero, offset);
+  ASSERT_TRUE(parsed.has_value());
+  const auto* real = std::get_if<double>(&parsed->value);
+  ASSERT_NE(real, nullptr);
+  EXPECT_EQ(std::bit_cast<uint64_t>(*real), UINT64_C(0x8000000000000000));
+}
+}  // namespace dexsplit::test
+
+namespace dexsplit::test {
+TEST(Raw, mutf8_whenSupplementaryBoundaryCodePoints_preservesGoldenSurrogateBytes) {
+  budget::Scope scope;
+  const std::array<std::string_view, 2> text{"\xF0\x90\x80\x80", "\xF4\x8F\xBF\xBF"};
+  const std::array<budget::Vector<uint8_t>, 2> golden{
+      {{0xed, 0xa0, 0x80, 0xed, 0xb0, 0x80}, {0xed, 0xaf, 0xbf, 0xed, 0xbf, 0xbf}}};
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    budget::Vector<uint8_t> encoded;
+    raw::mutf8::append_mutf8(text[i], encoded);
+    EXPECT_EQ(encoded, golden[i]);
+    encoded.insert(encoded.begin(), 2);
+    encoded.push_back(0);
+    auto decoded = raw::mutf8::decode_string_data(encoded, 0);
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_EQ(*decoded, text[i]);
+  }
+}
+}  // namespace dexsplit::test
+
+namespace dexsplit::test {
+TEST(Raw, encodedValue_whenDeclaredWidthExceedsItsType_refusesBeforePayloadShift) {
+  budget::Scope scope;
+  for (uint8_t tag : {0x20, 0x42, 0x84, 0x90}) {
+    std::array<uint8_t, 9> input{};
+    input[0] = tag;
+    uint32_t offset = 0;
+    auto result = raw::parser::parse_encoded_value(input, offset);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, raw::ParseError::Code::MalformedData);
+  }
+}
+TEST(Raw, accessFlags_whenNoBitsOrCombinedBits_areExplicitAndRetainDexValues) {
+  EXPECT_EQ(static_cast<uint32_t>(AccessFlags::None), 0U);
+  EXPECT_EQ(static_cast<uint32_t>(AccessFlags::Public | AccessFlags::Static), 9U);
+  EXPECT_TRUE(has_flag(AccessFlags::Public | AccessFlags::Static, AccessFlags::Static));
+  EXPECT_FALSE(has_flag(AccessFlags::None, AccessFlags::Public));
 }
 }  // namespace dexsplit::test

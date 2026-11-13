@@ -385,11 +385,11 @@ TEST(Model, read_whenUnusedMappedCodeIsMalformed_allNativeBoundariesRefuse) {
     ASSERT_NE(tries, 0U);
     auto set16 = [&](std::size_t at, uint16_t value) {
       bytes[at] = static_cast<uint8_t>(value);
-      bytes[at + 1] = static_cast<uint8_t>(value >> 8);
+      bytes[at + 1U] = static_cast<uint8_t>(value >> 8U);
     };
     auto set32 = [&](std::size_t at, uint32_t value) {
       set16(at, static_cast<uint16_t>(value));
-      set16(at + 2, static_cast<uint16_t>(value >> 16));
+      set16(at + 2U, static_cast<uint16_t>(value >> 16U));
     };
     for (uint32_t i = 0; i < header->class_defs_size; ++i) {
       for (uint32_t field : {20U, 24U, 28U}) {
@@ -480,6 +480,32 @@ TEST(Model, read_whenMappedDebugEndsOutsideRanges_allNativeBoundariesRefuse) {
       budget::Vector<std::span<const uint8_t>> buffers{bytes};
       EXPECT_EQ(AnalysisContext::from_dex_buffers(buffers).has_value(), valid);
     }
+  }
+}
+}  // namespace dexsplit::test
+
+namespace dexsplit::test {
+TEST(Model, roundTrip_whenSignedConstantsAndSpecialDoubles_preservesBitsAndStableWireBytes) {
+  for (uint64_t bits :
+       {UINT64_C(0x8000000000000000), UINT64_C(0xfff0000000000000), UINT64_C(0x7ff8123456789abc), UINT64_C(1)}) {
+    budget::Scope scope;
+    auto dex = feature_fixture(35);
+    auto& field = dex.classes.front().fields.front();
+    field.type = "D";
+    field.initial_value = model::Value{model::Value::Double{std::bit_cast<double>(bits)}};
+    auto& code = *dex.classes.front().methods.front().code;
+    code.items.insert(code.items.end() - 1, model::Insn{model::Const{0, INT32_MIN}});
+    code.items.insert(code.items.end() - 1, model::Insn{model::ConstWide{0, INT64_MIN}});
+    code.items.insert(code.items.end() - 1, model::Insn{model::ConstWide{0, INT64_C(-281474976710656)}});
+    auto bytes = model::write(dex);
+    ASSERT_TRUE(bytes.has_value()) << bytes.error().message;
+    auto reread = model::read(*bytes);
+    ASSERT_TRUE(reread.has_value()) << reread.error().message;
+    EXPECT_EQ(reread->classes.front().fields.front().initial_value, field.initial_value);
+    EXPECT_EQ(reread->classes.front().methods.front().code, dex.classes.front().methods.front().code);
+    auto stable = model::write(*reread);
+    ASSERT_TRUE(stable.has_value());
+    EXPECT_EQ(*stable, *bytes);
   }
 }
 }  // namespace dexsplit::test

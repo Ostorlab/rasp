@@ -267,7 +267,7 @@ constexpr std::array<OpcodeInfo, 256> detail::opcode_table = {{
 
 namespace {
 
-int32_t sext4(uint32_t v) { return (v & 0x8) ? static_cast<int32_t>(v | 0xFFFFFFF0u) : static_cast<int32_t>(v); }
+int32_t sext4(uint32_t v) { return (v & 0x8U) ? static_cast<int32_t>(v | 0xFFFFFFF0u) : static_cast<int32_t>(v); }
 
 ParseError bad_insn(uint32_t pos, const char* what) { return ParseError{ParseError::Code::InvalidOpcode, what, pos}; }
 
@@ -331,7 +331,7 @@ std::optional<uint64_t> payload_units(std::span<const uint16_t> insns, uint32_t 
         return std::nullopt;
       }
       uint64_t width = insns[pos + 1];
-      uint64_t count = insns[pos + 2] | (uint64_t{insns[pos + 3]} << 16);
+      uint64_t count = insns[pos + 2U] | (uint64_t{insns[pos + 3U]} << 16U);
       return 4 + (width * count + 1) / 2;
     }
     default:
@@ -343,14 +343,14 @@ std::expected<InsnFields, ParseError> decode_insn(std::span<const uint16_t> insn
   if (pos >= insns.size()) {
     return std::unexpected(bad_insn(pos, "instruction starts past the end of the code"));
   }
-  const uint16_t u0 = insns[pos];
+  const uint32_t u0 = insns[pos];
   InsnFields f;
-  f.opcode = static_cast<uint8_t>(u0 & 0xFF);
+  f.opcode = static_cast<uint8_t>(u0 & 0xFFU);
   const OpcodeInfo& info = opcode_info(f.opcode);
   if (info.format == Format::Unused) {
     return std::unexpected(bad_insn(pos, "unused opcode"));
   }
-  if (f.opcode == 0x00 && (u0 >> 8) != 0) {
+  if (f.opcode == 0x00U && (u0 >> 8U) != 0U) {
     return std::unexpected(bad_insn(pos, "payload where an instruction was expected"));
   }
   const uint32_t units = format_units(info.format);
@@ -359,9 +359,9 @@ std::expected<InsnFields, ParseError> decode_insn(std::span<const uint16_t> insn
   }
 
   auto u = [&](uint32_t i) -> uint32_t { return insns[pos + i]; };
-  const uint32_t aa = u0 >> 8;
-  const uint32_t a4 = (u0 >> 8) & 0xF;
-  const uint32_t b4 = u0 >> 12;
+  const uint32_t aa = u0 >> 8U;
+  const uint32_t a4 = (u0 >> 8U) & 0xFU;
+  const uint32_t b4 = u0 >> 12U;
   switch (info.format) {
     case Format::F10x:
     case Format::Unused:
@@ -402,13 +402,13 @@ std::expected<InsnFields, ParseError> decode_insn(std::span<const uint16_t> insn
       break;
     case Format::F23x:
       f.a = aa;
-      f.b = u(1) & 0xFF;
-      f.c = u(1) >> 8;
+      f.b = u(1U) & 0xFFU;
+      f.c = u(1U) >> 8U;
       break;
     case Format::F22b:
       f.a = aa;
-      f.b = u(1) & 0xFF;
-      f.literal = static_cast<int64_t>(u(1) >> 8) - ((u(1) >> 8) >= 128 ? 256 : 0);
+      f.b = u(1U) & 0xFFU;
+      f.literal = static_cast<int64_t>(u(1U) >> 8U) - ((u(1U) >> 8U) >= 128U ? 256U : 0U);
       break;
     case Format::F22t:
       f.a = a4;
@@ -430,19 +430,19 @@ std::expected<InsnFields, ParseError> decode_insn(std::span<const uint16_t> insn
       f.b = u(2);
       break;
     case Format::F30t:
-      f.offset = static_cast<int32_t>(u(1) | (u(2) << 16));
+      f.offset = static_cast<int32_t>(u(1U) | (u(2U) << 16U));
       break;
     case Format::F31t:
       f.a = aa;
-      f.offset = static_cast<int32_t>(u(1) | (u(2) << 16));
+      f.offset = static_cast<int32_t>(u(1U) | (u(2U) << 16U));
       break;
     case Format::F31i:
       f.a = aa;
-      f.literal = static_cast<int32_t>(u(1) | (u(2) << 16));
+      f.literal = static_cast<int32_t>(u(1U) | (u(2U) << 16U));
       break;
     case Format::F31c:
       f.a = aa;
-      f.index = u(1) | (u(2) << 16);
+      f.index = u(1U) | (u(2U) << 16U);
       break;
     case Format::F35c:
     case Format::F45cc: {
@@ -452,10 +452,10 @@ std::expected<InsnFields, ParseError> decode_insn(std::span<const uint16_t> insn
       }
       f.index = u(1);
       const uint16_t regs[5] = {
-          static_cast<uint16_t>(u(2) & 0xF),
-          static_cast<uint16_t>((u(2) >> 4) & 0xF),
-          static_cast<uint16_t>((u(2) >> 8) & 0xF),
-          static_cast<uint16_t>(u(2) >> 12),
+          static_cast<uint16_t>(u(2U) & 0xFU),
+          static_cast<uint16_t>((u(2U) >> 4U) & 0xFU),
+          static_cast<uint16_t>((u(2U) >> 8U) & 0xFU),
+          static_cast<uint16_t>(u(2U) >> 12U),
           static_cast<uint16_t>(a4),
       };
       for (uint32_t i = 0; i < f.a; ++i) {
@@ -478,8 +478,8 @@ std::expected<InsnFields, ParseError> decode_insn(std::span<const uint16_t> insn
       break;
     case Format::F51l:
       f.a = aa;
-      f.literal = static_cast<int64_t>(uint64_t{u(1)} | (uint64_t{u(2)} << 16) | (uint64_t{u(3)} << 32) |
-                                       (uint64_t{u(4)} << 48));
+      f.literal = static_cast<int64_t>(uint64_t{u(1U)} | (uint64_t{u(2U)} << 16U) | (uint64_t{u(3U)} << 32U) |
+                                       (uint64_t{u(4U)} << 48U));
       break;
   }
   return f;
@@ -487,14 +487,14 @@ std::expected<InsnFields, ParseError> decode_insn(std::span<const uint16_t> insn
 
 bool encode_insn(const InsnFields& f, budget::Vector<uint16_t>& out) {
   const OpcodeInfo& info = opcode_info(f.opcode);
-  auto fits_signed = [](int64_t v, int bits) {
-    int64_t lo = -(int64_t{1} << (bits - 1));
-    int64_t hi = (int64_t{1} << (bits - 1)) - 1;
+  auto fits_signed = [](int64_t v, uint32_t bits) {
+    int64_t lo = -static_cast<int64_t>(uint64_t{1} << (bits - 1U));
+    int64_t hi = static_cast<int64_t>(uint64_t{1} << (bits - 1U)) - 1;
     return v >= lo && v <= hi;
   };
-  auto unit0 = [&](uint32_t high) { return static_cast<uint16_t>(f.opcode | (high << 8)); };
-  auto lo16 = [](uint32_t v) { return static_cast<uint16_t>(v & 0xFFFF); };
-  auto hi16 = [](uint32_t v) { return static_cast<uint16_t>(v >> 16); };
+  auto unit0 = [&](uint32_t high) { return static_cast<uint16_t>(f.opcode | (high << 8U)); };
+  auto lo16 = [](uint32_t v) { return static_cast<uint16_t>(v & 0xFFFFU); };
+  auto hi16 = [](uint32_t v) { return static_cast<uint16_t>(v >> 16U); };
 
   uint16_t w[5] = {};
   switch (info.format) {
@@ -507,13 +507,13 @@ bool encode_insn(const InsnFields& f, budget::Vector<uint16_t>& out) {
       if (f.a > 0xF || f.b > 0xF) {
         return false;
       }
-      w[0] = unit0(f.a | (f.b << 4));
+      w[0U] = unit0(f.a | (f.b << 4U));
       break;
     case Format::F11n:
       if (f.a > 0xF || !fits_signed(f.literal, 4)) {
         return false;
       }
-      w[0] = unit0(f.a | ((static_cast<uint32_t>(f.literal) & 0xF) << 4));
+      w[0U] = unit0(f.a | ((static_cast<uint32_t>(f.literal) & 0xFU) << 4U));
       break;
     case Format::F11x:
       if (f.a > 0xFF) {
@@ -525,7 +525,7 @@ bool encode_insn(const InsnFields& f, budget::Vector<uint16_t>& out) {
       if (!fits_signed(f.offset, 8)) {
         return false;
       }
-      w[0] = unit0(static_cast<uint32_t>(f.offset) & 0xFF);
+      w[0U] = unit0(static_cast<uint32_t>(f.offset) & 0xFFU);
       break;
     case Format::F20t:
       if (!fits_signed(f.offset, 16)) {
@@ -568,34 +568,34 @@ bool encode_insn(const InsnFields& f, budget::Vector<uint16_t>& out) {
         return false;
       }
       w[0] = unit0(f.a);
-      w[1] = static_cast<uint16_t>(f.b | (f.c << 8));
+      w[1U] = static_cast<uint16_t>(f.b | (f.c << 8U));
       break;
     case Format::F22b:
       if (f.a > 0xFF || f.b > 0xFF || !fits_signed(f.literal, 8)) {
         return false;
       }
       w[0] = unit0(f.a);
-      w[1] = static_cast<uint16_t>(f.b | ((static_cast<uint32_t>(f.literal) & 0xFF) << 8));
+      w[1U] = static_cast<uint16_t>(f.b | ((static_cast<uint32_t>(f.literal) & 0xFFU) << 8U));
       break;
     case Format::F22t:
       if (f.a > 0xF || f.b > 0xF || !fits_signed(f.offset, 16)) {
         return false;
       }
-      w[0] = unit0(f.a | (f.b << 4));
+      w[0U] = unit0(f.a | (f.b << 4U));
       w[1] = lo16(static_cast<uint32_t>(f.offset));
       break;
     case Format::F22s:
       if (f.a > 0xF || f.b > 0xF || !fits_signed(f.literal, 16)) {
         return false;
       }
-      w[0] = unit0(f.a | (f.b << 4));
+      w[0U] = unit0(f.a | (f.b << 4U));
       w[1] = lo16(static_cast<uint32_t>(f.literal));
       break;
     case Format::F22c:
       if (f.a > 0xF || f.b > 0xF || f.index > 0xFFFF) {
         return false;
       }
-      w[0] = unit0(f.a | (f.b << 4));
+      w[0U] = unit0(f.a | (f.b << 4U));
       w[1] = lo16(f.index);
       break;
     case Format::F32x:
@@ -640,7 +640,7 @@ bool encode_insn(const InsnFields& f, budget::Vector<uint16_t>& out) {
       if (f.a > 5 || f.index > 0xFFFF || f.proto > 0xFFFF) {
         return false;
       }
-      uint16_t regs[5] = {};
+      uint32_t regs[5] = {};
       for (uint32_t i = 0; i < f.a; ++i) {
         dexsplit::budget::visit();
         if (f.args[i] > 0xF) {
@@ -648,9 +648,9 @@ bool encode_insn(const InsnFields& f, budget::Vector<uint16_t>& out) {
         }
         regs[i] = f.args[i];
       }
-      w[0] = unit0(regs[4] | (f.a << 4));
+      w[0U] = unit0(regs[4U] | (f.a << 4U));
       w[1] = lo16(f.index);
-      w[2] = static_cast<uint16_t>(regs[0] | (regs[1] << 4) | (regs[2] << 8) | (regs[3] << 12));
+      w[2U] = static_cast<uint16_t>(regs[0U] | (regs[1U] << 4U) | (regs[2U] << 8U) | (regs[3U] << 12U));
       w[3] = lo16(f.proto);
       break;
     }
@@ -672,7 +672,7 @@ bool encode_insn(const InsnFields& f, budget::Vector<uint16_t>& out) {
       w[0] = unit0(f.a);
       for (int i = 0; i < 4; ++i) {
         dexsplit::budget::visit();
-        w[1 + i] = static_cast<uint16_t>(v >> (16 * i));
+        w[1U + i] = static_cast<uint16_t>(v >> (16U * i));
       }
       break;
     }

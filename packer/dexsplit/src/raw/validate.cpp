@@ -15,8 +15,10 @@
 
 namespace dexsplit::raw {
 namespace {
-struct Failure {
+struct Failure : std::exception {
   ParseError error;
+  explicit Failure(ParseError value) : error(std::move(value)) {}
+  const char* what() const noexcept override { return error.message.c_str(); }
 };
 class Layout {
  public:

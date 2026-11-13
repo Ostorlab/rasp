@@ -72,7 +72,7 @@ budget::String join_regs(std::span<const uint16_t> regs) {
     }
     out += budget::format("v{}", regs[j]);
   }
-  out += "}";
+  out += '}';
   return out;
 }
 
@@ -176,18 +176,18 @@ static OperandWidth binary_op_width(uint8_t op) {
 
 // Decode format 35c argument registers.
 // count = (unit0 >> 12) & 0xf, G = (unit0 >> 8) & 0xf, C/D/E/F packed in unit2.
-static budget::Vector<uint16_t> decode_35c_regs(uint16_t unit0, uint16_t unit2) {
-  uint8_t count = static_cast<uint8_t>((unit0 >> 12) & 0xf);
-  uint8_t reg_g = static_cast<uint8_t>((unit0 >> 8) & 0xf);
+static budget::Vector<uint16_t> decode_35c_regs(uint32_t unit0, uint32_t unit2) {
+  uint8_t count = static_cast<uint8_t>((unit0 >> 12U) & 0xfU);
+  uint8_t reg_g = static_cast<uint8_t>((unit0 >> 8U) & 0xfU);
 
   budget::Vector<uint16_t> regs;
   regs.reserve(count);
 
   const uint8_t packed[5] = {
-      static_cast<uint8_t>(unit2 & 0xf),
-      static_cast<uint8_t>((unit2 >> 4) & 0xf),
-      static_cast<uint8_t>((unit2 >> 8) & 0xf),
-      static_cast<uint8_t>((unit2 >> 12) & 0xf),
+      static_cast<uint8_t>(unit2 & 0xfU),
+      static_cast<uint8_t>((unit2 >> 4U) & 0xfU),
+      static_cast<uint8_t>((unit2 >> 8U) & 0xfU),
+      static_cast<uint8_t>((unit2 >> 12U) & 0xfU),
       reg_g,
   };
   for (uint8_t i = 0; i < count && i < 5; ++i) {
@@ -200,7 +200,7 @@ static budget::Vector<uint16_t> decode_35c_regs(uint16_t unit0, uint16_t unit2) 
 
 // Decode format 3rc argument registers. count = AA (unit0 >> 8), first_reg = unit2.
 static budget::Vector<uint16_t> decode_3rc_regs(uint16_t unit0, uint16_t unit2) {
-  uint8_t count = static_cast<uint8_t>(unit0 >> 8);
+  uint8_t count = static_cast<uint8_t>(unit0 >> 8U);
   uint16_t first_reg = unit2;
 
   budget::Vector<uint16_t> regs;
@@ -222,13 +222,13 @@ static uint32_t payload_size(std::span<const uint16_t> insns, uint32_t pos) {
 
 static int32_t sex8(uint8_t v) { return static_cast<int32_t>(static_cast<int8_t>(v)); }
 static int32_t sex16(uint16_t v) { return static_cast<int32_t>(static_cast<int16_t>(v)); }
-static int32_t sex4(uint8_t v) { return (v & 0x8) ? static_cast<int32_t>(v | 0xfffffff0u) : v; }
+static int32_t sex4(uint8_t v) { return (v & 0x8U) ? static_cast<int32_t>(v | 0xfffffff0u) : v; }
 
 // Read a signed 32-bit value from two consecutive code units (little-endian within each).
 static int32_t read_s32(std::span<const uint16_t> insns, uint32_t pos) {
   uint32_t lo = insns[pos];
   uint32_t hi = insns[pos + 1];
-  return static_cast<int32_t>(lo | (hi << 16));
+  return static_cast<int32_t>(lo | (hi << 16U));
 }
 
 // Decode the packed/sparse switch payload pointed to by `payload_offset` (in
@@ -306,8 +306,8 @@ budget::Vector<Instruction> decode_instructions(std::span<const uint16_t> insns)
   while (pos < static_cast<uint32_t>(insns.size())) {
     dexsplit::budget::visit();
     uint16_t unit0 = insns[pos];
-    uint8_t op = static_cast<uint8_t>(unit0 & 0xff);
-    uint8_t hi = static_cast<uint8_t>(unit0 >> 8);
+    uint8_t op = static_cast<uint8_t>(unit0 & 0xffU);
+    uint8_t hi = static_cast<uint8_t>(unit0 >> 8U);
 
     // Payload pseudo-instructions: nop (op==0) with non-zero high byte
     if (op == 0x00 && hi != 0) {
@@ -329,8 +329,8 @@ budget::Vector<Instruction> decode_instructions(std::span<const uint16_t> insns)
       result.push_back(NopInstruction{base});
     } else if (op == 0x01 || op == 0x04 || op == 0x07) {
       // format 12x: B|A op → dest=A, src=B
-      uint8_t dest = hi & 0x0f;
-      uint8_t src = (hi >> 4) & 0x0f;
+      uint8_t dest = hi & 0x0fU;
+      uint8_t src = (static_cast<uint32_t>(hi) >> 4U) & 0x0fU;
       OperandWidth width = (op == 0x04) ? OperandWidth::Pair : OperandWidth::Single;
       result.push_back(MoveInstruction{base, dest, src, width});
     } else if (op == 0x02 || op == 0x05 || op == 0x08) {
@@ -354,37 +354,38 @@ budget::Vector<Instruction> decode_instructions(std::span<const uint16_t> insns)
       result.push_back(ReturnInstruction{base, hi, width});
     } else if (op == 0x12) {
       // const/4 format 11n: B|A op → dest=A, val=sign_extend(B,4)
-      result.push_back(ConstInstruction{base, static_cast<uint8_t>(hi & 0x0f),
-                                        sex4(static_cast<uint8_t>((hi >> 4) & 0x0f)), OperandWidth::Single});
+      result.push_back(ConstInstruction{base, static_cast<uint8_t>(hi & 0x0fU),
+                                        sex4(static_cast<uint8_t>((static_cast<uint32_t>(hi) >> 4U) & 0x0fU)),
+                                        OperandWidth::Single});
     } else if (op == 0x13) {
       // const/16 format 21s
       result.push_back(ConstInstruction{base, hi, sex16(unit1), OperandWidth::Single});
     } else if (op == 0x14) {
       // const format 31i
-      int32_t val = static_cast<int32_t>(static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16));
+      int32_t val = static_cast<int32_t>(static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16U));
       result.push_back(ConstInstruction{base, hi, val, OperandWidth::Single});
     } else if (op == 0x15) {
       // const/high16 format 21h
-      int64_t val = static_cast<int64_t>(static_cast<int32_t>(static_cast<uint32_t>(unit1) << 16));
+      int64_t val = static_cast<int64_t>(static_cast<int32_t>(static_cast<uint32_t>(unit1) << 16U));
       result.push_back(ConstInstruction{base, hi, val, OperandWidth::Single});
     } else if (op == 0x16) {
       result.push_back(ConstInstruction{base, hi, sex16(unit1), OperandWidth::Pair});
     } else if (op == 0x17) {
-      int32_t lo = static_cast<int32_t>(static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16));
+      int32_t lo = static_cast<int32_t>(static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16U));
       result.push_back(ConstInstruction{base, hi, lo, OperandWidth::Pair});
     } else if (op == 0x18) {
       // const-wide format 51l
-      uint64_t lo = static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16);
-      uint64_t hi64 = static_cast<uint32_t>(unit3) | (static_cast<uint32_t>(unit4) << 16);
-      result.push_back(ConstInstruction{base, hi, static_cast<int64_t>((hi64 << 32) | lo), OperandWidth::Pair});
+      uint64_t lo = static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16U);
+      uint64_t hi64 = static_cast<uint32_t>(unit3) | (static_cast<uint32_t>(unit4) << 16U);
+      result.push_back(ConstInstruction{base, hi, static_cast<int64_t>((hi64 << 32U) | lo), OperandWidth::Pair});
     } else if (op == 0x19) {
       // const-wide/high16 format 21h
       result.push_back(
-          ConstInstruction{base, hi, static_cast<int64_t>(static_cast<uint64_t>(unit1) << 48), OperandWidth::Pair});
+          ConstInstruction{base, hi, static_cast<int64_t>(static_cast<uint64_t>(unit1) << 48U), OperandWidth::Pair});
     } else if (op == 0x1a) {
       result.push_back(ConstStringInstruction{base, hi, unit1});
     } else if (op == 0x1b) {
-      uint32_t idx = static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16);
+      uint32_t idx = static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16U);
       result.push_back(ConstStringInstruction{base, hi, idx});
     } else if (op == 0x1c) {
       result.push_back(ConstClassInstruction{base, hi, unit1});
@@ -395,11 +396,12 @@ budget::Vector<Instruction> decode_instructions(std::span<const uint16_t> insns)
       result.push_back(TypeInstruction{base, unit1, hi, std::nullopt});
     } else if (op == 0x20 || op == 0x23) {
       // instance-of format 22c: A|B op CCCC → dest=A, src=B
-      result.push_back(
-          TypeInstruction{base, unit1, static_cast<uint8_t>(hi & 0x0f), static_cast<uint8_t>((hi >> 4) & 0x0f)});
+      result.push_back(TypeInstruction{base, unit1, static_cast<uint8_t>(hi & 0x0fU),
+                                       static_cast<uint8_t>((static_cast<uint32_t>(hi) >> 4U) & 0x0fU)});
     } else if (op == 0x21) {
       // array-length format 12x
-      result.push_back(UnaryOpInstruction{base, static_cast<uint8_t>(hi & 0x0f), static_cast<uint8_t>((hi >> 4) & 0x0f),
+      result.push_back(UnaryOpInstruction{base, static_cast<uint8_t>(hi & 0x0fU),
+                                          static_cast<uint8_t>((static_cast<uint32_t>(hi) >> 4U) & 0x0fU),
                                           OperandWidth::Single, OperandWidth::Single});
 
     } else if (op == 0x24) {
@@ -410,7 +412,7 @@ budget::Vector<Instruction> decode_instructions(std::span<const uint16_t> insns)
       result.push_back(FilledNewArrayInstruction{base, unit1, decode_3rc_regs(unit0, unit2)});
     } else if (op == 0x26) {
       // fill-array-data format 31t
-      int32_t off = static_cast<int32_t>(static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16));
+      int32_t off = static_cast<int32_t>(static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16U));
       result.push_back(FillArrayInstruction{base, hi, off});
     } else if (op == 0x27) {
       result.push_back(ThrowInstruction{base, hi});
@@ -420,11 +422,11 @@ budget::Vector<Instruction> decode_instructions(std::span<const uint16_t> insns)
     } else if (op == 0x29) {
       result.push_back(GotoInstruction{base, sex16(unit1)});
     } else if (op == 0x2a) {
-      int32_t off = static_cast<int32_t>(static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16));
+      int32_t off = static_cast<int32_t>(static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16U));
       result.push_back(GotoInstruction{base, off});
     } else if (op == 0x2b || op == 0x2c) {
       // packed-switch / sparse-switch format 31t
-      int32_t off = static_cast<int32_t>(static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16));
+      int32_t off = static_cast<int32_t>(static_cast<uint32_t>(unit1) | (static_cast<uint32_t>(unit2) << 16U));
       SwitchInstruction sw{base, off, hi, /*is_packed=*/op == 0x2b, {}};
       decode_switch_payload(insns, base.offset, off, sw);
       result.push_back(std::move(sw));
@@ -432,24 +434,25 @@ budget::Vector<Instruction> decode_instructions(std::span<const uint16_t> insns)
       // format 23x: AA op CC BB → dest=AA, src_a=BB, src_b=CC
       OperandWidth sw = (op >= 0x2f) ? OperandWidth::Pair : OperandWidth::Single;
       result.push_back(
-          CompareInstruction{base, hi, static_cast<uint8_t>(unit1 & 0xff), static_cast<uint8_t>(unit1 >> 8), sw});
+          CompareInstruction{base, hi, static_cast<uint8_t>(unit1 & 0xffU), static_cast<uint8_t>(unit1 >> 8U), sw});
     } else if (op >= 0x32 && op <= 0x37) {
       // if-* format 22t: A|B op CCCC
-      result.push_back(
-          IfInstruction{base, sex16(unit1), static_cast<uint8_t>(hi & 0x0f), static_cast<uint8_t>((hi >> 4) & 0x0f)});
+      result.push_back(IfInstruction{base, sex16(unit1), static_cast<uint8_t>(hi & 0x0fU),
+                                     static_cast<uint8_t>((static_cast<uint32_t>(hi) >> 4U) & 0x0fU)});
     } else if (op >= 0x38 && op <= 0x3d) {
       // if-*z format 21t: AA op BBBB
       result.push_back(IfZeroInstruction{base, sex16(unit1), hi});
     } else if (op >= 0x44 && op <= 0x51) {
       // aget/aput format 23x: AA op CC BB
       OperandWidth width = (op == 0x45 || op == 0x4c) ? OperandWidth::Pair : OperandWidth::Single;
-      result.push_back(ArrayOpInstruction{base, hi, static_cast<uint8_t>(unit1 & 0xff),
-                                          static_cast<uint8_t>(unit1 >> 8), op >= 0x4b, width});
+      result.push_back(ArrayOpInstruction{base, hi, static_cast<uint8_t>(unit1 & 0xffU),
+                                          static_cast<uint8_t>(unit1 >> 8U), op >= 0x4bU, width});
     } else if (op >= 0x52 && op <= 0x5f) {
       // iget/iput format 22c: A|B op CCCC
       OperandWidth width = (op == 0x53 || op == 0x5a) ? OperandWidth::Pair : OperandWidth::Single;
-      result.push_back(FieldInstruction{base, unit1, static_cast<uint8_t>(hi & 0x0f),
-                                        static_cast<uint8_t>((hi >> 4) & 0x0f), false, op >= 0x59, width});
+      result.push_back(FieldInstruction{base, unit1, static_cast<uint8_t>(hi & 0x0fU),
+                                        static_cast<uint8_t>((static_cast<uint32_t>(hi) >> 4U) & 0x0fU), false,
+                                        op >= 0x59U, width});
     } else if (op >= 0x60 && op <= 0x6d) {
       // sget/sput format 21c: AA op BBBB
       OperandWidth width = (op == 0x61 || op == 0x68) ? OperandWidth::Pair : OperandWidth::Single;
@@ -462,8 +465,8 @@ budget::Vector<Instruction> decode_instructions(std::span<const uint16_t> insns)
       result.push_back(InvokeInstruction{base, unit1, decode_3rc_regs(unit0, unit2)});
     } else if (op >= 0x7b && op <= 0x8f) {
       // unary ops format 12x: B|A op → dest=A, src=B
-      uint8_t dest = static_cast<uint8_t>(hi & 0x0f);
-      uint8_t src = static_cast<uint8_t>((hi >> 4) & 0x0f);
+      uint8_t dest = static_cast<uint8_t>(hi & 0x0fU);
+      uint8_t src = static_cast<uint8_t>((static_cast<uint32_t>(hi) >> 4U) & 0x0fU);
       OperandWidth dest_w, src_w;
       switch (op) {
         case 0x7b:
@@ -534,21 +537,22 @@ budget::Vector<Instruction> decode_instructions(std::span<const uint16_t> insns)
       result.push_back(UnaryOpInstruction{base, dest, src, dest_w, src_w});
     } else if (op >= 0x90 && op <= 0xaf) {
       // binary ops format 23x: AA op CC BB
-      result.push_back(BinaryOpInstruction{base, hi, static_cast<uint8_t>(unit1 & 0xff),
-                                           static_cast<uint8_t>(unit1 >> 8), binary_op_width(op)});
+      result.push_back(BinaryOpInstruction{base, hi, static_cast<uint8_t>(unit1 & 0xffU),
+                                           static_cast<uint8_t>(unit1 >> 8U), binary_op_width(op)});
     } else if (op >= 0xb0 && op <= 0xcf) {
       // binary /2addr format 12x: B|A op → dest=src_a=A, src_b=B
-      uint8_t dest = static_cast<uint8_t>(hi & 0x0f);
-      result.push_back(
-          BinaryOpInstruction{base, dest, dest, static_cast<uint8_t>((hi >> 4) & 0x0f), binary_op_width(op)});
+      uint8_t dest = static_cast<uint8_t>(hi & 0x0fU);
+      result.push_back(BinaryOpInstruction{
+          base, dest, dest, static_cast<uint8_t>((static_cast<uint32_t>(hi) >> 4U) & 0x0fU), binary_op_width(op)});
     } else if (op >= 0xd0 && op <= 0xd7) {
       // binary lit16 format 22s: A|B op CCCC
-      result.push_back(BinaryLitInstruction{base, static_cast<uint8_t>(hi & 0x0f),
-                                            static_cast<uint8_t>((hi >> 4) & 0x0f), static_cast<int16_t>(unit1)});
+      result.push_back(BinaryLitInstruction{base, static_cast<uint8_t>(hi & 0x0fU),
+                                            static_cast<uint8_t>((static_cast<uint32_t>(hi) >> 4U) & 0x0fU),
+                                            static_cast<int16_t>(unit1)});
     } else if (op >= 0xd8 && op <= 0xe2) {
       // binary lit8 format 22b: AA op BB CC
-      result.push_back(BinaryLitInstruction{base, hi, static_cast<uint8_t>(unit1 & 0xff),
-                                            static_cast<int16_t>(sex8(static_cast<uint8_t>(unit1 >> 8)))});
+      result.push_back(BinaryLitInstruction{base, hi, static_cast<uint8_t>(unit1 & 0xffU),
+                                            static_cast<int16_t>(sex8(static_cast<uint8_t>(unit1 >> 8U)))});
 
     } else if (op == 0xfc) {
       // invoke-custom format 35c

@@ -522,7 +522,7 @@ std::expected<CodeItem, ParseError> parse_code_item(std::span<const std::uint8_t
   for (uint32_t i = 0; i < item.insns_size; ++i) {
     dexsplit::budget::visit();
     std::size_t at = static_cast<std::size_t>(offset) + 2 * static_cast<std::size_t>(i);
-    item.insns[i] = static_cast<uint16_t>(buf[at] | (buf[at + 1] << 8));
+    item.insns[i] = static_cast<uint16_t>(buf[at] | (uint32_t{buf[at + 1U]} << 8U));
   }
   offset += static_cast<uint32_t>(insns_bytes);
 
@@ -857,8 +857,8 @@ std::expected<EncodedValue, ParseError> parse_encoded_value_impl(std::span<const
   }
 
   uint8_t lead = buf[offset++];
-  uint8_t arg = lead >> 5;
-  auto type = static_cast<EncodedValue::Type>(lead & 0x1f);
+  const uint32_t arg = static_cast<uint32_t>(lead) >> 5U;
+  auto type = static_cast<EncodedValue::Type>(lead & 0x1fU);
   if (depth == 0 && (type == EncodedValue::Type::Array || type == EncodedValue::Type::Annotation)) {
     return std::unexpected(ParseError{ParseError::Code::MalformedData, "encoded_value nesting too deep", offset});
   }
@@ -867,7 +867,6 @@ std::expected<EncodedValue, ParseError> parse_encoded_value_impl(std::span<const
   out.type = type;
 
   // Per-type bound on value_arg, from the encoded_value spec.
-  auto arg_in_range = [&](uint8_t max) -> bool { return arg <= max; };
   auto malformed = [&](const char* what) {
     return std::unexpected(ParseError{ParseError::Code::MalformedData, what, offset - 1});
   };
@@ -881,19 +880,19 @@ std::expected<EncodedValue, ParseError> parse_encoded_value_impl(std::span<const
                         : type == EncodedValue::Type::Short ? 1
                         : type == EncodedValue::Type::Int   ? 3
                                                             : 7;
-      if (!arg_in_range(max_arg)) {
+      if (arg > max_arg) {
         return malformed("encoded_value: integer size out of range");
       }
+      const uint64_t sign = uint64_t{1} << (8U * (arg + 1U) - 1U);
       auto v = read_le(buf, offset, arg + 1u);
       if (!v) {
         return std::unexpected(v.error());
       }
-      unsigned shift = 64 - 8 * (arg + 1u);
-      out.value = static_cast<int64_t>(*v << shift) >> shift;
+      out.value = std::bit_cast<int64_t>((*v ^ sign) - sign);
       return out;
     }
     case EncodedValue::Type::Char: {
-      if (!arg_in_range(1)) {
+      if (arg > 1) {
         return malformed("encoded_value: char size out of range");
       }
       auto v = read_le(buf, offset, arg + 1u);
@@ -904,7 +903,7 @@ std::expected<EncodedValue, ParseError> parse_encoded_value_impl(std::span<const
       return out;
     }
     case EncodedValue::Type::Float: {
-      if (!arg_in_range(3)) {
+      if (arg > 3) {
         return malformed("encoded_value: float size out of range");
       }
       auto v = read_le(buf, offset, arg + 1u);
@@ -912,19 +911,19 @@ std::expected<EncodedValue, ParseError> parse_encoded_value_impl(std::span<const
         return std::unexpected(v.error());
       }
       // Bytes fill the most-significant end; low bytes are zero.
-      uint32_t bits = static_cast<uint32_t>(*v) << (8 * (3 - arg));
+      uint32_t bits = static_cast<uint32_t>(*v) << (8U * (3U - arg));
       out.value = static_cast<double>(std::bit_cast<float>(bits));
       return out;
     }
     case EncodedValue::Type::Double: {
-      if (!arg_in_range(7)) {
+      if (arg > 7) {
         return malformed("encoded_value: double size out of range");
       }
       auto v = read_le(buf, offset, arg + 1u);
       if (!v) {
         return std::unexpected(v.error());
       }
-      uint64_t bits = *v << (8 * (7 - arg));
+      uint64_t bits = *v << (8U * (7U - arg));
       out.value = std::bit_cast<double>(bits);
       return out;
     }
@@ -935,7 +934,7 @@ std::expected<EncodedValue, ParseError> parse_encoded_value_impl(std::span<const
     case EncodedValue::Type::Field:
     case EncodedValue::Type::Method:
     case EncodedValue::Type::Enum: {
-      if (!arg_in_range(3)) {
+      if (arg > 3) {
         return malformed("encoded_value: index size out of range");
       }
       auto v = read_le(buf, offset, arg + 1u);
@@ -983,7 +982,7 @@ std::expected<EncodedValue, ParseError> parse_encoded_value_impl(std::span<const
       out.value = std::monostate{};
       return out;
     case EncodedValue::Type::Boolean:
-      if (!arg_in_range(1)) {
+      if (arg > 1) {
         return malformed("encoded_value: boolean value_arg out of range");
       }
       out.value = (arg != 0);
@@ -1062,7 +1061,7 @@ std::expected<uint32_t, ParseError> compute_checksum(std::span<const uint8_t> bu
     b %= ADLER_MOD;
   }
 
-  return (b << 16) | a;
+  return (b << 16U) | a;
 }
 
 std::expected<std::array<uint8_t, 20>, ParseError> compute_signature(std::span<const uint8_t> buf) {

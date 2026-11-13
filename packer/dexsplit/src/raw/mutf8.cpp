@@ -17,17 +17,17 @@ void append_utf8(uint32_t cp, budget::String& out) {
   if (cp < 0x80) {
     out.push_back(static_cast<char>(cp));
   } else if (cp < 0x800) {
-    out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
-    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    out.push_back(static_cast<char>(0xC0U | (cp >> 6U)));
+    out.push_back(static_cast<char>(0x80U | (cp & 0x3FU)));
   } else if (cp < 0x10000) {
-    out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
-    out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    out.push_back(static_cast<char>(0xE0U | (cp >> 12U)));
+    out.push_back(static_cast<char>(0x80U | ((cp >> 6U) & 0x3FU)));
+    out.push_back(static_cast<char>(0x80U | (cp & 0x3FU)));
   } else {
-    out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
-    out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
-    out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    out.push_back(static_cast<char>(0xF0U | (cp >> 18U)));
+    out.push_back(static_cast<char>(0x80U | ((cp >> 12U) & 0x3FU)));
+    out.push_back(static_cast<char>(0x80U | ((cp >> 6U) & 0x3FU)));
+    out.push_back(static_cast<char>(0x80U | (cp & 0x3FU)));
   }
 }
 
@@ -36,12 +36,12 @@ void append_unit(uint32_t unit, budget::Vector<uint8_t>& out) {
   if (unit != 0 && unit < 0x80) {
     out.push_back(static_cast<uint8_t>(unit));
   } else if (unit < 0x800) {
-    out.push_back(static_cast<uint8_t>(0xC0 | (unit >> 6)));
-    out.push_back(static_cast<uint8_t>(0x80 | (unit & 0x3F)));
+    out.push_back(static_cast<uint8_t>(0xC0U | (unit >> 6U)));
+    out.push_back(static_cast<uint8_t>(0x80U | (unit & 0x3FU)));
   } else {
-    out.push_back(static_cast<uint8_t>(0xE0 | (unit >> 12)));
-    out.push_back(static_cast<uint8_t>(0x80 | ((unit >> 6) & 0x3F)));
-    out.push_back(static_cast<uint8_t>(0x80 | (unit & 0x3F)));
+    out.push_back(static_cast<uint8_t>(0xE0U | (unit >> 12U)));
+    out.push_back(static_cast<uint8_t>(0x80U | ((unit >> 6U) & 0x3FU)));
+    out.push_back(static_cast<uint8_t>(0x80U | (unit & 0x3FU)));
   }
 }
 
@@ -49,7 +49,7 @@ void append_unit(uint32_t unit, budget::Vector<uint8_t>& out) {
 // is none.  Surrogate code points are accepted as 3-byte sequences.
 std::size_t sequence_length(std::string_view s, std::size_t pos) {
   auto byte = [&](std::size_t i) { return static_cast<uint8_t>(s[i]); };
-  auto cont = [&](std::size_t i) { return i < s.size() && (byte(i) & 0xC0) == 0x80; };
+  auto cont = [&](std::size_t i) { return i < s.size() && (byte(i) & 0xC0U) == 0x80U; };
   uint8_t b = byte(pos);
   if (b < 0x80) {
     return 1;
@@ -98,8 +98,8 @@ class Utf16Units {
     uint32_t cp = next_code_point(s_, pos_);
     if (cp >= 0x10000) {
       cp -= 0x10000;
-      unit = 0xD800 + (cp >> 10);
-      pending_ = 0xDC00 + (cp & 0x3FF);
+      unit = 0xD800U + (cp >> 10U);
+      pending_ = 0xDC00U + (cp & 0x3FFU);
     } else {
       unit = cp;
     }
@@ -135,7 +135,7 @@ std::expected<budget::String, ParseError> decode_string_data(std::span<const uin
     }
     uint8_t b = buf[pos++];
     uint32_t unit;
-    switch (b >> 4) {
+    switch (b >> 4U) {
       case 0x0:
         if (b == 0) {
           return malformed(pos - 1, "string data shorter than its declared length");
@@ -156,10 +156,10 @@ std::expected<budget::String, ParseError> decode_string_data(std::span<const uin
           return malformed(pos, "string data runs past the end of the file");
         }
         uint8_t b2 = buf[pos++];
-        if ((b2 & 0xC0) != 0x80) {
+        if ((b2 & 0xC0U) != 0x80U) {
           return malformed(pos - 1, "illegal continuation byte in string data");
         }
-        unit = ((b & 0x1Fu) << 6) | (b2 & 0x3Fu);
+        unit = ((b & 0x1Fu) << 6U) | (b2 & 0x3Fu);
         if (unit != 0 && unit < 0x80) {
           return malformed(pos - 2, "overlong encoding in string data");
         }
@@ -171,10 +171,10 @@ std::expected<budget::String, ParseError> decode_string_data(std::span<const uin
         }
         uint8_t b2 = buf[pos++];
         uint8_t b3 = buf[pos++];
-        if ((b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80) {
+        if ((b2 & 0xC0U) != 0x80U || (b3 & 0xC0U) != 0x80U) {
           return malformed(pos - 2, "illegal continuation byte in string data");
         }
-        unit = ((b & 0x0Fu) << 12) | ((b2 & 0x3Fu) << 6) | (b3 & 0x3Fu);
+        unit = ((b & 0x0Fu) << 12U) | ((b2 & 0x3Fu) << 6U) | (b3 & 0x3Fu);
         if (unit < 0x800) {
           return malformed(pos - 3, "overlong encoding in string data");
         }
@@ -186,7 +186,7 @@ std::expected<budget::String, ParseError> decode_string_data(std::span<const uin
 
     if (pending_high != 0) {
       if (is_low_surrogate(unit)) {
-        append_utf8(0x10000 + ((pending_high - 0xD800) << 10) + (unit - 0xDC00), out);
+        append_utf8(0x10000U + ((pending_high - 0xD800U) << 10U) + (unit - 0xDC00U), out);
         pending_high = 0;
         continue;
       }
@@ -229,17 +229,17 @@ uint32_t next_code_point(std::string_view s, std::size_t& pos) {
     return b;
   }
   if (b < 0xE0) {
-    uint32_t cp = ((b & 0x1F) << 6) | (byte(pos + 1) & 0x3F);
+    uint32_t cp = ((b & 0x1FU) << 6U) | (byte(pos + 1U) & 0x3FU);
     pos += 2;
     return cp;
   }
   if (b < 0xF0) {
-    uint32_t cp = ((b & 0x0F) << 12) | ((byte(pos + 1) & 0x3F) << 6) | (byte(pos + 2) & 0x3F);
+    uint32_t cp = ((b & 0x0FU) << 12U) | ((byte(pos + 1U) & 0x3FU) << 6U) | (byte(pos + 2U) & 0x3FU);
     pos += 3;
     return cp;
   }
-  uint32_t cp =
-      ((b & 0x07) << 18) | ((byte(pos + 1) & 0x3F) << 12) | ((byte(pos + 2) & 0x3F) << 6) | (byte(pos + 3) & 0x3F);
+  uint32_t cp = ((b & 0x07U) << 18U) | ((byte(pos + 1U) & 0x3FU) << 12U) | ((byte(pos + 2U) & 0x3FU) << 6U) |
+                (byte(pos + 3U) & 0x3FU);
   pos += 4;
   return cp;
 }
@@ -255,7 +255,7 @@ budget::String canonical(std::string_view s) {
       std::size_t after = pos;
       uint32_t lo = next_code_point(s, after);
       if (is_low_surrogate(lo)) {
-        append_utf8(0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00), out);
+        append_utf8(0x10000U + ((cp - 0xD800U) << 10U) + (lo - 0xDC00U), out);
         pos = after;
         continue;
       }
@@ -268,8 +268,8 @@ budget::String canonical(std::string_view s) {
 bool is_canonical(std::string_view s) {
   // A high surrogate is ED A0..AF xx; a low one ED B0..BF xx.
   for (std::size_t i = 0; i + 5 < s.size(); ++i) {
-    if (static_cast<uint8_t>(s[i]) == 0xED && (static_cast<uint8_t>(s[i + 1]) & 0xF0) == 0xA0 &&
-        static_cast<uint8_t>(s[i + 3]) == 0xED && (static_cast<uint8_t>(s[i + 4]) & 0xF0) == 0xB0) {
+    if (static_cast<uint8_t>(s[i]) == 0xEDU && (static_cast<uint8_t>(s[i + 1U]) & 0xF0U) == 0xA0U &&
+        static_cast<uint8_t>(s[i + 3U]) == 0xEDU && (static_cast<uint8_t>(s[i + 4U]) & 0xF0U) == 0xB0U) {
       return false;
     }
   }
@@ -291,8 +291,8 @@ void append_mutf8(std::string_view s, budget::Vector<uint8_t>& out) {
     uint32_t cp = next_code_point(s, pos);
     if (cp >= 0x10000) {
       cp -= 0x10000;
-      append_unit(0xD800 + (cp >> 10), out);
-      append_unit(0xDC00 + (cp & 0x3FF), out);
+      append_unit(0xD800U + (cp >> 10U), out);
+      append_unit(0xDC00U + (cp & 0x3FFU), out);
     } else {
       append_unit(cp, out);
     }
@@ -313,7 +313,7 @@ int compare_utf16(std::string_view a, std::string_view b) {
   if (i == n) {
     return a.size() < b.size() ? -1 : (a.size() > b.size() ? 1 : 0);
   }
-  while (i > 0 && (static_cast<uint8_t>(a[i]) & 0xC0) == 0x80) {
+  while (i > 0U && (static_cast<uint8_t>(a[i]) & 0xC0U) == 0x80U) {
     --i;  // back to the start of the code point (the same in both strings)
   }
   a.remove_prefix(i);

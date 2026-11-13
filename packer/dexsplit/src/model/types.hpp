@@ -789,7 +789,7 @@ class CodeValue {
 struct FieldDef {
   budget::String name;
   budget::String type;  ///< Field type descriptor.
-  AccessFlags access{};
+  AccessFlags access = AccessFlags::None;
   /** A static field's initial value; nullopt means the type's default
    *  (zero, false or null). */
   std::optional<Value> initial_value;
@@ -801,7 +801,7 @@ struct FieldDef {
 struct MethodDef {
   budget::String name;
   budget::String proto;  ///< Prototype descriptor, e.g. "(ILjava/lang/String;)V".
-  AccessFlags access{};
+  AccessFlags access = AccessFlags::None;
   /** nullopt for abstract and native methods. */
   CodeValue code;
   budget::Vector<AnnotationItem> annotations;
@@ -814,7 +814,7 @@ struct MethodDef {
 
 struct ClassDef {
   budget::String type;  ///< Class descriptor, e.g. "Lcom/example/Foo;".
-  AccessFlags access{};
+  AccessFlags access = AccessFlags::None;
   /** nullopt only for java.lang.Object. */
   std::optional<budget::String> superclass;
   budget::Vector<budget::String> interfaces;

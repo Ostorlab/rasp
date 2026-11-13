@@ -11,7 +11,7 @@ namespace dexsplit::raw {
  * Parse error with context information
  */
 struct ParseError {
-  enum class Code {
+  enum class Code : uint8_t {
     InvalidMagic,
     TruncatedFile,
     InvalidOffset,

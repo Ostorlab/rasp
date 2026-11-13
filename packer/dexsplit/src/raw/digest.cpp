@@ -10,8 +10,8 @@ namespace dexsplit::raw {
 namespace {
 
 uint32_t load_be32(const uint8_t* p) {
-  return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
-         (static_cast<uint32_t>(p[2]) << 8) | p[3];
+  return (static_cast<uint32_t>(p[0U]) << 24U) | (static_cast<uint32_t>(p[1U]) << 16U) |
+         (static_cast<uint32_t>(p[2U]) << 8U) | p[3U];
 }
 
 // Feeds @p data to @p block (64 bytes at a time) with the Merkle-Damgard
@@ -33,7 +33,7 @@ void for_each_padded_block(std::span<const uint8_t> data, BlockFn block) {
   std::size_t tail_size = rest + 1 + 8 <= 64 ? 64 : 128;
   uint64_t bits = static_cast<uint64_t>(data.size()) * 8;
   for (int i = 0; i < 8; ++i) {
-    tail[tail_size - 1 - i] = static_cast<uint8_t>(bits >> (8 * i));
+    tail[tail_size - 1U - i] = static_cast<uint8_t>(bits >> (8U * i));
   }
   block(tail);
   if (tail_size == 128) {
@@ -89,7 +89,7 @@ std::array<uint8_t, 20> sha1(std::span<const uint8_t> data) {
   std::array<uint8_t, 20> digest;
   for (int i = 0; i < 5; ++i) {
     for (int j = 0; j < 4; ++j) {
-      digest[i * 4 + j] = static_cast<uint8_t>(h[i] >> (24 - 8 * j));
+      digest[i * 4U + j] = static_cast<uint8_t>(h[i] >> (24U - 8U * j));
     }
   }
   return digest;
@@ -114,8 +114,8 @@ std::array<uint8_t, 32> sha256(std::span<const uint8_t> data) {
       w[i] = load_be32(chunk + static_cast<std::size_t>(i) * 4);
     }
     for (int i = 16; i < 64; ++i) {
-      uint32_t s0 = std::rotr(w[i - 15], 7) ^ std::rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
-      uint32_t s1 = std::rotr(w[i - 2], 17) ^ std::rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+      uint32_t s0 = std::rotr(w[i - 15U], 7U) ^ std::rotr(w[i - 15U], 18U) ^ (w[i - 15U] >> 3U);
+      uint32_t s1 = std::rotr(w[i - 2U], 17U) ^ std::rotr(w[i - 2U], 19U) ^ (w[i - 2U] >> 10U);
       w[i] = w[i - 16] + s0 + w[i - 7] + s1;
     }
 
@@ -150,7 +150,7 @@ std::array<uint8_t, 32> sha256(std::span<const uint8_t> data) {
   std::array<uint8_t, 32> digest;
   for (int i = 0; i < 8; ++i) {
     for (int j = 0; j < 4; ++j) {
-      digest[i * 4 + j] = static_cast<uint8_t>(h[i] >> (24 - 8 * j));
+      digest[i * 4U + j] = static_cast<uint8_t>(h[i] >> (24U - 8U * j));
     }
   }
   return digest;

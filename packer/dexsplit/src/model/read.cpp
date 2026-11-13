@@ -24,8 +24,10 @@ namespace {
 // The reader can find malformed data at any depth — in a pool, a nested
 // value, an instruction, the debug info — so it reports it with an exception
 // that read() turns into an Error.  Nothing else throws it.
-struct ReadFailure {
+struct ReadFailure : std::exception {
   Error error;
+  explicit ReadFailure(Error value) : error(std::move(value)) {}
+  const char* what() const noexcept override { return error.message.c_str(); }
 };
 
 constexpr int kMaxValueDepth = 64;
@@ -313,8 +315,8 @@ class Reader {
 
   static int64_t sign_extend(std::pair<uint64_t, uint32_t> encoded) {
     auto [v, size] = encoded;
-    unsigned shift = 64 - 8 * size;
-    return static_cast<int64_t>(v << shift) >> shift;
+    const uint64_t sign = uint64_t{1} << (8U * size - 1U);
+    return std::bit_cast<int64_t>((v ^ sign) - sign);
   }
 
   Value read_value(uint32_t& offset, int depth) {
@@ -325,8 +327,8 @@ class Reader {
       fail("encoded value runs past the end of the file");
     }
     const uint8_t header = bytes_[offset++];
-    const uint32_t type = header & 0x1F;
-    const uint32_t arg = header >> 5;
+    const uint32_t type = header & 0x1FU;
+    const uint32_t arg = header >> 5U;
     auto limit = [&](uint32_t max_arg) {
       if (arg > max_arg) {
         fail(budget::format("bad size {} for encoded value type 0x{:02x}", arg + 1, type));
@@ -703,8 +705,8 @@ Code Reader::read_code(uint32_t code_off) {
       dexsplit::budget::visit();
       range.catches.push_back(Catch{type_at(p.type_idx).get(), labels.at(p.addr)});
     }
-    if (t.handler->catch_all_addr) {
-      range.catch_all = labels.at(*t.handler->catch_all_addr);
+    if (const auto address = t.handler->catch_all_addr; address.has_value()) {
+      range.catch_all = labels.at(address.value());
     }
     code.tries.push_back(std::move(range));
   }
@@ -841,13 +843,14 @@ Insn Reader::convert(const raw::InsnFields& f, uint32_t pos, std::span<const uin
     case 0x14:
       return Const{a, static_cast<int32_t>(f.literal)};
     case 0x15:
-      return Const{a, static_cast<int32_t>(static_cast<uint32_t>(f.literal & 0xFFFF) << 16)};
+      return Const{a, static_cast<int32_t>(static_cast<uint32_t>(std::bit_cast<uint64_t>(f.literal) & 0xFFFFU) << 16U)};
     case 0x16:
     case 0x17:
     case 0x18:
       return ConstWide{a, f.literal};
     case 0x19:
-      return ConstWide{a, static_cast<int64_t>(static_cast<uint64_t>(f.literal & 0xFFFF) << 48)};
+      return ConstWide{
+          a, static_cast<int64_t>(static_cast<uint64_t>(std::bit_cast<uint64_t>(f.literal) & 0xFFFFU) << 48U)};
     case 0x1a:
     case 0x1b:
       return ConstString{a, string_at(f.index)};
@@ -873,14 +876,14 @@ Insn Reader::convert(const raw::InsnFields& f, uint32_t pos, std::span<const uin
     case 0x26: {
       uint32_t p = static_cast<uint32_t>(pos + f.offset);
       uint16_t width = insns[p + 1];
-      uint64_t count = insns[p + 2] | (uint64_t{insns[p + 3]} << 16);
+      uint64_t count = insns[p + 2U] | (uint64_t{insns[p + 3U]} << 16U);
       FillArrayData fill{a, width, {}};
       uint64_t bytes = count * width;
       fill.data.reserve(static_cast<std::size_t>(bytes));
       for (uint64_t i = 0; i < bytes; ++i) {
         dexsplit::budget::visit();
         uint16_t unit = insns[p + 4 + static_cast<std::size_t>(i / 2)];
-        fill.data.push_back(static_cast<uint8_t>(i % 2 == 0 ? unit & 0xFF : unit >> 8));
+        fill.data.push_back(static_cast<uint8_t>(i % 2U == 0U ? unit & 0xFFU : unit >> 8U));
       }
       return fill;
     }
@@ -894,7 +897,7 @@ Insn Reader::convert(const raw::InsnFields& f, uint32_t pos, std::span<const uin
     case 0x2c: {
       uint32_t p = static_cast<uint32_t>(pos + f.offset);
       uint32_t count = insns[p + 1];
-      auto s32 = [&](uint32_t at) { return static_cast<int32_t>(insns[at] | (uint32_t{insns[at + 1]} << 16)); };
+      auto s32 = [&](uint32_t at) { return static_cast<int32_t>(insns[at] | (uint32_t{insns[at + 1U]} << 16U)); };
       // A case that goes to the next instruction does what no case does
       // (packed switches fill their gaps that way), so it is left out.
       Switch sw{a, {}};

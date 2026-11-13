@@ -21,11 +21,11 @@
 
 /// Finite, cumulative request accounting; releasing memory never replenishes a budget.
 namespace dexsplit::budget {
-inline constexpr std::size_t kDexBytes = 64U * 1024U * 1024U;
+inline constexpr std::size_t kDexBytes = std::size_t{64} * 1024U * 1024U;
 /// Aggregate input/output bytes stay separate from cumulative allocation and backing limits.
-inline constexpr std::size_t kTotalBytes = 256U * 1024U * 1024U;
-inline constexpr std::size_t kAllocationBytes = 1536U * 1024U * 1024U;
-inline constexpr std::size_t kBackingBytes = 512U * 1024U * 1024U;
+inline constexpr std::size_t kTotalBytes = std::size_t{256} * 1024U * 1024U;
+inline constexpr std::size_t kAllocationBytes = std::size_t{1536} * 1024U * 1024U;
+inline constexpr std::size_t kBackingBytes = std::size_t{512} * 1024U * 1024U;
 inline constexpr std::size_t kWork = 64000000;
 inline constexpr std::size_t kClasses = 100000;
 inline constexpr std::size_t kStrings = 1048576;
@@ -90,17 +90,17 @@ struct State {
   }
   void* allocate(std::size_t bytes, std::size_t alignment) {
     std::lock_guard lock(pool_mutex);
-    auto& selected = bytes > 64U * 1024U ? large_pool : pool;
+    auto& selected = bytes > std::size_t{64} * 1024U ? large_pool : pool;
     if (selected == nullptr) {
       charge(0, sizeof(std::pmr::unsynchronized_pool_resource));
       selected = std::make_unique<std::pmr::unsynchronized_pool_resource>(
-          std::pmr::pool_options{bytes > 64U * 1024U ? 8 : kPoolChunkBlocks, kDexBytes}, &upstream);
+          std::pmr::pool_options{bytes > std::size_t{64} * 1024U ? 8 : kPoolChunkBlocks, kDexBytes}, &upstream);
     }
     return selected->allocate(bytes, alignment);
   }
   void release(void* pointer, std::size_t bytes, std::size_t alignment) {
     std::lock_guard lock(pool_mutex);
-    auto& selected = bytes > 64U * 1024U ? large_pool : pool;
+    auto& selected = bytes > std::size_t{64} * 1024U ? large_pool : pool;
     selected->deallocate(pointer, bytes, alignment);
   }
 };
@@ -186,7 +186,9 @@ class Allocator {
     owner_->charge(count / 64 + 1, bytes);
     return static_cast<T*>(owner_->allocate(bytes, alignof(T)));
   }
-  void deallocate(T* pointer, std::size_t count) noexcept { owner_->release(pointer, count * sizeof(T), alignof(T)); }
+  void deallocate(T* pointer, std::size_t count) noexcept {
+    owner_->release(static_cast<void*>(pointer), count * sizeof(T), alignof(T));
+  }
   template <class U, class... A>
     requires(!std::is_trivially_copyable_v<U>)
   void construct(U* pointer, A&&... arguments) {
@@ -252,6 +254,7 @@ String to_string(T value) {
 }  // namespace dexsplit::budget
 
 template <>
+// NOLINTNEXTLINE(bugprone-std-namespace-modification) -- [namespace.std]/2: depends on program-defined Allocator<char>.
 struct std::hash<dexsplit::budget::String> {
   std::size_t operator()(const dexsplit::budget::String& value) const noexcept {
     return std::hash<std::string_view>{}(value);

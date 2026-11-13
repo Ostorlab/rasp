@@ -437,8 +437,11 @@ class DexFile {
   /// Conversion releases a parsed body only after its last mapped owner has consumed it.
   void release_code_item(uint32_t offset) {
     auto found = code_items_.find(offset);
-    if (found != code_items_.end() && found->second.remaining_uses != 0 && --found->second.remaining_uses == 0) {
-      code_items_.erase(found);
+    if (found != code_items_.end() && found->second.remaining_uses != 0) {
+      --found->second.remaining_uses;
+      if (found->second.remaining_uses == 0) {
+        code_items_.erase(found);
+      }
     }
   }
   /// Analysis owns the immutable input bytes and only needs validated instruction extents.
