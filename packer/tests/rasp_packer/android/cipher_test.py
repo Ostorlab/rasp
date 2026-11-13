@@ -1,10 +1,10 @@
 """Tests of the payload cipher."""
 
-import os
-
 import pytest
 
 from rasp_packer.android import cipher
+
+_KEY = bytes.fromhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
 
 # The frame the native runtime's tests decrypt (runtime/tests/android/payload/cipher_test.cpp), so both
 # sides of the cipher are checked against the same bytes.
@@ -41,67 +41,71 @@ _WYCHEPROOF_PLAINTEXT = bytes.fromhex(
 
 
 def testDecrypt_whenSameKey_returnsThePlaintext() -> None:
-    key = cipher.new_key()
     plaintext = b"the original classes.dex bytes"
-    assert cipher.decrypt(key, cipher.encrypt(key, plaintext)) == plaintext
+    assert (
+        cipher.decrypt(_KEY, cipher.encrypt(_KEY, cipher.new_nonce(), plaintext))
+        == plaintext
+    )
 
 
 def testDecrypt_whenPlaintextEmpty_returnsEmptyBytes() -> None:
-    key = cipher.new_key()
-    assert cipher.decrypt(key, cipher.encrypt(key, b"")) == b""
+    assert cipher.decrypt(_KEY, cipher.encrypt(_KEY, cipher.new_nonce(), b"")) == b""
 
 
 def testDecrypt_whenPlaintextSpansBlocks_returnsThePlaintext() -> None:
-    key = cipher.new_key()
     plaintext = bytes(range(256)) * 40
-    assert cipher.decrypt(key, cipher.encrypt(key, plaintext)) == plaintext
+    assert (
+        cipher.decrypt(_KEY, cipher.encrypt(_KEY, cipher.new_nonce(), plaintext))
+        == plaintext
+    )
 
 
 def testEncrypt_whenSameInput_producesADifferentFrame() -> None:
-    key = cipher.new_key()
-    assert cipher.encrypt(key, b"same input") != cipher.encrypt(key, b"same input")
+    assert cipher.encrypt(_KEY, cipher.new_nonce(), b"same input") != cipher.encrypt(
+        _KEY, cipher.new_nonce(), b"same input"
+    )
 
 
 def testEncrypt_whenCalled_hidesThePlaintext() -> None:
-    key = cipher.new_key()
-    assert b"secret" not in cipher.encrypt(key, b"a secret value")
+    assert b"secret" not in cipher.encrypt(_KEY, cipher.new_nonce(), b"a secret value")
 
 
 def testEncrypt_whenKeySizeWrong_raisesValueError() -> None:
     with pytest.raises(ValueError, match="32 bytes"):
-        cipher.encrypt(b"too short", b"data")
+        cipher.encrypt(b"too short", cipher.new_nonce(), b"data")
+
+
+def testEncrypt_whenNonceSizeWrong_raisesValueError() -> None:
+    with pytest.raises(ValueError, match="12 bytes"):
+        cipher.encrypt(_KEY, b"too short", b"data")
 
 
 def testDecrypt_whenKeyWrong_raisesCipherError() -> None:
-    frame = cipher.encrypt(cipher.new_key(), b"data")
+    frame = cipher.encrypt(_KEY, cipher.new_nonce(), b"data")
     with pytest.raises(cipher.CipherError):
-        cipher.decrypt(cipher.new_key(), frame)
+        cipher.decrypt(bytes(32), frame)
 
 
 def testDecrypt_whenTagTampered_raisesCipherError() -> None:
-    key = cipher.new_key()
-    frame = bytearray(cipher.encrypt(key, b"data to protect"))
+    frame = bytearray(cipher.encrypt(_KEY, cipher.new_nonce(), b"data to protect"))
     frame[-1] ^= 0x01
     with pytest.raises(cipher.CipherError):
-        cipher.decrypt(key, bytes(frame))
+        cipher.decrypt(_KEY, bytes(frame))
 
 
 def testDecrypt_whenFrameTooShort_raisesCipherError() -> None:
     with pytest.raises(cipher.CipherError):
-        cipher.decrypt(cipher.new_key(), b"short")
+        cipher.decrypt(_KEY, b"short")
 
 
 def testDecrypt_whenGivenTheRuntimesTestFrame_returnsItsPlaintext() -> None:
     assert cipher.decrypt(_RUNTIME_KEY, _RUNTIME_FRAME) == _RUNTIME_PLAINTEXT
 
 
-def testEncrypt_whenGivenTheRuntimesTestNonce_producesTheRuntimesTestFrame(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def testEncrypt_whenGivenTheRuntimesTestNonce_producesTheRuntimesTestFrame() -> None:
     nonce = _RUNTIME_FRAME[: cipher.NONCE_SIZE]
-    monkeypatch.setattr(os, "urandom", lambda size: nonce)
 
-    assert cipher.encrypt(_RUNTIME_KEY, _RUNTIME_PLAINTEXT) == _RUNTIME_FRAME
+    assert cipher.encrypt(_RUNTIME_KEY, nonce, _RUNTIME_PLAINTEXT) == _RUNTIME_FRAME
 
 
 def testDecrypt_whenTheKeySizeIsWrong_raisesValueError() -> None:
@@ -113,10 +117,10 @@ def testDecrypt_whenGivenTheWycheproofVector_returnsItsPlaintext() -> None:
     assert cipher.decrypt(_WYCHEPROOF_KEY, _WYCHEPROOF_FRAME) == _WYCHEPROOF_PLAINTEXT
 
 
-def testEncrypt_whenGivenTheWycheproofNonce_producesTheWycheproofFrame(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def testEncrypt_whenGivenTheWycheproofNonce_producesTheWycheproofFrame() -> None:
     nonce = _WYCHEPROOF_FRAME[: cipher.NONCE_SIZE]
-    monkeypatch.setattr(os, "urandom", lambda size: nonce)
 
-    assert cipher.encrypt(_WYCHEPROOF_KEY, _WYCHEPROOF_PLAINTEXT) == _WYCHEPROOF_FRAME
+    assert (
+        cipher.encrypt(_WYCHEPROOF_KEY, nonce, _WYCHEPROOF_PLAINTEXT)
+        == _WYCHEPROOF_FRAME
+    )
