@@ -258,6 +258,54 @@ inline constexpr std::uint32_t kDebuggerPoison = 0x9e3779b9U;
 inline constexpr std::uint32_t kBasePoison = 0x85ebca6bU;
 inline constexpr std::uint32_t kTimingPoison = 0xc2b2ae35U;
 
+#if defined(__aarch64__)
+/// A poison value for the hardware-identity canary: the system counter frequency.
+inline constexpr std::uint32_t kCounterFrequencyPoison = 0x27d4c2baU;
+/// A poison value for the hardware-identity canary: the CPU identity register.
+inline constexpr std::uint32_t kCpuIdentityPoison = 0x165667b1U;
+
+/// Reads the system counter frequency (CNTFRQ_EL0). A real mobile SoC reports 13–26 MHz
+/// (Qualcomm 19.2 MHz, ARM reference 24 MHz, Samsung 26 MHz). QEMU and unicorn default to
+/// 1 GHz (0x3B9ACA00) or 0 — values a real device never produces. The check is deliberately
+/// loose so no real device trips it: it accepts 1–100 MHz, which covers every shipped ARM64
+/// SoC, and rejects everything outside.
+[[nodiscard]] bool counter_frequency_implausible() noexcept {
+  std::uint64_t frequency = 0;
+  // NOLINTNEXTLINE(portability-no-assembler): the canary is the mrs read itself.
+  asm volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
+  return frequency < 1000000U || frequency > 100000000U;
+}
+
+/// Reads the CPU identity register (MIDR_EL1). A real ARM64 CPU always reports a non-zero
+/// value with a known implementer in the top byte (ARM 0x41, Qualcomm 0x51, Samsung 0x53,
+/// Apple 0x61, etc.). QEMU's default CPU model reports a valid MIDR too, but some unicorn
+/// configurations report 0 or a synthetic value. The check is deliberately loose: only
+/// a zero MIDR trips it, which no real CPU produces.
+[[nodiscard]] bool cpu_identity_implausible() noexcept {
+  std::uint64_t midr = 0;
+  // NOLINTNEXTLINE(portability-no-assembler): the canary is the mrs read itself.
+  asm volatile("mrs %0, midr_el1" : "=r"(midr));
+  return midr == 0;
+}
+
+#elif defined(__x86_64__)
+/// A poison value for the hardware-identity canary: the CPU vendor string.
+inline constexpr std::uint32_t kCpuIdentityPoison = 0x27d4c2baU;
+
+/// Reads the CPU vendor string through CPUID leaf 0. A real x86_64 CPU reports one of
+/// the known vendors (GenuineIntel, AuthenticAMD, CentaurHauls, etc.). QEMU reports
+/// the vendor of the host CPU, but some emulators report zeros.
+[[nodiscard]] bool cpu_identity_implausible() noexcept {
+  std::uint32_t eax = 0;
+  std::uint32_t ebx = 0;
+  std::uint32_t ecx = 0;
+  std::uint32_t edx = 0;
+  // NOLINTNEXTLINE(portability-no-assembler): the canary is the cpuid read itself.
+  asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
+  return ebx == 0 && edx == 0 && ecx == 0;
+}
+#endif
+
 /// Runs the tamper and emulation gates and folds what they observed into one poison value: zero when the process
 /// looks clean, and a distinct non-zero pattern per tripped gate otherwise.
 ///
@@ -273,6 +321,21 @@ inline constexpr std::uint32_t kTimingPoison = 0xc2b2ae35U;
   if (timing_anomalous()) {
     poison ^= kTimingPoison;
   }
+#if defined(__aarch64__)
+  // Deliberate anti-emulation canaries: a real ARM64 CPU reports a counter frequency in
+  // the 13–26 MHz range and a non-zero CPU identity. QEMU and unicorn default to values
+  // outside these ranges, and the key derivation silently produces a wrong key.
+  if (counter_frequency_implausible()) {
+    poison ^= kCounterFrequencyPoison;
+  }
+  if (cpu_identity_implausible()) {
+    poison ^= kCpuIdentityPoison;
+  }
+#elif defined(__x86_64__)
+  if (cpu_identity_implausible()) {
+    poison ^= kCpuIdentityPoison;
+  }
+#endif
   return poison;
 }
 
