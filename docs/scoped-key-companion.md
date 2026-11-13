@@ -10,14 +10,14 @@ followups; host fixture providers are not those implementations.
 
 Build explicitly with `-DRASP_BUILD_KEY_COMPANION=ON` and target
 `rasp_scoped_keys`. Host test builds include the companion tests automatically.
-Do not add another RuntimeBridge class, loader constructor, monitor, private
+The companion adds no RuntimeBridge class, loader constructor, monitor, private
 runtime C++ call, packaged payload-key import or new injected-runtime export.
 
 <a id="public-contract"></a>
 
 ## What does the public contract guarantee?
 
-**[scoped_key.h](../runtime/companion/include/rasp/scoped_key.h)** defines ABI1's four
+**[scoped_key.h](../runtime/companion/include/rasp/scoped_key.h)** defines ABI version 1 (ABI1)'s four
 companion functions, complete primitive layouts and fixed enum values:
 
 - `rasp_scoped_key_client_open_v1`: explicit worker-thread host opt-in.
@@ -109,8 +109,10 @@ The gate is a historical local decision, not backend authority or attestation.
 
 CREATE validates platform prerequisites without gate/auth UI; REOPEN/DESCRIBE are
 noninteractive. DELETE/RESET and cancel/release/close need no gate or auth prompt.
+
 Only explicit interactive SIGN may start one system biometric prompt for its exact
 retained crypto context. No public auth-success/decision continuation is exposed.
+
 A biometric result does not prove the user understood or approved the transaction.
 Server authorization, challenge expiry and replay defense remain server-owned.
 
@@ -284,7 +286,7 @@ malicious same-UID writer from racing lookup/generation or point-check/deletion.
 completion fields. Only actual OS-returned numeric codes are reported; absent
 numbers remain absent, and successful cleanup does not erase a meaningful failure.
 
-Host tests use actual C entry points, actual local-policy CycleMonitor publication/gate,
+Host tests use actual C entry points, actual local-policy publication/gate,
 owned fixture keys and independently reconstructed/verified OpenSSL P-256 outputs.
 Controllable providers are test-only and absent from the production archive. Their
 properties are simulated contract inputs, not Android Keystore, Apple Keychain,
