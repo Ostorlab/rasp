@@ -41,11 +41,15 @@ nonoverlapping input/output are required; no API can validate arbitrary pointers
 All public scalars are fixed width. C++ objects never cross this interface.
 
 Submit is 4384 bytes and SignInput is 4336 bytes. Allocate these on an aligned heap or
-bounded caller arena, pass pointers and retain no borrowed memory after return.
+bounded caller arena and pass pointers; the SDK retains no borrowed caller input
+after return.
+
 TakeResult 2600 and gate result 2104 must not be stacked together in shipping SDK
 functions. Completion 2560 contains the full owned gate diagnostic projection.
-No native frame may exceed 4096 bytes. Public caller-owned results may be retained;
-they cannot be submitted as permits or used to revoke a returned signature.
+No native frame may exceed 4096 bytes.
+
+Public caller-owned results may be retained. They cannot be submitted as permits
+or used to revoke a returned signature.
 
 Namespaces bind one exact application, public signing scope, purpose, named gate
 operation/hash, advisory/mandatory mode and minimum key profile. The application
@@ -65,6 +69,11 @@ Software Keychain storage must not be described as Secure Enclave protection.
 <a id="message-binding-and-local-gate"></a>
 
 ## How is the signed message bound?
+
+**The canonical signed message** binds the application scope, namespace, purpose,
+gate operation and expected policy hash/mode to the key profile, KeyId and public
+key. It also binds the audience, transaction ID, challenge and transaction bytes,
+so the signature covers the exact scoped request.
 
 Integers in the canonical encoding are unsigned big-endian 32; LP means a 32-bit
 byte length followed by those exact bytes. No JSON normalization, padding, C NUL
@@ -119,18 +128,24 @@ The mutex has process lifetime on every libc++; no registry constructor or exit
 destructor runs. Descriptor/adapter release is a separate exclusive quiescence
 transition.
 
-The fixed arenas have the following budget:
+The eight permanent request/completion slots keep the complete public records.
+Unused private padding is removed; no live payload, signing context or borrower
+shares storage with another slot.
 
-| Arena | Count | Bytes each |
-| --- | --- | ---: |
-| Request | Eight | 6144 |
-| Completion | Eight | 4096 |
-| Physical job | Two | 8192 |
-| **Total arena bytes** | | **98304** |
+| Typed arena payload | Count | Actual bytes each | Ceiling each |
+| --- | --- | ---: | ---: |
+| Request input | Eight | 4384 | 6144 |
+| Completion | Eight | 2560 | 4096 |
+| Physical job | Two | 8192 | 8192 |
+| **Total typed payload bytes** | | **71936** | **98304 total** |
 
-The remaining 32768 bytes are the total allowance for all nonarena SDK state,
-including registry metadata and the child adapter reservation. They are not free
-Android adapter memory; all such state remains charged to the aggregate ceiling.
+All nonarena SDK state must fit 32768 bytes, including registry metadata and the
+4096-byte adapter reservation. That is a separate limit within the 131072-byte
+aggregate ceiling, not free Android adapter memory.
+
+Reclaimed data-arena capacity does not permit uncontrolled allocation or relabeling
+Java/Objective-C objects as payload. SDK-created carriers, reference tables, copies
+and allocator metadata remain charged to their applicable limits.
 
 SHA-256 uses the exact pinned TF-PSA-Crypto stateless primitive, without PSA wrapper
 heap copies, key slots or RNG initialization; its existing configuration is
@@ -153,16 +168,22 @@ expire at 300 seconds and explicit request deadlines at most 60 seconds, includi
 suspension. Exact expiry is invalid; clock regression/read failure latches the
 client domain. Reopening cannot reset the runtime gate's separate publication latch.
 
-Public/UI entry tries a native read lease without waiting before loading the active owner.
-Worker `run_job`/`authenticated` entries wait for that lease. `end_delivery` first touches
-only permanent atomic slots/counters; its fold/post pins the native owner before any
-platform access. The owner/mutex is constructed once and never destroyed or replaced.
-Detach is a nonblocking exclusive upgrade only when fully closed.
+Public/UI entry tries a native read lease without waiting before loading the
+active owner. Worker `run_job`/`authenticated` entries wait for that lease.
+
+`end_delivery` first touches only permanent atomic slots/counters. Its fold/post
+pins the native owner before any platform access.
+
+The owner/mutex is constructed once and never destroyed or replaced. Detach is a
+nonblocking exclusive upgrade only when fully closed.
+
 The closing worker waits for whole-entry quiescence before releasing platform
-storage/descriptors. UI/public entries never perform that wait. End-delivery records
-its acknowledgment atomically even if the state mutex is contended; the next bounded
-state access folds it into the tables without requiring another end-delivery call.
-Only stale callbacks can be rejected during an exclusive closed-state transition.
+storage/descriptors. UI/public entries never perform that wait; only stale callbacks
+can be rejected during an exclusive closed-state transition.
+
+End-delivery records its acknowledgment atomically even if the state mutex is
+contended. The next bounded state access folds it into the tables without requiring
+another end-delivery call.
 
 If a worker open fails after acquiring storage and its first close also fails, the
 original operation failure is returned without a client. One bounded closing job
@@ -218,18 +239,50 @@ plaintext from a compromised process, caller/GC/OS copies, dumps or prior observ
 There is no release telemetry/logging, malware verdict, process scanning/termination,
 legal-hold feature or widening of an unrelated deletion request.
 
-## Private child adapter and validation
+<a id="private-child-adapter-and-validation"></a>
 
-The [internal platform boundary](../runtime/companion/src/platform.h) is not installed
-or exported. Android and Apple attachments construct at most one adapter in
-`platform_storage()` and
-retain it until exclusive detach succeeds. Provider methods implement actual public
-OS key/store/UI behavior; none has a success stub or weaker fallback. OS callbacks
-post bounded copied job identities to SDK workers before `authenticated`; they do
-not call blocking shared-state methods on UI/OS callback queues. Scheduling never
-invokes `run_job` inline. Full job identity and owned context survive early/later,
-duplicate, cancelled and retired callbacks; release acknowledges no remaining OS
-borrowers. Every platform key/storage/UI call is outside the service state mutex.
+## How does the private child adapter boundary work?
+
+The [internal platform boundary](../runtime/companion/src/platform.h) is not
+installed or exported. Android and Apple attachments construct at most one adapter
+in `platform_storage()` and retain it until exclusive detach succeeds.
+
+Provider methods implement actual public OS key/store/UI behavior. They must not
+substitute a success stub or weaker key/authentication profile.
+
+OS callbacks post bounded copied job identities to SDK workers before
+`authenticated`; they do not call worker-wait methods on UI/OS callback queues.
+Scheduling never invokes `run_job` inline.
+
+Full job identity and owned context survive early/later, duplicate, cancelled and
+retired callbacks. Release acknowledges that no OS or refusal-payload borrower
+remains; every clock/gate/key/storage/UI call stays outside the service state mutex.
+
+**Platform-default lock observation** may be absent only for canonical Android
+KeyInfo facts with a requested PLATFORM_DEFAULT profile. Unknown observation is
+reported as absent/UNKNOWN, never as a getter returning false; strict unlocked,
+hardware/authentication requirements and Apple rules remain unchanged.
+
+**Creation ownership** requires an actual fresh, canonical on-curve public point
+and the original scoped identity. Shared state persists that witness in the existing
+reserved record before promoting a verified key to LIVE.
+
+Cleanup confirms exact absence or requires the matching generated point before
+deleting the exact recorded alias. An occupied zero-point reservation, missing
+readback or mismatched point stays pending and blocks only its affected namespace;
+RESET cannot adopt, overwrite or forget it.
+
+A crash between generation and durable witness publication is ambiguous. Reopen
+uses the actual durable file and retains that reservation until absence or ownership
+can be established; ordinary witnessed recovery remains usable.
+
+Android generation has no public create-if-absent primitive. Exclusive cooperating
+SDK ownership, random alias names and preexisting-alias lookup do not prevent a
+malicious same-UID writer from racing lookup/generation or point-check/deletion.
+
+**Platform diagnostics** use a bounded private channel and the existing public
+completion fields. Only actual OS-returned numeric codes are reported; absent
+numbers remain absent, and successful cleanup does not erase a meaningful failure.
 
 Host tests use actual C entry points, actual local-policy CycleMonitor publication/gate,
 owned fixture keys and independently reconstructed/verified OpenSSL P-256 outputs.
@@ -239,7 +292,9 @@ hardware, lock, biometric, restore or physical-device evidence. Actual child
 platform implementations, Apple SDK/Swift/NDK consumers and supported physical
 device outcomes must be recorded independently before claiming platform support.
 
-## Callback contention and prompt revalidation
+<a id="callback-contention-and-prompt-revalidation"></a>
+
+## How are callback contention and prompt revalidation handled?
 
 Private `run_job` and `authenticated` run on the two existing executor workers and
 wait for a native read lease before loading the installed owner. Public C calls
@@ -271,19 +326,43 @@ Cancellation, close, request expiry or handle expiry during lookup cannot start 
 prompt. The existing early-auth handshake and post-yield/preprimitive/take gates
 remain required.
 
-## Build and validate the companion
+After queued prompt preparation, `prompt_eligibility` takes only immutable copies,
+obtains the actual shipping local gate and freshly checks the same job/request,
+client, generation, key/profile, handle, clock and cancellation state again. OP_OK
+permits that prompt to start once; it is not authentication success.
+
+Both native entry and state-lock acquisition are try-only on this path. BUSY is a
+terminal refusal with one owed worker acknowledgment, not a retry/spin permit.
+
+The actual refused-query gate is retained in the adapter's same serialized scratch
+lease until its worker consumes it. The refusal-only payload cannot grant auth or
+write into a retired/replacement request; a state lock never spans gate or clock calls.
+
+Signing preparation performs provider lookup, initialization, message feeding and
+output preparation before the final shared gate. The final provider call performs
+only the prepared primitive, and failed completions retain the actual full last gate.
+
+These checks linearize immediately before prompt launch or the primitive. They do
+not make a future OS call atomic with time or policy changes; finish/take refusal
+and provider quiescence remain required.
+
+<a id="build-and-validate-the-companion"></a>
+
+## How do I build and validate the companion?
 
 From the repository root, build the existing host fixtures and run their registered
-CTest cases:
+CTest cases on Linux (the cold-process history and allocation probe targets are Linux-only):
 
 ```sh
 cmake --preset host -S runtime -B /tmp/rasp-scoped-key-host -DRASP_BUILD_KEY_COMPANION=ON
-cmake --build /tmp/rasp-scoped-key-host --parallel 2 --target rasp_keys_test rasp_keys_c_consumer rasp_keys_hash_allocation_probe
-ctest --test-dir /tmp/rasp-scoped-key-host --parallel 2 --output-on-failure --no-tests=error -R '^Scoped'
+cmake --build /tmp/rasp-scoped-key-host --parallel 2 --target rasp_keys_test rasp_keys_report_test rasp_keys_history_test rasp_keys_c_consumer rasp_keys_hash_allocation_probe
+ctest --test-dir /tmp/rasp-scoped-key-host --parallel 2 --output-on-failure --no-tests=error -R '^(Scoped|AdapterSeams)'
 ```
 
 See the [companion build targets](../runtime/companion/CMakeLists.txt),
 [public-C Service tests](../runtime/companion/tests/service_test.cpp),
+[adapter-seam regressions](../runtime/companion/tests/adapter_test.cpp),
+[cold-process recovery histories](../runtime/companion/tests/history_test.cpp),
 [ABI tests](../runtime/companion/tests/abi_test.cpp), and
 [encoding tests](../runtime/companion/tests/encoding_test.cpp) with their
 [frozen golden vectors](../runtime/companion/tests/golden.h).

@@ -27,12 +27,32 @@ if(RASP_BUILD_TESTS)
   target_link_libraries(gtest_main PRIVATE rasp_language)
   find_package(OpenSSL REQUIRED)
   add_executable(rasp_keys_test tests/service_test.cpp tests/support.cpp tests/abi_test.cpp
-    tests/encoding_test.cpp tests/manifest_test.cpp
+    tests/encoding_test.cpp tests/manifest_test.cpp tests/adapter_test.cpp
     ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp)
   target_include_directories(rasp_keys_test PRIVATE src tests ${PROJECT_SOURCE_DIR}/core/src)
   target_link_libraries(rasp_keys_test PRIVATE rasp_scoped_keys rasp_core rasp_tfpsacrypto GTest::gtest_main OpenSSL::Crypto rasp_warnings rasp_language)
   include(GoogleTest)
   gtest_discover_tests(rasp_keys_test)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(rasp_keys_test PRIVATE tests/contention.cpp)
+    target_link_options(rasp_keys_test PRIVATE "LINKER:--wrap=pthread_mutex_trylock,--wrap=pthread_mutex_lock")
+  endif()
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(rasp_keys_history_test tests/history_test.cpp tests/support.cpp
+      ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp)
+    target_include_directories(rasp_keys_history_test PRIVATE src tests ${PROJECT_SOURCE_DIR}/core/src)
+    target_link_libraries(rasp_keys_history_test PRIVATE rasp_scoped_keys rasp_core rasp_tfpsacrypto GTest::gtest_main
+      OpenSSL::Crypto rasp_warnings rasp_language)
+    gtest_discover_tests(rasp_keys_history_test TEST_PREFIX "ScopedHistory." PROPERTIES RUN_SERIAL TRUE TIMEOUT 60)
+  endif()
+  add_executable(rasp_keys_report_test tests/adapter_test.cpp tests/support.cpp
+    ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp)
+  target_compile_definitions(rasp_keys_report_test PRIVATE RASP_KEYS_TEST_REPORT_ONLY)
+  target_include_directories(rasp_keys_report_test PRIVATE src tests ${PROJECT_SOURCE_DIR}/core/src)
+  target_link_libraries(rasp_keys_report_test PRIVATE rasp_scoped_keys rasp_core rasp_tfpsacrypto GTest::gtest_main
+    OpenSSL::Crypto rasp_warnings rasp_language)
+  gtest_discover_tests(rasp_keys_report_test TEST_PREFIX "ScopedAdvisory."
+    TEST_FILTER "AdapterSeams.r2_whenQueuedMainStartStillValid_signsOnce")
   add_executable(rasp_keys_c_consumer tests/unavailable.c ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp)
   target_link_libraries(rasp_keys_c_consumer PRIVATE rasp_scoped_keys rasp_core rasp_language)
   target_compile_options(rasp_keys_c_consumer PRIVATE -Wall -Wextra -Werror)

@@ -36,6 +36,7 @@ struct Registry {
   std::atomic<std::uint64_t> ordinal{0};
 };
 static_assert(sizeof(Registry) <= 131072);
+static_assert(sizeof(Registry) - kOwnedArenaBytes <= 32768);
 /// Constinit has no load constructor; no_destroy explicitly preserves the one owner/mutex through process exit.
 /// Its native descriptors/platform are separately closed and detached under exclusive entry quiescence.
 Registry& registry() {
@@ -277,8 +278,6 @@ void Service::retire(std::size_t index) {
                           [index](const auto& job) { return job.used && !job.closing && job.request == index; })) {
     return;
   }
-  wipe(request.input_padding);
-  wipe(request.result_padding);
   wipe_object(request.input);
   wipe_object(request.result);
   request.used = false;
@@ -339,7 +338,11 @@ std::uint32_t Service::load() {
     if (!generated || !encode_manifest(manifest_, scratch)) {
       return RASP_SK_OP_INTERNAL_ERROR;
     }
-    status = platform_->persist(scratch);
+    PlatformDiagnostic diagnostic;
+    status = platform_->persist(scratch, diagnostic);
+    if (!valid_diagnostic(diagnostic)) {
+      status = RASP_SK_OP_PLATFORM_ERROR;
+    }
     if (status != RASP_SK_OP_OK) {
       return RASP_SK_OP_STORAGE_UNAVAILABLE;
     }
@@ -393,7 +396,9 @@ bool Service::valid_loaded() const {
     }
     if (!valid_binding(record.info, *space) ||
         !std::ranges::equal(record.info.profile_sha256, std::span{namespaces_}[index].profile) ||
-        (record.state == KeyState::kLive && !valid_info(record.info, *space))) {
+        (record.state == KeyState::kLive && !valid_info(record.info, *space)) ||
+        (std::ranges::any_of(record.info.public_key_x963, [](auto byte) { return byte != 0; }) &&
+         !valid_point(record.info.public_key_x963))) {
       return false;
     }
   }
@@ -410,14 +415,18 @@ std::uint32_t Service::recover(std::span<std::uint8_t> scratch) {
       reference(
           std::span{jobs_}[0], record.info.key_id,
           static_cast<std::uint32_t>(space - std::span(config_.namespaces).first(config_.namespace_count).begin()));
-      if (platform_->erase(std::span{jobs_}[0].reference) == RASP_SK_OP_OK) {
+      PlatformDiagnostic diagnostic;
+      if (platform_->erase(std::span{jobs_}[0].reference, cleanup_proof(record.info), diagnostic) == RASP_SK_OP_OK &&
+          valid_diagnostic(diagnostic)) {
         std::span{candidate_.records}[index] = {};
         changed = true;
       }
     }
   }
   if (changed) {
-    if (!encode_manifest(candidate_, scratch) || platform_->persist(scratch) != RASP_SK_OP_OK) {
+    PlatformDiagnostic diagnostic;
+    if (!encode_manifest(candidate_, scratch) || platform_->persist(scratch, diagnostic) != RASP_SK_OP_OK ||
+        !valid_diagnostic(diagnostic)) {
       storage_fault_ = true;
       return RASP_SK_OP_STORAGE_UNAVAILABLE;
     }
@@ -714,9 +723,9 @@ bool Service::targets(Request& request, std::size_t record, Posts& posts) {
   }
   return true;
 }
-bool Service::gate(const Request& request, RaspLocalGateResultV1& output) const {
-  const auto& space = std::span(config_.namespaces)[request.space];
-  RaspLocalGateRequestV1 input{};
+void Service::gate_input(std::uint32_t space_index, RaspLocalGateRequestV1& input) const {
+  const auto& space = std::span(config_.namespaces)[space_index];
+  input = {};
   input.abi_version = 1;
   input.struct_size = sizeof(input);
   std::memcpy(std::span(input.operation).data(), std::span(space.gate_operation).data(), space.gate_operation_length);
@@ -726,12 +735,134 @@ bool Service::gate(const Request& request, RaspLocalGateResultV1& output) const 
     std::span(input.expected_policy_sha256)[(index * 2) + 1] =
         kHex[std::span(space.expected_policy_sha256)[index] & 15U];
   }
-  const auto status = rasp_local_policy_gate_v1(&input, sizeof(input), &output, sizeof(output));
-  return status == RASP_LOCAL_OK &&
-         (output.action == RASP_LOCAL_ALLOW ||
-          (space.gate_mode == RASP_SK_EXPLICIT_ADVISORY && output.action == RASP_LOCAL_REPORT));
 }
-std::uint32_t Service::eligible(Request& request, std::uint64_t now) const {
+bool Service::gate(const Request& request, RaspLocalGateResultV1& output) const {
+  RaspLocalGateRequestV1 input{};
+  gate_input(request.space, input);
+  const auto status = rasp_local_policy_gate_v1(&input, sizeof(input), &output, sizeof(output));
+  return gate_allowed(status, output, std::span(config_.namespaces)[request.space].gate_mode);
+}
+bool Service::matches_prompt(const Job& job, const PromptSnapshot& snapshot) const {
+  if (!job.used || job.closing || !same(job.token, snapshot.job) || job.request >= requests_.size()) {
+    return false;
+  }
+  const auto& request = std::span(requests_)[job.request];
+  if (!request.used || request.space >= config_.namespace_count) {
+    return false;
+  }
+  RaspLocalGateRequestV1 input{};
+  gate_input(request.space, input);
+  return std::memcmp(&input, &snapshot.gate_request, sizeof(input)) == 0 &&
+         snapshot.gate_mode == std::span(config_.namespaces)[request.space].gate_mode &&
+         same(request.token, snapshot.request) && same(client_, snapshot.client) &&
+         same(request.input.client, snapshot.client) && same(manifest_.generation, snapshot.generation) &&
+         same(job.reference.generation, snapshot.generation) && same(job.reference.key_id, snapshot.key) &&
+         same(request.input.input.sign.key, snapshot.handle) &&
+         same(std::span(namespaces_)[request.space].token, snapshot.namespace_handle) &&
+         job.reference.profile_sha256 == snapshot.profile &&
+         std::span(namespaces_)[request.space].profile == snapshot.profile;
+}
+std::uint32_t Service::prompt_status(const Job& job, std::uint64_t now) const {
+  if (!job.used || job.closing || !job.prompt || !job.auth_pending || job.authenticated ||
+      job.request >= requests_.size()) {
+    return RASP_SK_OP_NOT_FOUND;
+  }
+  const auto& request = std::span(requests_)[job.request];
+  if (!request.used || request.input.operation != RASP_SK_SIGN || request.space >= config_.namespace_count ||
+      !same(request.input.client, client_)) {
+    return RASP_SK_OP_NOT_FOUND;
+  }
+  const auto status = eligible(request, now);
+  if (status != RASP_SK_OP_OK) {
+    return status;
+  }
+  const auto record = record_index(job.reference.key_id);
+  const auto handle = handle_index(request.input.input.sign.key);
+  if (request.taken || request.terminal || record >= manifest_.records.size() || handle >= handles_.size() ||
+      !same(manifest_.generation, job.reference.generation) ||
+      std::span(manifest_.records)[record].state != KeyState::kLive || std::span(blocked_)[record] ||
+      !same(std::span(handles_)[handle].key_id, job.reference.key_id) ||
+      std::span(namespaces_)[request.space].profile != job.reference.profile_sha256 ||
+      !std::ranges::equal(std::span(manifest_.records)[record].info.profile_sha256, job.reference.profile_sha256)) {
+    return RASP_SK_OP_INVALIDATED;
+  }
+  return RASP_SK_OP_OK;
+}
+std::uint32_t Service::prompt_eligibility(const RaspScopedKeyTokenV1& value, PromptCheck& check) {
+  check.operation_status = RASP_SK_OP_BUSY;
+  if (!refresh_clock()) {
+    return check.operation_status;
+  }
+  {
+    const std::unique_lock lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+      return check.operation_status;
+    }
+    const auto* job =
+        std::ranges::find_if(jobs_, [&](const auto& item) { return item.used && same(item.token, value); });
+    std::uint64_t now = 0;
+    if (job == jobs_.end()) {
+      check.operation_status = RASP_SK_OP_NOT_FOUND;
+    } else {
+      check.operation_status = sample(now) ? prompt_status(*job, now) : RASP_SK_OP_CLOCK_UNAVAILABLE;
+    }
+    if (check.operation_status != RASP_SK_OP_OK) {
+      return check.operation_status;
+    }
+    const auto& request = std::span(requests_)[job->request];
+    auto& snapshot = check.snapshot;
+    snapshot.job = job->token;
+    snapshot.request = request.token;
+    snapshot.client = client_;
+    snapshot.generation = job->reference.generation;
+    snapshot.key = job->reference.key_id;
+    snapshot.handle = request.input.input.sign.key;
+    snapshot.namespace_handle = std::span(namespaces_)[request.space].token;
+    snapshot.profile = job->reference.profile_sha256;
+    snapshot.gate_mode = std::span(config_.namespaces)[request.space].gate_mode;
+    gate_input(request.space, snapshot.gate_request);
+  }
+  check.gate_call_status = rasp_local_policy_gate_v1(&check.snapshot.gate_request, sizeof(check.snapshot.gate_request),
+                                                     &check.gate, sizeof(check.gate));
+  check.gate_present = 1;
+  const bool refreshed = refresh_clock();
+  check.operation_status = RASP_SK_OP_BUSY;
+  const std::unique_lock lock(mutex_, std::try_to_lock);
+  if (!lock.owns_lock()) {
+    return check.operation_status;
+  }
+  const auto* job = std::ranges::find_if(jobs_, [&](const auto& item) { return item.used && same(item.token, value); });
+  if (job == jobs_.end() || !job->auth_pending || !matches_prompt(*job, check.snapshot)) {
+    check.operation_status = RASP_SK_OP_NOT_FOUND;
+    return check.operation_status;
+  }
+  auto& request = std::span(requests_)[job->request];
+  if (!request.taken) {
+    request.result.gate = check.gate;
+    request.result.gate_present = 1;
+    check.gate_committed = 1;
+  }
+  std::uint64_t now = 0;
+  if (refreshed) {
+    check.operation_status = sample(now) ? prompt_status(*job, now) : RASP_SK_OP_CLOCK_UNAVAILABLE;
+  }
+  if (check.operation_status == RASP_SK_OP_OK &&
+      !gate_allowed(check.gate_call_status, check.gate, check.snapshot.gate_mode)) {
+    check.operation_status = RASP_SK_OP_GATE_REJECTED;
+  }
+  return check.operation_status;
+}
+std::uint32_t prompt_eligibility(const RaspScopedKeyTokenV1& job, PromptCheck& check) {
+  EntryLease const entry;
+  check = {};
+  Service* owner = entry.get();
+  if (owner == nullptr) {
+    check.operation_status = entry.busy() ? RASP_SK_OP_BUSY : RASP_SK_OP_NOT_READY;
+    return check.operation_status;
+  }
+  return owner->prompt_eligibility(job, check);
+}
+std::uint32_t Service::eligible(const Request& request, std::uint64_t now) const {
   if (storage_fault_) {
     return RASP_SK_OP_STORAGE_UNAVAILABLE;
   }

@@ -31,6 +31,10 @@ assert rows, "missing mutable section accounting"
 size = sum(int(value) for _, value in rows)
 print("complete consumer mutable sections including linked dependencies:", size)
 assert size <= 131072, size
+arena = 71936
+assert size >= arena, size
+print("typed arena payload:", arena, "complete other mutable state:", size - arena)
+assert size - arena <= 32768, size - arena
 PYCODE
   nm "$out/$mode" > "$out/symbols-$mode.txt"
   if grep -q __libcpp_contention_table "$out/symbols-$mode.txt"; then exit 1; fi

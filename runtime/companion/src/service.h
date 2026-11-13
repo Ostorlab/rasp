@@ -16,9 +16,7 @@ class EntryLease;
 /// One reserved request arena plus one reserved completion arena and finite metadata.
 struct Request {
   RaspScopedKeySubmitV1 input{};
-  std::array<std::uint8_t, 6144 - sizeof(RaspScopedKeySubmitV1)> input_padding{};
   RaspScopedKeyCompletionV1 result{};
-  std::array<std::uint8_t, 4096 - sizeof(RaspScopedKeyCompletionV1)> result_padding{};
   RaspScopedKeyTokenV1 token{};
   std::uint64_t deadline = 0;
   std::uint32_t targets = 0;
@@ -36,6 +34,10 @@ struct Request {
   std::atomic<std::uint64_t> delivery_prefix{0};
   std::atomic<std::uint64_t> delivery_ordinal{0};
 };
+/// Actual typed arenas stay below the frozen maxima; discriminator/slot bookkeeping is other state.
+inline constexpr std::size_t kOwnedArenaBytes =
+    (8 * (sizeof(RaspScopedKeySubmitV1) + sizeof(RaspScopedKeyCompletionV1))) + (std::size_t{2} * 8192);
+static_assert(kOwnedArenaBytes == 71936 && kOwnedArenaBytes <= 98304);
 /// Typed fields exactly partition one8192-byte arena; object representation also holds manifest bytes.
 struct alignas(8) SigningScratch {
   std::array<std::uint8_t, 4960> message{};
@@ -106,7 +108,10 @@ class Service {
   /// Child executor consumes only its exact already reserved token.
   void run(const RaspScopedKeyTokenV1& value, EntryLease& entry);
   /// Request-local callback cannot grant authority to another job or key.
-  void auth(const RaspScopedKeyTokenV1& value, std::uint32_t status);
+  void auth(const RaspScopedKeyTokenV1& value, std::uint32_t status, const PlatformDiagnostic& diagnostic,
+            const PromptCheck* refused_prompt);
+  /// Copy immutable binding then revalidate the exact still-owned job after external gate/clock calls.
+  [[nodiscard]] std::uint32_t prompt_eligibility(const RaspScopedKeyTokenV1& value, PromptCheck& check);
   /// Reserve the original request slot while an owned wrapper callback runs.
   [[nodiscard]] bool reserve_delivery(const RaspScopedKeyTokenV1& value);
   /// Only never-destroyed atomic slots/counters are accessed; no platform, mutex or descriptor access.
@@ -177,14 +182,26 @@ class Service {
   [[nodiscard]] bool reserve_job(Job& job, Request& request, std::size_t index, Posts& posts);
   /// Determine whether this request needs the single prompt lease.
   [[nodiscard]] bool needs_prompt(const Request& request) const;
+  /// Match only immutable copied identities; caller holds state lock, including on refusal consumption.
+  [[nodiscard]] bool matches_prompt(const Job& job, const PromptSnapshot& snapshot) const;
+  /// Exact active prompt eligibility, never matched by key or recycled slot alone; state lock held.
+  [[nodiscard]] std::uint32_t prompt_status(const Job& job, std::uint64_t now) const;
+  /// Copy the immutable gate operation/hash; caller owns the destination and holds the state lock.
+  void gate_input(std::uint32_t space_index, RaspLocalGateRequestV1& input) const;
+  /// Preserve latest meaningful actual OS failure; invalid private diagnostics fail closed.
+  [[nodiscard]] std::uint32_t boundary(Job& job, std::uint32_t status, const PlatformDiagnostic& diagnostic);
   /// Actual gate receives only immutable operation/hash, never a host-supplied decision.
   [[nodiscard]] bool gate(const Request& request, RaspLocalGateResultV1& output) const;
   /// Check request/handle lease, cancel, current record identity and namespace before key use.
-  [[nodiscard]] std::uint32_t eligible(Request& request, std::uint64_t now) const;
+  [[nodiscard]] std::uint32_t eligible(const Request& request, std::uint64_t now) const;
   /// Persistent public identity uses full128-bit CSPRNG output, with at most four collision attempts.
   [[nodiscard]] std::uint32_t fresh_key_id(RaspScopedKeyTokenV1& output);
   /// Recheck lookup/lifetime and actual gate immediately before committing an auth prompt.
   [[nodiscard]] std::uint32_t prepare_auth(Job& job);
+  /// Generate once and durably retain only its canonical owned witness before live promotion.
+  [[nodiscard]] std::uint32_t generate(Job& job, CleanupProof& proof);
+  /// Describe/revalidate and start the existing early/later authentication handshake when required.
+  [[nodiscard]] std::uint32_t start_auth(Job& job);
   /// Complete worker phases through actual adapter operations.
   [[nodiscard]] std::uint32_t create(Job& job);
   [[nodiscard]] std::uint32_t describe(Job& job);
@@ -197,7 +214,7 @@ class Service {
   /// Expose truthful bounded progress while a physical job retains its request.
   void progress(Job& job, RaspScopedKeyDurabilityV1 durability, RaspScopedKeyEffectV1 effect);
   /// Remove a cancelled/failed creation using its already durable exact reservation.
-  [[nodiscard]] std::uint32_t cleanup_created(Job& job);
+  [[nodiscard]] std::uint32_t cleanup_created(Job& job, const CleanupProof& proof);
   /// Allocate a finite memory lease after a fully verified successful key operation.
   [[nodiscard]] bool handle(Request& request, const RaspScopedKeyInfoV1& info, std::uint64_t now);
 

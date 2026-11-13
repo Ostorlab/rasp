@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <span>
 
+#include "rasp/local_policy_host.h"
 #include "rasp/scoped_key.h"
 
 namespace rasp::keys {
@@ -32,6 +33,10 @@ void wipe(std::span<std::uint8_t> memory);
 [[nodiscard]] std::size_t message_bytes(const Application& app, const RaspScopedKeyClientSpecV1& client,
                                         const RaspScopedKeyNamespaceSpecV1& space, const RaspScopedKeyInfoV1& key,
                                         const RaspScopedKeySignInputV1& input, std::span<std::uint8_t> output);
+/// Validate canonical uncompressed P-256 public coordinates and curve membership without heap state.
+[[nodiscard]] bool valid_point(std::span<const std::uint8_t, 65> point);
+/// Apply only the actual shipping gate status/action and explicit namespace advisory profile.
+[[nodiscard]] bool gate_allowed(std::int32_t status, const RaspLocalGateResultV1& gate, std::uint32_t mode);
 /// Validate measured properties and the exact immutable requested key profile.
 /// Persistent reservation metadata must match its exact namespace even before a public key exists.
 [[nodiscard]] bool valid_binding(const RaspScopedKeyInfoV1& info, const RaspScopedKeyNamespaceSpecV1& space);

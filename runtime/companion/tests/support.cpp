@@ -5,14 +5,21 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
+#include <ios>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <openssl/core_names.h>
+#include <openssl/ec.h>
 #include <openssl/evp.h>
 #include <openssl/params.h>
+#include <openssl/pem.h>
 #include <openssl/rand.h>
 #include <openssl/types.h>
 #include <optional>
@@ -36,6 +43,13 @@
 #include "rasp/scoped_key.h"
 
 namespace fixture {
+bool report_only() {
+#ifdef RASP_KEYS_TEST_REPORT_ONLY
+  return true;
+#else
+  return false;
+#endif
+}
 std::vector<std::uint8_t> unhex(std::string_view value) {
   std::vector<std::uint8_t> output;
   for (std::size_t index = 0; index < value.size(); index += 2) {
@@ -50,10 +64,28 @@ std::atomic<std::uint64_t>& ticks() {
 namespace {
 /// Exact controlled external clock boundary; production gate/evaluator remain unchanged.
 std::optional<std::int64_t> clock() { return static_cast<std::int64_t>(ticks().load()); }
+/// Actual immutable alias identity binds generation/profile/KeyId, not a reusable record index.
+std::string key_identity(const rasp::keys::KeyReference& key) {
+  std::string alias;
+  for (const auto part : {
+           std::span<const std::uint8_t>(key.generation.bytes),
+           std::span<const std::uint8_t>(key.profile_sha256),
+           std::span<const std::uint8_t>(key.key_id.bytes),
+       }) {
+    for (const auto byte : part) {
+      alias.push_back(static_cast<char>(byte));
+    }
+  }
+  return alias;
+}
 /// Immutable test policy independently specifies one actually supported debugger predicate.
 rasp::Config policy() {
-  return rasp::parse_config(
-      R"({"build_id":"test","checks":["debugger"],"local_policy":{"schema_version":1,"engine_version":1,"policy_id":"demo","policy_version":1,"mode":"gate","scope":"host_calls_only","platform":"android","catalogue_id":"2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d","report_schema_version":1,"report_reason_version":1,"native_metadata_version":1,"operations":[{"name":"append_demo_receipt","max_evidence_age_ms":75000,"max_cycle_duration_ms":5000,"rules":[{"rule_id":"native.android.dbg.tracer_pid.proc_status","rule_version":1}]}]}})");
+  std::string input =
+      R"({"build_id":"test","checks":["debugger"],"local_policy":{"schema_version":1,"engine_version":1,"policy_id":"demo","policy_version":1,"mode":"gate","scope":"host_calls_only","platform":"android","catalogue_id":"2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d","report_schema_version":1,"report_reason_version":1,"native_metadata_version":1,"operations":[{"name":"append_demo_receipt","max_evidence_age_ms":75000,"max_cycle_duration_ms":5000,"rules":[{"rule_id":"native.android.dbg.tracer_pid.proc_status","rule_version":1}]}]}})";
+  if (report_only()) {
+    input.replace(input.find(R"("mode":"gate")"), 13, R"("mode":"report_only")");
+  }
+  return rasp::parse_config(input);
 }
 /// Independent big-endian writer, deliberately separate from the implementation's Writer.
 void number(std::vector<std::uint8_t>& output, std::uint32_t value) {
@@ -175,7 +207,8 @@ std::uint32_t Provider::open_storage(rasp::keys::Application& app, std::span<std
   }
   return RASP_SK_OP_OK;
 }
-std::uint32_t Provider::persist(std::span<const std::uint8_t> file) {
+std::uint32_t Provider::persist(std::span<const std::uint8_t> file, rasp::keys::PlatformDiagnostic& diagnostic) {
+  diagnostic = state_.persist_diagnostic;
   state_.calls.fetch_add(1);
   ++state_.persists;
   if (state_.during_persist) {
@@ -184,10 +217,12 @@ std::uint32_t Provider::persist(std::span<const std::uint8_t> file) {
   if (std::cmp_equal(state_.persist_fail_at, state_.persists.load())) {
     if (state_.publish_before_error) {
       state_.disk.assign(file.begin(), file.end());
+      state_.history.push_back(state_.disk);
     }
     return RASP_SK_OP_STORAGE_UNAVAILABLE;
   }
   state_.disk.assign(file.begin(), file.end());
+  state_.history.push_back(state_.disk);
   return RASP_SK_OP_OK;
 }
 bool Provider::close_storage() {
@@ -206,12 +241,20 @@ bool Provider::schedule(const RaspScopedKeyTokenV1& job) {
   if (state_.schedule_fail) {
     return false;
   }
-  const std::scoped_lock lock(state_.mutex);
-  state_.queue.push_back(job);
-  state_.max_queue = std::max(state_.max_queue, static_cast<std::uint32_t>(state_.queue.size()));
+  {
+    const std::scoped_lock lock(state_.mutex);
+    state_.queue.push_back(job);
+    state_.max_queue = std::max(state_.max_queue, static_cast<std::uint32_t>(state_.queue.size()));
+  }
+  if (state_.during_schedule) {
+    state_.during_schedule();
+  }
   return true;
 }
-std::uint32_t Provider::create(const rasp::keys::KeyReference& key, RaspScopedKeyInfoV1& measured) {
+std::uint32_t Provider::create(const rasp::keys::KeyReference& key, RaspScopedKeyInfoV1& measured,
+                               rasp::keys::CreationReceipt& receipt, rasp::keys::PlatformDiagnostic& diagnostic) {
+  diagnostic = state_.create_diagnostic;
+  receipt = {};
   state_.calls.fetch_add(1);
   ++state_.generates;
   if (state_.during_create) {
@@ -219,6 +262,13 @@ std::uint32_t Provider::create(const rasp::keys::KeyReference& key, RaspScopedKe
   }
   if (state_.create_status != RASP_SK_OP_OK) {
     return state_.create_status;
+  }
+  {
+    const std::scoped_lock lock(state_.mutex);
+    if (keys_.contains(key_identity(key))) {
+      receipt.claim = rasp::keys::CreationClaim::kNoCreation;
+      return RASP_SK_OP_PLATFORM_ERROR;
+    }
   }
   EVP_PKEY_CTX* generator = EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr);
   if (generator == nullptr) {
@@ -240,11 +290,30 @@ std::uint32_t Provider::create(const rasp::keys::KeyReference& key, RaspScopedKe
   }
   {
     const std::scoped_lock lock(state_.mutex);
-    keys_.emplace(identity(key.key_id), generated);
+    if (!keys_.emplace(key_identity(key), generated).second) {
+      EVP_PKEY_free(generated);
+      receipt.claim = rasp::keys::CreationClaim::kNoCreation;
+      return RASP_SK_OP_PLATFORM_ERROR;
+    }
   }
-  return describe(key, measured);
+  std::size_t point_size = 0;
+  if (EVP_PKEY_get_octet_string_param(generated, OSSL_PKEY_PARAM_PUB_KEY, receipt.point.data(), receipt.point.size(),
+                                      &point_size) != 1 ||
+      point_size != 65) {
+    return RASP_SK_OP_PLATFORM_ERROR;
+  }
+  receipt.claim = rasp::keys::CreationClaim::kFreshPoint;
+  std::ranges::copy(receipt.point, std::span(measured.public_key_x963).begin());
+  rasp::keys::PlatformDiagnostic described;
+  const auto status = describe(key, measured, described);
+  if (status != RASP_SK_OP_OK) {
+    diagnostic = described;
+  }
+  return status;
 }
-std::uint32_t Provider::describe(const rasp::keys::KeyReference& key, RaspScopedKeyInfoV1& measured) {
+std::uint32_t Provider::describe(const rasp::keys::KeyReference& key, RaspScopedKeyInfoV1& measured,
+                                 rasp::keys::PlatformDiagnostic& diagnostic) {
+  diagnostic = state_.describe_diagnostic;
   if (state_.during_describe) {
     state_.during_describe();
   }
@@ -253,7 +322,7 @@ std::uint32_t Provider::describe(const rasp::keys::KeyReference& key, RaspScoped
     return state_.describe_status;
   }
   const std::scoped_lock lock(state_.mutex);
-  const auto found = keys_.find(identity(key.key_id));
+  const auto found = keys_.find(key_identity(key));
   if (found == keys_.end()) {
     return RASP_SK_OP_NOT_FOUND;
   }
@@ -277,12 +346,25 @@ std::uint32_t Provider::describe(const rasp::keys::KeyReference& key, RaspScoped
   return RASP_SK_OP_OK;
 }
 std::uint32_t Provider::authenticate(const RaspScopedKeyTokenV1& job, const rasp::keys::KeyReference& key,
-                                     std::span<std::uint8_t> bytes) {
+                                     std::span<std::uint8_t> bytes, rasp::keys::PlatformDiagnostic& diagnostic) {
+  diagnostic = state_.auth_diagnostic;
   state_.calls.fetch_add(1);
-  static_cast<void>(key);
   ++state_.prompts;
   if (state_.auth_status != RASP_SK_OP_OK) {
     return state_.auth_status;
+  }
+  {
+    const std::scoped_lock lock(state_.mutex);
+    const auto found = keys_.find(key_identity(key));
+    if (found == keys_.end()) {
+      return RASP_SK_OP_NOT_FOUND;
+    }
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (ctx == nullptr || EVP_DigestSignInit(ctx, nullptr, EVP_sha256(), nullptr, found->second) != 1) {
+      EVP_MD_CTX_free(ctx);
+      return RASP_SK_OP_PLATFORM_ERROR;
+    }
+    std::memcpy(bytes.subspan(8).data(), static_cast<const void*>(&ctx), sizeof(EVP_MD_CTX*));
   }
   bytes[0] = 0x79;
   state_.auth_jobs.push_back(job);
@@ -292,14 +374,47 @@ std::uint32_t Provider::authenticate(const RaspScopedKeyTokenV1& job, const rasp
   }
   return RASP_SK_OP_OK;
 }
-std::uint32_t Provider::sign(const rasp::keys::KeyReference& key, std::span<const std::uint8_t> message_bytes,
-                             std::span<std::uint8_t> bytes, std::span<std::uint8_t> der, std::uint32_t& written) {
+std::uint32_t Provider::prepare_sign(const rasp::keys::KeyReference& key, std::span<const std::uint8_t> message_bytes,
+                                     std::span<std::uint8_t> bytes, rasp::keys::PlatformDiagnostic& diagnostic) {
+  diagnostic = state_.prepare_diagnostic;
+  if (state_.during_prepare) {
+    state_.during_prepare();
+  }
+  if (bytes.size() != 1024 || (key.space.auth_requirement == 2 && bytes[0] != 0x79)) {
+    return RASP_SK_OP_AUTH_REQUIRED;
+  }
+  const std::scoped_lock lock(state_.mutex);
+  const auto found = keys_.find(key_identity(key));
+  if (found == keys_.end()) {
+    return RASP_SK_OP_NOT_FOUND;
+  }
+  EVP_MD_CTX* ctx = nullptr;
+  std::memcpy(static_cast<void*>(&ctx), bytes.subspan(8).data(), sizeof(EVP_MD_CTX*));
+  if (ctx == nullptr) {
+    if (key.space.auth_requirement == RASP_SK_CURRENT_BIOMETRY_EACH_REQUEST) {
+      return RASP_SK_OP_AUTH_REQUIRED;
+    }
+    ctx = EVP_MD_CTX_new();
+    if (ctx == nullptr || EVP_DigestSignInit(ctx, nullptr, EVP_sha256(), nullptr, found->second) != 1) {
+      EVP_MD_CTX_free(ctx);
+      return RASP_SK_OP_PLATFORM_ERROR;
+    }
+    std::memcpy(bytes.subspan(8).data(), static_cast<const void*>(&ctx), sizeof(EVP_MD_CTX*));
+  }
+  if (EVP_DigestSignUpdate(ctx, message_bytes.data(), message_bytes.size()) != 1) {
+    return RASP_SK_OP_PLATFORM_ERROR;
+  }
+  state_.last_message.assign(message_bytes.begin(), message_bytes.end());
+  return RASP_SK_OP_OK;
+}
+std::uint32_t Provider::sign(const rasp::keys::KeyReference& key, std::span<std::uint8_t> bytes,
+                             std::span<std::uint8_t> der, std::uint32_t& written,
+                             rasp::keys::PlatformDiagnostic& diagnostic) {
+  static_cast<void>(key);
+  diagnostic = state_.sign_diagnostic;
   state_.calls.fetch_add(1);
   if (bytes.size() != 1024 || der.size() != 72) {
     return RASP_SK_OP_INTERNAL_ERROR;
-  }
-  if (key.space.auth_requirement == 2 && bytes[0] != 0x79) {
-    return RASP_SK_OP_AUTH_REQUIRED;
   }
   ++state_.signs;
   if (state_.during_sign) {
@@ -308,21 +423,16 @@ std::uint32_t Provider::sign(const rasp::keys::KeyReference& key, std::span<cons
   if (state_.sign_status != RASP_SK_OP_OK) {
     return state_.sign_status;
   }
-  const std::scoped_lock lock(state_.mutex);
-  const auto found = keys_.find(identity(key.key_id));
-  if (found == keys_.end()) {
-    return RASP_SK_OP_NOT_FOUND;
-  }
-  state_.last_message.assign(message_bytes.begin(), message_bytes.end());
-  EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+  EVP_MD_CTX* ctx = nullptr;
+  std::memcpy(static_cast<void*>(&ctx), bytes.subspan(8).data(), sizeof(EVP_MD_CTX*));
   std::size_t length = der.size();
-  const bool okay = ctx != nullptr && EVP_DigestSignInit(ctx, nullptr, EVP_sha256(), nullptr, found->second) == 1 &&
-                    EVP_DigestSign(ctx, der.data(), &length, message_bytes.data(), message_bytes.size()) == 1;
-  EVP_MD_CTX_free(ctx);
+  const bool okay = ctx != nullptr && EVP_DigestSignFinal(ctx, der.data(), &length) == 1;
   written = static_cast<std::uint32_t>(length);
   return okay ? RASP_SK_OP_OK : RASP_SK_OP_PLATFORM_ERROR;
 }
-std::uint32_t Provider::erase(const rasp::keys::KeyReference& key) {
+std::uint32_t Provider::erase(const rasp::keys::KeyReference& key, const rasp::keys::CleanupProof& proof,
+                              rasp::keys::PlatformDiagnostic& diagnostic) {
+  diagnostic = state_.erase_diagnostic;
   state_.calls.fetch_add(1);
   const std::scoped_lock lock(state_.mutex);
   ++state_.erases;
@@ -330,8 +440,18 @@ std::uint32_t Provider::erase(const rasp::keys::KeyReference& key) {
   if (state_.erase_fail) {
     return RASP_SK_OP_PLATFORM_ERROR;
   }
-  const auto found = keys_.find(identity(key.key_id));
+  const auto found = keys_.find(key_identity(key));
   if (found != keys_.end()) {
+    std::array<std::uint8_t, 65> point{};
+    std::size_t size = 0;
+    if (proof.mode != rasp::keys::CleanupMode::kMatchCreatedPoint ||
+        !std::ranges::all_of(proof.reserved, [](auto byte) { return byte == 0; }) ||
+        !rasp::keys::valid_point(proof.point) ||
+        EVP_PKEY_get_octet_string_param(found->second, OSSL_PKEY_PARAM_PUB_KEY, point.data(), point.size(), &size) !=
+            1 ||
+        size != point.size() || point != proof.point) {
+      return RASP_SK_OP_CLEANUP_PENDING;
+    }
     EVP_PKEY_free(found->second);
     keys_.erase(found);
   }
@@ -343,7 +463,94 @@ void Provider::cancel(const RaspScopedKeyTokenV1& job) {
 }
 void Provider::release(std::span<std::uint8_t> bytes) {
   state_.calls.fetch_add(1);
+  EVP_MD_CTX* ctx = nullptr;
+  std::memcpy(static_cast<void*>(&ctx), bytes.subspan(8).data(), sizeof(EVP_MD_CTX*));
+  EVP_MD_CTX_free(ctx);
   std::ranges::fill(bytes, 0);
+}
+bool Provider::save_store(const std::filesystem::path& directory) {
+  {
+    std::ofstream manifest(directory / "manifest.bin", std::ios::binary);
+    for (const auto byte : state_.disk) {
+      manifest.put(static_cast<char>(byte));
+    }
+    if (!manifest.good()) {
+      return false;
+    }
+  }
+  std::ofstream inventory(directory / "keys.txt");
+  if (!inventory.good()) {
+    return false;
+  }
+  constexpr std::string_view kHex = "0123456789abcdef";
+  for (const auto& [alias, key] : keys_) {
+    std::string name;
+    for (const char value : alias) {
+      const auto byte = static_cast<unsigned char>(value);
+      name.push_back(kHex[byte >> 4U]);
+      name.push_back(kHex[byte & 15U]);
+    }
+    inventory << name << '\n';
+    name += ".pem";
+    const std::unique_ptr<FILE, decltype(&std::fclose)> file(std::fopen((directory / name).c_str(), "wb"), std::fclose);
+    if (file == nullptr || PEM_write_PrivateKey(file.get(), key, nullptr, nullptr, 0, nullptr, nullptr) != 1) {
+      return false;
+    }
+  }
+  return true;
+}
+bool Provider::load_store(const std::filesystem::path& directory) {
+  if (!keys_.empty()) {
+    return false;
+  }
+  {
+    std::ifstream manifest(directory / "manifest.bin", std::ios::binary);
+    if (!manifest.good()) {
+      return false;
+    }
+    const std::vector<char> bytes{std::istreambuf_iterator<char>(manifest), std::istreambuf_iterator<char>()};
+    if (bytes.size() != 8192) {
+      return false;
+    }
+    state_.disk.assign(bytes.begin(), bytes.end());
+  }
+  std::ifstream inventory(directory / "keys.txt");
+  if (!inventory.good()) {
+    return false;
+  }
+  std::string name;
+  while (std::getline(inventory, name)) {
+    if (name.size() != 128 || keys_.size() == 32 ||
+        !std::ranges::all_of(name, [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })) {
+      return false;
+    }
+    const auto bytes = unhex(name);
+    const std::string alias(bytes.begin(), bytes.end());
+    const std::unique_ptr<FILE, decltype(&std::fclose)> file(std::fopen((directory / (name + ".pem")).c_str(), "rb"),
+                                                             std::fclose);
+    if (file == nullptr) {
+      return false;
+    }
+    EVP_PKEY* key = PEM_read_PrivateKey(file.get(), nullptr, nullptr, nullptr);
+    if (key == nullptr || !keys_.emplace(alias, key).second) {
+      EVP_PKEY_free(key);
+      return false;
+    }
+  }
+  return true;
+}
+bool Provider::replace_external(const rasp::keys::KeyReference& key) {
+  const auto found = keys_.find(key_identity(key));
+  if (found == keys_.end()) {
+    return false;
+  }
+  EVP_PKEY* replacement = EVP_EC_gen("prime256v1");
+  if (replacement == nullptr) {
+    return false;
+  }
+  EVP_PKEY_free(found->second);
+  found->second = replacement;
+  return true;
 }
 bool Provider::step() {
   RaspScopedKeyTokenV1 token{};

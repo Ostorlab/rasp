@@ -16,6 +16,7 @@
 
 #include "encoding.h"
 #include "entry.h"
+#include "manifest.h"
 #include "platform.h"
 #include "rasp/local_policy_host.h"
 #include "rasp/scoped_key.h"
@@ -355,7 +356,12 @@ TEST_F(ScopedKeys, storage_whenRestoredWithoutItsKey_neverRegenerates) {
   const auto key = create();
   rasp::keys::KeyReference reference{};
   reference.key_id = key.info.key_id;
-  ASSERT_EQ(state().provider.erase(reference), RASP_SK_OP_OK);
+  auto stored = std::make_unique<rasp::keys::Manifest>();
+  ASSERT_TRUE(rasp::keys::decode_manifest(state().provider.state().disk, *stored));
+  reference.generation = stored->generation;
+  std::ranges::copy(key.info.profile_sha256, reference.profile_sha256.begin());
+  rasp::keys::PlatformDiagnostic diagnostic;
+  ASSERT_EQ(state().provider.erase(reference, rasp::keys::cleanup_proof(key.info), diagnostic), RASP_SK_OP_OK);
   request(RASP_SK_REOPEN);
   state().input->input.key_id = key.info.key_id;
   const auto admission = admit();
@@ -859,11 +865,11 @@ TEST_F(ScopedKeys, keyId_whenEntropyRepeats_rejectsCollisionAfterFourAttemptsWit
   take(unaffected.request);
   EXPECT_EQ(state().result->completion.operation_status, RASP_SK_OP_OK);
 }
-TEST_F(ScopedKeys, storage_whenReservationRestored_recoversOnlyItsExactKeyAndNeverRegenerates) {
+TEST_F(ScopedKeys, storage_whenWitnessedReservationRestored_recoversOnlyItsExactKeyAndNeverRegenerates) {
   std::vector<std::uint8_t> reserved;
-  state().provider.state().during_create = [&] { reserved = state().provider.state().disk; };
+  state().provider.state().during_persist = [&] { reserved = state().provider.state().disk; };
   const auto key = create();
-  state().provider.state().during_create = {};
+  state().provider.state().during_persist = {};
   ASSERT_FALSE(reserved.empty());
   static_cast<void>(control(RASP_SK_CLOSE_CLIENT));
   state().provider.drain();

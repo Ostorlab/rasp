@@ -10,6 +10,8 @@
 #include <span>
 #include <string_view>
 
+#include "platform.h"
+#include "rasp/local_policy_host.h"
 #include "rasp/scoped_key.h"
 
 namespace rasp::keys {
@@ -81,10 +83,103 @@ void binding(Writer& writer, const Application& app, const RaspScopedKeyClientSp
   writer.raw(space.expected_policy_sha256);
   writer.number(space.gate_mode);
 }
-/// Validate an exact public uncompressed P-256 point shape; provider verifies curve membership.
-bool point(const RaspScopedKeyInfoV1& info) { return info.public_key_x963[0] == 4; }
+/// Public-only field arithmetic: bounded work, no heap, no private-key operation or timing claim.
+using Field = std::array<std::uint32_t, 8>;
+constexpr Field kPrime{0xffffffff, 0xffffffff, 0xffffffff, 0, 0, 0, 1, 0xffffffff};
+constexpr Field kCurveB{0x27d2604b, 0x3bce3c3e, 0xcc53b0f6, 0x651d06b0, 0x769886bc, 0xb3ebbd55, 0xaa3a93e7, 0x5ac635d8};
+/// Little-endian limbs are compared from their most significant word.
+bool less(const Field& left, const Field& right) {
+  for (std::size_t i = left.size(); i > 0; --i) {
+    if (std::span(left)[i - 1] != std::span(right)[i - 1]) {
+      return std::span(left)[i - 1] < std::span(right)[i - 1];
+    }
+  }
+  return false;
+}
+/// Reduced inputs sum to less than twice the prime, so one subtraction suffices.
+Field add(const Field& left, const Field& right) {
+  Field result{};
+  std::uint64_t carry = 0;
+  for (std::size_t i = 0; i < result.size(); ++i) {
+    const auto sum = static_cast<std::uint64_t>(std::span(left)[i]) + std::span(right)[i] + carry;
+    std::span{result}[i] = static_cast<std::uint32_t>(sum);
+    carry = sum >> 32U;
+  }
+  if (carry != 0 || !less(result, kPrime)) {
+    std::uint64_t borrow = 0;
+    for (std::size_t i = 0; i < result.size(); ++i) {
+      const auto subtrahend = static_cast<std::uint64_t>(std::span(kPrime)[i]) + borrow;
+      const auto word = static_cast<std::uint64_t>(std::span{result}[i]);
+      std::span{result}[i] = static_cast<std::uint32_t>(word - subtrahend);
+      borrow = word < subtrahend ? 1U : 0U;
+    }
+  }
+  return result;
+}
+/// Fixed 256 public-bit steps; not a private scalar multiplication implementation.
+Field multiply(Field factor, std::span<const std::uint32_t, 8> bits) {
+  Field result{};
+  for (const auto limb : bits) {
+    for (unsigned bit = 0; bit < 32; ++bit) {
+      if ((limb & (UINT32_C(1) << bit)) != 0) {
+        result = add(result, factor);
+      }
+      factor = add(factor, factor);
+    }
+  }
+  return result;
+}
+/// Decode exactly one canonical big-endian coordinate.
+Field coordinate(std::span<const std::uint8_t, 32> bytes) {
+  Field value{};
+  for (std::size_t i = 0; i < bytes.size(); ++i) {
+    auto& limb = std::span(value)[(31 - i) / 4];
+    limb = (limb << 8U) | bytes[i];
+  }
+  return value;
+}
 }  // namespace
 
+bool valid_point(std::span<const std::uint8_t, 65> point) {
+  if (point[0] != 4) {
+    return false;
+  }
+  const auto x = coordinate(point.subspan<1, 32>());
+  const auto y = coordinate(point.subspan<33, 32>());
+  if (!less(x, kPrime) || !less(y, kPrime)) {
+    return false;
+  }
+  return add(multiply(y, y), add(add(x, x), x)) == add(multiply(multiply(x, x), x), kCurveB);
+}
+bool gate_allowed(std::int32_t status, const RaspLocalGateResultV1& gate, std::uint32_t mode) {
+  return status == RASP_LOCAL_OK &&
+         (gate.action == RASP_LOCAL_ALLOW || (mode == RASP_SK_EXPLICIT_ADVISORY && gate.action == RASP_LOCAL_REPORT));
+}
+bool valid_diagnostic(const PlatformDiagnostic& diagnostic) {
+  const auto& error = diagnostic.error;
+  if (diagnostic.present == 0) {
+    return std::ranges::all_of(std::as_bytes(std::span(&error, 1)),
+                               [](std::byte value) { return value == std::byte{}; });
+  }
+  if (diagnostic.present != 1 || error.reserved != 0 || error.numeric_code_present > 1 ||
+      (error.numeric_code_present == 0 && error.numeric_code != 0)) {
+    return false;
+  }
+  const bool android = error.platform == RASP_SK_PLATFORM_ANDROID;
+  const bool apple = error.platform == RASP_SK_PLATFORM_APPLE;
+  return ((android || apple) && error.domain == RASP_SK_POSIX_ERROR) ||
+         (android && error.domain >= RASP_SK_ANDROID_KEYSTORE_ERROR &&
+          error.domain <= RASP_SK_ANDROID_BIOMETRIC_ERROR) ||
+         (apple && (error.domain == RASP_SK_APPLE_OSSTATUS_ERROR || error.domain == RASP_SK_APPLE_LA_ERROR));
+}
+CleanupProof cleanup_proof(const RaspScopedKeyInfoV1& info) {
+  CleanupProof proof;
+  if (valid_point(info.public_key_x963)) {
+    proof.mode = CleanupMode::kMatchCreatedPoint;
+    std::ranges::copy(info.public_key_x963, proof.point.begin());
+  }
+  return proof;
+}
 bool digest(std::span<const std::uint8_t> input, std::span<std::uint8_t, 32> output) {
   return mbedtls_sha256(input.data(), input.size(), output.data(), 0) == 0;
 }
@@ -234,13 +329,18 @@ bool valid_binding(const RaspScopedKeyInfoV1& info, const RaspScopedKeyNamespace
 }
 bool valid_info(const RaspScopedKeyInfoV1& info, const RaspScopedKeyNamespaceSpecV1& space) {
   const auto& facts = info.provenance;
-  if (!valid_binding(info, space) || !point(info) || !zero(facts.reserved) || facts.backend == 0 || facts.backend > 3 ||
-      facts.security_level > 5 || facts.source == 0 || facts.source > 2 || facts.key_origin != 1 ||
-      facts.private_export == 0 || facts.private_export > 2 || facts.auth_observed_present != 1 ||
-      facts.auth_observed != space.auth_requirement || facts.auth_hardware_enforced_present > 1 ||
-      facts.auth_hardware_enforced > facts.auth_hardware_enforced_present || facts.lock_observed_present != 1 ||
-      (facts.lock_observed < RASP_SK_PLATFORM_DEFAULT || facts.lock_observed > RASP_SK_UNLOCKED_REQUIRED ||
-       (space.lock_requirement == RASP_SK_UNLOCKED_REQUIRED && facts.lock_observed != RASP_SK_UNLOCKED_REQUIRED)) ||
+  const bool absent_default = facts.backend == RASP_SK_ANDROID_KEYSTORE && facts.source == RASP_SK_ANDROID_KEYINFO &&
+                              space.lock_requirement == RASP_SK_PLATFORM_DEFAULT && facts.lock_observed_present == 0 &&
+                              facts.lock_observed == RASP_SK_LOCK_REQUIREMENT_UNKNOWN;
+  if (!valid_binding(info, space) || !valid_point(info.public_key_x963) || !zero(facts.reserved) ||
+      facts.backend == 0 || facts.backend > 3 || facts.security_level > 5 || facts.source == 0 || facts.source > 2 ||
+      facts.key_origin != 1 || facts.private_export == 0 || facts.private_export > 2 ||
+      facts.auth_observed_present != 1 || facts.auth_observed != space.auth_requirement ||
+      facts.auth_hardware_enforced_present > 1 || facts.auth_hardware_enforced > facts.auth_hardware_enforced_present ||
+      (!absent_default &&
+       (facts.lock_observed_present != 1 || facts.lock_observed < RASP_SK_PLATFORM_DEFAULT ||
+        facts.lock_observed > RASP_SK_UNLOCKED_REQUIRED ||
+        (space.lock_requirement == RASP_SK_UNLOCKED_REQUIRED && facts.lock_observed != RASP_SK_UNLOCKED_REQUIRED))) ||
       facts.accessibility == 0 || facts.accessibility > 2 || facts.backup == 0 || facts.backup > 2 ||
       facts.attestation != 0) {
     return false;

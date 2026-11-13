@@ -11,6 +11,7 @@
 #include <span>
 
 #include "golden.h"
+#include "platform.h"
 #include "rasp/scoped_key.h"
 #include "support.h"
 
@@ -101,5 +102,44 @@ TEST(ScopedEncoding, signature_whenNonminimalNegativeZeroOrOrder_rejectsInvalidD
     EXPECT_FALSE(rasp::keys::valid_signature(fixture::unhex(value)));
   }
   EXPECT_TRUE(rasp::keys::valid_signature(fixture::unhex("3006020101020101")));
+}
+}  // namespace
+namespace {
+TEST(ScopedEncoding, point_whenCanonicalGeneratorOrMutatedCoordinates_checksActualCurveAndFieldBounds) {
+  const auto bytes = fixture::unhex(
+      "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315e"
+      "cecbb6406837bf51f5");
+  std::array<std::uint8_t, 65> original{};
+  std::ranges::copy(bytes, original.begin());
+  ASSERT_TRUE(rasp::keys::valid_point(original));
+  for (std::size_t i = 0; i < original.size(); ++i) {
+    auto changed = original;
+    std::span(changed)[i] ^= std::uint8_t{1};
+    EXPECT_FALSE(rasp::keys::valid_point(changed)) << i;
+  }
+  auto noncanonical = original;
+  const auto prime = fixture::unhex("ffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
+  std::ranges::copy(prime, std::span(noncanonical).subspan(1).begin());
+  EXPECT_FALSE(rasp::keys::valid_point(noncanonical));
+  noncanonical = {};
+  noncanonical[0] = 4;
+  EXPECT_FALSE(rasp::keys::valid_point(noncanonical));
+}
+TEST(ScopedEncoding, diagnostic_whenClosedFieldsAreInvalid_neverTreatsThemAsAnActualOsCode) {
+  rasp::keys::PlatformDiagnostic diagnostic;
+  EXPECT_TRUE(rasp::keys::valid_diagnostic(diagnostic));
+  diagnostic.error.numeric_code = 1;
+  EXPECT_FALSE(rasp::keys::valid_diagnostic(diagnostic));
+  diagnostic = {};
+  diagnostic.present = 1;
+  diagnostic.error.platform = RASP_SK_PLATFORM_ANDROID;
+  diagnostic.error.domain = RASP_SK_ANDROID_JCA_ERROR;
+  EXPECT_TRUE(rasp::keys::valid_diagnostic(diagnostic));
+  diagnostic.error.numeric_code = -1;
+  EXPECT_FALSE(rasp::keys::valid_diagnostic(diagnostic));
+  diagnostic.error.numeric_code_present = 1;
+  EXPECT_TRUE(rasp::keys::valid_diagnostic(diagnostic));
+  diagnostic.error.reserved = 1;
+  EXPECT_FALSE(rasp::keys::valid_diagnostic(diagnostic));
 }
 }  // namespace
