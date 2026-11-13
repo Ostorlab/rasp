@@ -10,6 +10,7 @@ import dataclasses
 import json
 
 from rasp_packer import errors
+from rasp_packer import local_policy as policy_module
 
 # TODO: the config ships in the clear in the runtime's binary, so anyone who reads the binary can read it.
 # Encrypt it.
@@ -26,6 +27,7 @@ class RuntimeConfig:
 
     build_id: str
     checks: tuple[str, ...]
+    local_policy: policy_module.Policy | None = None
 
     def to_json(self) -> bytes:
         """Writes the config as the runtime reads it.
@@ -33,9 +35,18 @@ class RuntimeConfig:
         Returns:
             A JSON object with one member per attribute, in UTF-8.
         """
-        return json.dumps(
-            dataclasses.asdict(self), ensure_ascii=False, separators=(",", ":")
-        ).encode("utf-8")
+        document: dict[str, object] = {"build_id": self.build_id, "checks": self.checks}
+        if self.local_policy is not None:
+            policy = policy_module.validate_for(
+                self.local_policy,
+                self.local_policy.platform,
+                self.checks,
+                self.build_id,
+            )
+            document["local_policy"] = json.loads(policy.canonical_json)
+        return json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode(
+            "utf-8"
+        )
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -94,7 +105,10 @@ def read_config(binary: bytes, space: ConfigSpace) -> bytes:
     data = binary[space.offset : space.offset + space.size]
     if b"\0" not in data:
         raise errors.InvalidRuntimeError("the runtime config is not zero-terminated")
-    return data.split(b"\0", 1)[0]
+    document, padding = data.split(b"\0", 1)
+    if any(padding):
+        raise errors.InvalidRuntimeError("the runtime config padding is not zero")
+    return document
 
 
 def _check_space(binary: bytes, space: ConfigSpace) -> None:

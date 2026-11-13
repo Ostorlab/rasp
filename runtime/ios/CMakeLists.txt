@@ -9,12 +9,20 @@ set(CMAKE_OBJCXX_VISIBILITY_PRESET hidden)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/omvll_ios.cmake)
 
 add_library(RaspRuntime SHARED
+  ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp
+  ${PROJECT_SOURCE_DIR}/core/include/rasp/local_policy_host.h
+  include/rasp/ios_capture.h
   src/builtin.cpp
   src/entry.cpp
   src/monitoring.cpp
+  src/capture/capture_bridge.mm
+  src/capture/capture_events.cpp
+  src/checks/capture.cpp
   src/checks/debugger.cpp
   src/checks/emulator.cpp
   src/checks/hooks.cpp
+  src/checks/module_provenance.cpp
+  src/util/provenance_bundle.mm
   src/checks/identity.cpp
   src/checks/integrity.cpp
   src/checks/jailbreak.cpp
@@ -24,10 +32,19 @@ add_library(RaspRuntime SHARED
   src/util/process_query.cpp
   src/util/macho.cpp
   src/util/sha256.cpp)
-target_include_directories(RaspRuntime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/posix/include)
+target_include_directories(RaspRuntime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/posix/include ${PROJECT_SOURCE_DIR}/core/src)
+set_source_files_properties(src/capture/capture_bridge.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-fobjc-exceptions")
+target_link_options(RaspRuntime PRIVATE "-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/capture_exports.txt")
+set_property(TARGET RaspRuntime APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/capture_exports.txt)
+set_target_properties(RaspRuntime PROPERTIES PUBLIC_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/include/rasp/ios_capture.h;${PROJECT_SOURCE_DIR}/core/include/rasp/local_policy_host.h")
+add_custom_command(TARGET RaspRuntime POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:RaspRuntime>/Modules"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/module.modulemap "$<TARGET_BUNDLE_DIR:RaspRuntime>/Modules/module.modulemap"
+  VERBATIM)
+set_source_files_properties(src/util/provenance_bundle.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-fno-objc-exceptions")
 set_source_files_properties(src/util/private_storage.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-fno-objc-exceptions")
 target_link_libraries(RaspRuntime PRIVATE rasp_core rasp_plugins rasp_tfpsacrypto rasp_warnings rasp_language
-  rasp_shipped "$<LINK_LIBRARY:FRAMEWORK,Foundation>" "$<LINK_LIBRARY:FRAMEWORK,CFNetwork>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
+  rasp_shipped "$<LINK_LIBRARY:FRAMEWORK,UIKit>" "$<LINK_LIBRARY:FRAMEWORK,Foundation>" "$<LINK_LIBRARY:FRAMEWORK,CFNetwork>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")
 set_source_files_properties(src/entry.cpp PROPERTIES COMPILE_OPTIONS -Wno-global-constructors)
 
 # Obfuscate the RaspRuntime target's own sources (ios/src/*.cpp). target_compile_options is PRIVATE, so the plugin

@@ -21,6 +21,8 @@ import pathlib
 
 from rasp_packer import capabilities
 from rasp_packer import errors
+from rasp_packer import local_policy
+from rasp_packer.android import runtime_library
 
 STUB_FACTORY_CLASS = "co.ostorlab.rasp.RaspStub"
 RUNTIME_LIBRARY = "librasp.so"
@@ -53,6 +55,9 @@ class Artifacts:
     stub_dex: bytes
     libraries: collections.abc.Mapping[str, bytes]
     manifests: collections.abc.Mapping[str, bytes] = dataclasses.field(
+        default_factory=dict
+    )
+    policy_manifests: collections.abc.Mapping[str, bytes] = dataclasses.field(
         default_factory=dict
     )
 
@@ -100,6 +105,7 @@ def load_from(root: pathlib.Path) -> Artifacts:
         )
     libraries: dict[str, bytes] = {}
     manifests: dict[str, bytes] = {}
+    policy_manifests: dict[str, bytes] = {}
     for abi in abis:
         library = abi / RUNTIME_LIBRARY
         if library.is_file() is False:
@@ -109,8 +115,17 @@ def load_from(root: pathlib.Path) -> Artifacts:
         if sidecar is not None:
             manifests[abi.name] = sidecar
             capabilities.bind(libraries[abi.name], sidecar, "android", abi.name)
+        policy_sidecar = local_policy.read_support(library)
+        if policy_sidecar is not None:
+            local_policy.bind(
+                libraries[abi.name], policy_sidecar, "android", abi.name, required=False
+            )
+            policy_manifests[abi.name] = policy_sidecar
     return Artifacts(
-        stub_dex=stub.read_bytes(), libraries=libraries, manifests=manifests
+        stub_dex=stub.read_bytes(),
+        libraries=libraries,
+        manifests=manifests,
+        policy_manifests=policy_manifests,
     )
 
 
@@ -127,5 +142,34 @@ def bindings(
         if binding is None:
             unknown = True
         else:
+            result.append(binding)
+    return None if unknown is True or len(result) == 0 else tuple(result)
+
+
+def policy_bindings(
+    artifacts: Artifacts, abis: collections.abc.Iterable[str], *, required: bool
+) -> tuple[local_policy.Binding, ...] | None:
+    """Bind exact injected ABIs before config insertion; explicit policy cannot use old artifacts."""
+    result: list[local_policy.Binding] = []
+    unknown = False
+    for abi in sorted(abis):
+        capability = capabilities.bind(
+            artifacts.libraries[abi], artifacts.manifests.get(abi), "android", abi
+        )
+        binding = local_policy.bind(
+            artifacts.libraries[abi],
+            artifacts.policy_manifests.get(abi),
+            "android",
+            abi,
+            required=required,
+        )
+        if required is True and capability is None:
+            raise errors.InvalidRuntimeError(
+                "local policy requires matching native capability binding"
+            )
+        if binding is None:
+            unknown = True
+        else:
+            runtime_library.verify_policy_exports(artifacts.libraries[abi])
             result.append(binding)
     return None if unknown is True or len(result) == 0 else tuple(result)

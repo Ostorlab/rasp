@@ -1,6 +1,19 @@
 # Runtime
 
-The C++ runtime libraries that the packer adds to a protected app. They run the checks inside the app.
+The runtime is a set of C++ libraries that the packer adds to a protected app. They run the checks inside the app.
+
+Owned monitor snapshots include [typed local decision evidence](../docs/local-decisions-contract.md).
+The existing `on_cycle` callback receives the same immutable observations, coverage and report-only
+results. Disabled/missing/unavailable rows remain unknown; evaluated predicate counts are separate
+from row counts.
+
+Each completed native cycle owns an immutable `LocalDecisionReport`.
+An optional [local policy host gate](../docs/local-policy-contract.md) reads that report
+immediately before an explicitly adapted operation; without an embedded policy the runtime remains report-only.
+
+These client observations grant no backend authorization. The gate never terminates the app.
+The primitive C API adds exactly two versioned policy exports alongside the six iOS capture exports;
+Android retains JNI_OnLoad and the same two policy exports.
 
 Android signing-block and key/map/DEX reads use bounded descriptors; see the
 [archive read limits](../docs/android-archive-reads.md) for allocation caps,
@@ -96,7 +109,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
         A third-party virtualizer (such as Parallel Space or VirtualApp) runs the guest app inside its own process and redirects its files, so the library loads from the host app's data directory instead, such as `/data/data/com.parallel.intl/.../com.example/lib/<abi>/librasp.so`. That path still contains the guest package as a subdirectory, so the tell is the owning directory, not a substring: `/data/app/.../<package>-<suffix>` on a genuine install, or the host's `/data/data/...` directory on a virtualized one.
 
         `id.uid` can't surface this because the process runs under the host's normal uid. A sophisticated virtualizer can fake the path, so this is a signal, not proof.
-      - Versioned complete current signer sets, ordered single-signer rotation history, and supported Application package identity are documented in [Android signer observations](../docs/android-signer-observations.md). Legacy scalar outputs below retain first-signer semantics. schema 1, revision 5 introduced all nine identity outputs, preserved exactly in revision 7; generated cycle coverage retains errors as present observations.
+      - Versioned complete current signer sets, ordered single-signer rotation history, and supported Application package identity are documented in [Android signer observations](../docs/android-signer-observations.md). Legacy scalar outputs below retain first-signer semantics. schema 1, revision 5 introduced all nine identity outputs, preserved exactly in revision 8; generated cycle coverage retains errors as present observations.
       - `sig.cert_sha256`: the SHA-256 of the certificate of the key that signed the APK the app runs from, read two ways so the server can check they agree. The `apk_signing_block` source reads it from the APK file's own APK Signing Block, in native code a Java hook can't reach: the first certificate of the signer Android uses on the device, read as Android verifies the blocks, newest first. That is the first v3.1 or v3 signer whose range of API levels contains the device's API level, so after a key rotation it is the new key on the Android versions the v3.1 block covers and the old key on the versions below that range, or v2's first signer when no v3 signer applies.
 
         It is the digest `apksigner verify --print-certs` prints, the one Play Console shows for the app signing key, and the one Play Integrity returns in its `appIntegrity` verdict as `certificateSha256Digest` — an array of base64-encoded URL-safe digests, where this signal reports one hex digest. A repackaged app must be signed again, and the signing key never travels inside the APK, so in practice the re-signing key differs and the certificate changes even when nothing in it is hooked; a separate trusted backend/customer signing registry could compare the digest after that integration exists. Like the other identity probes, this is a signal, not proof: whoever holds the original signing key can reproduce the digest.
@@ -107,7 +120,7 @@ The code is grouped the same way at every level. `util/` holds generic helpers t
 
         A tool that hooks the package manager to return the original certificate makes the two sources disagree, which the server sees. Because the read goes through Java, a Java hook can change it; because `apk_signing_block` reads the APK file in native code, a Java hook can't reach it but a redirected file read could fool it. Each source fails in the way the other doesn't, so a tool that hides the re-signing from one source leaves the other unchanged. Both pick the signer Android uses on the device, so on a rotated-key app they report the same key per Android version.
     - `integrity.h`: the integrity checks. They run on Android; off Android every observation has the unsupported status.
-      - `integ.text_sha256`: the SHA-256 of librasp.so's own executable code (its `.text` section), read once from the installed file (the `file` source) and once from the process's memory (the `memory` source). The two are equal on a clean device and differ when the code was patched in memory, such as by a Frida hook that patches a check to always report a safe value. The runtime reports both and doesn't compare them. The library finds its own file and load address through the dynamic loader, so no path is built into the binary; when the app keeps its libraries uncompressed inside the APK, the file is read from the APK's zip entry.
+      - `integ.text_sha256`: the SHA-256 of librasp.so's own executable code (its `.text` section), read once from the installed file (the `file` source) and once from the process's memory (the `memory` source). The collector preserves both raw values. Completed owned cycles also include a [report-only comparison](../docs/local-decisions-contract.md): equality does not establish an approved baseline, and a mismatch is not malware proof. The library finds its own file and load address through the dynamic loader, so no path is built into the binary; when the app keeps its libraries uncompressed inside the APK, the file is read from the APK's zip entry.
     - `mitm.h`: the network-interception (man-in-the-middle, MITM) checks. `mitm.tunnels` and `mitm.user_cas` run on Android; the first reports the tunnel list and the second the user-installed authorities. Off Android every observation has the unsupported status.
       - `mitm.tunnels`: the network interfaces visible to the process whose name is `tun` or `tap` followed by a digit (such as `tun0` or `tap0`, the layer-3 and layer-2 interfaces of the kernel's TUN/TAP driver) — the interfaces a capture proxy routes traffic through, and the same `tun0` a legitimate VPN app opens; a name like the IPIP `tunl0` does not match. The names are read through `getifaddrs`, which an app process can call even though Android denies it `/proc/net/route`; the check reports each unique tunnel (at most 100), and a device with no tunnel reports an empty list.
       - `mitm.user_cas`: the file names of the user-installed CA certificate files in the user trust store (`/data/misc/user/<id>/cacerts-added`), where user-installed certificates are stored apart from the system authorities, so a proxy that decrypts TLS installs its root there. The directory is labeled `system_data_file` under SELinux, so it can't be listed; the runtime reads the names through JNI instead, from the aliases of the `AndroidCAStore` KeyStore, which needs no Context: a user authority's alias is `user:` followed by its file name. The check reports the names sorted, and an empty list when the user installed none.
@@ -170,7 +183,7 @@ cmake --preset ios
 cmake --build --preset ios
 ```
 
-The framework is written to `build/ios/ios/RaspRuntime.framework`. Its install name is `@rpath/RaspRuntime.framework/RaspRuntime`, which the packer adds to the app's load commands. The framework exports no symbols: the code runs from a constructor when the app loads it.
+The framework is written to `build/ios/ios/RaspRuntime.framework`. Its install name is `@rpath/RaspRuntime.framework/RaspRuntime`, which the packer adds to the app's load commands. It exports exactly eight C functions in `ios/capture_exports.txt`: six capture integration functions and two versioned local-policy functions; every other symbol is hidden. A load-time constructor starts the measurement worker; capture observation requires explicit host opt-in.
 
 The framework supports iOS 12.0 and later. It doesn't use the libc++ that comes with iOS, which only supports iOS 15 and later. Instead it links a static libc++ built from LLVM 23.1.3 for the same minimum iOS version, with all its symbols hidden. That library is built once and committed under `third_party/libcxx/`, and `cmake/libcxx.cmake` checks its hash and links it. The build steps, the one-line source change it needs, and the CI job that proves the committed library matches the source are described in `third_party/libcxx/README.md`.
 
@@ -182,7 +195,7 @@ cmake --preset android
 cmake --build --preset android
 ```
 
-The library is written to `build/android/android/librasp.so`. The only symbol it exports is the JVM's `JNI_OnLoad` hook. The checks start from a load-time constructor, and `JNI_OnLoad` binds the stub's native method with `RegisterNatives`, so the library exports no `Java_...` symbol. A release build is also stripped (`-Wl,--strip-all`), so it carries no symbol table and no debug sections. Every other symbol, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 12 (API 31) and later.
+The library is written to `build/android/android/librasp.so`. It exports exactly the JVM's `JNI_OnLoad` hook, `rasp_local_policy_gate_v1` and `rasp_local_policy_info_v1`. The checks start from a load-time constructor, and `JNI_OnLoad` binds the stub's native method with `RegisterNatives`, so the library exports no `Java_...` symbol. A release build is also stripped (`-Wl,--strip-all`), so it carries no static symbol table and no debug sections; the three exports above remain in the dynamic symbol table. Every other symbol, libc++ included, is hidden with `-Wl,--exclude-libs,ALL`. It links the NDK's static libc++ (`c++_static`). It supports Android 12 (API 31) and later.
 
 The payload decryption uses ChaCha20-Poly1305 from TF-PSA-Crypto, the cryptography library of the Mbed TLS project, and some checks use its SHA-256. Its source is committed as an archive under `third_party/tf-psa-crypto/`, and `cmake/tf_psa_crypto.cmake` checks the archive's hash, extracts it and builds it as a static library, for Android, for iOS and for the builds with tests. Its symbols are hidden like every other one. Why it is built this way, its configuration, and the CI job that proves the archive is the official release are described in `third_party/tf-psa-crypto/README.md`.
 
@@ -280,7 +293,7 @@ CI (`.github/workflows/runtime.yml`) runs:
 
 On the release binaries, it checks that:
 
-- the framework exports no symbols, and the Android library exports only the JVM's `JNI_OnLoad` hook;
+- the framework exports exactly the eight C functions in `ios/capture_exports.txt`, and Android exports exactly `JNI_OnLoad` and the same two versioned policy functions;
 - neither imports any of `exit`, `_Exit`, `quick_exit`, `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `setenv`, `putenv`, `unsetenv`, `setlocale` and `setrlimit`. `.clang-tidy` forbids these functions in the source, and also `abort` and `std::terminate`, which the binary check leaves out;
 - neither writes logs: the framework imports no symbol with `_os_log` in its name and contains no `{public}` text, and the Android library imports no symbol with `__android_log` in its name and contains no `RaspRuntime` text.
 
@@ -303,3 +316,7 @@ See [opt-in Android root and environment context](../docs/android-root-context.m
 
 
 Android API31+ hosts can opt in to [bounded Activity/window touch observations](../docs/android-window-observations.md) through RuntimeBridge after supported Context initialization.
+
+Optional iOS `screenshot` and `screen_recording` groups require the matching public C host API and explicit main-thread opt-in. See [UIKit capture observations](../docs/ios-capture-observations.md) and the [harmless host fixture](tests/ios/capture/README.md). Packing alone does not create scene ownership or a healthy observer.
+
+Opt-in `hooks` includes bounded executable-module location and public loader topology diagnostics; see [module provenance](../docs/module-provenance.md) for bounds, source limits and inherited reporting/storage behavior.

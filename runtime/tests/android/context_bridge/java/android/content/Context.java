@@ -6,4 +6,6 @@ public abstract class Context {
     public abstract String getPackageName();
     public Object getSystemService(String name) { return null; }
     public ContentResolver getContentResolver() { return new ContentResolver(); }
+    public java.util.concurrent.Executor getMainExecutor() { return Runnable::run; }
+    public int checkSelfPermission(String permission) { return 0; }
 }

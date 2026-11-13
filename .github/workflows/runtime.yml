@@ -11,6 +11,8 @@ permissions:
 env:
   LLVM_VERSION: "23"
   CMAKE_VERSION: "4.4.4"
+  CMAKE_BUILD_PARALLEL_LEVEL: "2"
+  CTEST_PARALLEL_LEVEL: "2"
 
 jobs:
   format:
@@ -161,6 +163,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Keep the actual CI merge and its parents for honest PR-head source mapping.
+          fetch-depth: 2
       - name: Select Xcode
         run: |
           sudo xcode-select --switch /Applications/Xcode_27.0.app
@@ -180,6 +184,13 @@ jobs:
         run: |
           /bin/bash --version
           /bin/bash ./tests/android/context_bridge/run.sh
+      - name: Check public own-task VM adapters with the actual macOS SDK and kernel
+        run: |
+          cmake --preset host -B "$RUNNER_TEMP/ios-vm-host"
+          cmake --build "$RUNNER_TEMP/ios-vm-host" --parallel 2 \
+            --target rasp_ios_provenance_vm_test rasp_ios_module_provenance_test
+          ctest --test-dir "$RUNNER_TEMP/ios-vm-host" --parallel 2 --output-on-failure \
+            --no-tests=error -R '^(IosVm|IosModuleProvenance)'
       - name: Configure
         # pipefail so a cmake failure fails this step with its own error, rather than tee masking it as exit 0
         # and the failure resurfacing later in Build or the canary with a misleading message.
@@ -208,8 +219,9 @@ jobs:
           if ! grep -qF 'O-MVLL on; RaspRuntime is obfuscated' "$RUNNER_TEMP/ios-configure.log"; then
             echo "FAIL: configure did not report O-MVLL on; the framework is not obfuscated"; exit 1
           fi
-          for literal in dbg.traced sysctl /var/jb i386; do
-            if ! strings -a "$binary" | grep -qxF "$literal"; then
+          strings -a "$binary" > "$RUNNER_TEMP/ios-data-read-literals.txt"
+          for literal in dbg.traced sysctl /var/jb i386 hook.exec_modules hook.exec_modules_meta dyld_v1; do
+            if ! grep -qxF "$literal" "$RUNNER_TEMP/ios-data-read-literals.txt"; then
               echo "FAIL: '$literal' is missing; a data-read literal was encrypted (skip list broken?)"; exit 1
             fi
           done
@@ -218,8 +230,10 @@ jobs:
           binary=build/ios/ios/RaspRuntime.framework/RaspRuntime
           file "$binary" | grep -q "Mach-O 64-bit dynamically linked shared library arm64"
           test "$(otool -D "$binary" | tail -n 1)" = "@rpath/RaspRuntime.framework/RaspRuntime"
-          test -z "$(nm -gU "$binary")"
+          ./tests/ios/capture/check_framework.sh build/ios/ios/RaspRuntime.framework "$RUNNER_TEMP/ios-capture-release"
           xcrun vtool -show-build "$binary" | grep -qxE ' *minos 12\.0'
+          nm -u "$binary" | awk '{ print $NF }' > "$RUNNER_TEMP/ios-vm-imports.txt"
+          test -z "$(grep -xE '_mach_vm_(read_overwrite|region)' "$RUNNER_TEMP/ios-vm-imports.txt")"
           test -z "$(otool -L "$binary" | grep 'libc++')"
       - name: Check the framework calls no forbidden function
         run: |
@@ -261,8 +275,101 @@ jobs:
         run: |
           clang-tidy --version
           run-clang-tidy -quiet -p build/ios-dev "^$PWD/ios/src/.*\.(cpp|mm)$"
+      - name: Check development capture ABI and build the actual UIKit host
+        run: |
+          ./tests/ios/capture/check_framework.sh build/ios-dev/ios/RaspRuntime.framework "$RUNNER_TEMP/ios-capture-debug"
+          cmake -S tests/ios/capture/host -B "$RUNNER_TEMP/ios-capture-host" -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DRASP_FRAMEWORK="$PWD/build/ios-dev/ios/RaspRuntime.framework"
+          cmake --build "$RUNNER_TEMP/ios-capture-host" --parallel 2
+          host="$RUNNER_TEMP/ios-capture-host/CaptureHost.app"
+          xcrun vtool -show-build "$host/CaptureHost" | grep -qxE ' *minos 12\.0'
+          cmp build/ios-dev/ios/RaspRuntime.framework/RaspRuntime "$host/Frameworks/RaspRuntime.framework/RaspRuntime"
+          cmake -S tests/ios/local_policy/host -B "$RUNNER_TEMP/ios-policy-host" -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Debug -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DRASP_FRAMEWORK="$PWD/build/ios-dev/ios/RaspRuntime.framework"
+          cmake --build "$RUNNER_TEMP/ios-policy-host" --parallel 2
+          policy_host="$RUNNER_TEMP/ios-policy-host/PolicyHost.app"
+          xcrun vtool -show-build "$policy_host/PolicyHost" | grep -qxE ' *minos 12\.0'
+          cmp build/ios-dev/ios/RaspRuntime.framework/RaspRuntime "$policy_host/Frameworks/RaspRuntime.framework/RaspRuntime"
+      - name: Materialize verified immutable PL05 for the combined Apple consumer gate
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/build-tools/bin/python" tools/pl05_snapshot.py --extract
+      - name: Build selected provenance and frozen PL05 with actual Apple SDK and consumers
+        run: |
+          plugins="$PWD/build/rt19-plugin-sources"
+          profile='{"host":"collector.example","mode":"system","pins":null,"port":443,"validity":null,"version":1}'
+          settings="$(python3 -c 'import json,sys; print(json.dumps([{"name":"RASP_REPORTING_ENDPOINT","value":"https://collector.example/apis/graphql"},{"name":"RASP_REPORTING_SECURITY_PROFILE","value":sys.argv[1]}]))' "$profile")"
+          for preset in ios ios-dev; do
+            build="build/$preset-provenance-pl05"
+            cmake --preset "$preset" -B "$build" \
+              -DRASP_PLUGINS="$plugins/plugins/reporting;$plugins/plugins/dns_reporting" \
+              -DRASP_REPORTING_ENDPOINT=https://collector.example/apis/graphql \
+              -DRASP_REPORTING_SECURITY_PROFILE="$profile" -DRASP_DNS_REPORTING_ZONE=r.example
+            cmake --build "$build" --parallel 2
+            stage="$RUNNER_TEMP/$preset-provenance-pl05"
+            cmake --install "$build" --prefix "$stage" --component runtime
+            framework="$stage/rasp_packer/ios/resources/RaspRuntime.framework"
+            binary="$framework/RaspRuntime"
+            cmp "$PWD/$build/ios/RaspRuntime.framework/RaspRuntime" "$binary"
+            ./tests/ios/capture/check_framework.sh "$framework" "$stage/abi" \
+              "$PWD/$build/ios/CMakeFiles/RaspRuntime.dir/src/capture/capture_bridge.mm.o"
+            nm -u "$binary" | awk '{ print $NF }' > "$stage/vm-imports.txt"
+            test -z "$(grep -xE '_mach_vm_(read_overwrite|region)' "$stage/vm-imports.txt")"
+            xcrun vtool -show-build "$binary" | grep -qxE ' *minos 12\.0'
+            python3 tools/capabilities.py verify "$binary" ios arm64 12.0
+            "$RUNNER_TEMP/build-tools/bin/python" tools/verify_packaging.py "$binary" ios arm64
+            python3 "$plugins/scripts/publish_packer/security.py" verify "$binary" ios "$settings"
+            if [ "$preset" = ios ]; then
+              strings -a "$binary" > "$stage/data-read-literals.txt"
+              for literal in hook.exec_modules hook.exec_modules_meta dyld_v1; do
+                grep -qxF "$literal" "$stage/data-read-literals.txt"
+              done
+            fi
+            for consumer in capture local_policy; do
+              host="$RUNNER_TEMP/$preset-$consumer-pl05"
+              cmake -S "tests/ios/$consumer/host" -B "$host" -G "Unix Makefiles" \
+                -DCMAKE_BUILD_TYPE=Debug -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
+                -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+                -DRASP_FRAMEWORK="$framework"
+              cmake --build "$host" --parallel 2
+              if [ "$consumer" = capture ]; then name=CaptureHost; else name=PolicyHost; fi
+              xcrun vtool -show-build "$host/$name.app/$name" | grep -qxE ' *minos 12\.0'
+              cmp "$binary" "$host/$name.app/Frameworks/RaspRuntime.framework/RaspRuntime"
+            done
+            run-clang-tidy -quiet -p "$build" "^$PWD/ios/src/.*\.(cpp|mm)$"
+          done
       - name: Check the development build writes logs
         run: nm -u build/ios-dev/ios/RaspRuntime.framework/RaspRuntime | grep -q _os_log
+
+      - name: Export validated pristine iPhoneOS Release frameworks
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          RT19_REQUESTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/build-tools/bin/python" tools/apple_artifacts.py \
+            --runner-temp "$RUNNER_TEMP" --requested-head "$RT19_REQUESTED_HEAD" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+      - name: Retain successful Apple validation inputs for independent IPA acceptance
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rt19-iphoneos-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rt19-apple-artifacts/apple-release-frameworks.tar
+            ${{ runner.temp }}/rt19-apple-artifacts/apple-release-frameworks.tar.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: false
 
   android:
     name: android (${{ matrix.abi }})
@@ -312,7 +419,9 @@ jobs:
           readelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           lib=build/android/android/librasp.so
           file "$lib" | grep -qF "${{ matrix.file }}"
-          test -z "$("$nm" -D --defined-only "$lib" | awk '{ print $3 }' | grep -vx 'JNI_OnLoad')"
+          "$nm" -D --defined-only "$lib" | awk '{ print $3 }' | LC_ALL=C sort > "$RUNNER_TEMP/android-exports.txt"
+          printf '%s\n' JNI_OnLoad rasp_local_policy_gate_v1 rasp_local_policy_info_v1 > "$RUNNER_TEMP/android-expected-exports.txt"
+          diff -u "$RUNNER_TEMP/android-expected-exports.txt" "$RUNNER_TEMP/android-exports.txt"
           test -z "$("$readelf" -S "$lib" | grep -oE '\.symtab|\.debug_[a-z_]+')"
           "$readelf" --dynamic "$lib" | grep -q 'INIT_ARRAY'
           "$nm" -D -u "$lib" | awk '{ print $2 }' | sed 's/@.*//' | grep -qx 'JNI_GetCreatedJavaVMs'
@@ -335,6 +444,8 @@ jobs:
           python3 tools/capabilities.py verify "$binary" android '${{ matrix.abi }}' 31
           "$RUNNER_TEMP/build-tools/bin/pip" install 'lief==1.0.0'
           "$RUNNER_TEMP/build-tools/bin/python" tools/verify_packaging.py "$binary" android '${{ matrix.abi }}'
+      - name: Link installed primitive C and C++ policy consumers
+        run: bash tests/android/local_policy/check_library.sh "$RUNNER_TEMP/runtime-release" '${{ matrix.abi }}' "$RUNNER_TEMP/policy-release"
       - name: Configure the development build with the private storage plugin consumer
         run: cmake --preset android-dev -DANDROID_ABI=${{ matrix.abi }} -DRASP_PLUGINS=tests/plugins/private_storage
       - name: Build the development build
@@ -345,9 +456,14 @@ jobs:
         run: |
           nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
           "$nm" -D -u build/android-dev/android/librasp.so | grep -q __android_log_write
+      - name: Stage development and link primitive policy consumers
+        run: |
+          cmake --install build/android-dev --prefix "$RUNNER_TEMP/runtime-debug" --component runtime
+          bash tests/android/local_policy/check_library.sh "$RUNNER_TEMP/runtime-debug" '${{ matrix.abi }}' "$RUNNER_TEMP/policy-debug"
       - name: Build the stub
         run: |
           jar="$(ls -d "$ANDROID_HOME"/platforms/android-*/android.jar | sort -V | tail -1)"
           d8="$(ls "$ANDROID_HOME"/build-tools/*/d8 | sort -V | tail -1)"
           ANDROID_JAR="$jar" D8="$d8" ./android/stub/build.sh "$RUNNER_TEMP"
           test -s "$RUNNER_TEMP/stub.dex"
+          ANDROID_JAR="$jar" ANDROID_BUILD_TOOLS="$(dirname "$d8")" bash tests/android/local_policy/device/build.sh "$RUNNER_TEMP/policy-host" "$RUNNER_TEMP/runtime-bridge-compile-only.jar"

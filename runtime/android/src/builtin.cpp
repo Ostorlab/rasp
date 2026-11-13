@@ -6,13 +6,16 @@
 #include <iterator>
 #include <vector>
 
+#include "checks/capture.h"
 #include "checks/context_exposure.h"
 #include "checks/debugger.h"
 #include "checks/emulator.h"
 #include "checks/hooks.h"
 #include "checks/identity.h"
 #include "checks/integrity.h"
+#include "checks/loader_provenance.h"
 #include "checks/mitm.h"
+#include "checks/module_provenance.h"
 #include "checks/overlay.h"
 #include "checks/root.h"
 #include "checks/root_namespace.h"
@@ -36,6 +39,8 @@ std::vector<Observation> run_checks(const Config& config) {
   }
   if (is_check_enabled(config, "hooks")) {
     std::ranges::move(checks::hooks(), std::back_inserter(observations));
+    std::ranges::move(checks::module_provenance(), std::back_inserter(observations));
+    std::ranges::move(checks::loader_provenance(), std::back_inserter(observations));
   }
   if (is_check_enabled(config, "integrity")) {
     std::ranges::move(checks::integrity(), std::back_inserter(observations));
@@ -72,6 +77,11 @@ std::vector<Observation> run_checks(const Config& config) {
   }
   if (is_check_enabled(config, "developer_settings")) {
     std::ranges::move(checks::developer_settings(), std::back_inserter(observations));
+  }
+  const bool screenshot = is_check_enabled(config, "screenshot");
+  const bool recording = is_check_enabled(config, "screen_recording");
+  if (screenshot || recording) {
+    std::ranges::move(checks::capture(screenshot, recording), std::back_inserter(observations));
   }
   return observations;
 }

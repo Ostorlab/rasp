@@ -17,7 +17,7 @@ https://github.com/user-attachments/assets/a43d48ed-75ec-43b1-ad76-77fc08826493
 - **No source code changes:** protect the build you already ship.
 - **Choose the checks:** turn on only the check groups that fit your users.
 - **Detects:** root and jailbreak, debuggers, Frida and other hooking, emulators, app virtualizers, network
-  interception (VPN tunnels and proxies), changes to the runtime's own code (reported for server-side comparison), and repackaged copies.
+  interception (VPN tunnels and proxies), raw runtime-code hashes with report-only comparison evidence, and repackaged copies.
 - **Runs all the time:** the checks run when the app starts, then every 60 seconds.
 - **Events on the Ostorlab platform:** protect apps and see their events in
   [Mobile ADR](#use-adr-on-the-ostorlab-platform) (Mobile Application Detection & Response).
@@ -44,6 +44,12 @@ Each completed check run gives plugins a snapshot of the results, timing and che
 
 - **The packer** (`packer/`, Python) adds the runtime to the app and returns it unsigned.
 - **The runtime** (`runtime/`, C++) runs inside the protected app and runs the checks.
+
+Optional Android host source integration can observe [screenshot notifications and recording
+visibility](docs/android-capture-observations.md), with separate permissions, API34/35 availability
+and explicit lifecycle/loss metadata. These observations do not prevent capture or classify malware.
+
+Optional iOS host source integration observes [post-capture screenshot notifications and capture state](docs/ios-capture-observations.md), with explicit opt-in, display-scoped legacy fallback and independent source availability.
 
 ## Quick start
 
@@ -99,7 +105,7 @@ result = packer.pack(
 | `jailbreak` | | ✓ | Jailbreak files, sandbox escape and process spawning |
 | `debugger` | ✓ | ✓ | A debugger attached to the app |
 | `hooks` | ✓ | ✓ | Frida and other hooking frameworks; on Android, changed libc/libdl entry bytes ([limits](runtime/inline_hooks.md)) |
-| `integrity` | ✓ | ✓ | File/memory SHA-256 observations of the runtime's own code; no local comparison or tampering verdict |
+| `integrity` | ✓ | ✓ | Raw file/memory SHA-256 and [report-only comparison](docs/local-decisions-contract.md); equality is not a trusted baseline |
 | `mitm` | ✓ | ✓ | VPN tunnels, and proxies on iOS |
 | `identity` | ✓ | ✓ | A repackaged copy of the app (always on) |
 | `emulator` | ✓ | ✓ | An emulator or the iOS Simulator |
@@ -121,6 +127,11 @@ Each check and the signals it reports are described in [`runtime/README.md`](run
 | Runtime build | CMake 4.4, Clang from LLVM 23; the Android NDK, SDK and a JDK for Android; Xcode on a Mac for iOS |
 
 ## Documentation
+
+[Embedded local policy](docs/local-policy-contract.md) is optional; without it the
+runtime keeps its existing report-only behavior. A sensitive-operation gate requires
+explicit host source calls immediately before the actual operation; packing alone
+does not adapt business actions or authorize backend transactions.
 
 - [`packer/README.md`](packer/README.md): the packer, its options, build ids and checks.
 - [`runtime/README.md`](runtime/README.md): the runtime, each check, building and logs.

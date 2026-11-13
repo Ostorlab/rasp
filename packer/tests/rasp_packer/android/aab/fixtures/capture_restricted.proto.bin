@@ -1,0 +1,20 @@
+
+‹
+9
+android*http://schemas.android.com/apk/res/androidmanifest"packagefixture.capture"K
+*http://schemas.android.com/apk/res/androidversionCode1"(›„„2:0"C
+*http://schemas.android.com/apk/res/androidversionName1.0(œ„„"R
+*http://schemas.android.com/apk/res/androidcompileSdkVersion35"(òŠ„2:0#"(platformBuildVersionCode35"2:0#"P
+*http://schemas.android.com/apk/res/androidcompileSdkVersionCodename15(óŠ„"(platformBuildVersionName15"2:0*
+  ‘*¶
+­uses-sdk"N
+*http://schemas.android.com/apk/res/androidminSdkVersion31"(Œ„„2:0"Q
+*http://schemas.android.com/apk/res/androidtargetSdkVersion35"(ğ„„2:0#*
+  F*Í
+Äuses-permission"N
+*http://schemas.android.com/apk/res/androidmaxSdkVersion34"(ñ„„2:0""a
+*http://schemas.android.com/apk/res/androidname(android.permission.DETECT_SCREEN_CAPTURE(ƒ€„*
+  g*`
+Xapplication"I
+*http://schemas.android.com/apk/res/androidlabelCapture fixture(€„*	
+0

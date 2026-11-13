@@ -236,7 +236,8 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     assert capsys.readouterr().out.strip() == (
         f"packed ios app: {tmp_path / 'out.ipa'} "
         f"(package dev.ostorlab.demo, version 1.2.3, build {_BUILD_ID}; unsigned, structurally verified)"
-        "\ncapabilities unknown (legacy runtime artifacts); effective checks"
+        "\ncapabilities unknown (legacy runtime artifacts); effective checks "
+        "\nlocal policy report_only; hash ; effective config ; host calls only, adaptation unverified"
     )
 
 
@@ -362,3 +363,15 @@ def testMain_whenNoMapping_passesNoneAsTheMapping(
     cli.main(_pack_arguments(tmp_path))
 
     assert captured["mapping"] is None
+
+
+@pytest.mark.parametrize("data", [b"{}", b" " * 2049])
+def testMain_whenExplicitPolicyIsInvalid_failsBeforeCreatingOutput(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str], data: bytes
+) -> None:
+    filename = tmp_path / "policy.json"
+    filename.write_bytes(data)
+    result = cli.main([*_pack_arguments(tmp_path), "--local-policy", str(filename)])
+    assert result == cli.EXIT_FAILED
+    assert "policy" in capsys.readouterr().err
+    assert (tmp_path / "out.ipa").exists() is False

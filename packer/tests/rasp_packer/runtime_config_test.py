@@ -107,3 +107,14 @@ def testWriteConfig_whenSectionBoundsInvalid_rejects(
 ) -> None:
     with pytest.raises(errors.InvalidRuntimeError, match="config"):
         runtime_config.write_config(_BINARY, space, _CONFIG)
+
+
+def testRuntimeConfig_whenPolicyIsAbsent_exposesReportOnlyDefault() -> None:
+    assert _CONFIG.local_policy is None
+
+
+def testReadConfig_whenPaddingIsNonzero_rejectsTheNativeInvalidEnvelope() -> None:
+    with pytest.raises(errors.InvalidRuntimeError, match="padding"):
+        runtime_config.read_config(
+            b"{}\0\0x", runtime_config.ConfigSpace(offset=0, size=5)
+        )

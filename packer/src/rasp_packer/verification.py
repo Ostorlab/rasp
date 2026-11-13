@@ -23,6 +23,7 @@ from rasp_packer import archive_validation
 from rasp_packer import checks
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer import local_policy
 from rasp_packer import platforms
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
@@ -140,6 +141,10 @@ def _check_config(
     config: runtime_config.RuntimeConfig, platform: platforms.Platform
 ) -> None:
     """Require the exact canonical platform config that the runtime will consume."""
+    if config.local_policy is not None:
+        local_policy.validate_for(
+            config.local_policy, platform.value, config.checks, config.build_id
+        )
     if (
         config.build_id == ""
         or re.search(r"[\x00-\x1f\x7f]", config.build_id) is not None

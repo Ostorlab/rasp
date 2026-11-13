@@ -14,8 +14,9 @@ cmake --build "$work" --parallel 2 --target \
   rasp_android_context_bridge_jni rasp_android_service_jni rasp_android_context_bridge_java \
   rasp_android_application_context_test rasp_android_window_events_test \
   rasp_android_storage_jni rasp_android_private_storage_test
+cmake --build "$work" --parallel 2 --target rasp_android_capture_events_test
 ctest --test-dir "$work" --parallel 2 --output-on-failure --no-tests=error \
-  -R '^(AndroidWindowBridge[.]|WindowEvents[.]|AndroidContextBridge[.]|AndroidIdentity[.]|AndroidServiceExposure[.]|ApplicationContext[.]|AndroidPrivateStorage[.]|AndroidPrivateStorageVm[.])'
+  -R '^(AndroidCaptureBridge[.]|CaptureEvents[.]|AndroidWindowBridge[.]|WindowEvents[.]|AndroidContextBridge[.]|AndroidIdentity[.]|AndroidServiceExposure[.]|ApplicationContext[.]|AndroidPrivateStorage[.]|AndroidPrivateStorageVm[.])'
 
 if [[ "$(uname -s)" == Darwin ]]; then
   cmake --build "$work" --parallel 2 --target rasp_ios_private_storage_test rasp_ios_private_entropy_test

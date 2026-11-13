@@ -8,12 +8,12 @@ because different source, compiler or plugin builds can share it.
 `packer/src/rasp_packer/checks_manifest.json` is the versioned source of truth for built-in
 group, signal and source identities. Its entries come from the platform check implementations
 and production `builtin.cpp` dispatchers. The catalogue describes possible outputs, not
-execution evidence or device attestation. The schema 1, revision 7 catalogue declares 52 Android and 26 iOS
+execution evidence or device attestation. The schema 1, revision 9 catalogue declares 73 Android and 52 iOS
 built-in signal/source identities.
 
-The current canonical catalogue ID is `c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`. The earlier revision 5 catalogue
+The current canonical catalogue ID is `2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d`. The earlier revision 5 catalogue
 `c996747579cf54fbb5af396f3b70d707407ca3146e582897474f1070e2746be5` remains
-foreign to this revision 7 consumer even with matching pristine bytes and sidecar.
+foreign to this revision 9 consumer even with matching pristine bytes and sidecar.
 
 Catalogue revision 5 adds four [Android identity observations](android-signer-observations.md): actual
 Application package, complete current signer sets from APK and PackageManager, and ordered
@@ -167,3 +167,5 @@ source `window_callback`: two finite availability/coverage strings and eight bou
 The current signer sets and ordered rotation history introduced in revision 5, along with earlier service-context, inline-hook and iOS outputs, are preserved exactly. Each selected
 actual measurement cycle drains window events once and hands the same immutable metadata/observations to both
 plugin callbacks. Complete source coverage is not continuous window ownership or evidence of overlay absence.
+
+The iOS opt-in `screenshot` and `screen_recording` groups add 26 scalar identities in revision 9. See [UIKit source/ownership/freshness semantics](ios-capture-observations.md); old Android outputs and the historical iOS outputs are unchanged. Removing only these two iOS groups and restoring revision 8 reconstructs the exact prior manifest bytes.
