@@ -1,22 +1,19 @@
 # The O-MVLL obfuscation scheme of the mobile runtime (https://obfuscator.re/o-mvll/): which passes run on which
 # functions. Cheap passes run on all first-party code the plugin sees; heavy passes run on the sensitive functions
-# and, by probability, elsewhere. The plugin only sees a target's own translation units: on Android the shared
-# library is built with the plugin so this covers rasp_core and the plugins, but on iOS the plugin is on the
-# RaspRuntime target alone, so only ios/src/*.cpp is obfuscated -- the first-party static libraries it links
-# (rasp_core, rasp_plugins) are compiled without the plugin and ship un-obfuscated (see runtime/ios/CMakeLists.txt).
-# On Android the self-decrypt bootstrap (selfdecrypt.cpp/chacha20.cpp/kdf_shovel.cpp) is the only code the
-# packer leaves in the clear while it encrypts the rest of the library at rest, so it gets every pass at probability 100
-# -- a static reverse-engineer who can read it must not be able to trace it to the decryptor or recover the key, and the
-# opaque-constants pass on kdf_shovel.cpp buries the shovelled derivation bytes. iOS has no at-rest layer yet (Phase 2),
-# so the bootstrap modules simply do not appear there and this scheme degrades to compile-time obfuscation only. The
-# secret is the per-release seed, RASP_OMVLL_SEED, not this file.
+# and, by probability, elsewhere. The plugin only sees a target's own translation units; this parent's Android build
+# does not apply it. On iOS it is on RaspRuntime alone, including that target's
+# C++/Objective-C++ sources and directly compiled core host bridge. Linked static libraries (rasp_core, rasp_plugins,
+# individual plugins and crypto) are compiled without the plugin (see runtime/ios/CMakeLists.txt).
+# The bootstrap selectors below describe dormant historical integration, not shipped coverage or key secrecy.
+# RASP_OMVLL_SEED is a diagnostic build input controlling part of the plugin's RNG behavior, not a cryptographic
+# key. One seed does not establish reproducible binaries or resistance to extraction.
 
 import os
 import re
 from functools import lru_cache
 
 import omvll
-
+import omvll_seed
 
 # Translation units never obfuscated, by module-name substring.
 THIRD_PARTY_MODULES = [
@@ -24,7 +21,7 @@ THIRD_PARTY_MODULES = [
 ]
 
 # The clear self-decrypt bootstrap translation units, by module-name substring; they get every pass at probability 100.
-# Android only -- iOS has no bootstrap yet, so these match nothing in an iOS build.
+# Historical Android integration only; these match no current iOS source or Android plugin compilation.
 BOOTSTRAP_MODULES = [
     "selfdecrypt",
     "chacha20",
@@ -54,8 +51,8 @@ SENSITIVE_FUNCTIONS = [
 # local decryption the string pass emits only runs at the uses it rewrites, and which uses it rewrites
 # differs by ABI and by optimization: a constant one ABI leaves alone another folds into a call argument
 # and encrypts. The runtime still reads the same bytes through data pointers, so they must never be
-# encrypted at all; on Android the packer's encryption at rest hides them in the shipped library. On iOS
-# there is no at-rest layer yet, so these stay readable in the shipped framework until Phase 2 adds one --
+# encrypted at all. This parent does not encrypt native Android libraries at rest. On iOS
+# there is no at-rest layer, so these stay readable in the shipped framework --
 # __rasp_config, the Mach-O lookup strings in util/macho.cpp, and the probe-source names and the artifact,
 # marker, folder and root literals the iOS checks iterate over (jailbreak.cpp's kArtifactPaths, hooks.cpp's
 # kFrameworkMarkers/kTweakFolders/kJailbreakRoots, mitm.cpp's kTunnelPrefixes, virtualizer.cpp's kSystemRoots
@@ -112,7 +109,7 @@ DATA_READ_LITERALS = re.compile(
 # The tf-psa-crypto translation units, by module-name substring.
 CRYPTO_MODULE = "tf-psa-crypto"
 
-# The only tf-psa-crypto functions obfuscated: the ChaCha20-Poly1305 decryption path.
+# Dormant crypto selectors; linking crypto never compiles its target with this plugin.
 CRYPTO_DECRYPTION_FUNCTIONS = [
     "chacha20_",
     "poly1305_",
@@ -133,13 +130,12 @@ class RaspConfig(omvll.ObfuscationConfig):
     omvll.config.shuffle_functions = True
     omvll.config.inline_jni_wrappers = True
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        seed = os.environ.get("RASP_OMVLL_SEED")
-        if seed is not None:
-            # The plugin's binding takes a 32-bit signed int, so the seed folds into one: any wider value would
-            # overflow it and fail the build.
-            omvll.config.probability_seed = int(seed) & 0x7FFFFFFF
+        policy = omvll_seed.parse_policy(
+            os.environ.get("RASP_OMVLL_SEED"), os.environ.get("RASP_OMVLL_SEED_MODE")
+        )
+        omvll.config.probability_seed = policy.seed
 
     def _in_crypto_module(self, mod: omvll.Module, func: omvll.Function) -> bool:
         # default_config returns False for an excluded module.
