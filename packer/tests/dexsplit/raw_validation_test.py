@@ -462,3 +462,88 @@ def testRead_whenDebugMapCountCannotFitSection_refusesBeforeReservation(
             with pytest.raises(ValueError, match="debug item count"):
                 _dex.AnalysisContext.from_dex_buffers([payload])
         assert request.storage < 64 * 1024 * 1024
+
+
+def _terminal_debug_fixture(state: str, *, unused: bool) -> bytes:
+    data = bytearray(_SAMPLE.read_bytes())
+
+    def leb(position: int) -> int:
+        while data[position] & 128 != 0:
+            position += 1
+        return position + 1
+
+    for code, _ in _mapped_code_items(data):
+        debug = struct.unpack_from("<I", data, code + 8)[0]
+        units = struct.unpack_from("<I", data, code + 12)[0]
+        if debug == 0 or data[debug] >= 128 or units >= 128:
+            continue
+        position = debug + 1
+        count_end = leb(position)
+        count = data[position]
+        assert count < 128
+        position = count_end
+        for _ in range(count):
+            position = leb(position)
+        begin = position
+        while data[position] != 0:
+            opcode = data[position]
+            position += 1
+            arguments = (
+                3
+                if opcode == 3
+                else 4
+                if opcode == 4
+                else 1
+                if opcode in (1, 2, 5, 6, 9)
+                else 0
+            )
+            for _ in range(arguments):
+                position = leb(position)
+        programs = {
+            "pc": bytes([1, 127]),
+            "line": bytes([2, 64]),
+            "pc-end": bytes([1, units]),
+            "line-zero": bytes([2, 0x79]),
+            "transient-line": bytes([2, 0x78, 2, 8]),
+        }
+        program = programs[state]
+        if position - begin < len(program):
+            continue
+        data[debug] = 7
+        # Keep the physical item extent; padding events follow restored legal state.
+        data[begin:position] = program + b"\x07" * (position - begin - len(program))
+        if unused:
+            count, offset, _ = _map(data)[6]
+            for index in range(count):
+                for field in (20, 24, 28):
+                    struct.pack_into("<I", data, offset + 32 * index + field, 0)
+        return _resign(data)
+    raise AssertionError("fixture needs enough debug op bytes")
+
+
+@pytest.mark.parametrize("boundary", ["model", "analysis"])
+@pytest.mark.parametrize("unused", [False, True])
+@pytest.mark.parametrize("state", ["pc", "line"])
+def testRead_whenMappedDebugTerminalStateIsOutsideBodyOrLine_refuses(
+    state: str, *, unused: bool, boundary: str
+) -> None:
+    payload = _terminal_debug_fixture(state, unused=unused)
+    if boundary == "model":
+        with pytest.raises(ValueError, match=r"(?i)(debug|position|line|bounds)"):
+            _dex.Model.read(payload)
+    else:
+        with pytest.raises(ValueError, match=r"(?i)(debug|position|line|bounds)"):
+            _dex.AnalysisContext.from_dex_buffers([payload])
+
+
+@pytest.mark.parametrize("boundary", ["model", "analysis"])
+@pytest.mark.parametrize("unused", [False, True])
+@pytest.mark.parametrize("state", ["pc-end", "line-zero", "transient-line"])
+def testRead_whenMappedDebugTerminalStateAndTransientLinesAreLegal_accepts(
+    state: str, *, unused: bool, boundary: str
+) -> None:
+    payload = _terminal_debug_fixture(state, unused=unused)
+    if boundary == "model":
+        _dex.Model.read(_dex.Model.read(payload).write())
+    else:
+        _dex.AnalysisContext.from_dex_buffers([payload])

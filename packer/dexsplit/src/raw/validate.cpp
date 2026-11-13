@@ -139,10 +139,6 @@ class Layout {
         fail("unterminated debug information");
       }
       uint8_t opcode = region_[cursor_++];
-      if (opcode == 0) {
-        debug_summaries_.push_back(summary);
-        return;
-      }
       if (opcode == 1) {
         address += leb();
       } else if (opcode == 5 || opcode == 6) {
@@ -166,12 +162,16 @@ class Layout {
         address += adjusted / 15;
         line += -4 + static_cast<int64_t>(adjusted % 15);
       }
-      // Match the reader's emitted-event bounds, including harmless redundant local events.
+      // Match emitted and terminal bounds; advance operations may have legal transient line states.
       if (opcode != 1 && opcode != 2) {
         if (line < 0 || line > UINT32_MAX) {
           fail("debug line outside supported range");
         }
         summary.address = std::max(summary.address, static_cast<uint32_t>(std::min<uint64_t>(address, UINT32_MAX)));
+      }
+      if (opcode == 0) {
+        debug_summaries_.push_back(summary);
+        return;
       }
     }
   }

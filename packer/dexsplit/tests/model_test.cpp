@@ -440,3 +440,46 @@ TEST(Model, generated_whenConstructedWithoutExplicitScope_retainsOneRequestForNe
   EXPECT_THROW((model::Dex(source)), budget::Exhausted);
 }
 }  // namespace dexsplit::test
+
+namespace dexsplit::test {
+TEST(Model, read_whenMappedDebugEndsOutsideRanges_allNativeBoundariesRefuse) {
+  std::ifstream input(DEXSPLIT_FIXTURE, std::ios::binary);
+  const std::vector<uint8_t> original{std::istreambuf_iterator<char>(input), {}};
+  ASSERT_GT(original.size(), 5684U);
+  for (bool unused : {false, true}) {
+    for (uint8_t state : {0U, 1U, 2U, 3U}) {
+      budget::Scope scope;
+      budget::Vector<uint8_t> bytes(original.begin(), original.end());
+      const auto header = raw::parser::parse_header(bytes);
+      ASSERT_TRUE(header.has_value());
+      ASSERT_EQ(bytes[5680], 7U);
+      ASSERT_EQ(bytes[5684], 0U);
+      bytes[5682] = state < 2 ? 1 : 2;
+      bytes[5683] = state == 0 ? 9 : state == 1 ? 127 : state == 2 ? 64 : 0x79;
+      auto set32 = [&](std::size_t at, uint32_t value) {
+        for (std::size_t i = 0; i < 4; ++i) {
+          bytes[at + i] = static_cast<uint8_t>(value >> (8 * i));
+        }
+      };
+      if (unused) {
+        for (uint32_t i = 0; i < header->class_defs_size; ++i) {
+          for (uint32_t field : {20U, 24U, 28U}) {
+            set32(header->class_defs_off + i * 32 + field, 0);
+          }
+        }
+      }
+      const auto signature = raw::parser::compute_signature(bytes);
+      ASSERT_TRUE(signature.has_value());
+      std::copy(signature->begin(), signature->end(), bytes.begin() + 12);
+      const auto checksum = raw::parser::compute_checksum(bytes);
+      ASSERT_TRUE(checksum.has_value());
+      set32(8, *checksum);
+      const bool valid = state == 0 || state == 3;
+      EXPECT_EQ(raw::parser::parse_buffer(bytes).has_value(), valid);
+      EXPECT_EQ(model::read(bytes).has_value(), valid);
+      budget::Vector<std::span<const uint8_t>> buffers{bytes};
+      EXPECT_EQ(AnalysisContext::from_dex_buffers(buffers).has_value(), valid);
+    }
+  }
+}
+}  // namespace dexsplit::test
