@@ -1,6 +1,7 @@
 """Tests of the packer's entry point."""
 
 import pathlib
+import zipfile
 
 import pytest
 
@@ -243,3 +244,31 @@ def testPack_whenAndroidApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
         build_id=_BUILD_ID,
         skipped_checks=(),
     )
+
+
+def testPack_whenAppArchiveIsDangerous_raisesBeforePackingTheApp(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app.apk"
+    with zipfile.ZipFile(app, "w") as archive:
+        archive.writestr("classes.dex", b"data")
+        archive.writestr("../../etc/passwd", b"owned")
+    packed = False
+
+    def fake_pack(**_: object) -> identity.AppIdentity:
+        nonlocal packed
+        packed = True
+        return _IDENTITY
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+
+    with pytest.raises(errors.DangerousAppError):
+        packer.pack(
+            app=app,
+            platform=platforms.Platform.ANDROID,
+            output=tmp_path / "out.apk",
+            build_id=_BUILD_ID,
+            checks=["identity"],
+        )
+
+    assert packed is False
