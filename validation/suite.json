@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "scenarios": [
+    {"scenario": "host_startup_unavailable", "adapter": "host_c", "expected": "error"},
+    {"scenario": "android_clean_receipt", "adapter": "android_adb", "expected": "benign"},
+    {"scenario": "android_policy_hash_mismatch", "adapter": "android_adb", "expected": "business_denial"},
+    {"scenario": "ios_receipt", "adapter": "ios_unavailable", "expected": "not_run"}
+  ]
+}
