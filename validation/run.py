@@ -245,7 +245,7 @@ def relative(value: typing.Any) -> str:
 
 
 def read_file(root: pathlib.Path, name: str, maximum: int) -> bytes:
-    """Read stable regular singleton files without following any path component link."""
+    """Read below a caller-prevalidated root; refuse its final link and relative links."""
     parts = relative(name).split("/")
     directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -258,40 +258,43 @@ def read_file(root: pathlib.Path, name: str, maximum: int) -> bytes:
         descriptor = os.open(
             parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
         )
-        with os.fdopen(descriptor, "rb") as stream:
-            before = os.fstat(stream.fileno())
-            require(
-                stat.S_ISREG(before.st_mode)
-                and before.st_nlink == 1
-                and before.st_size <= maximum,
-                "unsafe file or byte limit",
-            )
-            data = stream.read(maximum + 1)
-            after = os.fstat(stream.fileno())
-            linked = os.stat(parts[-1], dir_fd=directory, follow_symlinks=False)
-            require(
-                (
-                    before.st_dev,
-                    before.st_ino,
-                    before.st_size,
-                    before.st_mtime_ns,
-                    before.st_ctime_ns,
+        try:
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                before = os.fstat(stream.fileno())
+                require(
+                    stat.S_ISREG(before.st_mode)
+                    and before.st_nlink == 1
+                    and before.st_size <= maximum,
+                    "unsafe file or byte limit",
                 )
-                == (
-                    after.st_dev,
-                    after.st_ino,
-                    after.st_size,
-                    after.st_mtime_ns,
-                    after.st_ctime_ns,
-                ),
-                "changed input",
-            )
-            require(
-                (linked.st_dev, linked.st_ino) == (before.st_dev, before.st_ino)
-                and len(data) <= maximum,
-                "replaced input",
-            )
-            return data
+                data = stream.read(maximum + 1)
+                after = os.fstat(stream.fileno())
+                linked = os.stat(parts[-1], dir_fd=directory, follow_symlinks=False)
+                require(
+                    (
+                        before.st_dev,
+                        before.st_ino,
+                        before.st_size,
+                        before.st_mtime_ns,
+                        before.st_ctime_ns,
+                    )
+                    == (
+                        after.st_dev,
+                        after.st_ino,
+                        after.st_size,
+                        after.st_mtime_ns,
+                        after.st_ctime_ns,
+                    ),
+                    "changed input",
+                )
+                require(
+                    (linked.st_dev, linked.st_ino) == (before.st_dev, before.st_ino)
+                    and len(data) <= maximum,
+                    "replaced input",
+                )
+                return data
+        finally:
+            os.close(descriptor)
     except OSError as error:
         raise ValidationError("unreadable regular input") from error
     finally:
@@ -342,6 +345,27 @@ def child_argv(argv: list[str], no_fork: bool = False) -> list[str]:
     ]
 
 
+def process_exited(process: subprocess.Popen[bytes]) -> bool:
+    """Observe exit without releasing the leader PID/PGID ownership lease."""
+    require(process.returncode is None, "owned process already reaped")
+    try:
+        return (
+            os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+            is not None
+        )
+    except ChildProcessError as error:
+        raise ValidationError("owned process lease lost") from error
+
+
+def signal_owned_group(process: subprocess.Popen[bytes]) -> None:
+    """Signal only while our unreaped child still reserves its group identity."""
+    process_exited(process)
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def command(
     argv: list[str],
     cwd: pathlib.Path,
@@ -349,13 +373,16 @@ def command(
     binary_path: pathlib.Path | None = None,
     env: dict[str, str] | None = None,
     no_fork: bool = False,
+    binary_limit: int = 64 * MIB,
 ) -> CommandResult:
     """Drain both pipes under deadline; kill/reap the owned group on every exit."""
     require(0 < timeout <= 15, "command deadline")
     start = time.monotonic()
     output = bytearray()
     errors = bytearray()
-    maximum = 64 * MIB if binary_path is not None else 256 * 1024
+    maximum = (
+        integer(binary_limit, 0, 64 * MIB) if binary_path is not None else 256 * 1024
+    )
     binary_count = 0
     reason = "none"
     environment = (
@@ -420,23 +447,24 @@ def command(
                 if reason != "none":
                     break
             if reason == "none":
-                try:
-                    process.wait(timeout=max(0.001, start + timeout - time.monotonic()))
-                except subprocess.TimeoutExpired:
-                    reason = "timeout"
+                while process_exited(process) is False:
+                    remaining = start + timeout - time.monotonic()
+                    if remaining <= 0:
+                        reason = "timeout"
+                        break
+                    time.sleep(min(remaining, 0.01))
     finally:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait()
-        if process.stdout is not None:
-            process.stdout.close()
-        if process.stderr is not None:
-            process.stderr.close()
-        if binary is not None:
-            binary.close()
-            typing.cast(pathlib.Path, binary_path).chmod(0o600)
+            signal_owned_group(process)
+        finally:
+            process.wait()
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
+            if binary is not None:
+                binary.close()
+                typing.cast(pathlib.Path, binary_path).chmod(0o600)
     if reason == "none" and process.returncode < 0:
         reason = "process_crash"
     return CommandResult(
@@ -941,6 +969,25 @@ class Recorder:
         self.deadline = time.monotonic() + 900
         self.cell_deadline = self.deadline
         self.artifacts: list[dict[str, typing.Any]] = []
+        self.binary_files = 0
+        self.binary_bytes = 0
+
+    def reserve_binary_pair(self, artifact: dict[str, typing.Any]) -> None:
+        """Reserve both APK reads before acquisition; failures keep their spent budget."""
+        size = integer(artifact["bytes"], 1, 64 * MIB)
+        require(
+            len(self.plan["files"]) + self.binary_files + 2 <= 96,
+            "aggregate streamed artifact cap",
+        )
+        require(
+            sum(row["bytes"] for row in self.plan["files"])
+            + self.binary_bytes
+            + 2 * size
+            <= 256 * MIB,
+            "aggregate streamed artifact cap",
+        )
+        self.binary_files += 2
+        self.binary_bytes += 2 * size
 
     def capture(
         self,
@@ -1010,6 +1057,7 @@ class Recorder:
         binary_path: pathlib.Path | None = None,
         env: dict[str, str] | None = None,
         no_fork: bool = False,
+        binary_limit: int = 64 * MIB,
     ) -> CommandResult:
         """Never extend a cell/suite budget, including during cleanup."""
         self.commands += 1
@@ -1025,6 +1073,7 @@ class Recorder:
             binary_path=binary_path,
             env=env,
             no_fork=no_fork,
+            binary_limit=binary_limit,
         )
 
 
@@ -1071,11 +1120,16 @@ def host_run(
     static_host(files[artifact["id"]])
     executable = recorder.root / "inputs" / artifact["path"]
     scratch = recorder.root / ("scratch_" + nonce)
-    scratch.mkdir(mode=0o700)
     result = empty_result(cell, nonce, "runtime_unavailable")
     result["environment"] = host_environment()
     match_target(result["environment"], cell["target"])
-    actual = recorder.invoke([str(executable), nonce], scratch)
+    scratch.mkdir(mode=0o700)
+    try:
+        actual = recorder.invoke([str(executable), nonce], scratch)
+    except BaseException:
+        if len(list(scratch.iterdir())) == 0:
+            scratch.rmdir()
+        raise
     references: dict[str, str] = {}
     try:
         require(
@@ -1364,6 +1418,10 @@ def android_preflight(
             checks=tuple(array(injection["checks"], 64, 1)),
             local_policy=policy,
         )
+        require(
+            files[one_file(plan, "config")["id"]] == config.to_json(),
+            "retained config mismatch",
+        )
         config_hash = policy_module.effective_hash(
             config.build_id, config.checks, policy
         )
@@ -1471,10 +1529,9 @@ def fixture_xml(data: bytes) -> dict[str, typing.Any]:
         raise ValidationError("invalid fixture XML") from error
 
 
-def check_lab(
+def lab_descriptor(
     value: typing.Any,
     plan: dict[str, typing.Any],
-    files: dict[str, bytes],
     preflight: dict[str, typing.Any],
 ) -> dict[str, typing.Any]:
     """Accept only an explicitly provisioned isolated USB lab, never ambient devices."""
@@ -1503,13 +1560,38 @@ def check_lab(
         "unreviewed provisioning receipt",
     )
     adb = one_file_by_id(plan, lab["adb_file_id"])
-    require(adb["role"] == "tool" and adb["id"] in files, "missing pinned adb")
+    require(adb["role"] == "tool", "missing pinned adb")
+    require(
+        sum(
+            row["sha256"] == adb["sha256"] and row["bytes"] == adb["bytes"]
+            for row in preflight["bindings"].values()
+        )
+        == 1,
+        "missing/ambiguous installed adb binding",
+    )
+    home = pathlib.Path(text(lab["adb_home"], r"/[A-Za-z0-9_./-]{1,240}"))
+    require(
+        str(home) == lab["adb_home"] and ".." not in home.parts and str(home) != "/",
+        "provisioned adb home path",
+    )
+    return lab
+
+
+def check_lab(
+    value: typing.Any,
+    plan: dict[str, typing.Any],
+    files: dict[str, bytes],
+    preflight: dict[str, typing.Any],
+) -> dict[str, typing.Any]:
+    """Add local tool closure and credential metadata checks to pure lab admission."""
+    lab = lab_descriptor(value, plan, preflight)
+    adb = one_file_by_id(plan, lab["adb_file_id"])
+    require(adb["id"] in files, "missing pinned adb")
     matching = [
         row
         for row in preflight["bindings"].values()
         if row["sha256"] == adb["sha256"] and row["bytes"] == adb["bytes"]
     ]
-    require(len(matching) == 1, "missing/ambiguous installed adb binding")
     tool_closure(matching[0]["path"], preflight["bindings"])
     home = pathlib.Path(text(lab["adb_home"], r"/[A-Za-z0-9_./-]{1,240}"))
     require(
@@ -1527,6 +1609,49 @@ def check_lab(
             "preauthorized keys required; runner never generates keys",
         )
     return lab
+
+
+def check_probe(
+    probe: str,
+    data: bytes,
+    stderr: bytes,
+    exit_code: int | None,
+    term_signal: int | None,
+) -> None:
+    """Share the fixed route's pure command predicates between live and offline checks."""
+    absent = probe in {"process_pre", "process_post", "xml_pre", "xml_post"}
+    require(
+        term_signal is None
+        and type(exit_code) is int
+        and exit_code == (1 if absent is True else 0),
+        "collection_unavailable",
+    )
+    if absent is True:
+        require(data == b"" and stderr == b"", "unproved absence")
+    elif probe == "get_state":
+        require(data.strip() == b"device", "unsupported device state")
+    elif probe == "package_path":
+        require(
+            re.fullmatch(
+                rb"package:/data/app/[A-Za-z0-9_./=+-]+/base\.apk", data.strip()
+            )
+            is not None
+            and b".." not in data,
+            "installed package path",
+        )
+    elif probe == "adb_help":
+        require(
+            all(
+                token in data
+                for token in (
+                    b"Version 35.0.2-12147458",
+                    b"-L SOCKET",
+                    b"server nodaemon",
+                    b"one USB device",
+                )
+            ),
+            "unsupported pinned adb tool",
+        )
 
 
 def tool_closure(executable: str, bindings: dict[str, dict[str, typing.Any]]) -> None:
@@ -1577,17 +1702,22 @@ class AdbSession:
         self.preflight = preflight
         self.stage = "setup"
         self.refs: dict[str, list[str]] = {stage: [] for stage in PHASES}
-        self.work = pathlib.Path(tempfile.mkdtemp(prefix="v01-", dir="/tmp"))
-        self.endpoint = "localfilesystem:" + str(self.work / "server.sock")
-        require(
-            len(str(self.work / "server.sock").encode()) <= 100,
-            "private Unix endpoint path too long",
-        )
+        self.streams_reserved = False
+        self.remaining_streams = 0
         self.adb = (
             recorder.root
             / "inputs"
             / one_file_by_id(recorder.plan, lab["adb_file_id"])["path"]
         )
+        self.key_state = [
+            (path.stat().st_ino, path.stat().st_mtime_ns, path.stat().st_size)
+            for path in (
+                pathlib.Path(lab["adb_home"]) / ".android" / "adbkey",
+                pathlib.Path(lab["adb_home"]) / ".android" / "adbkey.pub",
+            )
+        ]
+        self.work = pathlib.Path(tempfile.mkdtemp(prefix="v01-", dir="/tmp"))
+        self.endpoint = "localfilesystem:" + str(self.work / "server.sock")
         self.env = {
             "PATH": "/usr/bin:/bin",
             "LANG": "C",
@@ -1600,13 +1730,6 @@ class AdbSession:
         }
         self.server: subprocess.Popen[bytes] | None = None
         self.streams: list[typing.BinaryIO] = []
-        self.key_state = [
-            (path.stat().st_ino, path.stat().st_mtime_ns, path.stat().st_size)
-            for path in (
-                pathlib.Path(lab["adb_home"]) / ".android" / "adbkey",
-                pathlib.Path(lab["adb_home"]) / ".android" / "adbkey.pub",
-            )
-        ]
 
     def start(self) -> None:
         """Check pinned help locally, then own the only permitted foreground server."""
@@ -1615,20 +1738,8 @@ class AdbSession:
             [str(self.adb), "--help"], self.work, env=self.env, no_fork=True
         )
         self.record("adb_help", result)
-        require(
-            result.returncode == 0
-            and result.reason == "none"
-            and all(
-                token in result.stdout
-                for token in (
-                    b"Version 35.0.2-12147458",
-                    b"-L SOCKET",
-                    b"server nodaemon",
-                    b"one USB device",
-                )
-            ),
-            "unsupported pinned adb tool",
-        )
+        require(result.reason == "none", result.reason)
+        check_probe("adb_help", result.stdout, result.stderr, result.returncode, None)
         for name in ("server.stdout", "server.stderr"):
             self.streams.append(
                 typing.cast(typing.BinaryIO, (self.work / name).open("xb"))
@@ -1693,7 +1804,7 @@ class AdbSession:
     def alive(self) -> None:
         """Fail before clients if the owned server dies or exceeds its output cap."""
         require(
-            self.server is not None and self.server.poll() is None,
+            self.server is not None and process_exited(self.server) is False,
             "owned adb server unavailable",
         )
         require(
@@ -1734,6 +1845,22 @@ class AdbSession:
         artifact_path: pathlib.Path | None = None,
     ) -> bytes:
         """All clients use the owned endpoint and a no-fork process limit."""
+        limit = 64 * MIB
+        if artifact_path is not None:
+            source = one_file_by_id(self.recorder.plan, self.lab["apk_file_id"])
+            limit = integer(source["bytes"], 1, 64 * MIB)
+            if probe == "apk_pre":
+                require(self.streams_reserved is False, "duplicate APK stream")
+                self.recorder.reserve_binary_pair(source)
+                self.streams_reserved = True
+                self.remaining_streams = 2
+            require(
+                probe in {"apk_pre", "apk_post"}
+                and self.streams_reserved is True
+                and self.remaining_streams > 0,
+                "unreserved APK stream",
+            )
+            self.remaining_streams -= 1
         self.alive()
         result = self.recorder.invoke(
             [str(self.adb), "-L", self.endpoint, "-s", self.lab["serial"], *args],
@@ -1742,6 +1869,7 @@ class AdbSession:
             binary_path=artifact_path,
             env=self.env,
             no_fork=True,
+            binary_limit=limit,
         )
         artifact: dict[str, typing.Any] | None = None
         if (
@@ -1766,35 +1894,22 @@ class AdbSession:
                 "phase": self.stage,
             }
             self.recorder.artifacts.append(artifact)
-            require(
-                len(self.recorder.artifacts) + len(self.recorder.plan["files"]) <= 96
-                and sum(
-                    row["bytes"]
-                    for row in self.recorder.artifacts + self.recorder.plan["files"]
-                )
-                <= 256 * MIB,
-                "aggregate streamed artifact cap",
-            )
         self.record(probe, result, artifact)
         self.alive()
+        require(result.reason == "none", result.reason)
         require(
-            result.reason == "none"
-            and result.returncode == (1 if allow_absent is True else 0)
-            and (
-                allow_absent is False or (result.stdout == b"" and result.stderr == b"")
-            ),
-            result.reason if result.reason != "none" else "collection_unavailable",
+            allow_absent
+            is (probe in {"process_pre", "process_post", "xml_pre", "xml_post"}),
+            "absence probe shape",
         )
+        check_probe(probe, result.stdout, result.stderr, result.returncode, None)
         return result.stdout
 
     def close(self) -> None:
         """Kill/reap only our server, capture its bounded output and remove its endpoint."""
         self.stage = "cleanup"
         if self.server is not None:
-            try:
-                os.killpg(self.server.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            signal_owned_group(self.server)
             self.server.wait(timeout=2)
         for stream in self.streams:
             stream.close()
@@ -1864,6 +1979,9 @@ def android_run(
     session = AdbSession(recorder, cell, nonce, lab, preflight)
     remote_xml = "/sdcard/val01_" + nonce + ".xml"
     package_path: str | None = None
+    device_admitted = False
+    fixture_touched = False
+    xml_owned = False
     try:
         session.start()
         require(
@@ -1939,6 +2057,15 @@ def android_run(
         session.call(
             "apk_pre", ["exec-out", "cat", package_path], artifact_path=artifact_path
         )
+        device_admitted = True
+        require(
+            session.call(
+                "xml_pre", ["shell", "-n", "test", "-e", remote_xml], allow_absent=True
+            )
+            == b"",
+            "setup_failed",
+        )
+        fixture_touched = True
         session.call(
             "force_stop_pre", ["shell", "-n", "am", "force-stop", "fixture.validation"]
         )
@@ -1947,13 +2074,6 @@ def android_run(
                 "process_pre",
                 ["shell", "-n", "pidof", "fixture.validation"],
                 allow_absent=True,
-            )
-            == b"",
-            "setup_failed",
-        )
-        require(
-            session.call(
-                "xml_pre", ["shell", "-n", "test", "-e", remote_xml], allow_absent=True
             )
             == b"",
             "setup_failed",
@@ -1984,6 +2104,7 @@ def android_run(
                 ],
             )
             for attempt in range(15):
+                xml_owned = True
                 session.call(
                     "dump_" + stage, ["shell", "-n", "uiautomator", "dump", remote_xml]
                 )
@@ -2037,21 +2158,22 @@ def android_run(
         clean = True
         session.stage = "cleanup"
         try:
-            if session.server is not None:
+            if device_admitted is True and fixture_touched is True:
                 session.call(
                     "force_stop_post",
                     ["shell", "-n", "am", "force-stop", "fixture.validation"],
                 )
-                session.call("remove_xml", ["shell", "-n", "rm", "-f", remote_xml])
-                require(
-                    session.call(
-                        "xml_post",
-                        ["shell", "-n", "test", "-e", remote_xml],
-                        allow_absent=True,
+                if xml_owned is True:
+                    session.call("remove_xml", ["shell", "-n", "rm", "-f", remote_xml])
+                    require(
+                        session.call(
+                            "xml_post",
+                            ["shell", "-n", "test", "-e", remote_xml],
+                            allow_absent=True,
+                        )
+                        == b"",
+                        "cleanup_failed",
                     )
-                    == b"",
-                    "cleanup_failed",
-                )
                 require(
                     session.call(
                         "process_post",
@@ -2454,11 +2576,23 @@ def verify_bundle(
                 and props["emulator"] == "0",
                 "environment probe value",
             )
-            lab = obj(
+            lab = lab_descriptor(
                 decode(files[one_file(plan, "lab_descriptor")["id"]]),
-                "version owned_lab serial device_id apk_file_id provisioning_receipt_sha256 adb_file_id transport network_isolation preauthorized adb_home",
+                plan,
+                preflight,
             )
-            observed_environment = {
+            for stage in PHASES:
+                for row in transcripts[stage]:
+                    require(row["kind"] == "adb", "Android probe kind")
+                    check_probe(
+                        row["probe"],
+                        row["data"].encode(),
+                        row["stderr"].encode(),
+                        row["exit_code"],
+                        row["signal"],
+                    )
+
+            observed_environment: dict[str, typing.Any] = {
                 "os": "android",
                 "os_version": props["os_version"],
                 "api": int(props["api"]),
@@ -2474,7 +2608,9 @@ def verify_bundle(
             }
             require(
                 result["environment"] == observed_environment
-                and observed_environment["device_id"] == lab["device_id"],
+                and observed_environment["device_id"] == lab["device_id"]
+                and observed_environment["api"] >= 31
+                and observed_environment["abi"] in preflight["abis"],
                 "forged environment",
             )
             require(len(setup["server_started"]) == 1, "missing server ownership")
@@ -2493,7 +2629,50 @@ def verify_bundle(
                 == one_file_by_id(plan, lab["adb_file_id"])["sha256"],
                 "server tool/device restriction",
             )
+            require(
+                [row["probe"] for row in transcripts["setup"]]
+                == [
+                    "adb_help",
+                    "server_started",
+                    "get_state",
+                    "env_api",
+                    "env_os_version",
+                    "env_model",
+                    "env_abi",
+                    "env_emulator",
+                    "env_fingerprint",
+                    "env_pages",
+                    "package_path",
+                    "apk_pre",
+                    "xml_pre",
+                    "force_stop_pre",
+                    "process_pre",
+                ],
+                "missing/ordered setup prerequisites",
+            )
+            require(
+                [row["probe"] for row in transcripts["cleanup"]]
+                == [
+                    "force_stop_post",
+                    "remove_xml",
+                    "xml_post",
+                    "process_post",
+                    "apk_post",
+                    "server_stdout",
+                    "server_stderr",
+                    "server_cleanup",
+                ],
+                "missing/ordered cleanup prerequisites",
+            )
             for stage in ("baseline", "execution"):
+                sequence = [row["probe"] for row in transcripts[stage]]
+                require(
+                    len(sequence) >= 3
+                    and sequence
+                    == ["launch_" + stage]
+                    + ["dump_" + stage, "ui_" + stage] * ((len(sequence) - 1) // 2),
+                    "missing/ordered UI prerequisites",
+                )
                 views = [
                     row for row in transcripts[stage] if row["probe"] == "ui_" + stage
                 ]
@@ -2521,44 +2700,8 @@ def verify_bundle(
                         == decision["config_sha256"],
                         "forged operation",
                     )
-            for stage, required in (
-                (
-                    "setup",
-                    {
-                        "apk_pre",
-                        "process_pre",
-                        "xml_pre",
-                        "get_state",
-                        "package_path",
-                        "adb_help",
-                        "server_started",
-                    },
-                ),
-                (
-                    "cleanup",
-                    {
-                        "apk_post",
-                        "process_post",
-                        "xml_post",
-                        "remove_xml",
-                        "force_stop_post",
-                        "server_cleanup",
-                    },
-                ),
-            ):
-                probes = {row["probe"] for row in transcripts[stage]}
-                require(required <= probes, "missing independent setup/cleanup proof")
+            for stage in ("setup", "cleanup"):
                 for row in transcripts[stage]:
-                    require(
-                        row["exit_code"]
-                        == (
-                            1
-                            if row["probe"]
-                            in {"process_pre", "process_post", "xml_pre", "xml_post"}
-                            else 0
-                        ),
-                        "failed setup/cleanup command",
-                    )
                     if row["probe"] in {"apk_pre", "apk_post"}:
                         require(
                             row["artifact"] is not None, "missing retained APK stream"

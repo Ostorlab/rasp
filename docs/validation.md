@@ -152,7 +152,9 @@ APK. It does not claim to inspect process memory after termination.
 
 ```sh
 VAL01_HOST=/tmp/val01-build/tests/rasp_validation_host \
-  python3.14 -m pytest -p no:cacheprovider validation/tests/run_test.py
+VAL01_ANDROID_INPUTS=/tmp/val01-prepared-inputs \
+VAL01_ADB_SNAPSHOT=/tmp/val01-read-only-adb-snapshot \
+  /path/to/pinned-packer/bin/python -m pytest -p no:cacheprovider validation/tests/run_test.py
 ```
 
 The suite exercises real killed/reaped local children and the production C gate,
@@ -179,3 +181,23 @@ See the [research evidence index](research/index.md). Private bundles are 0700
 directories with 0600 data and 0700 executable snapshots. Lab owners retain them
 through review/recovery, then explicitly erase them. The runner never uploads
 evidence, logs credentials or automatically erases failure evidence.
+
+
+The file reader assumes a caller-prevalidated, trusted root and ancestor chain.
+It rejects the root’s final symlink and relative descendant links; it does not
+validate ancestors above that root. Run in a private location with trusted parents.
+The unique retained config must match the actual installed production config’s
+canonical bytes. Offline Android verification checks pure provisioning predicates,
+command success, empty absence output and the fixed ordered prerequisites without
+accessing live credentials or devices. APK capacity reserves both pre/post streams
+before acquisition, within the existing ceilings. Remote cleanup begins only after
+identity/environment/APK admission and touching the fixture; nonce XML removal
+also requires confirmed absence followed by our own dump attempt.
+
+The installed-validator integration controls require the genuine prepared inputs
+and a read-only pinned ADB byte snapshot (never executed). Set
+`VAL01_ANDROID_INPUTS` to the directory containing the prepared `result.json` and
+its recorded inputs, and `VAL01_ADB_SNAPSHOT` to that snapshot. Run the suite with
+the Python environment bound by the prepared dependency manifest, alongside
+`VAL01_HOST`. Synthetic protocol records supply no signing, device or security
+credit. Missing prerequisites fail; these controls are not silently skipped.

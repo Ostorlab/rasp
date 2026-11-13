@@ -36,7 +36,10 @@ are 40 lowercase hex characters. General labels are printable ASCII, 1..128 byte
 Paths are relative ASCII components `[A-Za-z0-9_.-]+`, total <=240 bytes, with no
 empty, `.` or `..` component. Reject symlinks, hard links, devices/FIFOs/sockets,
 absolute paths, escapes, file replacement during reading and nonregular inputs.
-Open bounded files without following links, check identity before/after reading,
+The caller must prevalidate and trust the root and its ancestor chain. The bounded
+reader refuses a symlink in the root’s final component or any relative descendant;
+it does not verify ancestors above that root. Open bounded files below that root
+without following links, check identity before/after reading,
 snapshot into a new private directory and execute only the checked snapshot.
 
 | Record | Exact keys and values |
@@ -459,3 +462,17 @@ These concrete representations supersede corresponding historical details above:
 See [the runnable protocol](../docs/validation.md) for actual build/plan commands,
 limits and detector review, and [the evidence index](../docs/research/index.md) for
 reproduction/disclosure scope. Root owns code review and later publication/CI.
+
+
+## Independent review correction clarifications
+
+The retained unique `config` input must equal the canonical bytes emitted by the
+actual installed production `RuntimeConfig` used for injection and effective hash
+verification. Offline Android success reuses the pure live lab/probe predicates
+and requires the ordered setup, launch/dump/read and cleanup sequence. It does not
+read live keys or contact devices. Absence requires exit 1 and empty stdout/stderr.
+Both APK stream slots and their pinned byte sizes are reserved within the existing
+96-file/256-MiB aggregate before acquisition; a failed attempt keeps its budget.
+Remote cleanup requires admitted identity/environment/APK and a touched fixture;
+XML deletion also requires prior absence and our own creation attempt. Local
+process-group ownership persists until the last signal, followed by reaping.
