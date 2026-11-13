@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <array>
+#ifdef __linux__
 #include <bit>
+#endif
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -52,7 +54,9 @@ constexpr std::uint32_t kExecutableFlag = 1;
 /// Input limits are independent of the32-row output sample.
 constexpr std::size_t kMaxMaps = std::size_t{4} * 1024U * 1024U;
 constexpr std::size_t kMaxNames = std::size_t{4} * 1024U * 1024U;
+#ifdef __linux__
 constexpr std::size_t kMaxHeaders = std::size_t{2} * 1024U * 1024U;
+#endif
 constexpr std::size_t kMaxRecords = 8192;
 constexpr std::size_t kMaxImages = 4096;
 constexpr std::size_t kMaxIntervals = 16384;
