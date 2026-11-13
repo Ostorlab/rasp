@@ -22,7 +22,6 @@
 
 #include "apk/archive.h"
 #include "apk/location.h"
-#include "rasp/util/obfuscation.h"
 #include "util/jni.h"
 #endif
 
@@ -248,10 +247,6 @@ Observation observe_package_manager_signer(const std::optional<std::vector<std::
 
 std::vector<Observation> identity() {
 #ifdef __ANDROID__
-  static constexpr std::array kObfuscatedLiterals = {
-      kPackageSignal, kPackageSource, kUidSignal, kUidSource, kCodePathSignal, kCodePathSource, kCmdlinePath,
-  };
-  rasp::util::anchor_literals(kObfuscatedLiterals);
   const std::optional<std::string> code_path = apk::self_library_path();
   const std::optional<std::string> apk_path = apk::self_apk_path();
   const int api_level = android_get_device_api_level();

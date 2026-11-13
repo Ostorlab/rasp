@@ -26,7 +26,6 @@
 #include "payload/assets.h"
 #include "payload/cipher.h"
 #include "rasp/observation.h"
-#include "rasp/util/obfuscation.h"
 #include "util/apk_file.h"
 
 namespace rasp::android::payload {
@@ -68,9 +67,8 @@ constexpr std::size_t kConstantsOffset = kRecordsOffset + (kMaxProgramRecords * 
 /// forged file.
 constexpr std::size_t kMaxLibrarySize = std::size_t{64} << 20U;
 
-/// The smallest `.rasp_config` section the schedule accepts: a byte of config, a program, a keystore share and the
-/// expected text digest.
-constexpr std::uint64_t kSmallestConfigSection = kProgramSize + (2 * kKeySize) + 1;
+/// The smallest `.rasp_config` section the schedule accepts: a byte of config, a program and a keystore share.
+constexpr std::uint64_t kSmallestConfigSection = kProgramSize + kKeySize + 1;
 
 /// The name of the library's config section, whose trailing bytes hold the fold program and the keystore share.
 constexpr std::string_view kConfigSection = ".rasp_config";
@@ -444,10 +442,6 @@ std::optional<Key> guarded_master(const Key& seed, const Key& sensors) {
 
 std::optional<Key> recover_root_key(const Environment& environment, std::string_view library_path,
                                     const std::string& apk) {
-  static constexpr std::array<std::string_view, 6> kObfuscatedLiterals = {
-      kConfigSection, kFrameInfoPrefix, kSeedInfo, kGuardInfo, kShareEntry, kDecoyEntryPrefix,
-  };
-  rasp::util::anchor_literals(kObfuscatedLiterals);
   const std::optional<std::vector<std::uint8_t>> library = util::read_library_file(library_path, kMaxLibrarySize);
   if (!library.has_value()) {
     return std::nullopt;
@@ -458,15 +452,11 @@ std::optional<Key> recover_root_key(const Environment& environment, std::string_
   if (!section.has_value() || section->size < kSmallestConfigSection) {
     return std::nullopt;
   }
-  // The `.rasp_config` layout, from the section's start: the config JSON, its zero padding, the fold program, the
-  // expected plaintext `.text` digest, then the keystore share in the trailing 32 bytes. The gathered region is
-  // everything but the keystore: the share is written after the fold's inputs are gathered, while the digest sits
-  // inside the region, so a patched expectation breaks the fold instead of being honoured by it.
   const std::uint64_t region_size = section->size - kKeySize;
   const std::span<const std::uint8_t> config_region =
       image.subspan(static_cast<std::size_t>(section->file_offset), static_cast<std::size_t>(region_size));
-  const std::span<const std::uint8_t> program_bytes = image.subspan(
-      static_cast<std::size_t>(section->file_offset + region_size - kProgramSize - kKeySize), kProgramSize);
+  const std::span<const std::uint8_t> program_bytes =
+      image.subspan(static_cast<std::size_t>(section->file_offset + region_size - kProgramSize), kProgramSize);
   const std::span<const std::uint8_t> keystore =
       image.subspan(static_cast<std::size_t>(section->file_offset + region_size), kKeySize);
 

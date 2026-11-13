@@ -14,7 +14,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-clang --target=aarch64-linux-android31 -shared -fPIC -nostdlib -fuse-ld=lld -O1 -Wl,--build-id=none -Wl,-soname,librasp.so \
+clang --target=aarch64-linux-android31 -shared -fPIC -nostdlib -fuse-ld=lld -O1 -Wl,--build-id=none \
   "$here/runtime.c" -o "$here/librasp.so"
 for target in arm64-apple-ios12.0 x86_64-apple-ios12.0-simulator; do
   clang --target="$target" -dynamiclib -nostdlib -fuse-ld=lld -O1 \

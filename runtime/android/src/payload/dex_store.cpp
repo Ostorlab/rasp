@@ -4,7 +4,6 @@
 
 #include "payload/dex_store.h"
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -20,7 +19,6 @@
 #include "payload/assets.h"
 #include "payload/cipher.h"
 #include "payload/key_schedule.h"
-#include "rasp/util/obfuscation.h"
 
 namespace rasp::android::payload {
 
@@ -72,8 +70,6 @@ void index_map(std::string_view text, DexStore& store) {
 }  // namespace
 
 std::optional<DexStore> open_dex_store(std::string apk, const Key& root) {
-  static constexpr std::array<std::string_view, 2> kObfuscatedLiterals = {kMapEntry, kAssetPrefix};
-  rasp::util::anchor_literals(kObfuscatedLiterals);
   const std::optional<std::vector<std::uint8_t>> frame = rasp::android::apk::read_stored_entry(apk, kMapEntry);
   if (!frame.has_value()) {
     return std::nullopt;

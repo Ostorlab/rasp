@@ -11,7 +11,6 @@ from rasp_packer.android import cipher
 from rasp_packer.android import key_schedule
 from rasp_packer.android import packer
 from rasp_packer.android import resources
-from rasp_packer.android import runtime_library
 from rasp_packer.android import split
 from rasp_packer.android.aab import proto_manifest
 from tests.rasp_packer import conftest
@@ -162,12 +161,9 @@ def testPackAab_writesTheConfigProgramAndKeystoreIntoLibrasp(
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
         library = zf.read("base/lib/arm64-v8a/librasp.so")
-    # The placed library is self-encrypted — not the plain config-written library — but the fold's
-    # config, program and keystore still read back from its untouched `.rasp_config` section.
-    assert library != runtime_library.write_config(_ARM64_SO, _CONFIG)
-    assert runtime_library.read_config(library) == _CONFIG.to_json()
-    assert len(runtime_library.keystore(library)) == key_schedule.KEY_SIZE
-    assert runtime_library.program(library) != bytes(key_schedule.PROGRAM_SIZE)
+    assert runtime_config_read_config(library) == _CONFIG.to_json()
+    assert len(keystore_of(library)) == key_schedule.KEY_SIZE
+    assert program_of(library) != bytes(key_schedule.PROGRAM_SIZE)
 
 
 def testPackAab_writesEncryptedMapThatNamesEveryBusinessClass(
@@ -250,10 +246,9 @@ def testPackAab_addsRuntimeLibraryUnderBaseLib(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
         library = zf.read("base/lib/arm64-v8a/librasp.so")
-    # The placed library is the self-encrypted runtime, not the plain config-written library.
-    assert library != runtime_library.write_config(_ARM64_SO, _CONFIG)
-    assert runtime_library.read_config(library) == _CONFIG.to_json()
-    assert runtime_library.keystore(library) != bytes(key_schedule.KEY_SIZE)
+
+    assert runtime_config_read_config(library) == _CONFIG.to_json()
+    assert keystore_of(library) != bytes(key_schedule.KEY_SIZE)
 
 
 def testPackAab_setsComponentFactoryAndRaisesMinSdk(tmp_path: pathlib.Path) -> None:
@@ -315,3 +310,24 @@ def testPackAab_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     )
     assert app_identity.package_name == _PACKAGE
     assert app_identity.version == "1.0"
+
+
+def runtime_config_read_config(library: bytes) -> bytes:
+    """Reads the packed library's config."""
+    from rasp_packer.android import runtime_library
+
+    return runtime_library.read_config(library)
+
+
+def keystore_of(library: bytes) -> bytes:
+    """Reads the packed library's keystore share."""
+    from rasp_packer.android import runtime_library
+
+    return runtime_library.keystore(library)
+
+
+def program_of(library: bytes) -> bytes:
+    """Reads the packed library's fold program."""
+    from rasp_packer.android import runtime_library
+
+    return runtime_library.program(library)

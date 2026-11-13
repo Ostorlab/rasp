@@ -46,7 +46,6 @@ from rasp_packer.android import key_schedule
 from rasp_packer.android import loader_map
 from rasp_packer.android import resources as resources_module
 from rasp_packer.android import runtime_library
-from rasp_packer.android import self_encrypt
 from rasp_packer.android import split as split_module
 from rasp_packer.android.aab import archive as aab_archive
 from rasp_packer.android.aab import manifest as aab_manifest_module
@@ -160,14 +159,8 @@ def _pack_apk(
         apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
         resources_module.STUB_FACTORY_CLASS,
     )
-    libraries: dict[str, bytes] = {}
-    digests: dict[str, bytes] = {}
-    for name, library in injection.library_entries(apk, artifacts).items():
-        configured = runtime_library.write_config(library, config)
-        libraries[name] = self_encrypt.encrypt_library(configured)
-        digests[name] = hashlib.sha256(runtime_library.text_region(configured)).digest()
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
-        libraries, digests, config
+        injection.library_entries(apk, artifacts), config
     )
     map_frame, dex_entries = _encrypt_payload(result.business, root)
     base_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
@@ -222,17 +215,12 @@ def _pack_aab(
         resources_module.STUB_FACTORY_CLASS,
     )
     abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
-    libraries: dict[str, bytes] = {}
-    digests: dict[str, bytes] = {}
-    for abi in sorted(abis):
-        configured = runtime_library.write_config(artifacts.libraries[abi], config)
-        entry = f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}"
-        libraries[entry] = self_encrypt.encrypt_library(configured)
-        digests[entry] = hashlib.sha256(
-            runtime_library.text_region(configured)
-        ).digest()
+    libraries = {
+        f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": artifacts.libraries[abi]
+        for abi in sorted(abis)
+    }
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
-        libraries, digests, config
+        libraries, config
     )
     map_frame, dex_data_entries = _encrypt_payload(result.business, root)
     base_dexes = {
@@ -258,17 +246,14 @@ def _pack_aab(
 
 
 def _schedule_libraries(
-    libraries: dict[str, bytes],
-    digests: dict[str, bytes],
-    config: runtime_config.RuntimeConfig,
+    libraries: dict[str, bytes], config: runtime_config.RuntimeConfig
 ) -> tuple[bytes, bytes, dict[str, bytes], dict[str, bytes]]:
     """Builds the schedule's fold over the app's runtime libraries.
 
-    It invents a fresh fold program — the per-app recipe of real inputs and decoys, in a random order — and the decoy entries the program names, then writes into each ABI's library its per-ABI keystore share, the share that makes that library's chains recover the root: the share cancels its ABI's chains, so every ABI recovers the same root. It also writes each library's expected plaintext `.text` digest before the fold's inputs are gathered, so the region digest binds the expectation into the root: a patched digest in the shipped file breaks every decryption, and the integrity check and the sensor guard can only compare the running code against the expectation the app decrypts with. The libraries arrive with their config written and their code and read-only data self-encrypted, and the fold gathers its digests from those shipped bytes: they stay encrypted on disk, and the runtime reads the library file — not the decrypted memory — so both sides gather the same digests.
+    It invents a fresh fold program — the per-app recipe of real inputs and decoys, in a random order — and the decoy entries the program names, then writes each ABI's library with its config, the shared program, and the per-ABI keystore share that makes that library's chains recover the root: the share cancels its ABI's chains, so every ABI recovers the same root.
 
     Args:
-        libraries: The runtime libraries with their config written and their code and read-only data self-encrypted, by APK entry name. Each already carries the same config.
-        digests: The SHA-256 of each library's plaintext `.text` section, by APK entry name.
+        libraries: The prebuilt runtime libraries, by APK entry name.
         config: The runtime's config.
 
     Returns:
@@ -300,13 +285,10 @@ def _schedule_libraries(
     share_asset = key_schedule.new_share()
     lib_entries: dict[str, bytes] = {}
     for name, library in libraries.items():
-        with_digest = runtime_library.write_text_digest(
-            runtime_library.write_program(
-                runtime_library.write_config(library, config), encoded
-            ),
-            digests[name],
+        with_program = runtime_library.write_program(
+            runtime_library.write_config(library, config), encoded
         )
-        gather = _resolver(with_digest, program, share_asset, decoys)
+        gather = _resolver(with_program, program, share_asset, decoys)
         a_state = key_schedule.run_chain(
             bytes(key_schedule.KEY_SIZE), program.chain_a, gather, "a"
         )
@@ -314,7 +296,7 @@ def _schedule_libraries(
             bytes(key_schedule.KEY_SIZE), program.chain_s, gather, "s"
         )
         lib_entries[name] = runtime_library.write_keystore(
-            with_digest, key_schedule.fold(a_state, s_state, root)
+            with_program, key_schedule.fold(a_state, s_state, root)
         )
     return root, share_asset, lib_entries, decoys
 

@@ -14,7 +14,6 @@ from tests.rasp_packer import conftest
 _CONFIG = runtime_config.RuntimeConfig(build_id="build-1", checks=("identity",))
 _LIBRARY = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _SHARE = bytes(range(32, 64))
-_DIGEST = bytes(range(64, 96))
 _PROGRAM = bytes(key_schedule.PROGRAM_SIZE)
 
 
@@ -125,65 +124,20 @@ def testWriteKeystore_whenNotAnElfFile_raisesInvalidRuntimeError() -> None:
         runtime_library.write_keystore(b"not a library", _SHARE)
 
 
-def testConfigRegion_whenConfigProgramDigestAndKeystoreAreWritten_holdsThemAll() -> (
-    None
-):
+def testConfigRegion_whenConfigProgramAndKeystoreAreWritten_holdsThemAll() -> None:
     program = bytes(range(256)) * 2
-    library = runtime_library.write_text_digest(
-        runtime_library.write_program(_configured(), program),
-        _DIGEST,
+    library = runtime_library.write_keystore(
+        runtime_library.write_program(_configured(), program), _SHARE
     )
 
     region = runtime_library.config_region(library)
 
     assert len(region) == 4096 - key_schedule.KEY_SIZE
     assert region.startswith(_CONFIG.to_json())
-    assert region[
-        len(_CONFIG.to_json()) : -key_schedule.PROGRAM_SIZE - key_schedule.KEY_SIZE
-    ] == bytes(
-        len(region)
-        - len(_CONFIG.to_json())
-        - key_schedule.PROGRAM_SIZE
-        - key_schedule.KEY_SIZE
+    assert region[len(_CONFIG.to_json()) : -key_schedule.PROGRAM_SIZE] == bytes(
+        len(region) - len(_CONFIG.to_json()) - key_schedule.PROGRAM_SIZE
     )
-    assert (
-        region[
-            -key_schedule.PROGRAM_SIZE - key_schedule.KEY_SIZE : -key_schedule.KEY_SIZE
-        ]
-        == program
-    )
-    assert region[-key_schedule.KEY_SIZE :] == _DIGEST
-
-
-def testWriteTextDigest_whenGivenALibrary_writesTheDigestIntoTheSection() -> None:
-    library = runtime_library.write_text_digest(
-        runtime_library.write_keystore(_configured(), _SHARE), _DIGEST
-    )
-
-    assert runtime_library.text_digest(library) == _DIGEST
-
-
-def testWriteTextDigest_whenGivenALibrary_keepsTheConfigProgramAndKeystore() -> None:
-    program = bytes(range(256)) * 2
-    library = runtime_library.write_text_digest(
-        runtime_library.write_keystore(
-            runtime_library.write_program(_configured(), program), _SHARE
-        ),
-        _DIGEST,
-    )
-
-    assert runtime_library.read_config(library) == _CONFIG.to_json()
-    assert runtime_library.program(library) == program
-    assert runtime_library.keystore(library) == _SHARE
-
-
-def testWriteTextDigest_whenTheDigestIsTheWrongSize_raisesValueError() -> None:
-    with pytest.raises(ValueError, match="32 bytes"):
-        runtime_library.write_text_digest(_configured(), bytes(31))
-
-
-def testTextDigest_whenThePackerWroteNoDigest_isAllZeros() -> None:
-    assert runtime_library.text_digest(_configured()) == bytes(key_schedule.KEY_SIZE)
+    assert region[-key_schedule.PROGRAM_SIZE :] == program
 
 
 def testKeystore_whenThePackerWroteNoShare_isAllZeros() -> None:
