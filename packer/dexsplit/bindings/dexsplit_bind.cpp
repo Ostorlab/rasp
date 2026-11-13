@@ -1,10 +1,14 @@
 /** Python bindings for the trimmed dex splitter's native core (dexsplit._dex).
  *
- *  Exposes only what the Python splitter needs: the editable DEX model used to
- *  regroup classes into new DEX files and to measure pool sizes.
+ *  Exposes only what the Python splitter needs: an analysis context built from
+ *  in-memory DEX bytes, the per-class links it reads (superclass, interfaces,
+ *  and each method's calls, field accesses and type uses), and the editable DEX
+ *  model used to regroup classes into new DEX files and to measure pool sizes.
  *
- *  A parse or write failure raises ValueError; a pool overflow raises its
- *  subclass PoolOverflowError and a version that is too low VersionTooLowError. */
+ *  Conventions at the boundary:
+ *  - string_views are copied into owned Python str, so they never dangle;
+ *  - a parse or write failure raises ValueError; a pool overflow raises its
+ *    subclass PoolOverflowError and a version that is too low VersionTooLowError. */
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -16,12 +20,26 @@
 #include <string>
 #include <vector>
 
+#include "analysis/analysis_context.hpp"
+#include "analysis/class.hpp"
+#include "analysis/class_ref.hpp"
+#include "analysis/method.hpp"
+#include "common/ids.hpp"
 #include "model/model.hpp"
 
 namespace py = pybind11;
 
 namespace {
 
+using dexsplit::AnalysisContext;
+using dexsplit::Class;
+using dexsplit::ClassRef;
+using dexsplit::FieldAccess;
+using dexsplit::FieldId;
+using dexsplit::Method;
+using dexsplit::MethodCall;
+using dexsplit::MethodId;
+using dexsplit::TypeUse;
 using dexsplit::model::Dex;
 
 /** A model that has more entries in a pool than a DEX file can index. */
@@ -52,6 +70,92 @@ struct VersionTooLow : std::runtime_error
     if (error.kind == Kind::VersionTooLow)
         throw VersionTooLow(error.message);
     throw py::value_error(error.message);
+}
+
+/** A TypeUse whose descriptor is copied, so that the Python object does not
+ *  read from the context after the context is gone. */
+struct OwnedTypeUse
+{
+    std::string descriptor;
+};
+
+/** Register the analysis handles (context, class, method and the per-class links). */
+void register_analysis(py::module_ &m)
+{
+    py::class_<MethodId>(m, "MethodId")
+        .def_property_readonly(
+            "class_descriptor", [](const MethodId &id) { return id.class_descriptor; },
+            "The 'L...;' descriptor of the class that declares the method.");
+
+    py::class_<FieldId>(m, "FieldId")
+        .def_property_readonly(
+            "class_descriptor", [](const FieldId &id) { return id.class_descriptor; },
+            "The 'L...;' descriptor of the class that declares the field.");
+
+    py::class_<ClassRef>(m, "ClassRef")
+        .def_property_readonly(
+            "descriptor", [](const ClassRef &ref) { return std::string(ref.descriptor()); },
+            "The 'L...;' type descriptor this reference names.");
+
+    py::class_<MethodCall>(m, "MethodCall")
+        .def_property_readonly(
+            "target", [](const MethodCall &call) { return call.target; },
+            "The declared callee of the call site.");
+
+    py::class_<FieldAccess>(m, "FieldAccess")
+        .def_property_readonly(
+            "field", [](const FieldAccess &access) { return access.field; },
+            "The field the instruction reads or writes.");
+
+    py::class_<OwnedTypeUse>(m, "TypeUse")
+        .def_property_readonly(
+            "descriptor", [](const OwnedTypeUse &use) { return use.descriptor; },
+            "The referenced type descriptor.");
+
+    py::class_<Method>(m, "Method")
+        .def_property_readonly("calls", &Method::calls, "The methods this body calls.")
+        .def_property_readonly("field_accesses", &Method::field_accesses,
+                               "The fields this body reads or writes.")
+        .def_property_readonly(
+            "type_uses",
+            [](const Method &method) {
+                std::vector<OwnedTypeUse> uses;
+                for (const TypeUse &use : method.type_uses())
+                    uses.push_back({std::string(use.descriptor)});
+                return uses;
+            },
+            "The types this body references.");
+
+    py::class_<Class>(m, "Class")
+        .def_property_readonly(
+            "name", [](const Class &cls) { return std::string(cls.name()); },
+            "The 'L...;' type descriptor that names this class.")
+        .def_property_readonly("superclass", &Class::superclass,
+                               "A ClassRef for the superclass, or None for java.lang.Object.")
+        .def_property_readonly("interfaces", &Class::interfaces,
+                               "The interfaces this class implements.")
+        .def_property_readonly("methods", &Class::methods, "The methods this class defines.");
+
+    py::class_<AnalysisContext>(m, "AnalysisContext")
+        .def_static(
+            "from_dex_buffers",
+            [](const std::vector<py::bytes> &dexes) {
+                std::vector<std::span<const uint8_t>> buffers;
+                buffers.reserve(dexes.size());
+                for (const py::bytes &dex : dexes) {
+                    const std::string_view view(dex);
+                    buffers.emplace_back(reinterpret_cast<const uint8_t *>(view.data()),
+                                         view.size());
+                }
+                auto result = AnalysisContext::from_dex_buffers(buffers);
+                if (!result.has_value())
+                    throw py::value_error(result.error());
+                return std::move(*result);
+            },
+            py::arg("dexes"),
+            "Parse a list of DEX byte strings (multidex order) into one context.")
+        .def_property_readonly("classes", &AnalysisContext::classes,
+                               "Every class across the loaded DEX files.");
 }
 
 /** Register the editable DEX model and its pool statistics. */
@@ -139,6 +243,7 @@ void register_model(py::module_ &m)
 
 PYBIND11_MODULE(_dex, m)
 {
-    m.doc() = "Native core of the dex splitter: the editable DEX model.";
+    m.doc() = "Native core of the dex splitter: DEX analysis and the editable DEX model.";
+    register_analysis(m);
     register_model(m);
 }
