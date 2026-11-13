@@ -4,10 +4,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <iterator>
 #include <optional>
 #include <pthread.h>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -43,25 +45,33 @@ namespace {
 /// checks, in that order, each only when the config enables its group.
 [[nodiscard]] std::vector<Observation> run_checks(const Config& config) {
   std::vector<Observation> observations;
-  if (is_check_enabled(config, "root")) {
+  // The mask's bits are the groups' positions in the packer's CHECKS order, which this dispatch's order keeps in
+  // step with: new groups append at both ends.
+  const auto enabled = [&config](unsigned bit, std::string_view id) {
+    if (config.checks_mask.has_value()) {
+      return (config.checks_mask.value() & (std::uint64_t{1} << bit)) != 0;
+    }
+    return is_check_enabled(config, id);
+  };
+  if (enabled(0, "root")) {
     std::ranges::move(checks::root(), std::back_inserter(observations));
   }
-  if (is_check_enabled(config, "debugger")) {
+  if (enabled(1, "debugger")) {
     std::ranges::move(checks::debugger(), std::back_inserter(observations));
   }
-  if (is_check_enabled(config, "hooks")) {
+  if (enabled(2, "hooks")) {
     std::ranges::move(checks::hooks(), std::back_inserter(observations));
   }
-  if (is_check_enabled(config, "integrity")) {
+  if (enabled(3, "integrity")) {
     std::ranges::move(checks::integrity(), std::back_inserter(observations));
   }
-  if (is_check_enabled(config, "mitm")) {
+  if (enabled(4, "mitm")) {
     std::ranges::move(checks::mitm(), std::back_inserter(observations));
   }
-  if (is_check_enabled(config, "identity")) {
+  if (enabled(5, "identity")) {
     std::ranges::move(checks::identity(), std::back_inserter(observations));
   }
-  if (is_check_enabled(config, "emulator")) {
+  if (enabled(6, "emulator")) {
     std::ranges::move(checks::emulator(), std::back_inserter(observations));
   }
   return observations;

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <iterator>
 #include <memory>
@@ -111,6 +112,48 @@ struct Environment {
   return config;
 }
 
+/// Runs the built-in check groups the config enables, in the packer's CHECKS order, and returns their observations.
+///
+/// @param config The runtime's config.
+/// @param environment What the runtime read from the app's environment when it loaded.
+/// @return The observations of the enabled groups, in order.
+[[nodiscard]] std::vector<Observation> run_checks(const Config& config, const Environment& environment) {
+  std::vector<Observation> builtin;
+  // The mask's bits are the groups' positions in the packer's CHECKS order, which this dispatch's order keeps in
+  // step with: new groups append at both ends.
+  const auto enabled = [&config](unsigned bit, std::string_view id) {
+    if (config.checks_mask.has_value()) {
+      return (config.checks_mask.value() & (std::uint64_t{1} << bit)) != 0;
+    }
+    return is_check_enabled(config, id);
+  };
+  if (enabled(0, "jailbreak")) {
+    std::ranges::move(checks::jailbreak(), std::back_inserter(builtin));
+  }
+  if (enabled(1, "debugger")) {
+    std::ranges::move(checks::debugger(), std::back_inserter(builtin));
+  }
+  if (enabled(2, "hooks")) {
+    std::ranges::move(checks::hooks(environment.inserted_libraries), std::back_inserter(builtin));
+  }
+  if (enabled(3, "identity")) {
+    std::ranges::move(checks::identity(), std::back_inserter(builtin));
+  }
+  if (enabled(4, "codesign")) {
+    std::ranges::move(checks::codesign(), std::back_inserter(builtin));
+  }
+  if (enabled(5, "emulator")) {
+    std::ranges::move(checks::emulator(), std::back_inserter(builtin));
+  }
+  if (enabled(6, "virtualizer")) {
+    std::ranges::move(checks::virtualizer(), std::back_inserter(builtin));
+  }
+  if (enabled(7, "mitm")) {
+    std::ranges::move(checks::mitm(), std::back_inserter(builtin));
+  }
+  return builtin;
+}
+
 /// The thread: beats the monitoring heartbeat, reads the runtime's config and initialises the plugins with it, then,
 /// until the process exits, runs the jailbreak, debugger, hooking, app-identity, code-signing, emulator, virtualizer
 /// and network-interception checks, each only when the config enables its group, beats the heartbeat, arms a panic
@@ -128,31 +171,7 @@ void* monitor(void* argument) {
   rasp::plugins::Context context;
   rasp::plugins::init_plugins(rasp::plugins::compiled_in(), config, context);
   while (true) {
-    std::vector<Observation> builtin;
-    if (is_check_enabled(config, "jailbreak")) {
-      std::ranges::move(checks::jailbreak(), std::back_inserter(builtin));
-    }
-    if (is_check_enabled(config, "debugger")) {
-      std::ranges::move(checks::debugger(), std::back_inserter(builtin));
-    }
-    if (is_check_enabled(config, "hooks")) {
-      std::ranges::move(checks::hooks(environment->inserted_libraries), std::back_inserter(builtin));
-    }
-    if (is_check_enabled(config, "identity")) {
-      std::ranges::move(checks::identity(), std::back_inserter(builtin));
-    }
-    if (is_check_enabled(config, "codesign")) {
-      std::ranges::move(checks::codesign(), std::back_inserter(builtin));
-    }
-    if (is_check_enabled(config, "emulator")) {
-      std::ranges::move(checks::emulator(), std::back_inserter(builtin));
-    }
-    if (is_check_enabled(config, "virtualizer")) {
-      std::ranges::move(checks::virtualizer(), std::back_inserter(builtin));
-    }
-    if (is_check_enabled(config, "mitm")) {
-      std::ranges::move(checks::mitm(), std::back_inserter(builtin));
-    }
+    std::vector<Observation> builtin = run_checks(config, *environment);
     heartbeat.beat(std::chrono::steady_clock::now());
     static_cast<void>(panic_on_detection(builtin, end_process));
     const std::vector<Observation> observations =
