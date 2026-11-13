@@ -220,9 +220,13 @@ They are not cryptographic capabilities against the host.
 The dedicated manifest contains only generation/app/profile/key identities,
 public keys/properties and reserved/live/delete-pending states. Its fixed 8192-byte
 codec validates version, closed states, padding, duplicate identities and corruption
-digest. A digest is equality/corruption evidence, not authenticated storage or a
+digest.
+
+A digest is equality/corruption evidence, not authenticated storage or a
 rollback counter. Transactions, challenges, signatures, accounts, tokens and private
-keys are never persisted. Platform children own private directory/file validation,
+keys are never persisted.
+
+Platform children own private directory/file validation,
 backup exclusion, exclusive process/storage locks and file/rename/directory fsync.
 There is no dependency on a host-context storage-capability API or a cross-libc++
 PrivateStorage ABI.
