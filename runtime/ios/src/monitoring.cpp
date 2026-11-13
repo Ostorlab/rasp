@@ -32,6 +32,7 @@
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/embedded_config.h"
+#include "rasp/heartbeat.h"
 #include "rasp/install_id.h"
 #include "rasp/observation.h"
 #include "rasp/panic.h"
@@ -110,16 +111,18 @@ struct Environment {
   return config;
 }
 
-/// The thread: reads the runtime's config and initialises the plugins with it, then, until the process exits, runs the
-/// jailbreak, debugger, hooking, app-identity, code-signing, emulator, virtualizer and network-interception checks,
-/// each only when the config enables its group, arms a panic when they detect something, runs the plugins and waits a
-/// random check_interval. The config and the context the plugins share are locals of this thread, which never returns,
-/// so they live as long as the process.
+/// The thread: beats the monitoring heartbeat, reads the runtime's config and initialises the plugins with it, then,
+/// until the process exits, runs the jailbreak, debugger, hooking, app-identity, code-signing, emulator, virtualizer
+/// and network-interception checks, each only when the config enables its group, beats the heartbeat, arms a panic
+/// when the checks detect something, runs the plugins, beats again and waits a random check_interval. The config and
+/// the context the plugins share are locals of this thread, which never returns, so they live as long as the process.
 ///
 /// @param argument What the runtime read from the app's environment when it loaded, an Environment allocated with
 /// `new` that the thread takes and keeps until the process exits.
 /// @return Never returns.
 void* monitor(void* argument) {
+  Heartbeat& heartbeat = monitor_heartbeat();
+  heartbeat.beat(std::chrono::steady_clock::now());
   const std::unique_ptr<const Environment> environment(static_cast<Environment*>(argument));
   const Config config = read_config(environment->install_id_directory);
   rasp::plugins::Context context;
@@ -150,6 +153,7 @@ void* monitor(void* argument) {
     if (is_check_enabled(config, "mitm")) {
       std::ranges::move(checks::mitm(), std::back_inserter(builtin));
     }
+    heartbeat.beat(std::chrono::steady_clock::now());
     static_cast<void>(panic_on_detection(builtin, end_process));
     const std::vector<Observation> observations =
         rasp::plugins::run_plugins(rasp::plugins::compiled_in(), std::move(builtin), context);
@@ -158,6 +162,7 @@ void* monitor(void* argument) {
         rasp::log(describe(observation));
       }
     }
+    heartbeat.beat(std::chrono::steady_clock::now());
     const std::chrono::milliseconds interval = check_interval();
     if constexpr (rasp::kLoggingEnabled) {
       rasp::log("next run in " + std::to_string(interval.count()) + " ms");

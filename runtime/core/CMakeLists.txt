@@ -6,6 +6,7 @@ add_library(rasp_core STATIC
   src/install_id.cpp
   src/observation.cpp
   src/panic.cpp
+  src/heartbeat.cpp
   src/parse_config.cpp
   src/schedule.cpp
   src/plugins/init_plugins.cpp
