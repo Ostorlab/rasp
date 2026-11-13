@@ -1,27 +1,57 @@
 cmake_minimum_required(VERSION 3.18)
 project(dexsplit LANGUAGES CXX)
-
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+option(DEXSPLIT_BUILD_PYTHON "Build the installed native extension" ON)
+option(DEXSPLIT_BUILD_TESTS "Build native parser/model/hostile-input tests" OFF)
+set(DEXSPLIT_SANITIZER "" CACHE STRING "address or thread sanitizer")
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE Release)
+  set(CMAKE_BUILD_TYPE Release)
 endif()
-
-find_package(pybind11 CONFIG REQUIRED)
-
-# The native core: DEX reading/writing, the class model, and the small analysis
-# the splitter reads (superclass, interfaces, and each method's calls, field
-# accesses and type uses).
-file(GLOB_RECURSE DEXSPLIT_SOURCES CONFIGURE_DEPENDS
-     ${CMAKE_CURRENT_SOURCE_DIR}/dexsplit/src/*.cpp)
-
-pybind11_add_module(_dex
-    ${CMAKE_CURRENT_SOURCE_DIR}/dexsplit/bindings/dexsplit_bind.cpp
-    ${DEXSPLIT_SOURCES})
-target_include_directories(_dex PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/dexsplit/src)
-
-# The extension installs next to the pure-Python dexsplit package, so it imports
-# as dexsplit._dex.
-install(TARGETS _dex DESTINATION dexsplit)
+file(GLOB_RECURSE DEXSPLIT_SOURCES CONFIGURE_DEPENDS dexsplit/src/*.cpp)
+add_library(dexsplit_core STATIC ${DEXSPLIT_SOURCES})
+target_include_directories(dexsplit_core PUBLIC dexsplit/src)
+target_compile_options(dexsplit_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
+if(DEXSPLIT_SANITIZER)
+  if(DEXSPLIT_SANITIZER STREQUAL "address")
+    set(DEXSPLIT_SANITIZER_FLAGS -fsanitize=address,undefined -fno-sanitize-recover=all)
+  elseif(DEXSPLIT_SANITIZER STREQUAL "thread")
+    set(DEXSPLIT_SANITIZER_FLAGS -fsanitize=thread)
+  else()
+    message(FATAL_ERROR "Unknown sanitizer")
+  endif()
+  target_compile_options(dexsplit_core PUBLIC ${DEXSPLIT_SANITIZER_FLAGS} -fno-omit-frame-pointer)
+  target_link_options(dexsplit_core PUBLIC ${DEXSPLIT_SANITIZER_FLAGS})
+endif()
+if(DEXSPLIT_BUILD_PYTHON)
+  set(PYBIND11_FINDPYTHON ON)
+  find_package(pybind11 CONFIG REQUIRED)
+  pybind11_add_module(_dex dexsplit/bindings/dexsplit_bind.cpp)
+  target_link_libraries(_dex PRIVATE dexsplit_core)
+  target_compile_options(_dex PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  install(TARGETS _dex DESTINATION dexsplit)
+endif()
+if(DEXSPLIT_BUILD_TESTS)
+  include(CTest)
+  include(FetchContent)
+  FetchContent_Declare(googletest
+    URL https://github.com/google/googletest/releases/download/v1.17.0/googletest-1.17.0.tar.gz
+    URL_HASH SHA256=65fab701d9829d38cb77c14acdc431d2108bfdbf8979e40eb8ae567edf10b27c
+    DOWNLOAD_EXTRACT_TIMESTAMP ON SYSTEM)
+  set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+  set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(googletest)
+  include(GoogleTest)
+  add_executable(dexsplit_test dexsplit/tests/model_test.cpp dexsplit/tests/raw_test.cpp)
+  target_link_libraries(dexsplit_test PRIVATE dexsplit_core GTest::gtest_main)
+  target_compile_definitions(dexsplit_test PRIVATE DEXSPLIT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/dexsplit/fixtures/sample.dex")
+  target_compile_options(dexsplit_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  gtest_discover_tests(dexsplit_test DISCOVERY_TIMEOUT 30)
+  add_executable(dexsplit_fixtures dexsplit/tests/fixtures.cpp)
+  target_link_libraries(dexsplit_fixtures PRIVATE dexsplit_core)
+  target_compile_options(dexsplit_fixtures PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()

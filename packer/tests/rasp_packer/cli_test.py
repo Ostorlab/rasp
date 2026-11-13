@@ -317,3 +317,48 @@ def testMain_whenOutputCannotBePublished_reportsCleanErrorWithoutOutput(
     assert "Traceback" not in captured.err
     assert output.exists() is False
     assert list(tmp_path.glob(".rasp-*")) == []
+
+
+def testMain_whenMappingGiven_passesTheMappingPathToPack(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_pack(**kwargs: object) -> packer.PackResult:
+        captured.update(kwargs)
+        return packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+            skipped_checks=(),
+        )
+
+    monkeypatch.setattr(packer, "pack", fake_pack)
+    mapping_file = tmp_path / "mapping.txt"
+
+    cli.main([*_pack_arguments(tmp_path), "--mapping", str(mapping_file)])
+
+    assert captured["mapping"] == mapping_file
+
+
+def testMain_whenNoMapping_passesNoneAsTheMapping(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_pack(**kwargs: object) -> packer.PackResult:
+        captured.update(kwargs)
+        return packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+            skipped_checks=(),
+        )
+
+    monkeypatch.setattr(packer, "pack", fake_pack)
+
+    cli.main(_pack_arguments(tmp_path))
+
+    assert captured["mapping"] is None

@@ -8,10 +8,16 @@ on:
 permissions:
   contents: read
 
+env:
+  LLVM_VERSION: "23"
+  CMAKE_VERSION: "4.4.4"
+  CMAKE_BUILD_PARALLEL_LEVEL: "2"
+  CTEST_PARALLEL_LEVEL: "2"
+
 jobs:
   check:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: packer
@@ -22,13 +28,81 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.14"
+      - name: Install the pinned native tools
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "clang-format-${LLVM_VERSION}" "clang-tidy-${LLVM_VERSION}"
+          echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
+          python3 -m venv "$RUNNER_TEMP/packer-build-tools"
+          "$RUNNER_TEMP/packer-build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
+          echo "$RUNNER_TEMP/packer-build-tools/bin" >> "$GITHUB_PATH"
       - name: Install the locked dependencies
-        run: uv sync --locked
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          uv sync --locked
+          uv pip install --python .venv pybind11==3.1.0
       - name: Formatting
-        run: uv run ruff format --check .
-      - name: Lint
-        run: uv run ruff check .
-      - name: Types
-        run: uv run mypy
+        run: |
+          uv run ruff format --check .
+          find dexsplit -type f \( -name '*.cpp' -o -name '*.hpp' \) -print0 | xargs -0 clang-format --dry-run --Werror
+      - name: Lint and types
+        run: |
+          uv run ruff check .
+          uv run mypy
+      - name: Configure and build the same native core and bindings
+        run: |
+          cmake --preset dexsplit-host -DDEXSPLIT_BUILD_PYTHON=ON -DPython_EXECUTABLE="$PWD/.venv/bin/python" -Dpybind11_DIR="$(.venv/bin/python -m pybind11 --cmakedir)"
+          cmake --build --preset dexsplit-host --parallel 2
+          ctest --preset dexsplit-host --parallel 2
+          run-clang-tidy -quiet -j 2 -config-file "$PWD/dexsplit/.clang-tidy" -p build/dexsplit-host "^$PWD/dexsplit/.*\.cpp$"
+      - name: Install independent Android format tools
+        run: |
+          : "${ANDROID_HOME:?ubuntu-24.04 runner must provide ANDROID_HOME}"
+          android_sdk_manager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$android_sdk_manager" ]]; then
+            echo "Expected Android SDK command-line tools at $android_sdk_manager" >&2
+            exit 1
+          fi
+          "$android_sdk_manager" --sdk_root="$ANDROID_HOME" "build-tools;35.0.1" "platforms;android-35"
+          test -x "$ANDROID_HOME/build-tools/35.0.1/dexdump"
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar"
+      - name: Reproduce version feature fixtures and independently inspect them
+        run: |
+          build/dexsplit-host/dexsplit_fixtures build/version-fixtures
+          uv run python tests/dexsplit/fixtures/validate.py build/version-fixtures --dexdump "$ANDROID_HOME/build-tools/35.0.1/dexdump"
       - name: Tests
         run: uv run pytest
+
+  native-sanitizers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [dexsplit-asan, dexsplit-tsan]
+    defaults:
+      run:
+        working-directory: packer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned compiler and CMake
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "libclang-rt-${LLVM_VERSION}-dev"
+          echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
+          python3 -m venv "$RUNNER_TEMP/packer-build-tools"
+          "$RUNNER_TEMP/packer-build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
+          echo "$RUNNER_TEMP/packer-build-tools/bin" >> "$GITHUB_PATH"
+      - name: Configure, build and test production core
+        run: |
+          cmake --preset "${{ matrix.preset }}"
+          cmake --build --preset "${{ matrix.preset }}" --parallel 2
+          ctest --preset "${{ matrix.preset }}" --parallel 2

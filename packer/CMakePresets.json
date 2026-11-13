@@ -1,0 +1,23 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "dexsplit-host",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/dexsplit-host",
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug", "CMAKE_CXX_COMPILER": "clang++", "DEXSPLIT_BUILD_PYTHON": "OFF", "DEXSPLIT_BUILD_TESTS": "ON"}
+    },
+    {"name": "dexsplit-asan", "inherits": "dexsplit-host", "binaryDir": "${sourceDir}/build/dexsplit-asan", "cacheVariables": {"DEXSPLIT_SANITIZER": "address"}},
+    {"name": "dexsplit-tsan", "inherits": "dexsplit-host", "binaryDir": "${sourceDir}/build/dexsplit-tsan", "cacheVariables": {"DEXSPLIT_SANITIZER": "thread"}}
+  ],
+  "buildPresets": [
+    {"name": "dexsplit-host", "configurePreset": "dexsplit-host", "jobs": 2},
+    {"name": "dexsplit-asan", "configurePreset": "dexsplit-asan", "jobs": 2},
+    {"name": "dexsplit-tsan", "configurePreset": "dexsplit-tsan", "jobs": 2}
+  ],
+  "testPresets": [
+    {"name": "dexsplit-host", "configurePreset": "dexsplit-host", "execution": {"jobs": 2}, "output": {"outputOnFailure": true}},
+    {"name": "dexsplit-asan", "configurePreset": "dexsplit-asan", "execution": {"jobs": 2}, "output": {"outputOnFailure": true}},
+    {"name": "dexsplit-tsan", "configurePreset": "dexsplit-tsan", "execution": {"jobs": 2}, "output": {"outputOnFailure": true}}
+  ]
+}

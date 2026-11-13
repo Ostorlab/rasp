@@ -1,0 +1,12 @@
+Checks: >
+  -*,
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  -portability-avoid-pragma-once
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/packer/dexsplit/.*'
+ExcludeHeaderFilterRegex: '.*/build/.*'
+CheckOptions:
+  bugprone-unused-return-value.AllowCastToVoid: true
