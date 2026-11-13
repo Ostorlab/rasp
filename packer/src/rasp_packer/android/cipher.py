@@ -4,14 +4,14 @@ The packer encrypts the app's original code with ChaCha20-Poly1305, as RFC 8439
 defines it, using the `cryptography` package. The native runtime decrypts it
 with the same algorithm from TF-PSA-Crypto.
 
-The key schedule (key_schedule) picks the key each frame is sealed under and
-the nonce that diversifies it; this module only seals and opens the frame. The
-caller hands the nonce in, because the frame's key is derived from it and must
-be derived before the plaintext is sealed.
+Each protected app gets one random 32-byte key, which encrypts all of its frames:
+the class map and every business dex. Each frame gets its own random nonce,
+stored at the start of the frame so the runtime can read it. There is no
+associated data.
 
 Frame layout, in order:
 
-    nonce    12 bytes  one per frame, chosen by the caller
+    nonce    12 bytes  random, one per frame
     body     n bytes   ciphertext, the same length as the plaintext
     tag      16 bytes  the Poly1305 tag
 """
@@ -32,27 +32,25 @@ class CipherError(errors.Error):
     """A frame could not be decrypted: it is too short, or its tag does not verify."""
 
 
-def new_nonce() -> bytes:
-    """Returns a fresh random nonce for one frame."""
-    return os.urandom(NONCE_SIZE)
+def new_key() -> bytes:
+    """Returns a fresh random key."""
+    return aead.ChaCha20Poly1305.generate_key()
 
 
-def encrypt(key: bytes, nonce: bytes, plaintext: bytes) -> bytes:
-    """Encrypts and authenticates plaintext under `key` and `nonce`, returning one frame.
+def encrypt(key: bytes, plaintext: bytes) -> bytes:
+    """Encrypts and authenticates plaintext, returning one frame.
 
     Args:
         key: The 32-byte key.
-        nonce: The 12-byte nonce, unique for this key.
         plaintext: The bytes to protect.
 
     Returns:
         The frame: nonce, ciphertext and tag.
 
     Raises:
-        ValueError: The key is not 32 bytes, or the nonce is not 12 bytes.
+        ValueError: The key is not 32 bytes.
     """
-    if len(nonce) != NONCE_SIZE:
-        raise ValueError(f"the nonce must be {NONCE_SIZE} bytes")
+    nonce = os.urandom(NONCE_SIZE)
     return nonce + aead.ChaCha20Poly1305(key).encrypt(nonce, plaintext, None)
 
 
