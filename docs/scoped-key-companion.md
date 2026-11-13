@@ -72,7 +72,7 @@ X9.62 DER signatures. No raw-digest signing, key import/export, arbitrary bearer
 storage, encryption, ECDH or attestation is implemented. Per-key backend/security
 level, export policy, lock, authentication, accessibility and backup properties
 are distinct; unknown facts remain unknown and required minima never fall back.
-Software Keychain storage must not be described as Secure Enclave protection.
+Software Keychain storage is never described or presented as Secure Enclave protection.
 
 <a id="message-binding-and-local-gate"></a>
 
