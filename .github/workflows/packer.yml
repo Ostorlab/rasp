@@ -58,7 +58,7 @@ jobs:
           cmake --preset dexsplit-host -DDEXSPLIT_BUILD_PYTHON=ON -DPython_EXECUTABLE="$PWD/.venv/bin/python" -Dpybind11_DIR="$(.venv/bin/python -m pybind11 --cmakedir)"
           cmake --build --preset dexsplit-host --parallel 2
           ctest --preset dexsplit-host --parallel 2
-          run-clang-tidy -quiet -j 2 -p build/dexsplit-host "^$PWD/dexsplit/.*\.cpp$"
+          run-clang-tidy -quiet -j 2 -config-file "$PWD/dexsplit/.clang-tidy" -p build/dexsplit-host "^$PWD/dexsplit/.*\.cpp$"
       - name: Install independent Android format tools
         run: sdkmanager "build-tools;35.0.1" "platforms;android-35"
       - name: Reproduce version feature fixtures and independently inspect them
