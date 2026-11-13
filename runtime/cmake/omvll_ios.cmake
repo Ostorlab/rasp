@@ -1,18 +1,18 @@
 # Obfuscates the iOS runtime with the O-MVLL clang plugin (https://obfuscator.re/o-mvll/) vendored in
 # third_party/omvll/, by the scheme in omvll_config.py. This is Phase 1 of iOS obfuscation: compile-time obfuscation
-# only (Layer A). There is no at-rest encryption or self-decrypt bootstrap yet (Layer B / Phase 2), so unlike Android
-# nothing is encrypted at rest: the obfuscated code ships in place and the data-read literals in omvll_config.py
+# only (Layer A). There is no at-rest encryption or self-decrypt bootstrap in this parent, so
+# nothing is encrypted at rest: transformed code ships in place and the data-read literals in omvll_config.py
 # (__rasp_config, the Mach-O lookup strings, the iOS checks' path and marker literals) stay readable in the shipped
-# framework until Phase 2 adds an at-rest layer. The plugin is applied to the RaspRuntime target alone, so it
-# obfuscates the runtime's own source files (ios/src/*.cpp); the first-party static libraries it links (rasp_core,
+# framework. The plugin is applied to the RaspRuntime target alone, so it
+# processes its own C++/Objective-C++ sources and directly compiled core host bridge; static libraries (rasp_core,
 # rasp_plugins) are compiled without the plugin. On by default for Release.
 #
-# This mirrors cmake/omvll.cmake (Android) with the host/target gate flipped to macOS/arm64. O-MVLL is ABI-locked to one
+# Android has no plugin integration in this parent. O-MVLL is ABI-locked to one
 # clang: the plugin and the clang that loads it must come from the same LLVM. The iOS framework builds with Xcode 27's
 # clang (see .github/workflows/runtime.yml), so this vendors the O-MVLL 1.11.0 macOS plugin built for Xcode 27 -- NOT the
 # Android NDK/clang-21 plugin, which cannot load here. The archive is repacked from O-MVLL's 1.11.0 macOS release
-# (https://github.com/open-obfuscator/o-mvll/releases/tag/1.11.0) to just the Xcode plugin and the Python stdlib, the
-# same way the Android archive is packed.
+# (https://github.com/open-obfuscator/o-mvll/releases/tag/1.11.0) to just the Xcode plugin and the Python stdlib,
+# without introducing another compiler or a download.
 set(RASP_OMVLL_IOS_ARCHIVE
   ${CMAKE_CURRENT_LIST_DIR}/../third_party/omvll/omvll-1.11.0-xcode27-macos-arm64.tar.xz
   CACHE FILEPATH "The vendored iOS O-MVLL plugin archive")
@@ -25,9 +25,9 @@ set(RASP_OMVLL_PLUGIN "" CACHE FILEPATH
 set(RASP_OMVLL_PYTHONPATH "" CACHE PATH
   "Override O-MVLL's Python standard library; empty uses the one vendored under third_party/omvll")
 set(RASP_OMVLL_CONFIG ${CMAKE_CURRENT_LIST_DIR}/omvll_config.py CACHE FILEPATH
-  "The O-MVLL obfuscation scheme (shared with Android)")
+  "The O-MVLL obfuscation scheme")
 
-# On by default for Release, off for Debug/host builds -- the same rule as Android. Debug/host builds do not obfuscate,
+# On by default for Release, off for Debug/host builds. Debug/host builds do not obfuscate,
 # so iOS unit tests run against readable code; only Release (what ships) is obfuscated.
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   set(_rasp_obfuscate_ios_default ON)
@@ -36,6 +36,12 @@ else()
 endif()
 option(RASP_OBFUSCATE_IOS "Obfuscate the first-party iOS runtime with O-MVLL (default: on for Release)"
   ${_rasp_obfuscate_ios_default})
+if(DEFINED RASP_OMVLL_SEED OR DEFINED RASP_OMVLL_SEED_MODE)
+  message(FATAL_ERROR "O-MVLL seed settings are environment inputs, not CMake cache variables")
+endif()
+if(NOT RASP_OBFUSCATE_IOS AND (DEFINED ENV{RASP_OMVLL_SEED} OR DEFINED ENV{RASP_OMVLL_SEED_MODE}))
+  message(FATAL_ERROR "Explicit O-MVLL seed settings require RASP_OBFUSCATE_IOS=ON")
+endif()
 
 # Obfuscates `target`, when RASP_OBFUSCATE_IOS is on.
 function(rasp_obfuscate_ios target)
@@ -52,8 +58,9 @@ function(rasp_obfuscate_ios target)
 endfunction()
 
 if(RASP_OBFUSCATE_IOS)
-  # The iOS plugin runs only on a macOS arm64 host, for an Apple target, with Xcode's clang (LLVM 23). The Android gate
-  # hard-fails off Linux/NDK; this is the mirror -- it hard-fails off macOS/Apple/AppleClang.
+  # The iOS plugin requires a macOS arm64 host and its matching Xcode compiler. The vendored plugin embeds LLVM
+  # 21.1.6; the separate LLVM 23 tidy/libc++ tooling is not the compiler ABI that loads this plugin. These gates
+  # do not attest the exact Xcode build or compiler bytes; platform CI remains required.
   if(NOT (CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin"))
     message(FATAL_ERROR "RASP_OBFUSCATE_IOS is only supported for the Apple build; the iOS O-MVLL plugin is an "
       "Apple/LLVM clang plugin (building for '${CMAKE_SYSTEM_NAME}')")
@@ -81,8 +88,8 @@ if(RASP_OBFUSCATE_IOS)
       "vendored iOS O-MVLL ${RASP_OMVLL_IOS_ARCHIVE} has sha256 ${_rasp_omvll_ios_actual}, "
       "expected ${RASP_OMVLL_IOS_SHA256}")
   endif()
-  # Extract into a directory named after the verified SHA, so the loaded plugin always matches the pinned archive:
-  # when the archive is updated, the new SHA gives a new directory, and a stale dylib from an old archive is never used.
+  # The launcher preparation also compares the default extracted plugin with the archive member, rather than
+  # trusting an existing cache directory merely because its name contains the archive hash.
   set(RASP_OMVLL_IOS_DIR ${RASP_OMVLL_IOS_DIR}/${RASP_OMVLL_IOS_SHA256})
   if(NOT EXISTS ${RASP_OMVLL_IOS_DIR}/omvll-xcode.dylib)
     file(MAKE_DIRECTORY ${RASP_OMVLL_IOS_DIR})
@@ -107,9 +114,32 @@ if(RASP_OBFUSCATE_IOS)
     endif()
   endforeach()
 
-  # O-MVLL reads omvll.yml from the compiler's working directory or a parent of it.
-  file(WRITE "${CMAKE_BINARY_DIR}/omvll.yml"
-    "OMVLL_PYTHONPATH: \"${RASP_OMVLL_IOS_RESOLVED_PYTHONPATH}\"\nOMVLL_CONFIG: \"${RASP_OMVLL_CONFIG}\"\n")
-
-  set(RASP_OMVLL_IOS_LAUNCHER ${CMAKE_COMMAND} -E env)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  set(_rasp_omvll_launcher ${CMAKE_CURRENT_LIST_DIR}/omvll_launcher.py)
+  set(_rasp_omvll_policy ${CMAKE_BINARY_DIR}/omvll-seed-policy.json)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${_rasp_omvll_launcher} ${CMAKE_CURRENT_LIST_DIR}/omvll_seed.py ${RASP_OMVLL_CONFIG})
+  set(_rasp_omvll_archive_argument)
+  if(NOT RASP_OMVLL_PLUGIN)
+    list(APPEND _rasp_omvll_archive_argument --archive ${RASP_OMVLL_IOS_ARCHIVE})
+  endif()
+  # -E ignores Python environment injection; -s omits user site packages while retaining the launcher's helper.
+  # One seed is captured for the build directory; regeneration without the original shell environment retains it.
+  execute_process(
+    COMMAND ${Python3_EXECUTABLE} -E -s -B ${_rasp_omvll_launcher} freeze
+      --state ${_rasp_omvll_policy} --previous-sha256 "${RASP_OMVLL_POLICY_SHA256}"
+      --yaml ${CMAKE_BINARY_DIR}/omvll.yml --config ${RASP_OMVLL_CONFIG}
+      --plugin ${RASP_OMVLL_IOS_RESOLVED_PLUGIN} --pythonpath ${RASP_OMVLL_IOS_RESOLVED_PYTHONPATH}
+      ${_rasp_omvll_archive_argument}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    RESULT_VARIABLE _rasp_omvll_policy_result
+    OUTPUT_VARIABLE _rasp_omvll_policy_sha256
+    ERROR_VARIABLE _rasp_omvll_policy_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _rasp_omvll_policy_result EQUAL 0)
+    message(FATAL_ERROR "O-MVLL policy capture failed: ${_rasp_omvll_policy_error}")
+  endif()
+  set(RASP_OMVLL_POLICY_SHA256 "${_rasp_omvll_policy_sha256}" CACHE INTERNAL "Frozen O-MVLL compile policy digest" FORCE)
+  set(RASP_OMVLL_IOS_LAUNCHER ${Python3_EXECUTABLE} -E -s -B ${_rasp_omvll_launcher} run
+    --state ${_rasp_omvll_policy} --sha256 ${RASP_OMVLL_POLICY_SHA256} --)
 endif()
