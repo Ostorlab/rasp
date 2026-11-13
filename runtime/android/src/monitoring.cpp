@@ -27,15 +27,13 @@
 #include "rasp/observation.h"
 #include "rasp/panic.h"
 #include "rasp/plugins/registry.h"
+#include "rasp/schedule.h"
 #include "rasp/util/logging.h"
 #include "util/app_storage.h"
 
 namespace rasp::android {
 
 namespace {
-
-/// How long the thread waits between two runs of the checks.
-constexpr std::chrono::seconds kCheckInterval{60};
 
 /// Runs the built-in check groups that the runtime's config enables.
 ///
@@ -80,10 +78,10 @@ constexpr std::chrono::seconds kCheckInterval{60};
   return config;
 }
 
-/// The thread: reads the runtime's config and initialises the plugins with it, then runs the built-in checks the config
-/// enables, arms a panic when they detect something, and
-/// runs the plugins, then again every kCheckInterval, until the process exits. The config and the context the
-/// plugins share are locals of this thread, which never returns, so they live as long as the process.
+/// The thread: reads the runtime's config and initialises the plugins with it, then, until the process exits, runs the
+/// built-in checks the config enables, arms a panic when they detect something, runs the plugins and waits a random
+/// check_interval. The config and the context the plugins share are locals of this thread, which never returns, so
+/// they live as long as the process.
 ///
 /// @return Never returns.
 void* monitor(void* /*argument*/) {
@@ -100,7 +98,11 @@ void* monitor(void* /*argument*/) {
         rasp::log(describe(observation));
       }
     }
-    std::this_thread::sleep_for(kCheckInterval);
+    const std::chrono::milliseconds interval = check_interval();
+    if constexpr (kLoggingEnabled) {
+      rasp::log("next run in " + std::to_string(interval.count()) + " ms");
+    }
+    std::this_thread::sleep_for(interval);
   }
 }
 
