@@ -46,8 +46,6 @@ struct AnalysisContextImpl {
     ManagedBuffer buffer;                                                         ///< The DEX bytes.
     mutable std::mutex class_data_mutex;                                          ///< Guards class_data_cache.
     mutable budget::UnorderedMap<uint32_t, raw::ClassDataItem> class_data_cache;  ///< By offset.
-    mutable std::mutex code_item_mutex;                                           ///< Guards code_item_cache.
-    mutable budget::UnorderedMap<uint32_t, raw::CodeItem> code_item_cache;        ///< By offset.
     mutable std::mutex instructions_mutex;                                        ///< Guards instructions_cache.
     mutable budget::UnorderedMap<uint32_t, budget::Vector<Instruction>> instructions_cache;  ///< By offset.
     mutable std::mutex strings_mutex;                                                        ///< Guards string_cache.
@@ -90,10 +88,6 @@ struct AnalysisContextImpl {
   /** The parsed class_data at @p class_data_off, cached, or nullptr when
    *  @p class_data_off is 0 or the item is malformed. */
   const raw::ClassDataItem* get_class_data(DexIndex dex_idx, uint32_t class_data_off) const;
-
-  /** The parsed code_item at @p code_off, cached, or nullptr when @p code_off
-   *  is 0 or the item is malformed. */
-  const raw::CodeItem* get_code_item(DexIndex dex_idx, uint32_t code_off) const;
 
   /** The decoded instructions of the code_item at @p code_off, cached.  Empty
    *  when @p code_off is 0 or the item is malformed. */

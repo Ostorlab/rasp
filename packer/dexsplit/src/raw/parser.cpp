@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "common/budget.hpp"
+#include "raw/code_validation.hpp"
 #include "raw/constants.hpp"
 #include "raw/digest.hpp"
 #include "raw/parsing_utils.hpp"
@@ -495,6 +496,7 @@ std::expected<ClassDataItem, ParseError> parse_class_data(std::span<const std::u
 }
 
 std::expected<CodeItem, ParseError> parse_code_item(std::span<const std::uint8_t> buf, uint32_t offset) {
+  budget::Scope scope;
   // Minimum code_item header: 4 u16 + 2 u32 = 16 bytes
   if (buf.size() < static_cast<std::size_t>(offset) + 16) {
     return std::unexpected(ParseError::truncated_file(offset + 16, static_cast<uint32_t>(buf.size())));
@@ -530,7 +532,10 @@ std::expected<CodeItem, ParseError> parse_code_item(std::span<const std::uint8_t
       if (static_cast<std::size_t>(offset) + 2 > buf.size()) {
         return std::unexpected(ParseError::truncated_file(offset + 2, static_cast<uint32_t>(buf.size())));
       }
-      offset += 2;  // skip padding
+      if (buf[offset] != 0 || buf[offset + 1] != 0) {
+        return std::unexpected(ParseError{ParseError::Code::MalformedData, "nonzero code padding", offset});
+      }
+      offset += 2;
     }
 
     // Parse try_items (8 bytes each: u32 start_addr, u16 insn_count, u16 handler_off)
@@ -600,6 +605,12 @@ std::expected<CodeItem, ParseError> parse_code_item(std::span<const std::uint8_t
     }
   }
 
+  auto structure = validate_code_structure(item);
+  if (!structure) {
+    return std::unexpected(structure.error());
+  }
+  item.structure = std::move(*structure);
+  item.end_offset = offset;
   return item;
 }
 
@@ -1065,7 +1076,7 @@ std::expected<std::array<uint8_t, 20>, ParseError> compute_signature(std::span<c
 
 std::expected<DexFile, ParseError> parse_buffer(std::span<const uint8_t> buffer, ParseOptions options) {
   budget::Scope scope;
-  auto layout = validate_layout(buffer);
+  auto layout = parse_layout(buffer);
   if (!layout) {
     return std::unexpected(layout.error());
   }
@@ -1076,6 +1087,7 @@ std::expected<DexFile, ParseError> parse_buffer(std::span<const uint8_t> buffer,
 
   DexFile dex;
   dex.header_ = *header_result;
+  dex.code_items_ = std::move(*layout);
 
   auto map_result = parse_map_list(buffer, dex.header_.map_off);
   if (!map_result) {

@@ -115,3 +115,67 @@ TEST(Raw, encodedArray_whenNestingBoundaryIsExceeded_refusesEvenAnEmptyInnerArra
   }
 }
 }  // namespace dexsplit::test
+
+namespace dexsplit::test {
+TEST(Raw, parseCode_whenStructuralBoundsAreInvalid_rejectsBeforeReachability) {
+  budget::Scope scope;
+  raw::ByteWriter writer;
+  writer.u16(1);
+  writer.u16(0);
+  writer.u16(0);
+  writer.u16(1);
+  writer.u32(0);
+  writer.u32(3);
+  writer.u16(0x29);
+  writer.u16(2);
+  writer.u16(0x0e);
+  writer.u16(0);
+  writer.u32(0);
+  writer.u16(2);
+  writer.u16(1);
+  writer.uleb128(1);
+  writer.sleb128(0);
+  writer.uleb128(2);
+  const auto valid = writer.take();
+  ASSERT_TRUE(raw::parser::parse_code_item(valid, 0).has_value());
+  for (auto [offset, value] : {std::pair{18U, 1U}, {28U, 1U}, {30U, 0U}, {34U, 1U}}) {
+    auto bad = valid;
+    bad[offset] = static_cast<uint8_t>(value);
+    EXPECT_FALSE(raw::parser::parse_code_item(bad, 0).has_value()) << offset;
+  }
+  auto bad_register = valid;
+  bad_register[16] = 0x0f;
+  bad_register[17] = 1;
+  EXPECT_FALSE(raw::parser::parse_code_item(bad_register, 0).has_value());
+}
+}  // namespace dexsplit::test
+
+namespace dexsplit::test {
+TEST(Raw, allocate_whenBothPoolsOutliveScope_preservesChargesAndReleasesRetainedOwner) {
+  auto state = std::make_shared<budget::State>();
+  std::weak_ptr<budget::State> owner = state;
+  std::optional<budget::Vector<uint8_t>> retained;
+  {
+    budget::Scope scope(state);
+    budget::Vector<uint8_t> small(1024);
+    retained.emplace(std::size_t{128} * 1024);
+  }
+  auto before = state->storage;
+  retained->reserve(std::size_t{256} * 1024);
+  EXPECT_GT(state->storage, before);
+  EXPECT_NE(state->pool, nullptr);
+  EXPECT_NE(state->large_pool, nullptr);
+  auto unrelated = std::make_shared<budget::State>();
+  {
+    budget::Scope scope(unrelated);
+    EXPECT_THROW(retained->reserve(std::size_t{512} * 1024), budget::Exhausted);
+  }
+  EXPECT_EQ(unrelated->work, 0U);
+  EXPECT_EQ(unrelated->storage, 0U);
+  EXPECT_LE(state->backing, budget::kBackingBytes);
+  state.reset();
+  EXPECT_FALSE(owner.expired());
+  retained.reset();
+  EXPECT_TRUE(owner.expired());
+}
+}  // namespace dexsplit::test

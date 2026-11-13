@@ -36,6 +36,10 @@
  *  sequence.  Every DEX string survives a read and a write unchanged. */
 namespace dexsplit::model {
 
+/// Immutable empty sentinels must not retain the request that first accesses them.
+template <class T>
+T empty_shared_value();
+
 // ===================================================================
 // Building blocks
 // ===================================================================
@@ -71,7 +75,7 @@ class Shared {
 
  private:
   static const T& fallback() {
-    static const T value{};
+    static const T value = empty_shared_value<T>();
     return value;
   }
 
@@ -126,6 +130,7 @@ class RegList {
   Reg* data() noexcept { return on_heap() ? heap() : storage_; }
   void release() noexcept;
 
+  budget::Allocator<Reg> allocator_;
   uint16_t size_ = 0;
   uint16_t capacity_ = kInline;
   // Inline registers; when on the heap, the first bytes hold the pointer.
@@ -705,9 +710,10 @@ struct TryRange {
 struct Code {
   Reg registers = 0;  ///< Frame size.
   budget::Vector<Item> items;
-  budget::Vector<TryRange> tries;
+  budget::Vector<TryRange> tries{budget::Allocator<TryRange>{items.get_allocator().owner()}};
   /** Debug names of the parameters (not including `this`). */
-  budget::Vector<std::optional<budget::String>> parameter_names;
+  budget::Vector<std::optional<budget::String>> parameter_names{
+      budget::Allocator<std::optional<budget::String>>{items.get_allocator().owner()}};
 
   /** A label not used yet in this code. */
   Label new_label() noexcept { return Label{next_label_++}; }
@@ -728,9 +734,9 @@ struct Code {
 class CodeValue {
  public:
   CodeValue() = default;
-  CodeValue(Code value) : value_(budget::make_shared<Code>(std::move(value))) {}
+  CodeValue(Code value) : value_(store(std::move(value))) {}
   CodeValue& operator=(Code value) {
-    value_ = budget::make_shared<Code>(std::move(value));
+    value_ = store(std::move(value));
     return *this;
   }
   bool has_value() const noexcept { return value_ != nullptr; }
@@ -750,8 +756,13 @@ class CodeValue {
   }
 
  private:
+  static std::shared_ptr<Code> store(Code value) {
+    budget::Scope scope(value.items.get_allocator().owner());
+    return budget::make_shared<Code>(std::move(value));
+  }
   void detach() {
     if (value_ != nullptr && value_.use_count() > 1) {
+      budget::Scope scope(value_->items.get_allocator().owner());
       budget::visit(value_->items.size() + value_->tries.size() + value_->parameter_names.size());
       for (const auto& item : value_->items) {
         if (const auto* instruction = std::get_if<Insn>(&item)) {
@@ -826,10 +837,15 @@ struct ClassDef {
 struct Dex {
   /** DEX format version: 35, 37, 38, 39 or 40 (written as "dex\n0NN\0"). */
   uint32_t version = 35;
-  std::shared_ptr<budget::State> request =
-      budget::active != nullptr ? budget::active : std::make_shared<budget::State>();
+  std::shared_ptr<budget::State> request = budget::retained_request();
   /** Classes in any order; write() puts supertypes first. */
-  budget::Vector<ClassDef> classes;
+  budget::Vector<ClassDef> classes{budget::Allocator<ClassDef>{request}};
+
+  Dex() = default;
+  Dex(const Dex& other);
+  Dex& operator=(const Dex& other);
+  Dex(Dex&& other) noexcept;
+  Dex& operator=(Dex&& other) noexcept;
 
   ClassDef* find_class(std::string_view type);
   const ClassDef* find_class(std::string_view type) const;
@@ -838,5 +854,25 @@ struct Dex {
   std::shared_ptr<const budget::Vector<uint8_t>> original;
   bool operator==(const Dex& other) const { return version == other.version && classes == other.classes; }
 };
+
+template <class T>
+T empty_shared_value() {
+  if constexpr (std::is_same_v<T, budget::String>) {
+    return budget::String{budget::Allocator<char>{nullptr}};
+  } else if constexpr (std::is_same_v<T, FieldId> || std::is_same_v<T, MethodId>) {
+    return T{empty_shared_value<budget::String>(), empty_shared_value<budget::String>(),
+             empty_shared_value<budget::String>()};
+  } else if constexpr (std::is_same_v<T, MethodHandle>) {
+    return MethodHandle{MethodHandleKind::InvokeStatic, empty_shared_value<MethodId>()};
+  } else if constexpr (std::is_same_v<T, EncodedAnnotation>) {
+    return EncodedAnnotation{empty_shared_value<budget::String>(),
+                             budget::Vector<NamedValue>{budget::Allocator<NamedValue>{nullptr}}};
+  } else if constexpr (std::is_same_v<T, CallSite>) {
+    return CallSite{empty_shared_value<MethodHandle>(), empty_shared_value<budget::String>(),
+                    empty_shared_value<budget::String>(), budget::Vector<Value>{budget::Allocator<Value>{nullptr}}, 0};
+  } else {
+    return T{};
+  }
+}
 
 }  // namespace dexsplit::model

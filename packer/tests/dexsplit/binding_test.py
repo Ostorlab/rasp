@@ -1,9 +1,11 @@
 """Direct native trust boundaries, using the real compiled reader."""
 
 import array
+import gc
 import hashlib
 import pathlib
 import struct
+import weakref
 import zlib
 
 import pytest
@@ -138,3 +140,26 @@ def testReadWrite_whenRealVersionFeature_preservesBytesAndAnalysis(
         context = _dex.AnalysisContext.from_models([model])
         assert len(context.classes) == 1
         assert context.classes[0].name == model.class_descriptors[0]
+
+
+def testTypeUse_whenAllOriginalOwnersAreCollected_retainsExactDescriptor() -> None:
+    def obtain() -> tuple[_dex.TypeUse, str, list[weakref.ReferenceType[object]]]:
+        context = _dex.AnalysisContext.from_dex_buffers([_SAMPLE.read_bytes()])
+        for cls in context.classes:
+            for method in cls.methods:
+                uses = method.type_uses
+                if uses:
+                    saved = uses[0]
+                    return (
+                        saved,
+                        saved.descriptor,
+                        [weakref.ref(context), weakref.ref(cls), weakref.ref(method)],
+                    )
+        raise AssertionError("fixture needs a type use")
+
+    saved, expected, owners = obtain()
+    gc.collect()
+    assert all(owner() is None for owner in owners)
+    churn = [bytearray(b"Z" * count) for count in range(1024, 131072, 32)]
+    assert saved.descriptor == expected
+    assert len(churn) > 0

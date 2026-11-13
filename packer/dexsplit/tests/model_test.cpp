@@ -1,10 +1,17 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <fstream>
+#include <iterator>
 #include <thread>
 
+#include "analysis/analysis_context.hpp"
+#include "analysis/class.hpp"
+#include "analysis/method.hpp"
 #include "feature_fixture.hpp"
 #include "model/io.hpp"
+#include "raw/constants.hpp"
+#include "raw/parser.hpp"
 
 namespace dexsplit::test {
 TEST(Model, roundTrip_whenVersionUsesRealFeature_preservesSemanticsAndStableBytes) {
@@ -191,5 +198,245 @@ TEST(Model, write_whenThreadsShareRetainedRequest_countsEveryAllocationAndBounds
   EXPECT_EQ(state->work - before_work, 2 * one_work);
   EXPECT_EQ(state->storage - before_storage, 2 * one_storage);
   EXPECT_LE(state->backing, state->max_backing);
+}
+}  // namespace dexsplit::test
+
+namespace dexsplit::test {
+TEST(Analysis, typeUse_whenAllContextOwnersExit_ownsExactDescriptor) {
+  std::optional<TypeUse> retained;
+  std::string expected;
+  {
+    auto source = model::read_file(DEXSPLIT_FIXTURE);
+    ASSERT_TRUE(source.has_value());
+    budget::Scope scope(source->request);
+    budget::Vector<const model::Dex*> models{&*source};
+    auto context = AnalysisContext::from_models(models);
+    ASSERT_TRUE(context.has_value());
+    for (const auto& cls : context->classes()) {
+      for (const auto& method : cls.methods()) {
+        auto uses = method.type_uses();
+        if (!uses.empty()) {
+          retained = uses.front();
+          expected = retained->descriptor;
+          break;
+        }
+      }
+      if (retained) {
+        break;
+      }
+    }
+    ASSERT_TRUE(retained.has_value());
+  }
+  if (retained.has_value()) {
+    EXPECT_EQ(std::string(retained.value().descriptor), expected);
+  } else {
+    FAIL() << "fixture type use was not retained";
+  }
+}
+
+TEST(Model, copy_whenOriginalScopeExited_chargesSourceAndRetainsNestedOwners) {
+  auto source = model::read_file(DEXSPLIT_FIXTURE);
+  ASSERT_TRUE(source.has_value());
+  auto owner = source->request;
+  auto before = owner->storage;
+  auto copy = *source;
+  EXPECT_GT(owner->storage, before);
+  EXPECT_EQ(copy.request, owner);
+  model::Dex assigned;
+  assigned = copy;
+  EXPECT_EQ(assigned.request, owner);
+  source = std::unexpected(model::Error{});
+  copy.classes.clear();
+  before = owner->storage;
+  auto& cls = assigned.classes.front();
+  cls.annotations.reserve(cls.annotations.capacity() + 1);
+  cls.methods.front().name.append(128, 'x');
+  cls.interfaces.emplace_back(128, 'y');
+  cls.methods.front().parameter_annotations.emplace_back();
+  cls.methods.front().parameter_annotations.back().reserve(4);
+  EXPECT_GT(owner->storage, before);
+  auto moved = std::move(assigned);
+  EXPECT_EQ(moved.request, owner);
+  owner->charge(budget::kWork - owner->work, budget::kAllocationBytes - owner->storage);
+  EXPECT_THROW((model::Dex(moved)), budget::Exhausted);
+  EXPECT_THROW(cls.interfaces.back().append(1024, 'z'), budget::Exhausted);
+  EXPECT_THROW(cls.methods.front().parameter_annotations.back().reserve(1024), budget::Exhausted);
+}
+
+TEST(Model, copyAndCow_whenRetainedOwnerExhaustedOutsideScope_refuseWithoutFreshAllowance) {
+  for (bool unrelated : {false, true}) {
+    auto source = model::read_file(DEXSPLIT_FIXTURE);
+    ASSERT_TRUE(source.has_value());
+    auto owner = source->request;
+    auto copy = *source;
+    auto assigned = *source;
+    auto& code = copy.classes.front().methods.front().code;
+    auto& unique_code = assigned.classes.front().methods.front().code;
+    static_cast<void>(unique_code->items);
+    owner->charge(budget::kWork - owner->work, budget::kAllocationBytes - owner->storage);
+    auto other = std::make_shared<budget::State>();
+    std::optional<budget::Scope> scope;
+    if (unrelated) {
+      scope.emplace(other);
+    }
+    EXPECT_THROW((model::Dex(*source)), budget::Exhausted);
+    EXPECT_THROW(assigned = *source, budget::Exhausted);
+    EXPECT_THROW(code->registers += 1, budget::Exhausted);
+    EXPECT_THROW(unique_code->items.reserve(unique_code->items.capacity() + 1), budget::Exhausted);
+    EXPECT_EQ(owner->work, budget::kWork);
+    EXPECT_EQ(owner->storage, budget::kAllocationBytes);
+    EXPECT_EQ(other->work, 0U);
+    EXPECT_EQ(other->storage, 0U);
+  }
+}
+}  // namespace dexsplit::test
+
+namespace dexsplit::test {
+TEST(Model, nestedStorage_whenDetachedAndOriginalScopeExited_retainsOwnerForEveryGrowth) {
+  auto source = model::read_file(DEXSPLIT_FIXTURE);
+  ASSERT_TRUE(source.has_value());
+  auto owner = source->request;
+  auto copy = *source;
+  auto& code = *copy.classes.front().methods.front().code;
+  code.tries.emplace_back();
+  code.tries.back().catches.emplace_back();
+  auto replacement = code;
+  model::RegList registers;
+  {
+    budget::Scope scope(owner);
+    registers = model::RegList::range(0, 16);
+  }
+  auto* moved_from = &copy;
+  auto moved = std::move(copy);
+  EXPECT_EQ(moved_from->request, owner);
+  auto before = owner->storage;
+  moved_from->classes.reserve(1);
+  EXPECT_GT(owner->storage, before);
+  owner->charge(budget::kWork - owner->work, budget::kAllocationBytes - owner->storage);
+  EXPECT_THROW(code.tries.back().catches.front().type.append(128, 'x'), budget::Exhausted);
+  EXPECT_THROW((model::RegList(registers)), budget::Exhausted);
+  EXPECT_THROW(registers.push_back(16), budget::Exhausted);
+  EXPECT_THROW((model::CodeValue(std::move(replacement))), budget::Exhausted);
+  EXPECT_THROW(moved_from->classes.reserve(2), budget::Exhausted);
+  EXPECT_EQ(moved.request, owner);
+}
+}  // namespace dexsplit::test
+
+namespace dexsplit::test {
+TEST(Model, emptySharedAndAnalysisSentinels_whenScopeExits_doNotRetainRequestForever) {
+  auto state = std::make_shared<budget::State>();
+  std::weak_ptr<budget::State> owner = state;
+  {
+    budget::Scope scope(state);
+    EXPECT_TRUE(model::Shared<budget::String>{}.get().empty());
+    EXPECT_TRUE(model::Shared<FieldId>{}.get().name.empty());
+    EXPECT_TRUE(model::Shared<MethodId>{}.get().name.empty());
+    EXPECT_TRUE(model::Shared<model::EncodedAnnotation>{}.get().elements.empty());
+    EXPECT_TRUE(model::Shared<model::CallSite>{}.get().extra_args.empty());
+    static_cast<void>(model::Shared<model::MethodHandle>{}.get());
+    auto source = model::read_file(DEXSPLIT_FIXTURE);
+    ASSERT_TRUE(source.has_value());
+    budget::Vector<const model::Dex*> models{&*source};
+    auto context = AnalysisContext::from_models(models);
+    ASSERT_TRUE(context.has_value());
+    bool calls = false;
+    for (const auto& cls : context->classes()) {
+      for (const auto& method : cls.methods()) {
+        calls = !method.calls().empty() || calls;
+      }
+    }
+    EXPECT_TRUE(calls);
+  }
+  state.reset();
+  EXPECT_TRUE(owner.expired());
+}
+}  // namespace dexsplit::test
+
+namespace dexsplit::test {
+TEST(Model, read_whenUnusedMappedCodeIsMalformed_allNativeBoundariesRefuse) {
+  std::ifstream input(DEXSPLIT_FIXTURE, std::ios::binary);
+  const std::vector<uint8_t> original{std::istreambuf_iterator<char>(input), {}};
+  ASSERT_FALSE(original.empty());
+  for (int damage = 0; damage < 5; ++damage) {
+    budget::Scope scope;
+    budget::Vector<uint8_t> bytes(original.begin(), original.end());
+    const auto header = raw::parser::parse_header(bytes);
+    ASSERT_TRUE(header.has_value());
+    const auto map = raw::parser::parse_map_list(bytes, header->map_off);
+    ASSERT_TRUE(map.has_value());
+    uint32_t code = 0;
+    uint32_t tries = 0;
+    for (const auto& section : map->items) {
+      if (section.type == raw::TYPE_CODE_ITEM) {
+        code = section.offset;
+        auto at = code;
+        for (uint32_t i = 0; i < section.size; ++i) {
+          const auto item = raw::parser::parse_code_item(bytes, at);
+          ASSERT_TRUE(item.has_value());
+          if (item->tries_size != 0) {
+            tries = at + 16 + 2 * item->insns_size + 2 * (item->insns_size % 2);
+            break;
+          }
+          at = (item->end_offset + 3) & ~3U;
+        }
+      }
+    }
+    ASSERT_NE(code, 0U);
+    ASSERT_NE(tries, 0U);
+    auto set16 = [&](std::size_t at, uint16_t value) {
+      bytes[at] = static_cast<uint8_t>(value);
+      bytes[at + 1] = static_cast<uint8_t>(value >> 8);
+    };
+    auto set32 = [&](std::size_t at, uint32_t value) {
+      set16(at, static_cast<uint16_t>(value));
+      set16(at + 2, static_cast<uint16_t>(value >> 16));
+    };
+    for (uint32_t i = 0; i < header->class_defs_size; ++i) {
+      for (uint32_t field : {20U, 24U, 28U}) {
+        set32(header->class_defs_off + i * 32 + field, 0);
+      }
+    }
+    if (damage == 1) {
+      set16(code + 16, 0x29);
+      set16(code + 18, 0x7fff);
+    } else if (damage == 2) {
+      set16(code, 0);
+    } else if (damage == 3) {
+      set16(tries + 4, 0);
+    } else if (damage == 4) {
+      set16(tries + 6, 0xffff);
+    }
+    const auto signature = raw::parser::compute_signature(bytes);
+    ASSERT_TRUE(signature.has_value());
+    std::copy(signature->begin(), signature->end(), bytes.begin() + 12);
+    const auto checksum = raw::parser::compute_checksum(bytes);
+    ASSERT_TRUE(checksum.has_value());
+    set32(8, *checksum);
+    EXPECT_EQ(raw::parser::parse_buffer(bytes).has_value(), damage == 0);
+    EXPECT_EQ(model::read(bytes).has_value(), damage == 0);
+    budget::Vector<std::span<const uint8_t>> buffers{bytes};
+    EXPECT_EQ(AnalysisContext::from_dex_buffers(buffers).has_value(), damage == 0);
+  }
+}
+}  // namespace dexsplit::test
+
+namespace dexsplit::test {
+TEST(Model, generated_whenConstructedWithoutExplicitScope_retainsOneRequestForNestedValues) {
+  auto source = feature_fixture(35);
+  auto owner = source.request;
+  auto bytes = model::write(source);
+  ASSERT_TRUE(bytes.has_value()) << bytes.error().message;
+  EXPECT_EQ(source.classes.get_allocator().owner(), owner);
+  EXPECT_EQ(source.classes.front().type.get_allocator().owner(), owner);
+  EXPECT_EQ(source.classes.front().methods.front().code->items.get_allocator().owner(), owner);
+  {
+    budget::Scope independent;
+    auto separate = feature_fixture(35);
+    EXPECT_NE(separate.request, owner);
+    EXPECT_EQ(separate.classes.front().type.get_allocator().owner(), separate.request);
+  }
+  owner->charge(budget::kWork - owner->work, budget::kAllocationBytes - owner->storage);
+  EXPECT_THROW(source.classes.front().type.append(128, 'x'), budget::Exhausted);
+  EXPECT_THROW((model::Dex(source)), budget::Exhausted);
 }
 }  // namespace dexsplit::test

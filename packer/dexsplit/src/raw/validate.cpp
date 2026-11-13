@@ -49,80 +49,70 @@ class Layout {
   uint32_t alignment(uint16_t type) {
     return type == TYPE_CLASS_DATA_ITEM || (type >= TYPE_STRING_DATA_ITEM && type <= TYPE_ENCODED_ARRAY_ITEM) ? 1 : 4;
   }
-  void code_instructions(std::pair<uint32_t, uint32_t> extent) {
-    auto [start, units] = extent;
-    for (uint32_t position = 0; position < units;) {
+  uint8_t type_prefix(uint32_t index) {
+    if (index >= header_.type_ids_size) {
+      fail("code type index out of range");
+    }
+    uint32_t at = header_.type_ids_off + index * 4;
+    const auto string_index = check(parse_utils::read_uint32(bytes_, at));
+    if (string_index >= header_.string_ids_size) {
+      fail("code type string index out of range");
+    }
+    at = header_.string_ids_off + string_index * 4;
+    auto position = check(parse_utils::read_uint32(bytes_, at));
+    check(parse_utils::read_uleb128(bytes_, position));
+    if (position >= bytes_.size()) {
+      fail("code type descriptor outside input");
+    }
+    return bytes_[position];
+  }
+  static bool field_prefix(uint8_t prefix) {
+    return std::string_view("BCDFIJSZL[").find(static_cast<char>(prefix)) != std::string_view::npos;
+  }
+  void code() {
+    const auto start = cursor_;
+    auto item = check(parser::parse_code_item(region_, cursor_));
+    reference(item.debug_info_off, TYPE_DEBUG_INFO_ITEM);
+    for (const auto at : item.structure.starts) {
       budget::visit();
-      std::array<uint16_t, 5> words{};
-      auto count = std::min<uint32_t>(5, units - position);
-      for (uint32_t i = 0; i < count; ++i) {
-        uint32_t at = start + (position + i) * 2;
-        words[i] = check(parse_utils::read_uint16(region_, at));
-      }
-      std::span<const uint16_t> available(words.data(), count);
-      if ((words[0] & 255) == 0 && words[0] != 0) {
-        auto length = payload_units(available, 0);
-        if (!length || *length > units - position || position % 2 != 0) {
-          fail("invalid mapped code payload");
-        }
-        if (words[0] == FILL_ARRAY_DATA_PAYLOAD && words[1] != 1 && words[1] != 2 && words[1] != 4 && words[1] != 8) {
-          fail("invalid mapped fill-array width");
-        }
-        position += static_cast<uint32_t>(*length);
-        continue;
-      }
-      auto decoded = check(decode_insn(available, 0));
+      const auto decoded = check(decode_insn(item.insns, at));
       const auto& info = opcode_info(decoded.opcode);
       if ((decoded.opcode >= 0xfa && version_ < 38) || (decoded.opcode >= 0xfe && version_ < 39)) {
         fail("mapped opcode requires later DEX version");
       }
-      std::array<uint32_t, 8> limits{0,
-                                     header_.string_ids_size,
-                                     header_.type_ids_size,
-                                     header_.field_ids_size,
-                                     header_.method_ids_size,
-                                     header_.proto_ids_size,
-                                     call_sites_,
-                                     handles_};
+      const std::array<uint32_t, 8> limits{0,
+                                           header_.string_ids_size,
+                                           header_.type_ids_size,
+                                           header_.field_ids_size,
+                                           header_.method_ids_size,
+                                           header_.proto_ids_size,
+                                           call_sites_,
+                                           handles_};
       if (info.ref != RefKind::None && decoded.index >= limits[static_cast<std::size_t>(info.ref)]) {
         fail("mapped instruction pool index out of range");
       }
       if ((decoded.opcode == 0xfa || decoded.opcode == 0xfb) && decoded.proto >= header_.proto_ids_size) {
         fail("mapped instruction prototype index out of range");
       }
-      position += info.units;
-    }
-  }
-  void code() {
-    skip(6);
-    uint32_t tries = u16();
-    reference(u32(), TYPE_DEBUG_INFO_ITEM);
-    uint32_t units = u32();
-    uint32_t start = cursor_;
-    skip(uint64_t{units} * 2);
-    code_instructions({start, units});
-    if (tries == 0) {
-      return;
-    }
-    if (units % 2 != 0 && u16() != 0) {
-      fail("nonzero code padding");
-    }
-    skip(uint64_t{tries} * 8);
-    uint32_t count = leb();
-    for (uint32_t i = 0; i < count; ++i) {
-      dexsplit::budget::visit();
-      int64_t size = sleb();
-      uint64_t pairs = size < 0 ? static_cast<uint64_t>(-size) : static_cast<uint64_t>(size);
-      for (uint64_t j = 0; j < pairs; ++j) {
-        dexsplit::budget::visit();
-        if (leb() >= header_.type_ids_size || leb() >= units) {
-          fail("mapped catch type/address out of range");
+      if (info.ref == RefKind::Type) {
+        const auto prefix = type_prefix(decoded.index);
+        if (!field_prefix(prefix) || (decoded.opcode == 0x22 && prefix != 'L') ||
+            (decoded.opcode >= 0x23 && decoded.opcode <= 0x25 && prefix != '[')) {
+          fail("mapped instruction requires a different type kind");
         }
       }
-      if (size <= 0 && leb() >= units) {
-        fail("mapped catch-all address out of range");
+    }
+    for (const auto& handler : item.handlers) {
+      budget::visit();
+      for (const auto& caught : handler.handlers) {
+        budget::visit();
+        if (caught.type_idx >= header_.type_ids_size || type_prefix(caught.type_idx) != 'L') {
+          fail("mapped catch type must name a class");
+        }
       }
     }
+    cursor_ = item.end_offset;
+    code_items_.emplace(start, std::move(item));
   }
   void debug_index(uint32_t limit) {
     if (leb() > limit) {
@@ -130,12 +120,19 @@ class Layout {
     }
   }
   void debug() {
-    leb();
+    DebugSummary summary{cursor_, 0, 0, 0};
+    int64_t line = leb();
+    uint64_t address = 0;
     uint32_t count = leb();
+    summary.parameters = count;
     for (uint32_t i = 0; i < count; ++i) {
       budget::visit();
       debug_index(header_.string_ids_size);
     }
+    auto local = [&] {
+      const auto reg = leb();
+      summary.registers = std::max(summary.registers, std::min(reg, 65535U) + 1);
+    };
     while (true) {
       budget::visit();
       if (cursor_ >= region_.size()) {
@@ -143,21 +140,38 @@ class Layout {
       }
       uint8_t opcode = region_[cursor_++];
       if (opcode == 0) {
+        debug_summaries_.push_back(summary);
         return;
       }
-      if (opcode == 1 || opcode == 5 || opcode == 6) {
-        leb();
+      if (opcode == 1) {
+        address += leb();
+      } else if (opcode == 5 || opcode == 6) {
+        local();
       } else if (opcode == 9) {
         debug_index(header_.string_ids_size);
       } else if (opcode == 2) {
-        sleb();
+        line += sleb();
       } else if (opcode == 3 || opcode == 4) {
-        leb();
+        local();
         debug_index(header_.string_ids_size);
-        debug_index(header_.type_ids_size);
+        const auto type = leb();
+        if (type > header_.type_ids_size || (type != 0 && !field_prefix(type_prefix(type - 1)))) {
+          fail("debug local type is not a field type");
+        }
         if (opcode == 4) {
           debug_index(header_.string_ids_size);
         }
+      } else if (opcode >= 10) {
+        const auto adjusted = static_cast<uint32_t>(opcode - 10);
+        address += adjusted / 15;
+        line += -4 + static_cast<int64_t>(adjusted % 15);
+      }
+      // Match the reader's emitted-event bounds, including harmless redundant local events.
+      if (opcode != 1 && opcode != 2) {
+        if (line < 0 || line > UINT32_MAX) {
+          fail("debug line outside supported range");
+        }
+        summary.address = std::max(summary.address, static_cast<uint32_t>(std::min<uint64_t>(address, UINT32_MAX)));
       }
     }
   }
@@ -484,6 +498,12 @@ class Layout {
           section.size > 65536) {
         fail("DEX member pool limit exceeded");
       }
+      if (section.type == TYPE_DEBUG_INFO_ITEM) {
+        if (section.size > (end - section.offset) / 3) {
+          fail("mapped debug item count exceeds its section");
+        }
+        debug_summaries_.reserve(section.size);
+      }
       region_ = bytes_.first(end);
       cursor_ = section.offset;
       for (uint32_t n = 0; n < section.size; ++n) {
@@ -528,10 +548,38 @@ class Layout {
       if (found == items_.end() || found->second != type) {
         fail("DEX reference is not a typed item boundary");
       }
+      if (type == TYPE_CODE_ITEM) {
+        ++code_items_.at(offset).remaining_uses;
+      }
+    }
+    // Summaries are emitted in physical offset order, regardless of where code sections occur.
+    for (const auto& [offset, code] : code_items_) {
+      budget::visit();
+      if (code.debug_info_off == 0) {
+        continue;
+      }
+      const auto found = std::lower_bound(
+          debug_summaries_.begin(), debug_summaries_.end(), code.debug_info_off,
+          [](const DebugSummary& summary, uint32_t debug_offset) { return summary.offset < debug_offset; });
+      if (found == debug_summaries_.end() || found->offset != code.debug_info_off ||
+          found->registers > code.registers_size || found->address > code.insns_size ||
+          found->parameters > code.ins_size) {
+        fail("debug register/position/parameter bounds exceed mapped code frame");
+      }
     }
   }
 
+  budget::Map<uint32_t, CodeItem> take_code_items() { return std::move(code_items_); }
+
  private:
+  struct DebugSummary {
+    uint32_t offset;
+    uint32_t address;
+    uint32_t registers;
+    uint32_t parameters;
+  };
+  budget::Vector<DebugSummary> debug_summaries_;
+  budget::Map<uint32_t, CodeItem> code_items_;
   std::span<const uint8_t> bytes_, region_;
   Header header_{};
   uint32_t version_ = 0;
@@ -543,13 +591,21 @@ class Layout {
   budget::Vector<std::pair<uint32_t, uint16_t>> references_;
 };
 }  // namespace
-std::expected<void, ParseError> validate_layout(std::span<const uint8_t> bytes) {
+std::expected<budget::Map<uint32_t, CodeItem>, ParseError> parse_layout(std::span<const uint8_t> bytes) {
   budget::Scope scope;
   try {
-    Layout(bytes).run();
-    return {};
+    Layout layout(bytes);
+    layout.run();
+    return layout.take_code_items();
   } catch (Failure& failure) {
     return std::unexpected(std::move(failure.error));
   }
+}
+std::expected<void, ParseError> validate_layout(std::span<const uint8_t> bytes) {
+  auto result = parse_layout(bytes);
+  if (!result) {
+    return std::unexpected(result.error());
+  }
+  return {};
 }
 }  // namespace dexsplit::raw

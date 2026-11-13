@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include "common/budget.hpp"
+#include "model/copy.hpp"
 
 namespace dexsplit::model {
 
@@ -39,15 +40,21 @@ void RegList::set_heap(Reg* p) noexcept {
 
 void RegList::release() noexcept {
   if (on_heap()) {
-    budget::Allocator<Reg>{}.deallocate(heap(), capacity_);
+    allocator_.deallocate(heap(), capacity_);
   }
   size_ = 0;
   capacity_ = kInline;
 }
 
-RegList::RegList(const RegList& other) : RegList(std::span<const Reg>(other.begin(), other.size())) {}
+RegList::RegList(const RegList& other) : allocator_(other.allocator_) {
+  budget::Scope scope(allocator_.owner());
+  for (Reg reg : other) {
+    push_back(reg);
+  }
+}
 
-RegList::RegList(RegList&& other) noexcept : size_(other.size_), capacity_(other.capacity_) {
+RegList::RegList(RegList&& other) noexcept
+    : allocator_(other.allocator_), size_(other.size_), capacity_(other.capacity_) {
   std::memcpy(storage_, other.storage_, sizeof storage_);
   other.size_ = 0;
   other.capacity_ = kInline;
@@ -64,6 +71,7 @@ RegList& RegList::operator=(const RegList& other) {
 RegList& RegList::operator=(RegList&& other) noexcept {
   if (this != &other) {
     release();
+    allocator_ = other.allocator_;
     size_ = other.size_;
     capacity_ = other.capacity_;
     std::memcpy(storage_, other.storage_, sizeof storage_);
@@ -76,6 +84,8 @@ RegList& RegList::operator=(RegList&& other) noexcept {
 RegList::~RegList() { release(); }
 
 void RegList::push_back(Reg reg) {
+  budget::Scope scope(allocator_.owner());
+  budget::visit();
   if (size_ == capacity_) {
     uint32_t grown = std::min<uint32_t>(uint32_t{capacity_} * 2, 0xFFFF);
     if (grown <= size_) {
@@ -84,7 +94,7 @@ void RegList::push_back(Reg reg) {
     if (budget::active != nullptr) {
       budget::active->charge(size_, 0);
     }
-    Reg* bigger = budget::Allocator<Reg>{}.allocate(grown);
+    Reg* bigger = allocator_.allocate(grown);
     std::copy(begin(), end(), bigger);
     uint16_t size = size_;
     release();
@@ -106,6 +116,40 @@ bool RegList::is_run() const noexcept {
 
 bool operator==(const RegList& a, const RegList& b) noexcept {
   return std::equal(a.begin(), a.end(), b.begin(), b.end());
+}
+
+/// Copy under the source request before any container growth, including nested owned values.
+Dex::Dex(const Dex& other)
+    : version(other.version), request(other.request), classes(budget::Allocator<ClassDef>{request}) {
+  budget::Scope scope(request);
+  for (const auto& cls : other.classes) {
+    detail::charge_class_copy(cls);
+  }
+  classes = other.classes;
+  original = other.original;
+}
+Dex& Dex::operator=(const Dex& other) {
+  if (this != &other) {
+    Dex copy(other);
+    *this = std::move(copy);
+  }
+  return *this;
+}
+Dex::Dex(Dex&& other) noexcept
+    : version(other.version),
+      request(std::move(other.request)),
+      classes(std::move(other.classes)),
+      original(std::move(other.original)) {
+  other.request = request;
+}
+Dex& Dex::operator=(Dex&& other) noexcept {
+  if (this != &other) {
+    version = other.version;
+    request = other.request;
+    classes = std::move(other.classes);
+    original = std::move(other.original);
+  }
+  return *this;
 }
 
 // ===== lookups =====

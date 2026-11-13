@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "raw/error.hpp"
+#include "raw/opcodes.hpp"
 
 namespace dexsplit::raw {
 
@@ -228,6 +229,13 @@ struct EncodedCatchHandler {
   std::optional<uint32_t> catch_all_addr;
 };
 
+/// Validated instruction metadata reused by model conversion instead of decoding the body again.
+struct CodeStructure {
+  budget::Vector<uint32_t> starts;
+  budget::Map<uint32_t, uint32_t> payloads;
+  budget::Vector<uint32_t> targets;
+};
+
 struct CodeItem {
   /** Number of virtual registers used by this code. */
   uint16_t registers_size;
@@ -251,6 +259,9 @@ struct CodeItem {
    *  start of the list — i.e. the list_size ULEB128) at which each handlers[k]
    *  was decoded.  Use to map a TryItem::handler_off to its handlers index. */
   budget::Vector<uint16_t> handler_byte_offsets;
+  uint32_t end_offset = 0;
+  uint32_t remaining_uses = 0;
+  CodeStructure structure;
 };
 
 /** The "no index" value of 32-bit index fields (e.g. a class without a
@@ -414,8 +425,35 @@ class DexFile {
   budget::Vector<CallSiteIdItem> call_site_ids_;
   budget::Vector<MethodHandleItem> method_handles_;
   budget::Vector<budget::String> strings_;
+  budget::Map<uint32_t, CodeItem> code_items_;
+  budget::Map<uint32_t, uint32_t> instruction_sizes_;
 
  public:
+  /// Immutable, completely validated mapped code; all owners of a shared item reuse this instance.
+  const CodeItem* code_item(uint32_t offset) const {
+    auto found = code_items_.find(offset);
+    return found == code_items_.end() ? nullptr : &found->second;
+  }
+  /// Conversion releases a parsed body only after its last mapped owner has consumed it.
+  void release_code_item(uint32_t offset) {
+    auto found = code_items_.find(offset);
+    if (found != code_items_.end() && found->second.remaining_uses != 0 && --found->second.remaining_uses == 0) {
+      code_items_.erase(found);
+    }
+  }
+  /// Analysis owns the immutable input bytes and only needs validated instruction extents.
+  void compact_for_analysis() {
+    budget::Scope scope(code_items_.get_allocator().owner());
+    for (const auto& [offset, item] : code_items_) {
+      budget::visit();
+      instruction_sizes_.emplace(offset, item.insns_size);
+    }
+    code_items_.clear();
+  }
+  uint32_t instruction_units(uint32_t offset) const {
+    auto found = instruction_sizes_.find(offset);
+    return found == instruction_sizes_.end() ? 0 : found->second;
+  }
   const Header& header() const { return header_; }
   const MapList& map_list() const { return map_list_; }
   std::span<const uint32_t> string_ids() const { return string_ids_; }

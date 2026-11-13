@@ -34,9 +34,11 @@ struct FieldAccess {
 /** One type reference (const-class / check-cast / instance-of / new-instance /
  *  new-array / filled-new-array) in a method's body. */
 struct TypeUse {
-  uint32_t code_offset;         ///< Code-unit offset of the instruction.
-  std::string_view descriptor;  ///< Referenced type descriptor; context-lifetime.
-  TypeRefKind kind;             ///< What the instruction does with the type.
+  uint32_t code_offset;       ///< Code-unit offset of the instruction.
+  budget::String descriptor;  ///< Owned descriptor; safe after all context handles expire.
+  TypeRefKind kind;           ///< What the instruction does with the type.
+
+  TypeUse(uint32_t offset, std::string_view type, TypeRefKind use) : code_offset(offset), descriptor(type), kind(use) {}
 };
 
 /** A lightweight, non-owning handle to a single DEX method.

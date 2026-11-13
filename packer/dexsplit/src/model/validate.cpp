@@ -159,7 +159,7 @@ class Validator {
   enum Check : uint8_t { kString, kFieldType, kClassType, kArrayType, kProto, kMember, kChecks };
   bool first_check(Check check, const void* shared) { return checked_[check].insert(shared).second; }
 
-  static inline const budget::String kWholeFile;
+  static inline const budget::String kWholeFile{budget::Allocator<char>{nullptr}};
 
   // ----- names, descriptors, references -----
 

@@ -78,6 +78,8 @@ struct State {
     bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override { return this == &other; }
   } upstream{this};
   std::unique_ptr<std::pmr::unsynchronized_pool_resource> pool;
+  /// Large vectors need fewer blocks per chunk; small-container pools keep their amortized metadata.
+  std::unique_ptr<std::pmr::unsynchronized_pool_resource> large_pool;
   void charge(std::size_t visits, std::size_t bytes) {
     std::lock_guard lock(accounting_mutex);
     if (work > max_work || storage > max_storage || visits > max_work - work || bytes > max_storage - storage) {
@@ -88,22 +90,38 @@ struct State {
   }
   void* allocate(std::size_t bytes, std::size_t alignment) {
     std::lock_guard lock(pool_mutex);
-    if (pool == nullptr) {
+    auto& selected = bytes > 64U * 1024U ? large_pool : pool;
+    if (selected == nullptr) {
       charge(0, sizeof(std::pmr::unsynchronized_pool_resource));
-      pool = std::make_unique<std::pmr::unsynchronized_pool_resource>(
-          std::pmr::pool_options{kPoolChunkBlocks, kDexBytes}, &upstream);
+      selected = std::make_unique<std::pmr::unsynchronized_pool_resource>(
+          std::pmr::pool_options{bytes > 64U * 1024U ? 8 : kPoolChunkBlocks, kDexBytes}, &upstream);
     }
-    return pool->allocate(bytes, alignment);
+    return selected->allocate(bytes, alignment);
   }
   void release(void* pointer, std::size_t bytes, std::size_t alignment) {
     std::lock_guard lock(pool_mutex);
-    pool->deallocate(pointer, bytes, alignment);
+    auto& selected = bytes > 64U * 1024U ? large_pool : pool;
+    selected->deallocate(pointer, bytes, alignment);
   }
 };
 
-static_assert(sizeof(State) + sizeof(std::pmr::unsynchronized_pool_resource) + 128 <= 4096);
+static_assert(sizeof(State) + 2 * sizeof(std::pmr::unsynchronized_pool_resource) + 128 <= 4096);
 
 inline thread_local std::shared_ptr<State> active;
+inline thread_local std::weak_ptr<State> last_request;
+
+/// Unscoped native construction shares a retained request without keeping an expired pool alive.
+inline std::shared_ptr<State> retained_request() {
+  if (active != nullptr) {
+    return active;
+  }
+  if (auto retained = last_request.lock()) {
+    return retained;
+  }
+  auto state = std::make_shared<State>();
+  last_request = state;
+  return state;
+}
 
 /// Nested native calls share the outer request; they cannot reset its allowance.
 class Scope {
@@ -115,7 +133,12 @@ class Scope {
       throw Exhausted("cannot replace an active DEX request budget");
     }
   }
-  ~Scope() { active = previous_; }
+  ~Scope() {
+    if (previous_ == nullptr) {
+      last_request = active;
+    }
+    active = previous_;
+  }
   Scope(const Scope&) = delete;
   Scope& operator=(const Scope&) = delete;
 
@@ -129,41 +152,55 @@ inline void visit(std::size_t count = 1) {
   }
 }
 
-/// Every native container allocation uses this allocator, including copies/reallocations.
+/// Containers retain their owner across copies, moves, scope exit and nested element construction.
 template <class T>
 class Allocator {
  public:
   using value_type = T;
+  using propagate_on_container_copy_assignment = std::true_type;
   using propagate_on_container_move_assignment = std::true_type;
-  Allocator() = default;
+  using propagate_on_container_swap = std::true_type;
+  Allocator() : owner_(retained_request()) {}
+  explicit Allocator(std::shared_ptr<State> owner) : owner_(std::move(owner)) {}
+  Allocator(const Allocator&) noexcept = default;
+  Allocator& operator=(const Allocator&) noexcept = default;
   template <class U>
-  Allocator(const Allocator<U>&) noexcept {}
-  struct alignas(alignof(T) > alignof(std::shared_ptr<State>) ? alignof(T) : alignof(std::shared_ptr<State>)) Header {
-    std::shared_ptr<State> owner;
-    std::size_t bytes;
-  };
+  Allocator(const Allocator<U>& other) noexcept : owner_(other.owner()) {}
+  const std::shared_ptr<State>& owner() const noexcept { return owner_; }
+  Allocator select_on_container_copy_construction() const {
+    if (owner_ == nullptr) {
+      return Allocator{};
+    }
+    Scope scope(owner_);
+    return *this;
+  }
   [[nodiscard]] T* allocate(std::size_t count) {
-    if (count > (std::numeric_limits<std::size_t>::max() - sizeof(Header)) / sizeof(T)) {
+    if (owner_ == nullptr) {
+      throw Exhausted("immutable empty allocator cannot grow");
+    }
+    Scope scope(owner_);
+    if (count > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
       throw Exhausted("DEX allocation size overflow");
     }
-    auto state = active == nullptr ? std::make_shared<State>() : active;
-    std::size_t bytes = sizeof(Header) + count * sizeof(T);
-    state->charge(1, bytes);
-    auto* header = static_cast<Header*>(state->allocate(bytes, alignof(Header)));
-    std::construct_at(header, Header{state, bytes});
-    return reinterpret_cast<T*>(header + 1);
+    std::size_t bytes = count * sizeof(T);
+    owner_->charge(count / 64 + 1, bytes);
+    return static_cast<T*>(owner_->allocate(bytes, alignof(T)));
   }
-  void deallocate(T* pointer, std::size_t) noexcept {
-    auto* header = reinterpret_cast<Header*>(pointer) - 1;
-    auto state = header->owner;
-    auto bytes = header->bytes;
-    std::destroy_at(header);
-    state->release(header, bytes, alignof(Header));
+  void deallocate(T* pointer, std::size_t count) noexcept { owner_->release(pointer, count * sizeof(T), alignof(T)); }
+  template <class U, class... A>
+    requires(!std::is_trivially_copyable_v<U>)
+  void construct(U* pointer, A&&... arguments) {
+    Scope scope(owner_);
+    visit();
+    std::construct_at(pointer, std::forward<A>(arguments)...);
   }
   template <class U>
-  bool operator==(const Allocator<U>&) const noexcept {
-    return true;
+  bool operator==(const Allocator<U>& other) const noexcept {
+    return owner_ == other.owner();
   }
+
+ private:
+  std::shared_ptr<State> owner_;
 };
 
 using String = std::basic_string<char, std::char_traits<char>, Allocator<char>>;

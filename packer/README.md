@@ -108,6 +108,16 @@ handles retain the original request after scope exit. To combine models, read th
 within one request; copying unrelated requests is rejected. Budget exhaustion never
 triggers subdivision.
 
+Direct C++ model copies, assignments, copy-on-write bodies and nested containers retain
+their source request, including after scope exit. Growth under an unrelated active
+request is rejected. Returned type-use descriptors own their storage and remain valid
+after their context and method handles are released. Every mapped code item receives
+the same structural instruction, register, branch, payload and try/handler checks,
+including unused items; complete unused or shared items remain supported.
+Unscoped native construction shares one retained default request per thread while its
+values remain alive. An explicit native scope starts an independent request when no
+scope is active; binding entry points keep their existing independent-request behavior.
+
 Debug locals accept harmless redundant end/restart events, matching ART. Incoming
 parameters initialize metadata only at their first register, including wide arguments.
 Out-of-frame locals and restarts with no known metadata fail; the latter is an explicit

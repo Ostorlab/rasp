@@ -64,6 +64,7 @@ std::expected<AnalysisContext, budget::String> AnalysisContext::from_models(
     if (!dex) {
       return std::unexpected(dex.error().message);
     }
+    dex->compact_for_analysis();
     impl->dex_files_vec.push_back(std::move(*dex));
     impl->slots.push_back(budget::make_shared<AnalysisContextImpl::DexSlot>(std::move(buffer)));
   }
@@ -159,35 +160,13 @@ const raw::ClassDataItem* AnalysisContextImpl::get_class_data(DexIndex dex_idx, 
   return &ins_it->second;
 }
 
-const raw::CodeItem* AnalysisContextImpl::get_code_item(DexIndex dex_idx, uint32_t code_off) const {
-  if (code_off == 0) {
-    return nullptr;
-  }
-
-  auto& slot = *slots[dex_idx.value];
-  std::lock_guard<std::mutex> lock(slot.code_item_mutex);
-
-  auto it = slot.code_item_cache.find(code_off);
-  if (it != slot.code_item_cache.end()) {
-    return &it->second;
-  }
-
-  auto result = raw::parser::parse_code_item(slot.buffer.bytes(), code_off);
-  if (!result.has_value()) {
-    return nullptr;
-  }
-
-  auto [ins_it, ok] = slot.code_item_cache.emplace(code_off, std::move(result.value()));
-  return &ins_it->second;
-}
-
 std::span<const Instruction> AnalysisContextImpl::get_instructions(DexIndex dex_idx, uint32_t code_off) const {
   if (code_off == 0) {
     return {};
   }
 
-  const auto* ci = get_code_item(dex_idx, code_off);
-  if (!ci) {
+  const auto units = dex_files_vec[dex_idx.value].instruction_units(code_off);
+  if (units == 0) {
     return {};
   }
 
@@ -199,12 +178,24 @@ std::span<const Instruction> AnalysisContextImpl::get_instructions(DexIndex dex_
     return it->second;
   }
 
-  auto [ins_it, ok] = slot.instructions_cache.emplace(code_off, decode_instructions(ci->insns));
+  // The extent was structurally validated against these same privately owned immutable bytes.
+  const auto bytes = slot.buffer.bytes();
+  const auto start = static_cast<std::size_t>(code_off) + 16;
+  if (start > bytes.size() || units > (bytes.size() - start) / 2) {
+    throw std::invalid_argument("validated instruction extent is outside its owned buffer");
+  }
+  budget::Vector<uint16_t> words(units);
+  for (uint32_t i = 0; i < units; ++i) {
+    budget::visit();
+    const auto at = start + 2 * static_cast<std::size_t>(i);
+    words[i] = static_cast<uint16_t>(bytes[at] | (uint16_t{bytes[at + 1]} << 8));
+  }
+  auto [ins_it, ok] = slot.instructions_cache.emplace(code_off, decode_instructions(words));
   return ins_it->second;
 }
 
 const budget::String& AnalysisContextImpl::proto_descriptor_of(DexIndex dex_idx, uint32_t proto_idx) const {
-  static const budget::String kEmpty;
+  static const budget::String kEmpty{budget::Allocator<char>{nullptr}};
   auto proto_ids = dex_files_vec[dex_idx.value].proto_ids();
   if (proto_idx >= proto_ids.size()) {
     return kEmpty;

@@ -59,7 +59,8 @@ void annotations(const budget::Vector<AnnotationItem>& values) {
     }
   }
 }
-void charge_class(const ClassDef& value) {
+}  // namespace
+void detail::charge_class_copy(const ClassDef& value) {
   budget::visit();
   text(value.type);
   if (value.superclass) {
@@ -92,7 +93,6 @@ void charge_class(const ClassDef& value) {
     // CodeValue copies share their immutable instruction vectors and detach before edits.
   }
 }
-}  // namespace
 std::shared_ptr<budget::State> copy_request(Dex& destination, const Dex& source) {
   if (source.request == nullptr) {
     throw budget::Exhausted("source model has no request budget");
@@ -100,6 +100,7 @@ std::shared_ptr<budget::State> copy_request(Dex& destination, const Dex& source)
   if (destination.request == nullptr ||
       (destination.classes.empty() && destination.request->work == 0 && destination.request->storage == 0)) {
     destination.request = source.request;
+    destination.classes = budget::Vector<ClassDef>(budget::Allocator<ClassDef>{source.request});
   }
   if (destination.request != source.request) {
     throw budget::Exhausted("read all copied models within one Request");
@@ -136,7 +137,7 @@ std::expected<void, Error> copy_classes(Dex& destination, const Dex& source,
     if (!seen.insert(descriptor).second) {
       return std::unexpected(Error{Error::Kind::Invalid, "destination already has class", {}});
     }
-    charge_class(*found->second);
+    detail::charge_class_copy(*found->second);
     destination.classes.push_back(*found->second);
   }
   return {};

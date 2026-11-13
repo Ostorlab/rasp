@@ -34,7 +34,7 @@ ValueKind kind_at(uint8_t opcode, uint8_t base) { return static_cast<ValueKind>(
 
 class Reader {
  public:
-  Reader(std::span<const uint8_t> bytes, const raw::DexFile& file, const ReadOptions& options)
+  Reader(std::span<const uint8_t> bytes, raw::DexFile& file, const ReadOptions& options)
       : bytes_(bytes),
         file_(file),
         options_(options),
@@ -607,7 +607,7 @@ class Reader {
   budget::Vector<std::pair<uint32_t, Item>> read_debug_info(uint32_t debug_off, Code& code, uint32_t code_size);
 
   std::span<const uint8_t> bytes_;
-  const raw::DexFile& file_;
+  raw::DexFile& file_;
   const ReadOptions& options_;
   budget::String where_;
 
@@ -621,140 +621,38 @@ class Reader {
 };
 
 Code Reader::read_code(uint32_t code_off) {
-  raw::CodeItem item = check(raw::parser::parse_code_item(bytes_, code_off));
+  const auto* parsed = file_.code_item(code_off);
+  if (parsed == nullptr) {
+    fail("method code offset is not a validated code item");
+  }
+  const raw::CodeItem& item = *parsed;
   if (item.ins_size > item.registers_size) {
     fail("incoming arguments exceed register frame");
   }
   std::span<const uint16_t> insns(item.insns);
   const uint32_t size = static_cast<uint32_t>(insns.size());
 
-  // Pass 1: instruction boundaries.  Payloads are data inside the code, not
-  // instructions; they are found where the walk meets their ident.
-  budget::Vector<uint32_t> starts;
-  budget::Vector<raw::InsnFields> decoded;
-  budget::Map<uint32_t, uint32_t> payloads;  // start -> size in code units
-  for (uint32_t pos = 0; pos < size;) {
-    dexsplit::budget::visit();
-    if ((insns[pos] & 0xFF) == 0 && (insns[pos] >> 8) != 0) {
-      auto units = raw::payload_units(insns, pos);
-      if (!units || *units > size - pos) {
-        fail(budget::format("bad payload at code offset {}", pos));
-      }
-      if (pos % 2 != 0) {
-        fail(budget::format("payload at odd code offset {}", pos));
-      }
-      payloads[pos] = static_cast<uint32_t>(*units);
-      pos += static_cast<uint32_t>(*units);
-      continue;
-    }
-    auto f = raw::decode_insn(insns, pos);
-    if (!f) {
-      fail(budget::format("code offset {}: {}", pos, f.error().message));
-    }
-    if (((f->opcode >= 0x6e && f->opcode <= 0x78) || (f->opcode >= 0xfa && f->opcode <= 0xfd)) &&
-        f->a > item.outs_size) {
-      fail("invoke arguments exceed outgoing register count");
-    }
-    starts.push_back(pos);
-    decoded.push_back(*f);
-    pos += raw::opcode_info(f->opcode).units;
-  }
-  budget::Vector<bool> is_start(size + 1, false);
-  for (uint32_t s : starts) {
-    dexsplit::budget::visit();
-    is_start[s] = true;
-  }
-
-  auto target_of = [&](uint32_t pos, int64_t offset, const char* what) {
-    int64_t target = int64_t{pos} + offset;
-    if (target < 0 || target >= size || !is_start[static_cast<uint32_t>(target)]) {
-      fail(budget::format("{} at code offset {} goes to {}, which is not an instruction", what, pos, target));
-    }
-    return static_cast<uint32_t>(target);
-  };
-
-  // Pass 2: every address something refers to gets a label.
-  budget::Vector<uint32_t> targets;
-  for (std::size_t i = 0; i < decoded.size(); ++i) {
-    dexsplit::budget::visit();
-    const raw::InsnFields& f = decoded[i];
-    const uint32_t pos = starts[i];
-    switch (raw::opcode_info(f.opcode).format) {
-      case raw::Format::F10t:
-      case raw::Format::F20t:
-      case raw::Format::F30t:
-      case raw::Format::F21t:
-      case raw::Format::F22t:
-        targets.push_back(target_of(pos, f.offset, "branch"));
-        break;
-      case raw::Format::F31t: {
-        int64_t at = int64_t{pos} + f.offset;
-        uint16_t ident = f.opcode == 0x26   ? raw::FILL_ARRAY_DATA_PAYLOAD
-                         : f.opcode == 0x2b ? raw::PACKED_SWITCH_PAYLOAD
-                                            : raw::SPARSE_SWITCH_PAYLOAD;
-        if (at < 0 || at >= size || !payloads.contains(static_cast<uint32_t>(at)) ||
-            insns[static_cast<std::size_t>(at)] != ident) {
-          fail(budget::format("instruction at code offset {} has no payload at {}", pos, at));
-        }
-        if (f.opcode == 0x2b || f.opcode == 0x2c) {
-          uint32_t p = static_cast<uint32_t>(at);
-          uint32_t count = insns[p + 1];
-          uint32_t first = f.opcode == 0x2b ? p + 4 : p + 2 + 2 * count;
-          for (uint32_t k = 0; k < count; ++k) {
-            dexsplit::budget::visit();
-            int32_t rel = static_cast<int32_t>(insns[first + 2 * k] | (uint32_t{insns[first + 2 * k + 1]} << 16));
-            // A case that goes to the next instruction is dropped
-            // (see convert()), so it needs no label.
-            if (rel != 3) {
-              targets.push_back(target_of(pos, rel, "switch case"));
-            }
-          }
-        }
-        break;
-      }
-      default:
-        break;
-    }
-  }
+  // The shared raw parser validates every mapped body and supplies the same
+  // structural metadata for conversion, independent of class reachability.
+  const auto& starts = item.structure.starts;
+  const auto& payloads = item.structure.payloads;
+  const auto& targets = item.structure.targets;
   struct TryOut {
     uint32_t start, end;
     const raw::EncodedCatchHandler* handler;
   };
   budget::Vector<TryOut> tries;
-  budget::UnorderedMap<uint32_t, std::size_t> handler_at;  // byte offset -> handler
-  for (std::size_t k = 0; k < item.handler_byte_offsets.size(); ++k) {
-    dexsplit::budget::visit();
-    handler_at.emplace(item.handler_byte_offsets[k], k);
-  }
-  for (const raw::TryItem& t : item.tries) {
-    dexsplit::budget::visit();
-    uint32_t end = t.start_addr + uint32_t{t.insn_count};
-    if (t.start_addr >= size || end > size || t.insn_count == 0 || !is_start[t.start_addr] ||
-        (!is_start[end] && end != size && !payloads.contains(end))) {
-      fail(budget::format("try range at code offset {} does not cover whole instructions", t.start_addr));
-    }
-    auto h = handler_at.find(t.handler_off);
-    if (h == handler_at.end()) {
-      fail(budget::format("try range at code offset {} has no handler at {}", t.start_addr, t.handler_off));
-    }
-    const raw::EncodedCatchHandler& handler = item.handlers[h->second];
-    tries.push_back({t.start_addr, end, &handler});
-    targets.push_back(t.start_addr);
-    targets.push_back(end);
-    for (const raw::EncodedTypePair& p : handler.handlers) {
-      dexsplit::budget::visit();
-      targets.push_back(target_of(0, p.addr, "catch handler"));
-    }
-    if (handler.catch_all_addr) {
-      targets.push_back(target_of(0, *handler.catch_all_addr, "catch-all handler"));
-    }
+  for (const auto& range : item.tries) {
+    budget::visit();
+    auto found =
+        std::lower_bound(item.handler_byte_offsets.begin(), item.handler_byte_offsets.end(), range.handler_off);
+    const auto index = static_cast<std::size_t>(found - item.handler_byte_offsets.begin());
+    tries.push_back({range.start_addr, range.start_addr + uint32_t{range.insn_count}, &item.handlers[index]});
   }
 
   // Labels are numbered in code order, so a read is canonical.
   Code code;
   code.registers = item.registers_size;
-  budget::sort(targets.begin(), targets.end());
-  targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
   budget::Map<uint32_t, Label> labels;
   for (uint32_t t : targets) {
     dexsplit::budget::visit();
@@ -783,11 +681,11 @@ Code Reader::read_code(uint32_t code_off) {
       ++next_event;
     }
   };
-  code.items.reserve(decoded.size() + labels.size() + events.size());
-  for (std::size_t i = 0; i < decoded.size(); ++i) {
+  code.items.reserve(starts.size() + labels.size() + events.size());
+  for (std::size_t i = 0; i < starts.size(); ++i) {
     dexsplit::budget::visit();
     const uint32_t pos = starts[i];
-    const raw::InsnFields& f = decoded[i];
+    const raw::InsnFields f = check(raw::decode_insn(insns, pos));
     if (f.opcode == 0x00 && payloads.contains(pos + 1)) {
       continue;  // padding: the next instruction boundary takes its labels
     }
@@ -810,6 +708,7 @@ Code Reader::read_code(uint32_t code_off) {
     }
     code.tries.push_back(std::move(range));
   }
+  file_.release_code_item(code_off);
   return code;
 }
 
