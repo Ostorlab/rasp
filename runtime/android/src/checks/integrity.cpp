@@ -23,6 +23,8 @@
 #include <bit>
 #include <dlfcn.h>
 #include <link.h>
+
+#include "rasp/util/obfuscation.h"
 #endif
 
 namespace rasp::android::checks {
@@ -166,6 +168,10 @@ constexpr std::uint64_t kShfAlloc = 0x2;
 
 /// The name of the executable code section.
 constexpr std::string_view kTextSectionName = ".text";
+
+/// The name of the runtime's config section, whose trailing 32 bytes carry the expected plaintext `.text` digest
+/// on packed builds.
+constexpr std::string_view kConfigSectionName = ".rasp_config";
 
 /// Whether the range `[offset, offset + length)` lies within a container of `size` bytes, checked without any addition
 /// that could overflow. Every bounds check on an attacker-controlled ELF offset and size goes through this, so a
@@ -488,19 +494,50 @@ std::optional<std::array<std::uint8_t, kDigestSize>> sha256(std::span<const std:
   return digest;
 }
 
+namespace {
+
+/// Encodes bytes as lowercase hex.
+///
+/// @param bytes The bytes to encode.
+/// @return Their hex string.
+[[nodiscard]] std::string hex_encode(std::span<const std::uint8_t> bytes) {
+  constexpr std::string_view kDigits = "0123456789abcdef";
+  std::string hex;
+  hex.reserve(bytes.size() * 2);
+  for (const std::uint8_t byte : bytes) {
+    hex.push_back(kDigits[byte >> 4U]);
+    hex.push_back(kDigits[byte & 0x0FU]);
+  }
+  return hex;
+}
+
+/// The expected plaintext `.text` digest a packed runtime carries, as hex: the `.rasp_config` section's 32 bytes before
+/// its keystore share, which the packer's fold writes there and binds into the root key. All-zero bytes mean the
+/// library was never packed, and the caller falls back to comparing the file against memory.
+///
+/// @param image The library's whole file bytes.
+/// @return The digest as hex. Nothing when the section is missing, too small, or unwritten.
+[[nodiscard]] std::optional<std::string> expected_text_hash(std::span<const std::uint8_t> image) {
+  const std::optional<SectionRegion> section = find_section_region(image, kConfigSectionName);
+  if (!section || section->size < 2 * kDigestSize || !range_fits(section->file_offset, section->size, image.size())) {
+    return std::nullopt;
+  }
+  const auto start = static_cast<std::size_t>(section->file_offset + section->size - (2 * kDigestSize));
+  const std::span<const std::uint8_t> digest = image.subspan(start, kDigestSize);
+  if (std::ranges::all_of(digest, [](std::uint8_t byte) { return byte == 0; })) {
+    return std::nullopt;
+  }
+  return hex_encode(digest);
+}
+
+}  // namespace
+
 std::optional<std::string> sha256_hex(std::span<const std::uint8_t> bytes) {
   const std::optional<std::array<std::uint8_t, kDigestSize>> digest = sha256(bytes);
   if (!digest.has_value()) {
     return std::nullopt;
   }
-  constexpr std::string_view kDigits = "0123456789abcdef";
-  std::string hex;
-  hex.reserve(digest->size() * 2);
-  for (const std::uint8_t byte : *digest) {
-    hex.push_back(kDigits[byte >> 4U]);
-    hex.push_back(kDigits[byte & 0x0FU]);
-  }
-  return hex;
+  return hex_encode(*digest);
 }
 
 std::vector<Observation> observe_text_hashes(std::string_view library_path, std::span<const std::uint8_t> text_memory) {
@@ -519,6 +556,18 @@ std::vector<Observation> observe_text_hashes(std::string_view library_path, std:
       image.subspan(static_cast<std::size_t>(region->file_offset), static_cast<std::size_t>(region->size));
   const std::span<const std::uint8_t> memory_bytes =
       text_memory.subspan(static_cast<std::size_t>(region->memory_address), static_cast<std::size_t>(region->size));
+
+  // A packed library ships ciphertext where this digest was taken, so its file bytes can never match the decrypted
+  // memory. The packer's fold ships the expected plaintext digest in `.rasp_config` instead; comparing the running
+  // `.text` against it observes the same fact: the running code is the code that shipped.
+  if (const std::optional<std::string> expected = expected_text_hash(image)) {
+    const std::optional<std::string> memory_hash = sha256_hex(memory_bytes);
+    return {
+        observed(kTextHashSignal, kFileSource, *expected),
+        memory_hash ? observed(kTextHashSignal, kMemorySource, *memory_hash) : failed(kTextHashSignal, kMemorySource),
+    };
+  }
+
   const std::optional<std::string> file_hash = sha256_hex(file_bytes);
   const std::optional<std::string> memory_hash = sha256_hex(memory_bytes);
   return {
@@ -596,6 +645,10 @@ constexpr char kAnchor = 0;
 }  // namespace
 
 std::vector<Observation> integrity() {
+  static constexpr std::array kObfuscatedLiterals = {
+      kTextHashSignal, kFileSource, kMemorySource, kTextSectionName, kConfigSectionName,
+  };
+  rasp::util::anchor_literals(kObfuscatedLiterals);
   const std::optional<LoadedLibrary> library = find_own_library();
   if (!library || library->path.empty()) {
     return {failed(kTextHashSignal, kFileSource), failed(kTextHashSignal, kMemorySource)};

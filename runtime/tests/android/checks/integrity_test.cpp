@@ -329,6 +329,53 @@ struct TextLayout {
   return {.text_offset_in_segment = text_offset, .segment_file_size = 0x1000, .segment_memory_size = 0x1000};
 }
 
+/// An image like `image_with_text` builds, plus a `.rasp_config` section of `config_size` bytes after the text
+/// segment, whose 32 bytes before the section's end are overwritten with `digest`. The packer's fold leaves such a
+/// section in every packed library: the expected plaintext `.text` digest right before the keystore share, bound
+/// into the root key.
+///
+/// @param text_bytes The `.text` content, also placed in the section the image names `.text`.
+/// @param layout The text layout, as `image_with_text` takes it.
+/// @param config_size The `.rasp_config` section's size, at least 64 bytes.
+/// @param digest The bytes written into the section's 32 bytes before its end, or an empty span to leave them zero.
+/// @return The built image.
+[[nodiscard]] std::vector<std::uint8_t> image_with_text_and_config(std::span<const std::uint8_t> text_bytes,
+                                                                   const TextLayout& layout, std::uint64_t config_size,
+                                                                   std::span<const std::uint8_t> digest) {
+  const std::uint64_t segment_file_offset = kPageSize;
+  const std::uint64_t config_offset = segment_file_offset + 0x2000;
+  const SegmentSpec text_segment{
+      .flags = kPfR | kPfX,
+      .file_offset = segment_file_offset,
+      .address = kSegmentVaddr,
+      .file_size = layout.segment_file_size,
+      .memory_size = layout.segment_memory_size,
+  };
+  const SectionSpec text_section{
+      .name = ".text",
+      .type = kShtProgbits,
+      .flags = kShfAlloc | kShfExecinstr,
+      .address = kSegmentVaddr + layout.text_offset_in_segment,
+      .file_offset = segment_file_offset + layout.text_offset_in_segment,
+      .size = text_bytes.size(),
+  };
+  const SectionSpec config_section{
+      .name = ".rasp_config",
+      .type = kShtProgbits,
+      .flags = kShfAlloc,
+      .address = 0,
+      .file_offset = config_offset,
+      .size = config_size,
+  };
+  std::vector<std::uint8_t> image = build_image({text_section, config_section}, {text_segment}, text_bytes);
+  image.resize(static_cast<std::size_t>(config_offset + config_size), 0);
+  if (!digest.empty()) {
+    std::ranges::copy(digest,
+                      std::span(image).subspan(static_cast<std::size_t>(config_offset + config_size - 64)).begin());
+  }
+  return image;
+}
+
 TEST(Integrity, findTextRegion_whenSegmentIsPageShifted_translatesOffsetToAddress) {
   const std::vector<std::uint8_t> text = sample_text(200);
   const std::uint64_t text_offset_in_segment = 0x40;
@@ -491,6 +538,64 @@ TEST(Integrity, observeTextHashes_whenMemoryWasPatched_reportsDifferentHashes) {
   EXPECT_EQ(observations[0].status, Status::kOk);
   EXPECT_EQ(observations[1].status, Status::kOk);
   EXPECT_NE(observations[0].value, observations[1].value);
+}
+
+TEST(Integrity, observeTextHashes_whenTheLibraryIsPacked_comparesMemoryAgainstTheExpectedPlaintextHash) {
+  const std::vector<std::uint8_t> text = sample_text(300);
+  const std::optional<std::array<std::uint8_t, kDigestSize>> digest = sha256(text);
+  ASSERT_TRUE(digest.has_value());
+  const std::optional<std::string> hash = sha256_hex(text);
+  ASSERT_TRUE(hash.has_value());
+  const std::vector<std::uint8_t> image = image_with_text_and_config(text, whole_page_layout(0x30), 128, *digest);
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string library = directory.path() + "/librasp.so";
+  ASSERT_TRUE(write_file(library, as_string(image)));
+  const std::vector<std::uint8_t> memory = loaded_image(image, whole_page_layout(0x30));
+
+  const std::vector<Observation> observations = observe_text_hashes(library, memory);
+
+  EXPECT_EQ(observations, (std::vector<Observation>{hashed("file", *hash), hashed("memory", *hash)}));
+}
+
+TEST(Integrity, observeTextHashes_whenThePackedLibraryWasPatched_reportsDifferentHashes) {
+  const std::vector<std::uint8_t> text = sample_text(300);
+  const std::optional<std::array<std::uint8_t, kDigestSize>> digest = sha256(text);
+  ASSERT_TRUE(digest.has_value());
+  const std::optional<std::string> hash = sha256_hex(text);
+  ASSERT_TRUE(hash.has_value());
+  const std::vector<std::uint8_t> image = image_with_text_and_config(text, whole_page_layout(0x30), 128, *digest);
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string library = directory.path() + "/librasp.so";
+  ASSERT_TRUE(write_file(library, as_string(image)));
+
+  std::vector<std::uint8_t> patched = loaded_image(image, whole_page_layout(0x30));
+  patched[static_cast<std::size_t>(kSegmentVaddr + 0x30)] ^= 0xFFU;  // a hook, patched into the running code
+
+  const std::vector<Observation> observations = observe_text_hashes(library, patched);
+
+  ASSERT_EQ(observations.size(), 2U);
+  EXPECT_EQ(observations[0].status, Status::kOk);
+  EXPECT_EQ(observations[1].status, Status::kOk);
+  EXPECT_EQ(std::get<std::string>(observations[0].value), *hash);  // the shipped expectation, not the file's ciphertext
+  EXPECT_NE(observations[0].value, observations[1].value);
+}
+
+TEST(Integrity, observeTextHashes_whenTheConfigDigestSlotIsUnwritten_fallsBackToTheFileHash) {
+  const std::vector<std::uint8_t> text = sample_text(300);
+  const std::vector<std::uint8_t> image = image_with_text_and_config(text, whole_page_layout(0x30), 128, {});
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string library = directory.path() + "/librasp.so";
+  ASSERT_TRUE(write_file(library, as_string(image)));
+  const std::vector<std::uint8_t> memory = loaded_image(image, whole_page_layout(0x30));
+
+  const std::vector<Observation> observations = observe_text_hashes(library, memory);
+
+  const std::optional<std::string> hash = sha256_hex(text);
+  ASSERT_TRUE(hash.has_value());
+  EXPECT_EQ(observations, (std::vector<Observation>{hashed("file", *hash), hashed("memory", *hash)}));
 }
 
 TEST(Integrity, observeTextHashes_whenFileIsMissing_reportsAnError) {
