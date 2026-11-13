@@ -1443,5 +1443,913 @@ TEST(CodeEncoder, encode_whenAGrowingBranchPushesAnotherOutOfRange_growsThatOneT
     EXPECT_EQ(insns[1].fields.offset, 137);
 }
 
+TEST(CodeEncoder, encode_whenAFarIfIsFollowedByAGoto_growsEachBranchAsFarAsItNeeds)
+{
+    std::vector<Item> items{Insn{IfZero{Condition::Eq, 0, Label{1}}}, Insn{Goto{Label{0}}}};
+    items.insert(items.end(), 200, Item{Insn{Nop{}}});
+    items.push_back(Label{0});
+    items.insert(items.end(), 40000, Item{Insn{Nop{}}});
+    items.push_back(Label{1});
+    items.push_back(Insn{ReturnVoid{}});
+
+    std::vector<Decoded> insns = decode(encode(code_of(std::move(items))).insns);
+
+    EXPECT_EQ(name_of(insns[0].fields), "if-nez");
+    EXPECT_EQ(insns[0].fields.offset, 5);
+    EXPECT_EQ(insns[1].address, 2u);
+    EXPECT_EQ(name_of(insns[1].fields), "goto/32");
+    EXPECT_EQ(insns[1].fields.offset, 5 + 2 + 200 + 40000 - 2);
+    EXPECT_EQ(insns[2].address, 5u);
+    EXPECT_EQ(name_of(insns[2].fields), "goto/16");
+    EXPECT_EQ(insns[2].fields.offset, 2 + 200);
+}
+
+TEST(CodeEncoder, encode_whenSwitchKeysAreDense_usesPackedSwitch)
+{
+    const Code code = switch_code({{3, Label{0}}, {1, Label{1}}, {2, Label{0}}}, 2);
+
+    CodeOut out = encode(code);
+    raw::InsnFields fields = decode(out.insns)[0].fields;
+    raw::InsnFields expected{.opcode = fields.opcode, .a = 0, .offset = 6};
+
+    EXPECT_EQ(name_of(fields), "packed-switch");
+    EXPECT_TRUE(fields == expected);
+    // ident, size, first_key, then one target per key from 1 to 3, relative to the switch.
+    EXPECT_EQ(units_from(out, 6), (Units{0x0100, 3, 1, 0, 5, 0, 4, 0, 4, 0}));
+}
+
+TEST(CodeEncoder, encode_whenSwitchKeysAreSpreadOut_usesSparseSwitchWithSortedKeys)
+{
+    const Code code = switch_code({{1, Label{0}}, {1000, Label{1}}, {-7, Label{0}}}, 2);
+
+    CodeOut out = encode(code);
+    raw::InsnFields fields = decode(out.insns)[0].fields;
+
+    EXPECT_EQ(name_of(fields), "sparse-switch");
+    EXPECT_EQ(fields.offset, 6);
+    // ident, size, the keys -7, 1 and 1000, then their targets.
+    EXPECT_EQ(units_from(out, 6),
+              (Units{0x0200, 3, 0xFFF9, 0xFFFF, 1, 0, 1000, 0, 4, 0, 4, 0, 5, 0}));
+}
+
+TEST(CodeEncoder, encode_whenAPackedSwitchHasAGap_makesTheGapFallThrough)
+{
+    const Code code = switch_code({{1, Label{0}}, {3, Label{0}}}, 1);
+
+    CodeOut out = encode(code);
+
+    EXPECT_EQ(name_of(decode(out.insns)[0].fields), "packed-switch");
+    // Key 2 has no case: its target is the instruction after the switch, 3 units on.
+    EXPECT_EQ(units_from(out, 6), (Units{0x0100, 3, 1, 0, 4, 0, 3, 0, 4, 0}));
+}
+
+TEST(CodeEncoder, encode_whenTwoKeysAreFourApart_usesSparseSwitch)
+{
+    const Code code = switch_code({{1, Label{0}}, {4, Label{0}}}, 1);
+
+    CodeOut out = encode(code);
+
+    EXPECT_EQ(name_of(decode(out.insns)[0].fields), "sparse-switch");
+    EXPECT_EQ(units_from(out, 6), (Units{0x0200, 2, 1, 0, 4, 0, 4, 0, 4, 0}));
+}
+
+TEST(CodeEncoder, encode_whenSwitchHasOneCase_usesPackedSwitch)
+{
+    const Code code = switch_code({{5, Label{0}}}, 1);
+
+    CodeOut out = encode(code);
+
+    EXPECT_EQ(name_of(decode(out.insns)[0].fields), "packed-switch");
+    EXPECT_EQ(units_from(out, 6), (Units{0x0100, 1, 5, 0, 4, 0}));
+}
+
+TEST(CodeEncoder, encode_whenSwitchHasNoCases_usesAnEmptySparseSwitch)
+{
+    const Code code = switch_code({}, 0);
+
+    CodeOut out = encode(code);
+    raw::InsnFields fields = decode(out.insns)[0].fields;
+
+    EXPECT_EQ(name_of(fields), "sparse-switch");
+    EXPECT_EQ(fields.offset, 4);
+    EXPECT_EQ(units_from(out, 4), (Units{0x0200, 0}));
+}
+
+TEST(CodeEncoder, encode_whenAPackedSwitchStartsAtANegativeKey_writesTheKeySignExtended)
+{
+    const Code code = switch_code({{0, Label{0}}, {-1, Label{0}}}, 1);
+
+    CodeOut out = encode(code);
+
+    EXPECT_EQ(units_from(out, 6), (Units{0x0100, 2, 0xFFFF, 0xFFFF, 4, 0, 4, 0}));
+}
+
+TEST(CodeEncoder, encode_whenSwitchKeysAreTheIntLimits_usesSparseSwitch)
+{
+    const Code code = switch_code({{kInt32Max, Label{0}}, {kInt32Min, Label{0}}}, 1);
+
+    CodeOut out = encode(code);
+
+    EXPECT_EQ(name_of(decode(out.insns)[0].fields), "sparse-switch");
+    EXPECT_EQ(units_from(out, 6), (Units{0x0200, 2, 0x0000, 0x8000, 0xFFFF, 0x7FFF, 4, 0, 4, 0}));
+}
+
+TEST(CodeEncoder, encode_whenDenseKeysSpan65535Values_usesPackedSwitch)
+{
+    std::vector<Switch::Case> cases;
+    for (int32_t key = 0; key < 65535; ++key)
+        cases.push_back({key, Label{0}});
+
+    CodeOut out = encode(switch_code(std::move(cases), 1));
+
+    EXPECT_EQ(name_of(decode(out.insns)[0].fields), "packed-switch");
+    EXPECT_EQ(out.insns[7], 0xFFFF);
+    EXPECT_EQ(out.insns.size(), 6u + 4 + 2 * 65535);
+}
+
+TEST(CodeEncoder, encode_whenDenseKeysSpan65536Values_usesSparseSwitch)
+{
+    std::vector<Switch::Case> cases;
+    for (int32_t key = 0; key < 65534; ++key)
+        cases.push_back({key, Label{0}});
+    cases.push_back({65535, Label{0}});
+
+    CodeOut out = encode(switch_code(std::move(cases), 1));
+
+    EXPECT_EQ(name_of(decode(out.insns)[0].fields), "sparse-switch");
+    EXPECT_EQ(out.insns[7], 0xFFFF);
+    EXPECT_EQ(out.insns.size(), 6u + 2 + 4 * 65535);
+}
+
+TEST(CodeEncoder, encode_whenSwitchIsNotTheFirstInstruction_writesTargetsRelativeToTheSwitch)
+{
+    const Code code = code_of({Insn{Nop{}}, Insn{Switch{0, {{1, Label{0}}, {9, Label{0}}}}},
+                               Insn{ReturnVoid{}}, Label{0}, Insn{ReturnVoid{}}});
+
+    CodeOut out = encode(code);
+    Decoded insn = decode(out.insns)[1];
+
+    EXPECT_EQ(insn.address, 1u);
+    EXPECT_EQ(insn.fields.offset, 5);
+    EXPECT_EQ(units_from(out, 6), (Units{0x0200, 2, 1, 0, 9, 0, 4, 0, 4, 0}));
+}
+
+TEST(CodeEncoder, encode_whenASwitchTargetIsBeforeTheSwitch_writesANegativeOffset)
+{
+    const Code code =
+        code_of({Label{0}, Insn{Nop{}}, Insn{Switch{0, {{1, Label{0}}}}}, Insn{ReturnVoid{}}});
+
+    CodeOut out = encode(code);
+
+    EXPECT_EQ(units_from(out, 6), (Units{0x0100, 1, 1, 0, 0xFFFF, 0xFFFF}));
+}
+
+TEST(CodeEncoder, encode_whenTheCodeBeforeAPayloadHasAnOddSize_padsWithANop)
+{
+    const Code code = switch_code({{5, Label{0}}}, 1);
+
+    CodeOut out = encode(code);
+
+    EXPECT_EQ(out.insns[5], 0x0000);
+    EXPECT_EQ(decode(out.insns)[0].fields.offset, 6);
+}
+
+TEST(CodeEncoder, encode_whenTheCodeBeforeAPayloadHasAnEvenSize_addsNoPadding)
+{
+    const Code code = switch_code({{5, Label{0}}, {6, Label{1}}}, 2);
+
+    CodeOut out = encode(code);
+
+    EXPECT_EQ(out.insns[6], raw::PACKED_SWITCH_PAYLOAD);
+    EXPECT_EQ(decode(out.insns)[0].fields.offset, 6);
+}
+
+TEST(CodeEncoder, encode_whenInsnIsFillArrayData_writesTheRegisterAndThePayloadOffset)
+{
+    const Code code = code_of({Insn{FillArrayData{200, 1, {1, 2}}}, Insn{ReturnVoid{}}});
+
+    raw::InsnFields fields = decode(encode(code).insns)[0].fields;
+    raw::InsnFields expected{.opcode = fields.opcode, .a = 200, .offset = 4};
+
+    EXPECT_EQ(name_of(fields), "fill-array-data");
+    EXPECT_TRUE(fields == expected);
+}
+
+TEST(CodeEncoder, encode_whenArrayDataHasAnOddNumberOfBytes_padsTheLastUnitWithZero)
+{
+    const Code code = code_of({Insn{FillArrayData{0, 1, {1, 2, 3}}}, Insn{ReturnVoid{}}});
+
+    // ident, element width, element count (2 units), then the bytes, low byte first.
+    EXPECT_EQ(units_from(encode(code), 4), (Units{0x0300, 1, 3, 0, 0x0201, 0x0003}));
+}
+
+TEST(CodeEncoder, encode_whenArrayElementsAreTwoBytesWide_countsElementsNotBytes)
+{
+    const Code code =
+        code_of({Insn{FillArrayData{0, 2, {0x34, 0x12, 0x78, 0x56}}}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(units_from(encode(code), 4), (Units{0x0300, 2, 2, 0, 0x1234, 0x5678}));
+}
+
+TEST(CodeEncoder, encode_whenArrayElementsAreFourBytesWide_writesEachAsTwoUnits)
+{
+    const Code code =
+        code_of({Insn{FillArrayData{0, 4, {0x78, 0x56, 0x34, 0x12}}}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(units_from(encode(code), 4), (Units{0x0300, 4, 1, 0, 0x5678, 0x1234}));
+}
+
+TEST(CodeEncoder, encode_whenArrayElementsAreEightBytesWide_writesEachAsFourUnits)
+{
+    const Code code =
+        code_of({Insn{FillArrayData{0, 8, {1, 2, 3, 4, 5, 6, 7, 8}}}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(units_from(encode(code), 4),
+              (Units{0x0300, 8, 1, 0, 0x0201, 0x0403, 0x0605, 0x0807}));
+}
+
+TEST(CodeEncoder, encode_whenArrayDataIsEmpty_writesAPayloadWithNoElements)
+{
+    const Code code = code_of({Insn{FillArrayData{0, 1, {}}}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(units_from(encode(code), 4), (Units{0x0300, 1, 0, 0}));
+}
+
+TEST(CodeEncoder, encode_whenArrayDataHasMoreThan65535Elements_writesTheCountInTwoUnits)
+{
+    const Code code =
+        code_of({Insn{FillArrayData{0, 1, std::vector<uint8_t>(65536, 0xAB)}}, Insn{ReturnVoid{}}});
+
+    CodeOut out = encode(code);
+
+    EXPECT_EQ(out.insns[6], 0x0000);
+    EXPECT_EQ(out.insns[7], 0x0001);
+    EXPECT_EQ(out.insns.size(), 4u + 4 + 32768);
+}
+
+TEST(CodeEncoder, encode_whenCodeHasTwoPayloads_startsEachAtAnEvenAddress)
+{
+    const Code code = code_of({Insn{FillArrayData{0, 1, {9}}}, Insn{FillArrayData{1, 1, {8}}},
+                               Insn{ReturnVoid{}}, Insn{ReturnVoid{}}});
+
+    CodeOut out = encode(code);
+    std::vector<Decoded> insns = decode(out.insns);
+
+    EXPECT_EQ(insns[0].fields.offset, 8);
+    EXPECT_EQ(insns[1].fields.offset, 14 - 3);
+    EXPECT_EQ(units_from(out, 8),
+              (Units{0x0300, 1, 1, 0, 0x0009, 0x0000, 0x0300, 1, 1, 0, 0x0008}));
+}
+
+TEST(CodeEncoder, encode_whenCodeFillsAByteArrayAndALongArray_writesBothPayloadsAfterTheCode)
+{
+    const Code code =
+        code_of({Insn{Const{0, 3}}, Insn{NewArray{1, 0, "[B"}},
+                 Insn{FillArrayData{1, 1, {1, 2, 3}}}, Insn{NewArray{2, 0, "[J"}},
+                 Insn{FillArrayData{2, 8, std::vector<uint8_t>(24, 0xAB)}}, Insn{ReturnVoid{}}});
+    Units long_payload{0x0300, 8, 3, 0};
+    long_payload.insert(long_payload.end(), 12, 0xABAB);
+
+    CodeOut out = encode(code);
+    std::vector<Decoded> insns = decode(out.insns);
+
+    EXPECT_EQ(insns[2].address, 3u);
+    EXPECT_EQ(insns[2].fields.offset, 12 - 3);
+    EXPECT_EQ(insns[4].address, 8u);
+    EXPECT_EQ(insns[4].fields.offset, 18 - 8);
+    EXPECT_EQ(Units(out.insns.begin() + 12, out.insns.begin() + 18),
+              (Units{0x0300, 1, 3, 0, 0x0201, 0x0003}));
+    EXPECT_EQ(units_from(out, 18), long_payload);
+}
+
+TEST(CodeEncoder, encode_whenCodeHasNoTryRanges_emitsNoTriesAndNoHandlers)
+{
+    CodeOut out = encode(three_calls({}));
+
+    EXPECT_TRUE(out.tries.empty());
+    EXPECT_TRUE(out.handlers.empty());
+}
+
+TEST(CodeEncoder, encode_whenCodeHasOneTryRange_emitsOneTryWithItsHandler)
+{
+    const Code code =
+        three_calls({TryRange{Label{1}, Label{2}, {Catch{"LE;", Label{4}}}, std::nullopt}});
+
+    EXPECT_EQ(encoded_tries(code), (std::vector<Try>{{3, 3, caught({{"LE;", 10}})}}));
+}
+
+TEST(CodeEncoder, encode_whenCodeHasOneTryRange_writesTheHandlerListInTheFormatOfTheFile)
+{
+    const Code code =
+        three_calls({TryRange{Label{1}, Label{2}, {Catch{"LE;", Label{4}}}, std::nullopt}});
+    Pools pools = pools_of(code);
+
+    CodeOut out = encode(code, pools);
+
+    ASSERT_EQ(out.tries.size(), 1u);
+    EXPECT_EQ(out.tries[0].handler_off, 1);
+    // One handler; it has one catch: the type index, then the handler address.
+    EXPECT_EQ(out.handlers,
+              (std::vector<uint8_t>{1, 1, static_cast<uint8_t>(pools.type("LE;")), 10}));
+}
+
+TEST(CodeEncoder, encode_whenATryRangeHasOnlyACatchAll_writesAZeroSizeAndTheAddress)
+{
+    const Code code = three_calls({TryRange{Label{0}, Label{3}, {}, Label{4}}});
+
+    CodeOut out = encode(code);
+
+    EXPECT_EQ(out.handlers, (std::vector<uint8_t>{1, 0, 10}));
+}
+
+TEST(CodeEncoder, encode_whenATryRangeHasCatchesAndACatchAll_writesANegativeSize)
+{
+    const Code code =
+        three_calls({TryRange{Label{0}, Label{3}, {Catch{"LE;", Label{4}}}, Label{5}}});
+    Pools pools = pools_of(code);
+
+    CodeOut out = encode(code, pools);
+
+    // The size -1 is 0x7f as sleb128.
+    EXPECT_EQ(out.handlers,
+              (std::vector<uint8_t>{1, 0x7f, static_cast<uint8_t>(pools.type("LE;")), 10, 12}));
+}
+
+TEST(CodeEncoder, encode_whenATryRangeHasSeveralCatches_keepsTheirOrder)
+{
+    const Code code = three_calls({TryRange{
+        Label{0}, Label{3}, {Catch{"LZ;", Label{4}}, Catch{"LA;", Label{5}}}, std::nullopt}});
+
+    EXPECT_EQ(encoded_tries(code), (std::vector<Try>{{0, 9, caught({{"LZ;", 10}, {"LA;", 12}})}}));
+}
+
+TEST(CodeEncoder, encode_whenATryRangeListsACatchTypeTwice_keepsBoth)
+{
+    const Code code = three_calls({TryRange{
+        Label{0}, Label{3}, {Catch{"LE;", Label{4}}, Catch{"LE;", Label{5}}}, std::nullopt}});
+
+    EXPECT_EQ(encoded_tries(code), (std::vector<Try>{{0, 9, caught({{"LE;", 10}, {"LE;", 12}})}}));
+}
+
+TEST(CodeEncoder, encode_whenATryRangeStartsAndEndsAtTheSameLabel_emitsNoTry)
+{
+    const Code code =
+        three_calls({TryRange{Label{1}, Label{1}, {Catch{"LE;", Label{4}}}, std::nullopt}});
+
+    CodeOut out = encode(code);
+
+    EXPECT_TRUE(out.tries.empty());
+    EXPECT_TRUE(out.handlers.empty());
+}
+
+TEST(CodeEncoder, encode_whenATryRangeCoversNoInstruction_emitsNoTry)
+{
+    const Code code =
+        code_of({Label{0}, Label{1}, Insn{ReturnVoid{}}, Label{2}, Insn{ReturnVoid{}}},
+                {TryRange{Label{0}, Label{1}, {Catch{"LE;", Label{2}}}, std::nullopt}});
+
+    CodeOut out = encode(code);
+
+    EXPECT_TRUE(out.tries.empty());
+    EXPECT_TRUE(out.handlers.empty());
+}
+
+TEST(CodeEncoder, encode_whenATryRangeHasNoHandler_emitsNoTry)
+{
+    const Code code = three_calls({TryRange{Label{0}, Label{3}, {}, std::nullopt}});
+
+    CodeOut out = encode(code);
+
+    EXPECT_TRUE(out.tries.empty());
+    EXPECT_TRUE(out.handlers.empty());
+}
+
+TEST(CodeEncoder, encode_whenATryRangeEndsAtTheEndOfTheCode_coversTheLastInstruction)
+{
+    const Code code = code_of({Label{0}, Insn{Nop{}}, Insn{ReturnVoid{}}, Label{1}},
+                              {TryRange{Label{0}, Label{1}, {}, Label{0}}});
+
+    EXPECT_EQ(encoded_tries(code), (std::vector<Try>{{0, 2, caught({}, 0)}}));
+}
+
+TEST(CodeEncoder, encode_whenSeparateRangesHaveEqualHandlers_sharesOneHandler)
+{
+    const Code code =
+        three_calls({TryRange{Label{0}, Label{1}, {Catch{"LE;", Label{4}}}, std::nullopt},
+                     TryRange{Label{2}, Label{3}, {Catch{"LE;", Label{4}}}, std::nullopt}});
+
+    CodeOut out = encode(code);
+
+    ASSERT_EQ(out.tries.size(), 2u);
+    EXPECT_EQ(out.tries[0].start, 0u);
+    EXPECT_EQ(out.tries[1].start, 6u);
+    EXPECT_EQ(out.tries[0].handler_off, out.tries[1].handler_off);
+    EXPECT_EQ(out.handlers[0], 1);
+    EXPECT_EQ(out.handlers.size(), 4u);
+}
+
+TEST(CodeEncoder, encode_whenSeparateRangesHaveDifferentHandlers_writesBothHandlers)
+{
+    const Code code =
+        three_calls({TryRange{Label{0}, Label{1}, {Catch{"LE;", Label{4}}}, std::nullopt},
+                     TryRange{Label{2}, Label{3}, {Catch{"LE;", Label{5}}}, std::nullopt}});
+
+    CodeOut out = encode(code);
+
+    ASSERT_EQ(out.tries.size(), 2u);
+    EXPECT_EQ(out.handlers[0], 2);
+    EXPECT_EQ(out.tries[0].handler_off, 1);
+    EXPECT_EQ(out.tries[1].handler_off, 4);
+}
+
+TEST(CodeEncoder, encode_whenNeighbouringRangesHaveEqualHandlers_joinsThemIntoOneTry)
+{
+    const Code code =
+        three_calls({TryRange{Label{0}, Label{1}, {Catch{"LE;", Label{4}}}, std::nullopt},
+                     TryRange{Label{1}, Label{3}, {Catch{"LE;", Label{4}}}, std::nullopt}});
+
+    EXPECT_EQ(encoded_tries(code), (std::vector<Try>{{0, 9, caught({{"LE;", 10}})}}));
+}
+
+TEST(CodeEncoder, encode_whenNeighbouringRangesHaveDifferentHandlers_keepsTwoTries)
+{
+    const Code code =
+        three_calls({TryRange{Label{0}, Label{1}, {Catch{"LE;", Label{4}}}, std::nullopt},
+                     TryRange{Label{1}, Label{3}, {Catch{"LE;", Label{5}}}, std::nullopt}});
+
+    EXPECT_EQ(encoded_tries(code),
+              (std::vector<Try>{{0, 3, caught({{"LE;", 10}})}, {3, 6, caught({{"LE;", 12}})}}));
+}
+
+TEST(CodeEncoder, encode_whenRangesAreListedOutOfAddressOrder_emitsTriesByAddress)
+{
+    const Code code =
+        three_calls({TryRange{Label{2}, Label{3}, {Catch{"LB;", Label{5}}}, std::nullopt},
+                     TryRange{Label{0}, Label{1}, {Catch{"LA;", Label{4}}}, std::nullopt}});
+
+    EXPECT_EQ(encoded_tries(code),
+              (std::vector<Try>{{0, 3, caught({{"LA;", 10}})}, {6, 3, caught({{"LB;", 12}})}}));
+}
+
+TEST(CodeEncoder, encode_whenATryRangeIsNestedInAnother_flattensThemWithTheFirstListedFirst)
+{
+    const Code code = three_calls({
+        TryRange{Label{1}, Label{2}, {Catch{"Ljava/io/IOException;", Label{5}}}, std::nullopt},
+        TryRange{Label{0}, Label{3}, {Catch{"Ljava/lang/Exception;", Label{4}}}, std::nullopt},
+    });
+
+    EXPECT_EQ(encoded_tries(code),
+              (std::vector<Try>{
+                  {0, 3, caught({{"Ljava/lang/Exception;", 10}})},
+                  {3, 3, caught({{"Ljava/io/IOException;", 12}, {"Ljava/lang/Exception;", 10}})},
+                  {6, 3, caught({{"Ljava/lang/Exception;", 10}})},
+              }));
+}
+
+TEST(CodeEncoder, encode_whenATryRangeIsNestedInAnother_sharesTheHandlerOfTheOuterPieces)
+{
+    const Code code = three_calls({
+        TryRange{Label{1}, Label{2}, {Catch{"Ljava/io/IOException;", Label{5}}}, std::nullopt},
+        TryRange{Label{0}, Label{3}, {Catch{"Ljava/lang/Exception;", Label{4}}}, std::nullopt},
+    });
+
+    CodeOut out = encode(code);
+
+    ASSERT_EQ(out.tries.size(), 3u);
+    EXPECT_EQ(out.tries[0].handler_off, out.tries[2].handler_off);
+    EXPECT_NE(out.tries[0].handler_off, out.tries[1].handler_off);
+    EXPECT_EQ(out.handlers[0], 2);
+}
+
+TEST(CodeEncoder, encode_whenTheOuterRangeIsListedFirst_putsItsCatchesFirst)
+{
+    const Code code = three_calls({
+        TryRange{Label{0}, Label{3}, {Catch{"LOuter;", Label{4}}}, std::nullopt},
+        TryRange{Label{1}, Label{2}, {Catch{"LInner;", Label{5}}}, std::nullopt},
+    });
+
+    EXPECT_EQ(encoded_tries(code), (std::vector<Try>{
+                                       {0, 3, caught({{"LOuter;", 10}})},
+                                       {3, 3, caught({{"LOuter;", 10}, {"LInner;", 12}})},
+                                       {6, 3, caught({{"LOuter;", 10}})},
+                                   }));
+}
+
+TEST(CodeEncoder, encode_whenTryRangesOverlapPartly_splitsTheCodeAtEveryBoundary)
+{
+    const Code code =
+        three_calls({TryRange{Label{0}, Label{2}, {Catch{"LA;", Label{4}}}, std::nullopt},
+                     TryRange{Label{1}, Label{3}, {Catch{"LB;", Label{5}}}, std::nullopt}});
+
+    EXPECT_EQ(encoded_tries(code), (std::vector<Try>{
+                                       {0, 3, caught({{"LA;", 10}})},
+                                       {3, 3, caught({{"LA;", 10}, {"LB;", 12}})},
+                                       {6, 3, caught({{"LB;", 12}})},
+                                   }));
+}
+
+TEST(CodeEncoder, encode_whenTheFirstListedRangeHasACatchAll_dropsTheCatchesOfLaterRanges)
+{
+    const Code code = three_calls({
+        TryRange{Label{1}, Label{2}, {}, Label{5}},
+        TryRange{Label{0}, Label{3}, {Catch{"LE;", Label{4}}}, std::nullopt},
+    });
+
+    EXPECT_EQ(encoded_tries(code), (std::vector<Try>{
+                                       {0, 3, caught({{"LE;", 10}})},
+                                       {3, 3, caught({}, 12)},
+                                       {6, 3, caught({{"LE;", 10}})},
+                                   }));
+}
+
+TEST(CodeEncoder, encode_whenALaterRangeHasTheCatchAll_addsItAfterTheEarlierCatches)
+{
+    const Code code = three_calls({
+        TryRange{Label{1}, Label{2}, {Catch{"LE;", Label{5}}}, std::nullopt},
+        TryRange{Label{0}, Label{3}, {}, Label{4}},
+    });
+
+    EXPECT_EQ(encoded_tries(code), (std::vector<Try>{
+                                       {0, 3, caught({}, 10)},
+                                       {3, 3, caught({{"LE;", 12}}, 10)},
+                                       {6, 3, caught({}, 10)},
+                                   }));
+}
+
+TEST(CodeEncoder, encode_whenATryRangeIs65535UnitsLong_emitsOneTry)
+{
+    std::vector<Item> items{Label{0}};
+    items.insert(items.end(), 65535, Item{Insn{Nop{}}});
+    items.push_back(Label{1});
+    items.push_back(Insn{ReturnVoid{}});
+    const Code code = code_of(std::move(items), {TryRange{Label{0}, Label{1}, {}, Label{1}}});
+
+    EXPECT_EQ(encoded_tries(code), (std::vector<Try>{{0, 65535, caught({}, 65535)}}));
+}
+
+TEST(CodeEncoder, encode_whenATryRangeIs65536UnitsLong_cutsItIntoTwoTries)
+{
+    std::vector<Item> items{Label{0}};
+    items.insert(items.end(), 65536, Item{Insn{Nop{}}});
+    items.push_back(Label{1});
+    items.push_back(Insn{ReturnVoid{}});
+    const Code code = code_of(std::move(items), {TryRange{Label{0}, Label{1}, {}, Label{1}}});
+
+    EXPECT_EQ(encoded_tries(code),
+              (std::vector<Try>{{0, 65535, caught({}, 65536)}, {65535, 1, caught({}, 65536)}}));
+}
+
+TEST(CodeEncoder, encode_whenTheLimitOfATryFallsInsideAnInstruction_cutsBeforeThatInstruction)
+{
+    // Instructions start at 1 + 5k: 65535 is inside the one at 65531, 131066 starts one.
+    const Code code = long_try_of_wide_constants(30000);
+
+    EXPECT_EQ(encoded_tries(code), (std::vector<Try>{
+                                       {0, 65531, caught({}, 150001)},
+                                       {65531, 65535, caught({}, 150001)},
+                                       {131066, 18935, caught({}, 150001)},
+                                   }));
+}
+
+TEST(CodeEncoder, encode_whenALongTryRangeIsCut_startsEveryTryAtAnInstruction)
+{
+    const Code code = long_try_of_wide_constants(30000);
+
+    CodeOut out = encode(code);
+    std::set<uint32_t> starts;
+    for (const Decoded &insn : decode(out.insns))
+        starts.insert(insn.address);
+
+    ASSERT_EQ(out.tries.size(), 3u);
+    uint32_t next = 0;
+    for (const CodeOut::Try &t : out.tries) {
+        EXPECT_TRUE(starts.contains(t.start))
+            << "a try starts inside an instruction at " << t.start;
+        EXPECT_EQ(t.start, next);
+        next = t.start + t.count;
+    }
+    EXPECT_EQ(next, 150001u);
+}
+
+TEST(CodeEncoder, encode_whenALongTryRangeHoldsTwoUnitInstructions_cutsAtAnEvenAddress)
+{
+    std::vector<Item> items{Label{0}};
+    items.insert(items.end(), 40000, Item{Insn{Const{0, 100}}});
+    items.push_back(Label{1});
+    items.push_back(Insn{ReturnVoid{}});
+    const Code code =
+        code_of(std::move(items), {TryRange{Label{0}, Label{1}, {Catch{"LE;", Label{1}}}, {}}});
+
+    EXPECT_EQ(encoded_tries(code), (std::vector<Try>{{0, 65534, caught({{"LE;", 80000}})},
+                                                     {65534, 14466, caught({{"LE;", 80000}})}}));
+}
+
+TEST(CodeEncoder, encode_whenASecondHandlerStartsPast65535Bytes_failsWithTooLarge)
+{
+    std::vector<Catch> many(40000, Catch{"LE;", Label{4}});
+    const Code code =
+        three_calls({TryRange{Label{0}, Label{1}, std::move(many), std::nullopt},
+                     TryRange{Label{2}, Label{3}, {Catch{"LE;", Label{5}}}, std::nullopt}});
+
+    Error error = encode_error(code);
+
+    EXPECT_EQ(error.kind, Error::Kind::TooLarge);
+    EXPECT_EQ(error.message, "LT;->m()V: too many exception handlers");
+}
+
+TEST(CodeEncoder, encode_whenDebugInfoIsOff_emitsNoDebugInfo)
+{
+    Code code = code_of({LineNumber{1}, Insn{ReturnVoid{}}});
+    code.parameter_names = {std::string("argument")};
+
+    EXPECT_TRUE(encode(code, false).debug.empty());
+}
+
+TEST(CodeEncoder, encode_whenCodeHasNoMarkerAndNoParameterName_emitsNoDebugInfo)
+{
+    const Code code = code_of({Label{0}, Insn{ReturnVoid{}}});
+
+    EXPECT_TRUE(encode(code, true).debug.empty());
+}
+
+TEST(CodeEncoder, encode_whenCodeHasOnlyParameterNames_emitsAHeaderAndNoOpcodes)
+{
+    Code code = code_of({Insn{ReturnVoid{}}});
+    code.parameter_names = {std::string("first"), std::nullopt, std::string("third")};
+
+    CodeOut out = encode(code);
+
+    // line_start 0, 3 parameters as index + 1 ("first" is 0, "third" is 1), end of sequence.
+    EXPECT_EQ(out.debug, (std::vector<uint8_t>{0, 3, 1, 0, 2, raw::DBG_END_SEQUENCE}));
+}
+
+TEST(CodeEncoder, encode_whenParametersHaveNames_readsBackAsTheirStringIndices)
+{
+    Code code = code_of({Insn{ConstString{0, "a string before"}}, Insn{ReturnVoid{}}});
+    code.parameter_names = {std::nullopt, std::string("named")};
+    Pools pools = pools_of(code);
+
+    raw::DebugInfoItem item = debug_item(encode(code, pools));
+
+    EXPECT_EQ(item.parameter_names, (std::vector<uint32_t>{raw::NO_INDEX, pools.string("named")}));
+}
+
+TEST(CodeEncoder, encode_whenCodeHasLineNumbers_startsTheLineRegisterAtTheFirstOne)
+{
+    const Code code =
+        code_of({Insn{Nop{}}, LineNumber{42}, Insn{Nop{}}, LineNumber{50}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(debug_item(encode(code)).line_start, 42u);
+}
+
+TEST(CodeEncoder, encode_whenCodeHasMarkersButNoLineNumber_startsTheLineRegisterAtZero)
+{
+    const Code code = code_of({PrologueEnd{}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(debug_item(encode(code)).line_start, 0u);
+}
+
+TEST(CodeEncoder, encode_whenDebugInfoIsEmitted_endsItWithEndSequence)
+{
+    const Code code = code_of({LineNumber{1}, Insn{ReturnVoid{}}});
+
+    CodeOut out = encode(code);
+
+    // line_start 1, no parameters, the special opcode for line +0 pc +0, end of sequence.
+    EXPECT_EQ(out.debug, (std::vector<uint8_t>{1, 0, 0x0e, raw::DBG_END_SEQUENCE}));
+}
+
+TEST(CodeEncoder, encode_whenTheFirstLineIsAfterAnInstruction_advancesTheAddressInItsOpcode)
+{
+    const Code code = code_of({Insn{Nop{}}, LineNumber{42}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code), (Names{"line +0 pc +1"}));
+}
+
+TEST(CodeEncoder, encode_whenTheLineAdvancesByUpToTen_usesOneSpecialOpcode)
+{
+    const Code code = code_of({LineNumber{10}, Insn{Nop{}}, LineNumber{20}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code), (Names{"line +0 pc +0", "line +10 pc +1"}));
+}
+
+TEST(CodeEncoder, encode_whenTheLineAdvancesByEleven_usesAdvanceLine)
+{
+    const Code code = code_of({LineNumber{10}, Insn{Nop{}}, LineNumber{21}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code),
+              (Names{"line +0 pc +0", "advance_line 11", "line +0 pc +1"}));
+}
+
+TEST(CodeEncoder, encode_whenTheLineGoesBackByUpToFour_usesOneSpecialOpcode)
+{
+    const Code code = code_of({LineNumber{10}, Insn{Nop{}}, LineNumber{6}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code), (Names{"line +0 pc +0", "line -4 pc +1"}));
+}
+
+TEST(CodeEncoder, encode_whenTheLineGoesBackByFive_usesAdvanceLineWithANegativeDelta)
+{
+    const Code code = code_of({LineNumber{10}, Insn{Nop{}}, LineNumber{5}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code),
+              (Names{"line +0 pc +0", "advance_line -5", "line +0 pc +1"}));
+}
+
+TEST(CodeEncoder, encode_whenTheLineGoesFarBack_writesTheDeltaAsSleb128)
+{
+    const Code code = code_of({LineNumber{200}, Insn{Nop{}}, LineNumber{3}, Insn{ReturnVoid{}}});
+
+    CodeOut out = encode(code);
+
+    // line_start 200 as uleb128; -197 as sleb128 is BB 7E; 0x1d is line +0 pc +1.
+    EXPECT_EQ(out.debug, (std::vector<uint8_t>{0xC8, 0x01, 0, 0x0e, raw::DBG_ADVANCE_LINE, 0xBB,
+                                               0x7E, 0x1d, raw::DBG_END_SEQUENCE}));
+}
+
+TEST(CodeEncoder, encode_whenAddressAndLineFitTheLastSpecialOpcode_usesIt)
+{
+    CodeOut out = encode(two_lines_apart(16, 1));
+
+    EXPECT_EQ(out.debug, (std::vector<uint8_t>{100, 0, 0x0e, 0xFF, raw::DBG_END_SEQUENCE}));
+}
+
+TEST(CodeEncoder, encode_whenAddressAndLineAreOnePastTheLastSpecialOpcode_usesAdvancePc)
+{
+    EXPECT_EQ(encoded_debug_ops(two_lines_apart(16, 2)),
+              (Names{"line +0 pc +0", "advance_pc 16", "line +2 pc +0"}));
+}
+
+TEST(CodeEncoder, encode_whenTheAddressAdvancesBySeventeen_usesAdvancePc)
+{
+    EXPECT_EQ(encoded_debug_ops(two_lines_apart(17, 0)),
+              (Names{"line +0 pc +0", "advance_pc 17", "line +0 pc +0"}));
+}
+
+TEST(CodeEncoder, encode_whenLineAndAddressBothAdvanceFar_usesAdvanceLineThenAdvancePc)
+{
+    EXPECT_EQ(encoded_debug_ops(two_lines_apart(20, 99)),
+              (Names{"line +0 pc +0", "advance_line 99", "advance_pc 20", "line +0 pc +0"}));
+}
+
+TEST(CodeEncoder, encode_whenALocalStarts_writesItsRegisterNameAndType)
+{
+    const Code code =
+        code_of({LocalStart{3, LocalVariable{"x", "I", std::nullopt}}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code), (Names{"start_local v3 x I"}));
+}
+
+TEST(CodeEncoder, encode_whenALocalHasASignature_usesStartLocalExtended)
+{
+    const Code code =
+        code_of({LocalStart{3, LocalVariable{"list", "Ljava/util/List;", "Ljava/util/List<TT;>;"}},
+                 Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code),
+              (Names{"start_local_extended v3 list Ljava/util/List; Ljava/util/List<TT;>;"}));
+}
+
+TEST(CodeEncoder, encode_whenALocalHasNoNameAndNoType_writesNoIndexForBoth)
+{
+    const Code code =
+        code_of({LocalStart{3, LocalVariable{std::nullopt, std::nullopt, std::nullopt}},
+                 Insn{ReturnVoid{}}});
+
+    CodeOut out = encode(code);
+
+    EXPECT_EQ(out.debug,
+              (std::vector<uint8_t>{0, 0, raw::DBG_START_LOCAL, 3, 0, 0, raw::DBG_END_SEQUENCE}));
+}
+
+TEST(CodeEncoder, encode_whenALocalEnds_writesEndLocalWithItsRegister)
+{
+    const Code code = code_of({LocalEnd{300}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code), (Names{"end_local v300"}));
+}
+
+TEST(CodeEncoder, encode_whenALocalRestarts_writesRestartLocalWithItsRegister)
+{
+    const Code code = code_of({LocalRestart{300}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code), (Names{"restart_local v300"}));
+}
+
+TEST(CodeEncoder, encode_whenThePrologueEnds_writesSetPrologueEnd)
+{
+    const Code code = code_of({PrologueEnd{}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code), (Names{"prologue_end"}));
+}
+
+TEST(CodeEncoder, encode_whenTheEpilogueBegins_writesSetEpilogueBegin)
+{
+    const Code code = code_of({EpilogueBegin{}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code), (Names{"epilogue_begin"}));
+}
+
+TEST(CodeEncoder, encode_whenTheSourceFileChanges_writesSetFileWithTheName)
+{
+    const Code code = code_of({SetSourceFile{"Other.java"}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code), (Names{"set_file Other.java"}));
+}
+
+TEST(CodeEncoder, encode_whenTheSourceFileIsUnknown_writesSetFileWithNoIndex)
+{
+    const Code code = code_of({SetSourceFile{std::nullopt}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code), (Names{"set_file -"}));
+}
+
+TEST(CodeEncoder, encode_whenAMarkerFollowsInstructions_advancesTheAddressToItFirst)
+{
+    const Code code =
+        code_of({Insn{Const{0, 100}}, Insn{Nop{}}, PrologueEnd{}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code), (Names{"advance_pc 3", "prologue_end"}));
+}
+
+TEST(CodeEncoder, encode_whenTwoMarkersAreAtTheSameAddress_advancesTheAddressOnce)
+{
+    const Code code = code_of({Insn{Nop{}}, LocalEnd{0}, LocalRestart{0}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encoded_debug_ops(code), (Names{"advance_pc 1", "end_local v0", "restart_local v0"}));
+}
+
+TEST(CodeEncoder, encode_whenAMarkerFollowsTheLastInstruction_placesItAtTheEndOfTheCode)
+{
+    const Code code = code_of({Insn{Nop{}}, Insn{ReturnVoid{}}, LocalEnd{0}});
+
+    EXPECT_EQ(encoded_debug_ops(code), (Names{"advance_pc 2", "end_local v0"}));
+}
+
+TEST(CodeEncoder, encode_whenALineFollowsABranchThatGrew_usesTheFinalAddress)
+{
+    std::vector<Item> items{Insn{Goto{Label{0}}}, LineNumber{7}};
+    items.insert(items.end(), 200, Item{Insn{Nop{}}});
+    items.push_back(Label{0});
+    items.push_back(Insn{ReturnVoid{}});
+
+    EXPECT_EQ(encoded_debug_ops(code_of(std::move(items))), (Names{"line +0 pc +2"}));
+}
+
+TEST(CodeEncoder, encode_whenCodeMixesEveryMarker_emitsThemInItemOrder)
+{
+    Code code = code_of({
+        LineNumber{10},
+        PrologueEnd{},
+        LineNumber{11},
+        Insn{Const{0, 1}},
+        LocalStart{0, LocalVariable{"x", "I", std::nullopt}},
+        LineNumber{200},
+        Insn{Const{0, 2}},
+        LocalEnd{0},
+        SetSourceFile{"Other.java"},
+        LineNumber{3},
+        LocalRestart{0},
+        EpilogueBegin{},
+        LineNumber{4},
+        Insn{ReturnVoid{}},
+        LocalStart{0, LocalVariable{"list", "Ljava/util/List;", "Ljava/util/List<TT;>;"}},
+    });
+    code.parameter_names = {std::string("count")};
+    Pools pools = pools_of(code);
+
+    CodeOut out = encode(code, pools);
+
+    EXPECT_EQ(debug_item(out).line_start, 10u);
+    EXPECT_EQ(debug_item(out).parameter_names, (std::vector<uint32_t>{pools.string("count")}));
+    EXPECT_EQ(debug_ops(out, pools),
+              (Names{
+                  "line +0 pc +0",
+                  "prologue_end",
+                  "line +1 pc +0",
+                  "advance_pc 1",
+                  "start_local v0 x I",
+                  "advance_line 189",
+                  "line +0 pc +0",
+                  "advance_pc 1",
+                  "end_local v0",
+                  "set_file Other.java",
+                  "advance_line -197",
+                  "line +0 pc +0",
+                  "restart_local v0",
+                  "epilogue_begin",
+                  "line +1 pc +0",
+                  "advance_pc 1",
+                  "start_local_extended v0 list Ljava/util/List; Ljava/util/List<TT;>;",
+              }));
+}
+
+TEST(CodeEncoder, encode_whenDebugInfoIsOff_stillEncodesTheInstructions)
+{
+    const Code code = code_of({LineNumber{10}, Insn{Const{0, 1}}, LocalEnd{0}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(encode(code, false).insns, encode(code, true).insns);
+}
+
 } // namespace
 } // namespace dexsplit::model::detail
