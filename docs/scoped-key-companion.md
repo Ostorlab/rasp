@@ -6,7 +6,7 @@ linked into the injected runtime or stub. Without a reviewed platform attachment
 its real public C facade returns `RASP_SK_CALL_NOT_READY`, with no key, signature
 or advertised hardware capability. Android Keystore/JNI/private-storage/UI and
 Apple Keychain/Secure Enclave/Objective-C++/Swift attachments are separate reviewed
-followups; host fixture providers are not those implementations.
+followups; the host's test-only fixture providers are not those implementations.
 
 Build explicitly with `-DRASP_BUILD_KEY_COMPANION=ON` and target
 `rasp_scoped_keys`. Host test builds include the companion tests automatically.
@@ -36,16 +36,20 @@ Check C call status and operation status separately:
 
 **Admission ACCEPTED** is not completion, authorization or a durability acknowledgment.
 Unknown versions, values, nonzero reserved bytes, unused union arms/tails and bad
-lengths are failures. Exact sizes, alignment 8, valid readable/writable memory and
+lengths are failures.
+
+Exact sizes, alignment 8, valid readable/writable memory and
 nonoverlapping input/output are required; no API can validate arbitrary pointers.
+
 All public scalars are fixed width. C++ objects never cross this interface.
 
 Submit is 4384 bytes and SignInput is 4336 bytes. Allocate these on an aligned heap or
 bounded caller arena and pass pointers; the SDK retains no borrowed caller input
 after return.
 
-TakeResult 2600 and gate result 2104 must not be stacked together in shipping SDK
-functions. Completion 2560 contains the full owned gate diagnostic projection.
+TakeResult (2600 bytes) and gate result (2104 bytes) must not be stacked together in
+shipping SDK functions: their combined 4704 bytes exceed the 4096-byte native-frame
+ceiling. Completion (2560 bytes) contains the full owned gate diagnostic projection.
 No native frame may exceed 4096 bytes.
 
 Public caller-owned results may be retained. They cannot be submitted as permits
@@ -201,6 +205,7 @@ another end-delivery call.
 If a worker open fails after acquiring storage and its first close also fails, the
 original operation failure is returned without a client. One bounded closing job
 retries release; a later worker open may post another attempt and returns CLOSING.
+
 Repeated failure or scheduler rejection retains ownership without a repost loop.
 Main-thread open remains refused, and replacement/detach waits for quiescence.
 
@@ -306,8 +311,9 @@ numbers remain absent, and successful cleanup does not erase a meaningful failur
 
 Host tests use actual C entry points, actual local-policy publication/gate,
 owned fixture keys and independently reconstructed/verified OpenSSL P-256 outputs.
-Controllable providers are test-only and absent from the production archive. Their
-properties are simulated contract inputs, not Android Keystore, Apple Keychain,
+Controllable providers are test-only and absent from the production archive.
+
+Their properties are simulated contract inputs, not Android Keystore, Apple Keychain,
 hardware, lock, biometric, restore or physical-device evidence. Actual child
 platform implementations, Apple SDK/Swift/NDK consumers and supported physical
 device outcomes must be recorded independently before claiming platform support.
