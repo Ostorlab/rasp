@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -109,17 +110,46 @@ def testRead_whenSymlinkOrHardlinkOrOversize_rejects(
         runner.read_file(tmp_path, "original", 4)
 
 
+@pytest.mark.parametrize("blocked_startup", [False, True])
 def testCommand_whenDeadlineExpires_killsAndReapsGroup(
-    runner: typing.Any, tmp_path: pathlib.Path
+    blocked_startup: bool,
+    runner: typing.Any,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pidfile = tmp_path / "child"
     code = "import os,time,pathlib; pathlib.Path('child').write_text(str(os.getpid())); time.sleep(20)"
+    if blocked_startup is True:
+        os.mkfifo(tmp_path / "start-gate", 0o600)
+        code = "open('start-gate', 'rb').read(1); " + code
+    processes: list[subprocess.Popen[bytes]] = []
+    actual_popen = subprocess.Popen
+
+    def capture(*args: typing.Any, **kwargs: typing.Any) -> subprocess.Popen[bytes]:
+        process = actual_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", capture)
     result = runner.command([sys.executable, "-I", "-c", code], tmp_path, timeout=0.2)
     assert result.reason == "timeout"
     assert result.returncode < 0
-    child_pid = int(pidfile.read_text())
+    assert len(processes) == 1
+    process = processes[0]
+    child_pid = process.pid
+    assert process.returncode == result.returncode
+    assert process.stdout is not None and process.stdout.closed is True
+    assert process.stderr is not None and process.stderr.closed is True
+    with pytest.raises(ChildProcessError):
+        os.waitpid(child_pid, os.WNOHANG)
     with pytest.raises(ProcessLookupError):
         os.kill(child_pid, 0)
+    with pytest.raises(ProcessLookupError):
+        os.killpg(child_pid, 0)
+    if blocked_startup is True:
+        assert pidfile.exists() is False
+    elif pidfile.exists() is True:
+        assert int(pidfile.read_text()) == child_pid
 
 
 def testCommand_whenOutputOverflows_stopsWithoutTruncationSuccess(
@@ -1044,6 +1074,86 @@ def testScratch_whenHostOrConstructorAdmissionFails_leavesNoUnownedDirectory(
                 path.rmdir()
 
 
+def diagnosed_android_preflight(
+    plan: dict[str, typing.Any], files: dict[str, bytes], root: pathlib.Path
+) -> dict[str, typing.Any]:
+    """Run actual preflight; annotate its real read failure without changing its predicates."""
+    manifest_bytes = files[
+        validation_runner.one_file(plan, "dependency_manifest")["id"]
+    ]
+    manifest = validation_runner.decode(manifest_bytes)
+    actual_read = validation_runner.read_file
+
+    def path_state(path: pathlib.Path) -> dict[str, typing.Any]:
+        try:
+            value = path.lstat()
+        except OSError as error:
+            return {"errno": error.errno}
+        return {
+            "mode": value.st_mode,
+            "regular": stat.S_ISREG(value.st_mode),
+            "nlink": value.st_nlink,
+            "bytes": value.st_size,
+            "device": value.st_dev,
+            "inode": value.st_ino,
+            "mtime_ns": value.st_mtime_ns,
+            "ctime_ns": value.st_ctime_ns,
+        }
+
+    def observed_read(directory: pathlib.Path, name: str, maximum: int) -> bytes:
+        path = directory / name
+        before = path_state(path)
+        try:
+            return actual_read(directory, name, maximum)
+        except validation_runner.ValidationError as error:
+            diagnostic = {
+                "version": 1,
+                "path": str(path),
+                "maximum": maximum,
+                "record": next(
+                    (row for row in manifest["files"] if row["path"] == str(path)), None
+                ),
+                "before": before,
+                "after": path_state(path),
+                "stat_kind": "path_lstat_before_after",
+                "manifest_sha256": validation_runner.sha(manifest_bytes),
+                "runner_source_sha256": validation_runner.sha(
+                    pathlib.Path(str(validation_runner.__file__)).read_bytes()
+                ),
+                "test_source_sha256": validation_runner.sha(
+                    pathlib.Path(__file__).read_bytes()
+                ),
+            }
+            targets = {root}
+            destination = os.environ.get("VAL01_DIAGNOSTICS")
+            if destination is not None:
+                targets.add(pathlib.Path(destination))
+            for target in targets:
+                try:
+                    validation_runner.write_file(
+                        target,
+                        "dependency-read-failure.json",
+                        validation_runner.canonical(diagnostic),
+                    )
+                    validation_runner.write_file(
+                        target, "preflight-dependencies.json", manifest_bytes
+                    )
+                except (OSError, validation_runner.ValidationError) as retention_error:
+                    error.add_note(
+                        "VAL01 diagnostic retention failed: "
+                        + str(retention_error)[:200]
+                    )
+            error.add_note(
+                "VAL01 dependency read failure: "
+                + validation_runner.canonical(diagnostic).decode()
+            )
+            raise
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(validation_runner, "read_file", observed_read)
+        return validation_runner.android_preflight(plan, files, root)
+
+
 @pytest.fixture(scope="module")
 def android_protocol_bundle(tmp_path_factory: pytest.TempPathFactory) -> typing.Any:
     """Synthetic protocol claims over genuine unsigned prepared bytes; no device/signature credit."""
@@ -1196,7 +1306,7 @@ def android_protocol_bundle(tmp_path_factory: pytest.TempPathFactory) -> typing.
             root, "inputs/" + row["path"], payloads[row["id"]], row["role"] == "tool"
         )
     run.write_file(root, "plan.json", run.canonical(plan))
-    preflight = run.android_preflight(plan, payloads, root / "inputs")
+    preflight = diagnosed_android_preflight(plan, payloads, root / "inputs")
     recorder = run.Recorder(plan, root)
     nonce = "a" * 32
     refs: dict[str, list[str]] = {stage: [] for stage in run.PHASES}
@@ -1670,3 +1780,45 @@ def testXmlOwnership_whenDumpCannotComplete_cleansOnlyAfterProcessAcquisition(
     assert trace.count("dump_baseline") == (0 if failure == "budget" else 1)
     assert len(processes) == (1 if failure == "launched_dump" else 0)
     assert all(process.returncode is not None for process in processes)
+
+
+def testPreflightDiagnostic_whenActualDependencyGuardRejects_retainsExactRowAndStats(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actual_read = validation_runner.read_file
+    original = tmp_path / "original"
+    original.write_bytes(b"bound")
+    linked = tmp_path / "linked"
+    os.link(original, linked)
+    row = {"path": str(linked), "bytes": 5, "sha256": validation_runner.sha(b"bound")}
+    manifest = {
+        "version": 1,
+        "python": str(pathlib.Path(sys.executable).resolve()),
+        "prefix": sys.prefix,
+        "files": [row],
+        "distributions": [],
+    }
+    encoded = validation_runner.canonical(manifest)
+    retained = tmp_path / "retained"
+    retained.mkdir(mode=0o700)
+    monkeypatch.setenv("VAL01_DIAGNOSTICS", str(retained))
+    with pytest.raises(
+        validation_runner.ValidationError, match="unsafe file or byte limit"
+    ) as failure:
+        diagnosed_android_preflight(
+            {"files": [{"id": "dependencies", "role": "dependency_manifest"}]},
+            {"dependencies": encoded},
+            tmp_path,
+        )
+    assert (retained / "dependency-read-failure.json").is_file() is True
+    diagnostic = json.loads((retained / "dependency-read-failure.json").read_bytes())
+    assert diagnostic["path"] == str(linked) and diagnostic["maximum"] == 5
+    assert diagnostic["record"] == row
+    assert (
+        diagnostic["before"]["regular"] is True and diagnostic["before"]["nlink"] == 2
+    )
+    assert diagnostic["after"]["bytes"] == 5 and diagnostic["after"]["nlink"] == 2
+    assert diagnostic["manifest_sha256"] == validation_runner.sha(encoded)
+    assert (retained / "preflight-dependencies.json").read_bytes() == encoded
+    assert str(linked) in " ".join(failure.value.__notes__)
+    assert validation_runner.read_file is actual_read

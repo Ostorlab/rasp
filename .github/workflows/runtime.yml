@@ -565,6 +565,8 @@ jobs:
           echo "VAL01_HOST=$RUNNER_TEMP/val01-host/rasp_validation_host" >> "$GITHUB_ENV"
           sha256sum "$RUNNER_TEMP/val01-inputs/result.json" "$RUNNER_TEMP/val01-inputs/dependencies" "$RUNNER_TEMP/val01-inputs/adb.snapshot" "$RUNNER_TEMP/val01-host/rasp_validation_host" "$RUNNER_TEMP"/val01-wheels/*.whl | tee "$RUNNER_TEMP/val01-logs/inputs.sha256"
       - name: Collect the complete foundation suite from the repository root
+        env:
+          VAL01_DIAGNOSTICS: ${{ runner.temp }}/val01-logs
         run: |
           set -euo pipefail
           "$RUNNER_TEMP/val01-env/bin/python" -B -m pytest -v -p no:cacheprovider \
