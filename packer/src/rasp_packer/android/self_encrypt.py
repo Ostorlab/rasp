@@ -39,12 +39,14 @@ IKM_WORDS = 8
 NONCE_LEN = 16
 WORD = 8
 
-# Post-encryption section renames, so the shipped library does not advertise its bootstrap. The replacements are no
-# longer than the originals (edited in place); the bootstrap finds g_meta by address, so the names are free to change.
+# Post-encryption section renames, so the shipped library does not advertise its runtime. The replacements are no
+# longer than the originals (edited in place); the runtime reads the config section under its renamed name, which is
+# the pair of this map and the two `kConfigSection` constants in the runtime's key schedule and integrity check.
 SECTION_RENAMES = {
     ".stubcode": ".text.hot",
     ".stubrodata": ".rodata.cst",
     ".packmeta": ".data.rel",
+    ".rasp_config": ".init",
 }
 # A neutral soname (<= the 10 bytes of "librasp.so"), so the shipped library does not carry the project name.
 NEUTRAL_SONAME = b"libjni.so"

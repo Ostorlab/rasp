@@ -13,6 +13,7 @@ import pytest
 
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
+from rasp_packer.android import java_program
 from rasp_packer.android import key_schedule
 from rasp_packer.android import runtime_library
 from tests.rasp_packer import conftest
@@ -60,7 +61,7 @@ _A_STATE = bytes.fromhex(
     "80f696036977bec443168ac195612f3bbef55acceddbccc100170f56d18053b4"
 )
 _S_STATE = bytes.fromhex(
-    "4bea01eb78580ceadcbdde36797bd2d272db507b6fa58067776094534d498a9f"
+    "edf2ff1485219c1a1e93456c8e96570376beca90af8ea811c822d00d07760db2"
 )
 _MAP_KEY = bytes.fromhex(
     "5148f4c03d5c379482f5e656dfe3ede4a139f570175a397308ae1213c43b014e"
@@ -76,19 +77,47 @@ _SEED = bytes.fromhex(
     "8bc6daaea6969e5ad8b4dbab11d077a62c08b90d094aed686908845c1de0fbf7"
 )
 _GUARD = bytes.fromhex(
-    "944e29316ba4b4b4dffd54378aab62ef62807261d48be2e59fb72df663bb6a23"
+    "196ae89c970ab84648efc8630c95216615a5404a9e7c638b9b574331a59daac4"
 )
 _DIRTY_GUARD = bytes.fromhex(
-    "83b17fb7baa07c1f89b6ce89d336fae8386fd67786a9e2d48d60e4bf60240620"
+    "9ff998abcda62f7f473405529d58187c579c8210cd64455ffa869744f71607a1"
 )
 _DEX0_FRAME = bytes.fromhex(
-    "101112131415161718191a1bdb0fa54f72e44bf99595b360f3b1c68d107a2baacd481bd3c2"
-    "89cd0f6ef21b2bdb46a8a08980d0a9e94a70a67aa533d8e585dbaabe60359febe5fe544975"
-    "f82a19cdc38f2cab4fcec2ca3397590f59"
+    "101112131415161718191a1ba9c7420e1659ad1489903bc83dc62c7078e47eee15fb6b1c2050b7ececdf8b32cbd75824883b7098698563d5c6e8e55e4254fecd0557bbe69acfe8419d8bf714f3953433d3e11094062769b5c0e328"
 )
 _DEX1_FRAME = bytes.fromhex(
-    "202122232425262728292a2b857019a080e0b74704d8686130ff975604a674850ecee1440e"
-    "98f2a45a6a8d5cc5"
+    "202122232425262728292a2b08f788d56388474256841b85c393ef0a18f0708b07c0db658083e9557b87f71087"
+)
+
+# The fixed Java program the vectors' app ships: two hierarchy walks and two resolutions, in a fixed order. Its
+# share — what the stub yields on a runtime that resolves as the packer predicted — is the vector below, and the
+# dex frames are sealed under the armed master that share derives.
+_JAVA_PROGRAM = java_program.Program(
+    steps=(
+        java_program.Step(
+            kind=java_program.KIND_SUPERS, name="java.util.ArrayList", depth=3
+        ),
+        java_program.Step(
+            kind=java_program.KIND_RESOLVE, name="java.lang.String", depth=0
+        ),
+        java_program.Step(
+            kind=java_program.KIND_RESOLVE, name="co.ostorlab.rasp.RaspStub", depth=0
+        ),
+        java_program.Step(
+            kind=java_program.KIND_SUPERS, name="java.lang.Exception", depth=2
+        ),
+    )
+)
+_JAVA_PROGRAM_ENTRY = "assets/rasp/j.bin"
+_JAVA_NONCE = bytes.fromhex("303132333435363738393a3b")
+_JAVA_FRAME = bytes.fromhex(
+    "303132333435363738393a3b6e4d4bbca466657713459031be2d98b30172d467d4f16b5f4b00e02717cc7ea271d3c909c4cff1b0452dc435fc29be838f6a92f61d172f4b94ba1aa469b47b8535e3b2d813bfadd77532e2af989efca6a479380fb39f17044aa4a79f5a59edd71ea5f318d06b69febd60c2dd2ef04a9b43"
+)
+_JAVA_SHARE = bytes.fromhex(
+    "063f7eca0167a1c524f862d0f1fd64d44ee47f502dcf8c97fbb4dc7ef16e631a"
+)
+_ARMED = bytes.fromhex(
+    "27ff73c243df33f85ab17a91a3caede3ceb67c79ee2355f2488870dd0d78535b"
 )
 
 _MAP_ENTRY = "assets/rasp/map.bin"
@@ -105,7 +134,7 @@ _DEX1_PLAINTEXT = b"business dex one\n"
 
 _LIBRARY = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _CONFIG = runtime_config.RuntimeConfig(
-    build_id="rasp-build/v1:" + "ab" * 32, checks=("identity",)
+    build_id="rasp-build/v1:" + "ab" * 32, checks=("identity",), checks_mask=32
 )
 # The SHA-256 of the fixture's plaintext `.text`, which the packer writes before the fold's inputs are gathered so
 # the region digest binds the sensor guard's expectation into the root.
@@ -128,6 +157,15 @@ _FIXED_PROGRAM = key_schedule.FoldProgram(
     ),
     constants=(_CONSTANT,),
 )
+# The app's package name, which the fold program folds in as its package record's input.
+_PACKAGE = b"com.example.fold"
+
+# The stub dex's bytes, which the fold program folds in as its stub record's input.
+_STUB_DEX = b"stub dex bytes"
+
+# The APK's stored entries, which the fold program folds in as the APK digest.
+_APK_ENTRIES: dict[str, tuple[bytes, int, int]] = {}
+
 _FIXED_ENTRIES = {
     key_schedule.SHARE_ENTRY: _SHARE,
     key_schedule.decoy_entry_name(0): _DECOY0,
@@ -180,6 +218,14 @@ def _gather(
             return key_schedule.CLEAN_GATES
         if record.kind == key_schedule.KIND_CONSTANT:
             return constants[record.param]
+        if record.kind == key_schedule.KIND_PACKAGE:
+            return hashlib.sha256(_PACKAGE).digest()
+        if record.kind == key_schedule.KIND_STUB:
+            return hashlib.sha256(_STUB_DEX).digest()
+        if record.kind == key_schedule.KIND_APK:
+            return key_schedule.apk_digest(_APK_ENTRIES)
+        if record.kind == key_schedule.KIND_SPLITS:
+            return key_schedule.splits_digest()
         return hashlib.sha256(
             entries[key_schedule.decoy_entry_name(record.param)]
         ).digest()
@@ -259,7 +305,7 @@ def testRecovery_whenGivenTheFixedLibraryAndEntries_givesTheVectorRoot() -> None
     library = _fixed_library()
 
     root = schedule_recovery.recover_root(
-        library, _FIXED_ENTRIES, key_schedule.CLEAN_GATES
+        library, _FIXED_ENTRIES, key_schedule.CLEAN_GATES, _PACKAGE, _STUB_DEX
     )
 
     assert root == _ROOT
@@ -274,7 +320,11 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     tampered_program[program_offset + 100] ^= 1
     assert (
         schedule_recovery.recover_root(
-            bytes(tampered_program), _FIXED_ENTRIES, key_schedule.CLEAN_GATES
+            bytes(tampered_program),
+            _FIXED_ENTRIES,
+            key_schedule.CLEAN_GATES,
+            _PACKAGE,
+            _STUB_DEX,
         )
         != _ROOT
     )
@@ -288,7 +338,11 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     tampered_text[text.offset] ^= 1
     assert (
         schedule_recovery.recover_root(
-            bytes(tampered_text), _FIXED_ENTRIES, key_schedule.CLEAN_GATES
+            bytes(tampered_text),
+            _FIXED_ENTRIES,
+            key_schedule.CLEAN_GATES,
+            _PACKAGE,
+            _STUB_DEX,
         )
         != _ROOT
     )
@@ -301,7 +355,7 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     }
     assert (
         schedule_recovery.recover_root(
-            library, without_decoy1, key_schedule.CLEAN_GATES
+            library, without_decoy1, key_schedule.CLEAN_GATES, _PACKAGE, _STUB_DEX
         )
         is None
     )
@@ -310,7 +364,9 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     wrong_share = dict(_FIXED_ENTRIES)
     wrong_share[key_schedule.SHARE_ENTRY] = bytes(key_schedule.KEY_SIZE)
     assert (
-        schedule_recovery.recover_root(library, wrong_share, key_schedule.CLEAN_GATES)
+        schedule_recovery.recover_root(
+            library, wrong_share, key_schedule.CLEAN_GATES, _PACKAGE, _STUB_DEX
+        )
         != _ROOT
     )
 
@@ -326,15 +382,29 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
             ),
             _FIXED_ENTRIES,
             key_schedule.CLEAN_GATES,
+            _PACKAGE,
+            _STUB_DEX,
         )
         != _ROOT
     )
 
     # The gates: a traced or emulated environment.
     traced = key_schedule.gate_block(
-        java_environment=True, no_tracer=False, installed_under_data=True
+        java_environment=True,
+        no_tracer=False,
+        installed_under_data=True,
+        counter_frequency_plausible=True,
+        cpu_identity_plausible=True,
+        owns_package_data=True,
+        release_build=True,
+        not_debuggable=True,
     )
-    assert schedule_recovery.recover_root(library, _FIXED_ENTRIES, traced) != _ROOT
+    assert (
+        schedule_recovery.recover_root(
+            library, _FIXED_ENTRIES, traced, _PACKAGE, _STUB_DEX
+        )
+        != _ROOT
+    )
 
 
 def testRecovery_whenBuiltWithRandomPrograms_recoversOnEveryLibrary() -> None:
@@ -346,6 +416,7 @@ def testRecovery_whenBuiltWithRandomPrograms_recoversOnEveryLibrary() -> None:
             sections=sections,
             library_size=len(_LIBRARY),
             keystore_spans=(runtime_library.keystore_span(_LIBRARY),),
+            include_apk_digest=True,
         )
         entries = {
             key_schedule.SHARE_ENTRY: _SHARE,
@@ -377,32 +448,160 @@ def testRecovery_whenBuiltWithRandomPrograms_recoversOnEveryLibrary() -> None:
         for library in libraries:
             assert (
                 schedule_recovery.recover_root(
-                    library, entries, key_schedule.CLEAN_GATES
+                    library, entries, key_schedule.CLEAN_GATES, _PACKAGE, _STUB_DEX
                 )
                 == root
+            )
+            assert (
+                schedule_recovery.recover_root(
+                    library,
+                    entries,
+                    key_schedule.CLEAN_GATES,
+                    b"com.example.other",
+                    _STUB_DEX,
+                )
+                != root
             )
 
 
 def testGateBlock_whenCleanDevice_isTheCleanGates() -> None:
     clean = key_schedule.gate_block(
-        java_environment=True, no_tracer=True, installed_under_data=True
+        java_environment=True,
+        no_tracer=True,
+        installed_under_data=True,
+        counter_frequency_plausible=True,
+        cpu_identity_plausible=True,
+        owns_package_data=True,
+        release_build=True,
+        not_debuggable=True,
     )
 
     assert clean == key_schedule.CLEAN_GATES
-    assert clean[0:3] == b"\x01\x01\x01"
-    assert clean[3:] == bytes(29)
+    assert clean[0:8] == b"\x01" * 8
+    assert clean[8:] == bytes(24)
+
+
+def testSplitsDigest_whenTheBaseSitsAlone_hashesTheEmptySet() -> None:
+    assert key_schedule.splits_digest() == hashlib.sha256(b"").digest()
+
+
+def testSplitsDigest_whenASplitSitsBesideTheBase_hashesItsName() -> None:
+    alone = key_schedule.splits_digest()
+    beside = key_schedule.splits_digest(["split_inj.apk"])
+    assert beside != alone
+    assert beside == hashlib.sha256(b"split_inj.apk\x00").digest()
+
+
+def testSplitsDigest_whenSeveralSplitsSitBesideTheBase_hashesThemSorted() -> None:
+    digest = key_schedule.splits_digest(["split_inj.apk", "split_config.arm64_v8a.apk"])
+    assert (
+        digest
+        == hashlib.sha256(b"split_config.arm64_v8a.apk\x00split_inj.apk\x00").digest()
+    )
+
+
+def testBuildProgram_whenThePackKnowsTheInstalledSet_foldsTheSplitSet() -> None:
+    for seed in range(8):
+        program = key_schedule.build_program(
+            random.Random(seed), include_apk_digest=True
+        )
+        kinds = [record.kind for record in program.chain_s]
+        assert key_schedule.KIND_APK in kinds
+        assert key_schedule.KIND_SPLITS in kinds
+        assert key_schedule.KIND_DEXES not in kinds
+        assert key_schedule.KIND_DEXLESS_SPLITS not in kinds
+        assert key_schedule.KIND_MANIFEST not in kinds
+    for seed in range(8):
+        program = key_schedule.build_program(random.Random(seed))
+        assert key_schedule.KIND_APK not in [r.kind for r in program.chain_s]
+        assert key_schedule.KIND_SPLITS not in [r.kind for r in program.chain_s]
+        # An AAB the store splits: the module's dex content, the splits' emptiness and the
+        # manifest's semantics stand in for the entry digest and the installed set.
+        assert key_schedule.KIND_DEXES in [r.kind for r in program.chain_s]
+        assert key_schedule.KIND_DEXLESS_SPLITS in [r.kind for r in program.chain_s]
+        assert key_schedule.KIND_MANIFEST in [r.kind for r in program.chain_s]
+
+
+def testBuildProgram_whenTheCertificateIsPinned_foldsTheSigner() -> None:
+    for seed in range(8):
+        program = key_schedule.build_program(
+            random.Random(seed), include_apk_digest=True, pinned_signer=b"\x01" * 32
+        )
+        assert key_schedule.KIND_SIGNER in [r.kind for r in program.chain_s]
+    for seed in range(8):
+        program = key_schedule.build_program(
+            random.Random(seed), pinned_signer=b"\x01" * 32
+        )
+        assert key_schedule.KIND_SIGNER in [r.kind for r in program.chain_s]
+    for seed in range(4):
+        program = key_schedule.build_program(random.Random(seed))
+        assert key_schedule.KIND_SIGNER not in [r.kind for r in program.chain_s]
+
+
+def testSignerDigest_whenGivenTheCertificate_hashesTheDerBytes() -> None:
+    assert (
+        key_schedule.signer_digest(b"\x30\x02\xaa\xbb")
+        == hashlib.sha256(b"\x30\x02\xaa\xbb").digest()
+    )
+
+
+def testDexDigest_whenGivenTheModuleDexes_hashesNameAndContent() -> None:
+    alone = key_schedule.dex_digest({"classes.dex": b"dex zero"})
+    beside = key_schedule.dex_digest(
+        {"classes.dex": b"dex zero", "classes2.dex": b"dex one"}
+    )
+    assert beside != alone
+    assert (
+        beside
+        == hashlib.sha256(
+            b"classes.dex\x00"
+            + hashlib.sha256(b"dex zero").digest()
+            + b"classes2.dex\x00"
+            + hashlib.sha256(b"dex one").digest()
+        ).digest()
+    )
+
+
+def testDexDigest_whenADexIsEdited_changes() -> None:
+    clean = key_schedule.dex_digest({"classes.dex": b"dex zero"})
+    edited = key_schedule.dex_digest({"classes.dex": b"dex one "})
+    added = key_schedule.dex_digest(
+        {"classes.dex": b"dex zero", "classes2.dex": b"anything"}
+    )
+    assert clean != edited
+    assert clean != added
+
+
+def testDexlessSplits_isTheCleanFact() -> None:
+    assert key_schedule.dexless_splits() == bytes((1,)) + bytes(
+        key_schedule.KEY_SIZE - 1
+    )
 
 
 def testSensorBlock_whenCleanProcess_isTheCleanSensors() -> None:
-    clean = key_schedule.sensor_block(no_tracer=True, text_intact=True)
+    clean = key_schedule.sensor_block(
+        no_tracer=True,
+        text_intact=True,
+        no_framework_maps=True,
+        no_rwx_regions=True,
+        no_framework_threads=True,
+        no_foreign_libraries=True,
+    )
 
     assert clean == key_schedule.CLEAN_SENSORS
-    assert clean[0:2] == b"\x01\x01"
-    assert clean[2:] == bytes(30)
+    assert clean[0:6] == b"\x01\x01\x01\x01\x01\x01"
+    assert clean[6:] == bytes(26)
 
 
 def testSensorBlock_whenAFactFails_flipsItsByte() -> None:
-    dirty = key_schedule.sensor_block(no_tracer=False, text_intact=True)
+    dirty = key_schedule.sensor_block(
+        no_tracer=False,
+        text_intact=True,
+        no_framework_maps=True,
+        no_rwx_regions=True,
+        no_framework_threads=True,
+        no_foreign_libraries=True,
+    )
 
     assert dirty[0] == 0
     assert dirty != key_schedule.CLEAN_SENSORS
@@ -432,17 +631,64 @@ def testGuardedMaster_whenTheProcessIsClean_matchesTheVectorGuard() -> None:
 
 
 def testGuardedMaster_whenASensorFails_derivesADifferentMaster() -> None:
-    dirty = key_schedule.sensor_block(no_tracer=False, text_intact=True)
+    dirty = key_schedule.sensor_block(
+        no_tracer=False,
+        text_intact=True,
+        no_framework_maps=True,
+        no_rwx_regions=True,
+        no_framework_threads=True,
+        no_foreign_libraries=True,
+    )
 
     assert key_schedule.guarded_master(_SEED, dirty) == _DIRTY_GUARD
+
+
+def testArmedMaster_whenGivenTheVectorSeedAndShare_matchesTheVectorArmed() -> None:
+    assert key_schedule.armed_master(_SEED, _JAVA_SHARE) == _ARMED
+
+
+def testArmedMaster_whenTheShareDiffers_derivesADifferentMaster() -> None:
+    wrong = bytes(key_schedule.KEY_SIZE)
+
+    assert key_schedule.armed_master(_SEED, wrong) != _ARMED
+
+
+def testJavaShare_whenTheReferenceRunsTheVectorProgram_matchesTheVectorShare() -> None:
+    assert java_program.run_reference(_JAVA_PROGRAM) == _JAVA_SHARE
+
+
+def testJavaShare_whenAStepIsAnsweredDifferently_changes() -> None:
+    # An emulated runtime that resolves one step differently — walking a shorter hierarchy, or echoing a name —
+    # yields a different share, and every dex frame's tag fails.
+    answered = java_program.Program(
+        steps=(
+            java_program.Step(
+                kind=java_program.KIND_SUPERS, name="java.util.ArrayList", depth=2
+            ),
+            *_JAVA_PROGRAM.steps[1:],
+        )
+    )
+
+    assert java_program.run_reference(answered) != _JAVA_SHARE
+
+
+def testJavaFrame_whenSealedUnderTheVectorKey_matchesTheVectorFrame() -> None:
+    key = key_schedule.frame_key(_ROOT, _JAVA_NONCE, _JAVA_PROGRAM_ENTRY)
+
+    assert cipher.encrypt(
+        key, _JAVA_NONCE, java_program.encode_program(_JAVA_PROGRAM)
+    ) == (_JAVA_FRAME)
 
 
 def testMapFrame_whenSealedUnderTheVectorKey_matchesTheVectorFrame() -> None:
     assert cipher.encrypt(_MAP_KEY, _MAP_NONCE, _MAP_TEXT) == _MAP_FRAME
 
 
-def testDexFrames_whenSealedUnderTheVectorGuard_matchTheVectorFrames() -> None:
-    guard = key_schedule.guarded_master(_SEED, key_schedule.CLEAN_SENSORS)
+def testDexFrames_whenSealedUnderTheVectorArmedGuard_matchTheVectorFrames() -> None:
+    guard = key_schedule.guarded_master(
+        key_schedule.armed_master(_SEED, _JAVA_SHARE),
+        key_schedule.CLEAN_SENSORS,
+    )
 
     assert (
         cipher.encrypt(
@@ -462,9 +708,30 @@ def testDexFrames_whenSealedUnderTheVectorGuard_matchTheVectorFrames() -> None:
     )
 
 
+def testDexFrame_whenTheShareIsWrong_doesNotDecryptUnderTheArmedKey() -> None:
+    guard = key_schedule.guarded_master(
+        key_schedule.armed_master(_SEED, bytes(key_schedule.KEY_SIZE)),
+        key_schedule.CLEAN_SENSORS,
+    )
+
+    key = key_schedule.frame_key(guard, _DEX0_NONCE, _DEX0_ENTRY)
+    assert cipher.encrypt(key, _DEX0_NONCE, _DEX0_PLAINTEXT) != _DEX0_FRAME
+    with pytest.raises(cipher.CipherError):
+        cipher.decrypt(key, _DEX0_FRAME)
+
+
 def testDexFrame_whenTheGuardIsDirty_doesNotDecryptUnderTheCleanKey() -> None:
-    dirty = key_schedule.sensor_block(no_tracer=False, text_intact=True)
-    guard = key_schedule.guarded_master(_SEED, dirty)
+    dirty = key_schedule.sensor_block(
+        no_tracer=False,
+        text_intact=True,
+        no_framework_maps=True,
+        no_rwx_regions=True,
+        no_framework_threads=True,
+        no_foreign_libraries=True,
+    )
+    guard = key_schedule.guarded_master(
+        key_schedule.armed_master(_SEED, _JAVA_SHARE), dirty
+    )
 
     key = key_schedule.frame_key(guard, _DEX0_NONCE, _DEX0_ENTRY)
     assert cipher.encrypt(key, _DEX0_NONCE, _DEX0_PLAINTEXT) != _DEX0_FRAME

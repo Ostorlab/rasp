@@ -12,7 +12,10 @@ from rasp_packer.android.apk import archive
 
 def _apk(names: collections.abc.Sequence[str]) -> archive.Apk:
     return archive.Apk(
-        [archive.Entry(name=name, data=b"x", compressed=False) for name in names]
+        [
+            archive.Entry(name=name, data=b"x", compressed=False, compressed_size=1)
+            for name in names
+        ]
     )
 
 
@@ -23,7 +26,9 @@ def _artifacts(abis: collections.abc.Sequence[str]) -> resources.Artifacts:
 
 
 def testEntry_whenPresent_returnsItsBytes() -> None:
-    apk = archive.Apk([archive.Entry(name="a", data=b"hello", compressed=False)])
+    apk = archive.Apk(
+        [archive.Entry(name="a", data=b"hello", compressed=False, compressed_size=5)]
+    )
     assert injection.entry(apk, "a") == b"hello"
 
 

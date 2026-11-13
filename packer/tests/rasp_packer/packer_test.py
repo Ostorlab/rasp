@@ -43,7 +43,7 @@ def testPack_whenIosApp_packsWithAConfigHoldingTheGivenBuildId(
         "app": ipa_file,
         "output": tmp_path / "out.ipa",
         "config": runtime_config.RuntimeConfig(
-            build_id=_BUILD_ID, checks=("identity",)
+            build_id=_BUILD_ID, checks=("identity",), checks_mask=8
         ),
     }
 
@@ -123,7 +123,9 @@ def testPack_whenGivenChecks_packsWithAConfigHoldingThemSortedWithTheRequiredOne
 
     assert configs == [
         runtime_config.RuntimeConfig(
-            build_id=_BUILD_ID, checks=("debugger", "identity", "jailbreak")
+            build_id=_BUILD_ID,
+            checks=("debugger", "identity", "jailbreak"),
+            checks_mask=11,
         )
     ]
 
@@ -147,7 +149,9 @@ def testPack_whenGivenNoChecks_packsWithAConfigHoldingOnlyTheRequiredOnes(
     )
 
     assert configs == [
-        runtime_config.RuntimeConfig(build_id=_BUILD_ID, checks=("identity",))
+        runtime_config.RuntimeConfig(
+            build_id=_BUILD_ID, checks=("identity",), checks_mask=8
+        )
     ]
 
 
@@ -170,7 +174,9 @@ def testPack_whenChecksAreNotOfThePlatform_packsWithTheOthersAndReportsThem(
     )
 
     assert configs == [
-        runtime_config.RuntimeConfig(build_id=_BUILD_ID, checks=("hooks", "identity"))
+        runtime_config.RuntimeConfig(
+            build_id=_BUILD_ID, checks=("hooks", "identity"), checks_mask=12
+        )
     ]
     assert result.skipped_checks == ("root", "telepathy")
 
@@ -217,7 +223,7 @@ def testPack_whenAndroidApp_packsWithAConfigHoldingTheGivenBuildId(
         "app": app,
         "output": tmp_path / "out.apk",
         "config": runtime_config.RuntimeConfig(
-            build_id=_BUILD_ID, checks=("identity",)
+            build_id=_BUILD_ID, checks=("identity",), checks_mask=32
         ),
     }
 

@@ -54,6 +54,7 @@ _UTF8_FLAG = 0x100
 _TYPE_STRING = 0x03
 _TYPE_INT_DEC = 0x10
 _TYPE_INT_HEX = 0x11
+_TYPE_INT_BOOLEAN = 0x12
 _NO_ENTRY = 0xFFFFFFFF
 
 ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android"
@@ -65,6 +66,7 @@ ATTR_NAME_RESOURCE_ID = 0x01010003
 ATTR_VERSION_NAME_RESOURCE_ID = 0x0101021C
 ATTR_MIN_SDK_VERSION_RESOURCE_ID = 0x0101020C
 ATTR_APP_COMPONENT_FACTORY_RESOURCE_ID = 0x0101057A
+ATTR_DEBUGGABLE_RESOURCE_ID = 0x0101000F
 APP_COMPONENT_FACTORY_ATTRIBUTE = "appComponentFactory"
 
 
@@ -474,6 +476,43 @@ def _find_min_sdk_attribute(region: _Buffer, pool: _StringPool) -> int | None:
         ):
             return attribute
     return None
+
+
+def clear_debuggable(data: bytes) -> bytes:
+    """Returns the manifest with ``<application android:debuggable>`` set to false.
+
+    A debug build ships the attribute as true, and the protected app accepts a
+    Java debugger over JDWP out of the box, which no native check sees. A manifest
+    that declares the attribute false, or does not declare it, is returned as it
+    is: absence already means not debuggable, and the attribute is never added.
+
+    Args:
+        data: The binary AndroidManifest.xml.
+
+    Returns:
+        The edited binary AndroidManifest.xml.
+
+    Raises:
+        AxmlError: The bytes are not AXML, or have no ``<application>`` element.
+    """
+    pool, region_bytes = _split(data)
+    region = bytearray(region_bytes)
+    element = _find_element(region, pool, APPLICATION_ELEMENT)
+    if element is None:
+        raise AxmlError("manifest has no <application> element")
+    resource_map = _resource_map(region)
+    attribute = _find_attribute(
+        region, element, resource_map, ATTR_DEBUGGABLE_RESOURCE_ID
+    )
+    if attribute is None:
+        return data
+    current = struct.unpack_from("<IHBBI", region, attribute + 8)[4]
+    if current == 0:
+        return data
+    struct.pack_into(
+        "<IHBBI", region, attribute + 8, _NO_ENTRY, 8, 0, _TYPE_INT_BOOLEAN, 0
+    )
+    return _assemble(pool, region)
 
 
 def set_app_component_factory(data: bytes, class_name: str) -> bytes:

@@ -47,6 +47,7 @@ def pack(
     output: pathlib.Path,
     build_id: str,
     checks: collections.abc.Sequence[str],
+    pin_certificate: pathlib.Path | None = None,
 ) -> PackResult:
     """Protects a built app: adds the runtime and writes the protected app to `output`.
 
@@ -70,6 +71,9 @@ def pack(
         build_id: The id of the protected build, written into the runtime's config.
         checks: The ids of the check groups the protected app runs. An empty sequence runs only
             the required groups. An id that is not one of the platform's groups is skipped.
+        pin_certificate: The certificate the developer will sign the protected app with, in PEM or
+            DER form; the pack folds the certificate's digest into the key schedule, so a re-signed
+            install derives a different key and nothing decrypts. None leaves the pack unpinned.
 
     Returns:
         The protected app, the app's package name and version, the build id, and the skipped
@@ -93,12 +97,16 @@ def pack(
             "or cannot be read"
         )
     config = runtime_config.RuntimeConfig(
-        build_id=build_id, checks=resolved_checks.checks
+        build_id=build_id,
+        checks=resolved_checks.checks,
+        checks_mask=check_groups.checks_mask(platform, resolved_checks.checks),
     )
     app_identity: identity.AppIdentity
     match platform:
         case platforms.Platform.ANDROID:
-            app_identity = android_packer.pack(app=app, output=output, config=config)
+            app_identity = android_packer.pack(
+                app=app, output=output, config=config, pin_certificate=pin_certificate
+            )
         case platforms.Platform.IOS:
             app_identity = ios_packer.pack(app=app, output=output, config=config)
     return PackResult(

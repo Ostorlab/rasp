@@ -21,6 +21,10 @@ from rasp_packer.android import key_schedule
 
 ELF_SECTION = ".rasp_config"
 
+# The config section's shipped name: the self-encrypting packer renames the section in the library it produces, so a
+# library this module reads may carry either name.
+SHIPPED_ELF_SECTION = ".init"
+
 # The name of the library's executable code section, which the key schedule binds the payload to.
 TEXT_SECTION = ".text"
 
@@ -325,8 +329,13 @@ def read_config(library: bytes) -> bytes:
 
 
 def _space(library: bytes) -> runtime_config.ConfigSpace:
-    """Finds the `.rasp_config` section of the library."""
-    section = _elf_section(library, ELF_SECTION)
+    """Finds the library's config section, under its raw name or its shipped one."""
+    binary = _elf(library)
+    section = binary.get_section(ELF_SECTION) or binary.get_section(SHIPPED_ELF_SECTION)
+    if section is None:
+        raise errors.InvalidRuntimeError(
+            f"the runtime library has no {ELF_SECTION} or {SHIPPED_ELF_SECTION} section"
+        )
     return runtime_config.ConfigSpace(offset=section.offset, size=section.size)
 
 
