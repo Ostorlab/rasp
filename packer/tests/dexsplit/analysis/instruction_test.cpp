@@ -1105,5 +1105,681 @@ TEST(Instruction, decodeInstructions_whenPayloadDeclaresMoreUnitsThanRemain_stop
     EXPECT_EQ(ret->base.offset, 0u);
 }
 
+TEST(Instruction, decodeInstructions_whenPayloadHeaderIsCutOff_skipsOneUnit)
+{
+    auto insns = decode({0x0300, 0x000e});
+
+    const auto *ret = only<ReturnInstruction>(insns);
+    ASSERT_NE(ret, nullptr);
+    EXPECT_EQ(ret->base.offset, 1u);
+}
+
+TEST(Instruction, decodeInstructions_whenNopHasAnUnknownPayloadIdent_skipsOneUnit)
+{
+    auto insns = decode({0x0400, 0x000e});
+
+    const auto *ret = only<ReturnInstruction>(insns);
+    ASSERT_NE(ret, nullptr);
+    EXPECT_EQ(ret->base.offset, 1u);
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsACompare_returnsDestinationAndBothSources)
+{
+    auto insns = decode({0x012d, 0x0302});
+
+    const auto *compare = only<CompareInstruction>(insns);
+    ASSERT_NE(compare, nullptr);
+    EXPECT_EQ(compare->dest, 1);
+    EXPECT_EQ(compare->src_a, 2);
+    EXPECT_EQ(compare->src_b, 3);
+    EXPECT_EQ(compare->base.size, 2);
+}
+
+TEST(Instruction, decodeInstructions_whenCompareIsOnFloats_returnsSingleSourceWidth)
+{
+    for (uint8_t opcode : {0x2d, 0x2e}) {
+        auto insns = decode({unit(opcode, 1), 0x0302});
+
+        const auto *compare = only<CompareInstruction>(insns);
+        ASSERT_NE(compare, nullptr);
+        EXPECT_EQ(compare->src_width, OperandWidth::Single) << opcode_name(opcode);
+    }
+}
+
+TEST(Instruction, decodeInstructions_whenCompareIsOnDoublesOrLongs_returnsPairSourceWidth)
+{
+    for (uint8_t opcode : {0x2f, 0x30, 0x31}) {
+        auto insns = decode({unit(opcode, 1), 0x0302});
+
+        const auto *compare = only<CompareInstruction>(insns);
+        ASSERT_NE(compare, nullptr);
+        EXPECT_EQ(compare->src_width, OperandWidth::Pair) << opcode_name(opcode);
+    }
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsIf_returnsBothRegistersAndTheSignedOffset)
+{
+    auto insns = decode({0x2132, 0xfffd});
+
+    const auto *branch = only<IfInstruction>(insns);
+    ASSERT_NE(branch, nullptr);
+    EXPECT_EQ(branch->reg_a, 1);
+    EXPECT_EQ(branch->reg_b, 2);
+    EXPECT_EQ(branch->branch_offset, -3);
+    EXPECT_EQ(branch->base.size, 2);
+}
+
+TEST(Instruction, decodeInstructions_whenOpcodeIsAnyTwoRegisterIf_returnsAnIf)
+{
+    for (int opcode = 0x32; opcode <= 0x37; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 0x21), 0x0004});
+
+        const auto *branch = only<IfInstruction>(insns);
+        ASSERT_NE(branch, nullptr) << opcode;
+        EXPECT_EQ(branch->base.opcode, opcode);
+        EXPECT_EQ(branch->branch_offset, 4);
+    }
+}
+
+// The units are the ones dexdump shows for "if-gez v10, 0005 // +0005" in fibonacci.dex.
+TEST(Instruction, decodeInstructions_whenInsnIsIfZero_returnsTheRegisterAndTheSignedOffset)
+{
+    auto insns = decode({0x0a3b, 0x0005});
+
+    const auto *branch = only<IfZeroInstruction>(insns);
+    ASSERT_NE(branch, nullptr);
+    EXPECT_EQ(branch->reg, 10);
+    EXPECT_EQ(branch->branch_offset, 5);
+    EXPECT_EQ(branch->base.size, 2);
+}
+
+TEST(Instruction, decodeInstructions_whenOpcodeIsAnyZeroTestIf_returnsAnIfZero)
+{
+    for (int opcode = 0x38; opcode <= 0x3d; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 5), 0xfffc});
+
+        const auto *branch = only<IfZeroInstruction>(insns);
+        ASSERT_NE(branch, nullptr) << opcode;
+        EXPECT_EQ(branch->base.opcode, opcode);
+        EXPECT_EQ(branch->branch_offset, -4);
+    }
+}
+
+// The units are the ones dexdump shows for "aput-object v2, v0, v1" in casts.dex.
+TEST(Instruction, decodeInstructions_whenInsnIsAnArrayOp_returnsValueArrayAndIndexRegisters)
+{
+    auto insns = decode({0x024d, 0x0100});
+
+    const auto *array = only<ArrayOpInstruction>(insns);
+    ASSERT_NE(array, nullptr);
+    EXPECT_EQ(array->value_reg, 2);
+    EXPECT_EQ(array->array_reg, 0);
+    EXPECT_EQ(array->index_reg, 1);
+    EXPECT_EQ(array->base.size, 2);
+}
+
+TEST(Instruction, decodeInstructions_whenOpcodeIsAnAget_returnsARead)
+{
+    for (int opcode = 0x44; opcode <= 0x4a; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 1), 0x0302});
+
+        const auto *array = only<ArrayOpInstruction>(insns);
+        ASSERT_NE(array, nullptr) << opcode;
+        EXPECT_FALSE(array->is_write) << opcode_name(array->base.opcode);
+    }
+}
+
+TEST(Instruction, decodeInstructions_whenOpcodeIsAnAput_returnsAWrite)
+{
+    for (int opcode = 0x4b; opcode <= 0x51; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 1), 0x0302});
+
+        const auto *array = only<ArrayOpInstruction>(insns);
+        ASSERT_NE(array, nullptr) << opcode;
+        EXPECT_TRUE(array->is_write) << opcode_name(array->base.opcode);
+    }
+}
+
+TEST(Instruction, decodeInstructions_whenArrayOpIsWide_returnsPairWidthAndSingleOtherwise)
+{
+    for (int opcode = 0x44; opcode <= 0x51; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 1), 0x0302});
+
+        const auto *array = only<ArrayOpInstruction>(insns);
+        ASSERT_NE(array, nullptr) << opcode;
+        bool wide = opcode == 0x45 || opcode == 0x4c;
+        EXPECT_EQ(array->width, wide ? OperandWidth::Pair : OperandWidth::Single)
+            << opcode_name(array->base.opcode);
+    }
+}
+
+// The units are the ones dexdump shows for "iget-object v0, v1, field@0000" in shapes.dex.
+TEST(Instruction, decodeInstructions_whenInsnIsAnInstanceFieldOp_returnsValueAndObjectRegisters)
+{
+    auto insns = decode({0x1054, 0x0000});
+
+    const auto *field = only<FieldInstruction>(insns);
+    ASSERT_NE(field, nullptr);
+    EXPECT_EQ(field->value_reg, 0);
+    EXPECT_EQ(field->object_reg, 1);
+    EXPECT_EQ(field->field_index, 0u);
+    EXPECT_FALSE(field->is_static);
+    EXPECT_EQ(field->base.size, 2);
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsAFieldOp_returnsTheSixteenBitFieldIndex)
+{
+    auto insns = decode({0x2152, 0xfffe});
+
+    const auto *field = only<FieldInstruction>(insns);
+    ASSERT_NE(field, nullptr);
+    EXPECT_EQ(field->field_index, 0xfffeu);
+}
+
+TEST(Instruction, decodeInstructions_whenOpcodeIsAnIget_returnsAnInstanceRead)
+{
+    for (int opcode = 0x52; opcode <= 0x58; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 0x21), 0x0007});
+
+        const auto *field = only<FieldInstruction>(insns);
+        ASSERT_NE(field, nullptr) << opcode;
+        EXPECT_FALSE(field->is_write) << opcode_name(field->base.opcode);
+        EXPECT_FALSE(field->is_static) << opcode_name(field->base.opcode);
+    }
+}
+
+TEST(Instruction, decodeInstructions_whenOpcodeIsAnIput_returnsAnInstanceWrite)
+{
+    for (int opcode = 0x59; opcode <= 0x5f; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 0x21), 0x0007});
+
+        const auto *field = only<FieldInstruction>(insns);
+        ASSERT_NE(field, nullptr) << opcode;
+        EXPECT_TRUE(field->is_write) << opcode_name(field->base.opcode);
+        EXPECT_FALSE(field->is_static) << opcode_name(field->base.opcode);
+    }
+}
+
+// The units are the ones dexdump shows for "sget-object v1, field@0000" in classes.dex.
+TEST(Instruction, decodeInstructions_whenInsnIsAStaticFieldOp_returnsNoObjectRegister)
+{
+    auto insns = decode({0x0162, 0x0000});
+
+    const auto *field = only<FieldInstruction>(insns);
+    ASSERT_NE(field, nullptr);
+    EXPECT_EQ(field->value_reg, 1);
+    EXPECT_FALSE(field->object_reg.has_value());
+    EXPECT_EQ(field->field_index, 0u);
+    EXPECT_TRUE(field->is_static);
+}
+
+TEST(Instruction, decodeInstructions_whenOpcodeIsAnSget_returnsAStaticRead)
+{
+    for (int opcode = 0x60; opcode <= 0x66; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 3), 0x0009});
+
+        const auto *field = only<FieldInstruction>(insns);
+        ASSERT_NE(field, nullptr) << opcode;
+        EXPECT_FALSE(field->is_write) << opcode_name(field->base.opcode);
+        EXPECT_TRUE(field->is_static) << opcode_name(field->base.opcode);
+    }
+}
+
+TEST(Instruction, decodeInstructions_whenOpcodeIsAnSput_returnsAStaticWrite)
+{
+    for (int opcode = 0x67; opcode <= 0x6d; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 3), 0x0009});
+
+        const auto *field = only<FieldInstruction>(insns);
+        ASSERT_NE(field, nullptr) << opcode;
+        EXPECT_TRUE(field->is_write) << opcode_name(field->base.opcode);
+        EXPECT_TRUE(field->is_static) << opcode_name(field->base.opcode);
+    }
+}
+
+TEST(Instruction, decodeInstructions_whenFieldOpIsWide_returnsPairWidthAndSingleOtherwise)
+{
+    for (int opcode = 0x52; opcode <= 0x6d; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 0x21), 0x0007});
+
+        const auto *field = only<FieldInstruction>(insns);
+        ASSERT_NE(field, nullptr) << opcode;
+        bool wide = opcode == 0x53 || opcode == 0x5a || opcode == 0x61 || opcode == 0x68;
+        EXPECT_EQ(field->width, wide ? OperandWidth::Pair : OperandWidth::Single)
+            << opcode_name(field->base.opcode);
+    }
+}
+
+// The units are the ones dexdump shows for "invoke-virtual {v1, v0}, method@0003" in classes.dex.
+TEST(Instruction, decodeInstructions_whenInsnIsInvokeVirtual_returnsItsMethodAndRegisters)
+{
+    auto insns = decode({0x206e, 0x0003, 0x0001});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->base.opcode, 0x6e);
+    EXPECT_EQ(invoke->base.size, 3);
+    EXPECT_EQ(invoke->method_index, 3u);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{1, 0}));
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsInvokeSuper_returnsItsMethodAndRegisters)
+{
+    auto insns = decode({0x106f, 0x000a, 0x0002});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->base.opcode, 0x6f);
+    EXPECT_EQ(invoke->method_index, 10u);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{2}));
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsInvokeDirect_returnsItsMethodAndRegisters)
+{
+    auto insns = decode({0x2070, 0x0000, 0x0010});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->base.opcode, 0x70);
+    EXPECT_EQ(invoke->method_index, 0u);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{0, 1}));
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsInvokeStatic_returnsItsMethodAndRegisters)
+{
+    auto insns = decode({0x3071, 0x002b, 0x0645});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->base.opcode, 0x71);
+    EXPECT_EQ(invoke->method_index, 0x2bu);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{5, 4, 6}));
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsInvokeInterface_returnsItsMethodAndRegisters)
+{
+    auto insns = decode({0x1072, 0x0000, 0x0000});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->base.opcode, 0x72);
+    EXPECT_EQ(invoke->method_index, 0u);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{0}));
+}
+
+TEST(Instruction, decodeInstructions_whenInvokeHasNoArgument_returnsNoRegister)
+{
+    auto insns = decode({0x0071, 0x0001, 0x0000});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_TRUE(invoke->arg_regs.empty());
+}
+
+TEST(Instruction, decodeInstructions_whenInvokeHasFiveArguments_takesTheFifthFromUnitZero)
+{
+    auto insns = decode({0x596e, 0x0003, 0x4321});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{1, 2, 3, 4, 9}));
+}
+
+TEST(Instruction, decodeInstructions_whenInvokeCountIsBelowFive_ignoresTheUnusedRegisterNibbles)
+{
+    auto insns = decode({0x296e, 0x0003, 0x4321});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{1, 2}));
+}
+
+TEST(Instruction, decodeInstructions_whenInvokeCountIsAboveFive_returnsFiveRegisters)
+{
+    auto insns = decode({0x796e, 0x0003, 0x4321});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{1, 2, 3, 4, 9}));
+}
+
+TEST(Instruction, decodeInstructions_whenInvokeMethodIndexIsLarge_returnsAllSixteenBits)
+{
+    auto insns = decode({0x0071, 0xfffe, 0x0000});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->method_index, 0xfffeu);
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsARangeInvoke_returnsTheWholeRegisterRange)
+{
+    auto insns = decode({0x0374, 0x0010, 0x0005});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->base.opcode, 0x74);
+    EXPECT_EQ(invoke->base.size, 3);
+    EXPECT_EQ(invoke->method_index, 0x10u);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{5, 6, 7}));
+}
+
+TEST(Instruction, decodeInstructions_whenOpcodeIsAnyRangeInvoke_returnsAnInvokeWithThatOpcode)
+{
+    for (int opcode = 0x74; opcode <= 0x78; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 2), 0x0010, 0x0100});
+
+        const auto *invoke = only<InvokeInstruction>(insns);
+        ASSERT_NE(invoke, nullptr) << opcode;
+        EXPECT_EQ(invoke->base.opcode, opcode);
+        EXPECT_EQ(invoke->method_index, 0x10u);
+        EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{0x100, 0x101}));
+    }
+}
+
+TEST(Instruction, decodeInstructions_whenRangeInvokeHasNoArgument_returnsNoRegister)
+{
+    auto insns = decode({0x0077, 0x0010, 0x0005});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_TRUE(invoke->arg_regs.empty());
+}
+
+TEST(Instruction, decodeInstructions_whenRangeInvokeHas255Arguments_returnsThemAll)
+{
+    auto insns = decode({0xff74, 0x0010, 0x0001});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    ASSERT_EQ(invoke->arg_regs.size(), 255u);
+    EXPECT_EQ(invoke->arg_regs.front(), 1);
+    EXPECT_EQ(invoke->arg_regs.back(), 255);
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsInvokePolymorphic_readsRegistersFromTheThirdUnit)
+{
+    auto insns = decode({0x20fa, 0x0010, 0x0021, 0x0543});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->base.opcode, 0xfa);
+    EXPECT_EQ(invoke->method_index, 0x10u);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{1, 2}));
+}
+
+TEST(Instruction, decodeInstructions_whenInvokePolymorphicHasFiveArguments_returnsThemAll)
+{
+    auto insns = decode({0x59fa, 0x0010, 0x4321, 0x0020});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{1, 2, 3, 4, 9}));
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsInvokePolymorphic_takesFourUnits)
+{
+    auto insns = decode({0x20fa, 0x0010, 0x0021, 0x0020, 0x000e});
+
+    ASSERT_EQ(insns.size(), 2u);
+    EXPECT_EQ(base_of(insns[0]).size, 4);
+    EXPECT_TRUE(std::holds_alternative<ReturnInstruction>(insns[1]));
+    EXPECT_EQ(base_of(insns[1]).offset, 4u);
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsInvokePolymorphicRange_readsTheRangeFromTheThirdUnit)
+{
+    auto insns = decode({0x03fb, 0x0010, 0x0005, 0x0020});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->base.opcode, 0xfb);
+    EXPECT_EQ(invoke->method_index, 0x10u);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{5, 6, 7}));
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsInvokePolymorphicRange_takesFourUnits)
+{
+    auto insns = decode({0x03fb, 0x0010, 0x0005, 0x0020, 0x000e});
+
+    ASSERT_EQ(insns.size(), 2u);
+    EXPECT_EQ(base_of(insns[0]).size, 4);
+    EXPECT_TRUE(std::holds_alternative<ReturnInstruction>(insns[1]));
+    EXPECT_EQ(base_of(insns[1]).offset, 4u);
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsInvokeCustom_returnsItsCallSiteAndRegisters)
+{
+    auto insns = decode({0x20fc, 0x0002, 0x0043});
+
+    const auto *invoke = only<InvokeCustomInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->base.opcode, 0xfc);
+    EXPECT_EQ(invoke->base.size, 3);
+    EXPECT_EQ(invoke->call_site_index, 2u);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{3, 4}));
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsInvokeCustomRange_returnsItsCallSiteAndRange)
+{
+    auto insns = decode({0x02fd, 0x0002, 0x0008});
+
+    const auto *invoke = only<InvokeCustomInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->base.opcode, 0xfd);
+    EXPECT_EQ(invoke->base.size, 3);
+    EXPECT_EQ(invoke->call_site_index, 2u);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{8, 9}));
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsAUnaryOp_returnsFourBitRegisters)
+{
+    auto insns = decode({0x217b});
+
+    const auto *unary = only<UnaryOpInstruction>(insns);
+    ASSERT_NE(unary, nullptr);
+    EXPECT_EQ(unary->dest, 1);
+    EXPECT_EQ(unary->src, 2);
+    EXPECT_EQ(unary->base.size, 1);
+}
+
+// The widths are the operand types the Dalvik bytecode reference gives for each opcode.
+TEST(Instruction, decodeInstructions_whenInsnIsAUnaryOp_returnsTheWidthsOfItsOperandTypes)
+{
+    const OperandWidth s = OperandWidth::Single;
+    const OperandWidth p = OperandWidth::Pair;
+    struct Case
+    {
+        uint8_t opcode;
+        OperandWidth dest;
+        OperandWidth src;
+    };
+    const Case cases[] = {
+        {0x7b, s, s}, {0x7c, s, s}, {0x7d, p, p}, {0x7e, p, p}, {0x7f, s, s}, {0x80, p, p},
+        {0x81, p, s}, {0x82, s, s}, {0x83, p, s}, {0x84, s, p}, {0x85, s, p}, {0x86, p, p},
+        {0x87, s, s}, {0x88, p, s}, {0x89, p, s}, {0x8a, s, p}, {0x8b, p, p}, {0x8c, s, p},
+        {0x8d, s, s}, {0x8e, s, s}, {0x8f, s, s},
+    };
+
+    for (const auto &c : cases) {
+        auto insns = decode({unit(c.opcode, 0x21)});
+
+        const auto *unary = only<UnaryOpInstruction>(insns);
+        ASSERT_NE(unary, nullptr) << opcode_name(c.opcode);
+        EXPECT_EQ(unary->dest_width, c.dest) << opcode_name(c.opcode);
+        EXPECT_EQ(unary->src_width, c.src) << opcode_name(c.opcode);
+    }
+}
+
+// The units are the ones dexdump shows for "mul-double v0, v0, v2" in shapes.dex.
+TEST(Instruction, decodeInstructions_whenInsnIsABinaryOp_returnsDestinationAndBothSources)
+{
+    auto insns = decode({0x00ad, 0x0200});
+
+    const auto *binary = only<BinaryOpInstruction>(insns);
+    ASSERT_NE(binary, nullptr);
+    EXPECT_EQ(binary->dest, 0);
+    EXPECT_EQ(binary->src_a, 0);
+    EXPECT_EQ(binary->src_b, 2);
+    EXPECT_EQ(binary->width, OperandWidth::Pair);
+    EXPECT_EQ(binary->base.size, 2);
+}
+
+TEST(Instruction, decodeInstructions_whenBinaryOpIsWide_returnsPairWidthAndSingleOtherwise)
+{
+    for (int opcode = 0x90; opcode <= 0xaf; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 1), 0x0302});
+
+        const auto *binary = only<BinaryOpInstruction>(insns);
+        ASSERT_NE(binary, nullptr) << opcode;
+        bool wide = (opcode >= 0x9b && opcode <= 0xa5) || opcode >= 0xab;
+        EXPECT_EQ(binary->width, wide ? OperandWidth::Pair : OperandWidth::Single)
+            << opcode_name(binary->base.opcode);
+    }
+}
+
+// The unit is the one dexdump shows for "add-long/2addr v4, v2" in fibonacci.dex.
+TEST(Instruction, decodeInstructions_whenInsnIsATwoAddressOp_usesTheDestinationAsFirstSource)
+{
+    auto insns = decode({0x24bb});
+
+    const auto *binary = only<BinaryOpInstruction>(insns);
+    ASSERT_NE(binary, nullptr);
+    EXPECT_EQ(binary->dest, 4);
+    EXPECT_EQ(binary->src_a, 4);
+    EXPECT_EQ(binary->src_b, 2);
+    EXPECT_EQ(binary->width, OperandWidth::Pair);
+    EXPECT_EQ(binary->base.size, 1);
+}
+
+TEST(Instruction, decodeInstructions_whenTwoAddressOpIsWide_returnsPairWidthAndSingleOtherwise)
+{
+    for (int opcode = 0xb0; opcode <= 0xcf; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 0x21)});
+
+        const auto *binary = only<BinaryOpInstruction>(insns);
+        ASSERT_NE(binary, nullptr) << opcode;
+        bool wide = (opcode >= 0xbb && opcode <= 0xc5) || opcode >= 0xcb;
+        EXPECT_EQ(binary->width, wide ? OperandWidth::Pair : OperandWidth::Single)
+            << opcode_name(binary->base.opcode);
+    }
+}
+
+TEST(Instruction, decodeInstructions_whenInsnIsALit16Op_returnsFourBitRegistersAndTheSignedLiteral)
+{
+    auto insns = decode({0x21d0, 0xfffe});
+
+    const auto *binary = only<BinaryLitInstruction>(insns);
+    ASSERT_NE(binary, nullptr);
+    EXPECT_EQ(binary->dest, 1);
+    EXPECT_EQ(binary->src, 2);
+    EXPECT_EQ(binary->literal, -2);
+    EXPECT_EQ(binary->base.size, 2);
+}
+
+TEST(Instruction, decodeInstructions_whenOpcodeIsAnyLit16Op_returnsABinaryLiteralOp)
+{
+    for (int opcode = 0xd0; opcode <= 0xd7; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 0x21), 0x7fff});
+
+        const auto *binary = only<BinaryLitInstruction>(insns);
+        ASSERT_NE(binary, nullptr) << opcode;
+        EXPECT_EQ(binary->base.opcode, opcode);
+        EXPECT_EQ(binary->literal, 0x7fff);
+    }
+}
+
+// The units are the ones dexdump shows for "add-int/lit8 v6, v6, #int 1" in fibonacci.dex.
+TEST(Instruction, decodeInstructions_whenInsnIsALit8Op_returnsEightBitRegistersAndTheLiteral)
+{
+    auto insns = decode({0x06d8, 0x0106});
+
+    const auto *binary = only<BinaryLitInstruction>(insns);
+    ASSERT_NE(binary, nullptr);
+    EXPECT_EQ(binary->dest, 6);
+    EXPECT_EQ(binary->src, 6);
+    EXPECT_EQ(binary->literal, 1);
+    EXPECT_EQ(binary->base.size, 2);
+}
+
+TEST(Instruction, decodeInstructions_whenLit8LiteralIsNegative_signExtendsIt)
+{
+    auto insns = decode({0x01d8, 0x8002});
+
+    const auto *binary = only<BinaryLitInstruction>(insns);
+    ASSERT_NE(binary, nullptr);
+    EXPECT_EQ(binary->src, 2);
+    EXPECT_EQ(binary->literal, -128);
+}
+
+TEST(Instruction, decodeInstructions_whenOpcodeIsAnyLit8Op_returnsABinaryLiteralOp)
+{
+    for (int opcode = 0xd8; opcode <= 0xe2; ++opcode) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 1), 0x7f02});
+
+        const auto *binary = only<BinaryLitInstruction>(insns);
+        ASSERT_NE(binary, nullptr) << opcode;
+        EXPECT_EQ(binary->base.opcode, opcode);
+        EXPECT_EQ(binary->literal, 0x7f);
+    }
+}
+
+TEST(Instruction, decodeInstructions_whenOpcodeIsUnused_returnsANopOfOneUnitWithThatOpcode)
+{
+    auto insns = decode({0x1273});
+
+    const auto *nop = only<NopInstruction>(insns);
+    ASSERT_NE(nop, nullptr);
+    EXPECT_EQ(nop->base.opcode, 0x73);
+    EXPECT_EQ(nop->base.size, 1);
+}
+
+TEST(Instruction, decodeInstructions_whenOpcodeIsAnyUnusedOne_decodesTheNextUnitAsAnInstruction)
+{
+    std::vector<int> unused = {0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x73, 0x79, 0x7a};
+    for (int opcode = 0xe3; opcode <= 0xf9; ++opcode)
+        unused.push_back(opcode);
+
+    for (int opcode : unused) {
+        auto insns = decode({unit(static_cast<uint8_t>(opcode), 0xff), 0x000e});
+
+        ASSERT_EQ(insns.size(), 2u) << opcode;
+        EXPECT_TRUE(std::holds_alternative<NopInstruction>(insns[0])) << opcode;
+        EXPECT_TRUE(std::holds_alternative<ReturnInstruction>(insns[1])) << opcode;
+        EXPECT_EQ(base_of(insns[1]).offset, 1u) << opcode;
+    }
+}
+
+TEST(Instruction, decodeInstructions_whenLastInsnIsCutOff_readsTheMissingUnitsAsZero)
+{
+    auto insns = decode({0x206e});
+
+    const auto *invoke = only<InvokeInstruction>(insns);
+    ASSERT_NE(invoke, nullptr);
+    EXPECT_EQ(invoke->method_index, 0u);
+    EXPECT_EQ(invoke->arg_regs, (std::vector<uint16_t>{0, 0}));
+}
+
+TEST(Instruction, decodeInstructions_whenLastInsnIsCutOff_keepsTheFullSizeOfItsFormat)
+{
+    auto insns = decode({0x000e, 0x0218, 0x0001});
+
+    ASSERT_EQ(insns.size(), 2u);
+    const auto *constant = std::get_if<ConstInstruction>(&insns[1]);
+    ASSERT_NE(constant, nullptr);
+    EXPECT_EQ(constant->value, 1);
+    EXPECT_EQ(constant->base.offset, 1u);
+    EXPECT_EQ(constant->base.size, 5);
+}
+
+TEST(Instruction, decodeInstructions_whenEveryUnitIsAnInvokeOpcodeWithoutOperands_terminates)
+{
+    std::vector<uint16_t> insns(1000, 0x00fa);
+
+    auto decoded = decode_instructions(insns);
+
+    EXPECT_EQ(decoded.size(), 250u);
+}
+
 } // namespace
 } // namespace dexsplit
