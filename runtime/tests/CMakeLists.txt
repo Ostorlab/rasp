@@ -647,11 +647,13 @@ add_test(NAME EntryPoint.classify COMMAND rasp_entrypoint_classify_test ${CMAKE_
 if(TARGET rasp_android_context_bridge_java)
   add_test(NAME EntryPoint.missingBridge COMMAND ${Java_JAVA_EXECUTABLE} -cp ${bridge_test_classes}
     co.ostorlab.rasp.EntryMissingBridgeTest ${bridge_test_classes})
+  set_tests_properties(EntryPoint.missingBridge PROPERTIES TIMEOUT 30)
   add_test(NAME EntryPoint.androidBoundaries COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes}
     co.ostorlab.rasp.EntryBoundaryTest $<TARGET_FILE:rasp_android_context_bridge_jni>)
   set_tests_properties(EntryPoint.androidBoundaries PROPERTIES TIMEOUT 30)
   add_test(NAME EntryPoint.javaVectors COMMAND ${Java_JAVA_EXECUTABLE} -cp ${bridge_test_classes}
     EntryParserTest ${CMAKE_CURRENT_SOURCE_DIR}/entrypoint_validation/vectors.tsv)
+  set_tests_properties(EntryPoint.javaVectors PROPERTIES TIMEOUT 30)
 endif()
 add_executable(rasp_entrypoint_gate_test entrypoint_validation/gate_test.cpp entrypoint_validation/c_host.c
   ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp)

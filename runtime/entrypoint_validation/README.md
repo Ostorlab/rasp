@@ -23,8 +23,8 @@ validation, fresh native gate and actual closed dispatch together.
   deliberate confirmation action; no C++ object crosses a framework boundary.
 
 Configuration is immutable app source, not a URL-supplied rule/permission/result.
-One bounded table admits 1..16 exact argument-free routes; caller profiles <= 4,
-pins 1..2*32 bytes. Unknown/malformed configuration rejects wholly. Sources expose
+One bounded table admits 1..16 exact argument-free routes; caller profiles <= 4.
+Each profile has 1..2 SHA256 pins of 32 bytes each. Unknown/malformed configuration rejects wholly. Sources expose
 finite local diagnostics, never a cached grant. The URL's delivered representation
 is bounded to 1024 ASCII bytes; v1 rejects encodings/IDNA/ports/queries/fragments.
 

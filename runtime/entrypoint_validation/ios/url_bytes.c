@@ -15,7 +15,11 @@ int32_t rasp_entry_classify_url_v1(const struct RaspEntryRuleV1* rules, uint32_t
     return kRaspEntryRejected;
   }
   *out = (struct RaspEntryCheckV1){
-      .version = 1, .struct_size = sizeof(*out), .status = kRaspEntryRejected, .reason = kRaspEntryBadArgument};
+      .version = 1,
+      .struct_size = sizeof(*out),
+      .status = kRaspEntryRejected,
+      .reason = kRaspEntryBadArgument,
+  };
   if (delivery != 4 && delivery != 5) {
     out->status = kRaspEntryUnsupported;
     return kRaspEntryUnsupported;
@@ -32,7 +36,7 @@ int32_t rasp_entry_classify_url_v1(const struct RaspEntryRuleV1* rules, uint32_t
     out->reason = kRaspEntryTooLong;
     return kRaspEntryRejected;
   }
-  UniChar units[1024];
+  uint16_t units[1024];
   uint8_t bytes[1024];
   CFStringGetCharacters(text, CFRangeMake(0, length), units);
   for (CFIndex index = 0; index < length; ++index) {
