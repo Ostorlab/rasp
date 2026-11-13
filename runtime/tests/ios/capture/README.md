@@ -19,7 +19,22 @@ cmake -S tests/ios/capture/host -B build/capture-host -G "Unix Makefiles" \
 cmake --build build/capture-host --parallel 2
 ```
 
-That last command builds an unsigned iOS app bundle with the actual Xcode compiler/SDK, not a
+For an installed framework, pass the matching build-tree capture adapter object as the
+optional third argument to `check_framework.sh`. For example, after installing the same
+`ios-dev` build, compare its binary and inspect its source object separately:
+
+```sh
+framework=/path/to/install/rasp_packer/ios/resources/RaspRuntime.framework
+cmp "$PWD/build/ios-dev/ios/RaspRuntime.framework/RaspRuntime" "$framework/RaspRuntime"
+./tests/ios/capture/check_framework.sh "$framework" /tmp/capture-installed-abi \
+  "$PWD/build/ios-dev/ios/CMakeFiles/RaspRuntime.dir/src/capture/capture_bridge.mm.o"
+```
+
+The source-object exception/terminate check remains mandatory. The installed framework
+is still used for the export, header, module, minimum-OS and real language/link probes.
+Build-tree framework calls may omit the third argument and retain the existing layout.
+
+The host build command above builds an unsigned iOS app bundle with the actual Xcode compiler/SDK, not a
 signed device run. The Makefiles generator preserves iOS 12 without Xcode 27's project-level
 minimum-target rejection; the runtime already uses this compiler path. The bundle explicitly
 copies the matching framework and uses `@executable_path/Frameworks`. For device execution,

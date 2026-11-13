@@ -318,7 +318,9 @@ jobs:
             cmake --install "$build" --prefix "$stage" --component runtime
             framework="$stage/rasp_packer/ios/resources/RaspRuntime.framework"
             binary="$framework/RaspRuntime"
-            ./tests/ios/capture/check_framework.sh "$framework" "$stage/abi"
+            cmp "$PWD/$build/ios/RaspRuntime.framework/RaspRuntime" "$binary"
+            ./tests/ios/capture/check_framework.sh "$framework" "$stage/abi" \
+              "$PWD/$build/ios/CMakeFiles/RaspRuntime.dir/src/capture/capture_bridge.mm.o"
             nm -u "$binary" | awk '{ print $NF }' > "$stage/vm-imports.txt"
             test -z "$(grep -xE '_mach_vm_(read_overwrite|region)' "$stage/vm-imports.txt")"
             xcrun vtool -show-build "$binary" | grep -qxE ' *minos 12\.0'
