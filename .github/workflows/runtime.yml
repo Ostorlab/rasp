@@ -295,13 +295,13 @@ jobs:
           policy_host="$RUNNER_TEMP/ios-policy-host/PolicyHost.app"
           xcrun vtool -show-build "$policy_host/PolicyHost" | grep -qxE ' *minos 12\.0'
           cmp build/ios-dev/ios/RaspRuntime.framework/RaspRuntime "$policy_host/Frameworks/RaspRuntime.framework/RaspRuntime"
-      - name: Fetch immutable PL05 for the combined Apple consumer gate
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: Ostorlab/rasp-plugins
-          ref: 1197b25162eadc202799abfe16008bef390e3482
-          path: runtime/build/rt19-plugin-sources
-          persist-credentials: false
+      - name: Materialize verified immutable PL05 for the combined Apple consumer gate
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/build-tools/bin/python" tools/pl05_snapshot.py --extract
       - name: Build selected provenance and frozen PL05 with actual Apple SDK and consumers
         run: |
           plugins="$PWD/build/rt19-plugin-sources"

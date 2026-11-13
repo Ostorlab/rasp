@@ -10,6 +10,7 @@ import subprocess
 import tarfile
 
 import apple_artifacts
+import pl05_snapshot
 import pytest
 
 
@@ -291,3 +292,22 @@ def testExport_whenInstallChangesAfterValidation_refusesUnvalidatedBytes(
     with pytest.raises(ValueError, match="after production validation"):
         apple_artifacts.export_bundle(tmp_path / "export", frameworks, {}, validated)
     assert (tmp_path / "export").exists() is False
+
+
+def testExport_whenSourceIsVerifiedFrozenSnapshot_recordsActualKindAndFullInventory(
+    frameworks: dict[str, pathlib.Path], tmp_path: pathlib.Path
+) -> None:
+    source = tmp_path / "plugins"
+    expected = pl05_snapshot.extract_source(source)
+    identity = pl05_snapshot.verified_source(source)
+    output = tmp_path / "export"
+    apple_artifacts.export_bundle(output, frameworks, {"pl05_source": identity})
+    with tarfile.open(output / "apple-release-frameworks.tar") as bundle:
+        stream = bundle.extractfile("manifest.json")
+        assert stream is not None
+        with stream:
+            recorded = json.load(stream)["provenance"]["pl05_source"]
+    assert recorded == expected
+    assert recorded["kind"] == "frozen_verified_source"
+    assert len(recorded["tracked_files"]) == 214
+    assert "parents" not in recorded

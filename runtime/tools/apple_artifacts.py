@@ -20,8 +20,10 @@ import sys
 import tarfile
 import typing
 
-PL05_COMMIT = "1197b25162eadc202799abfe16008bef390e3482"
-PL05_TREE = "b15595265d8d907439227848e064f8f66fc89844"
+import pl05_snapshot
+
+PL05_COMMIT = pl05_snapshot.COMMIT
+PL05_TREE = pl05_snapshot.TREE
 FRAMEWORK = pathlib.Path("rasp_packer/ios/resources/RaspRuntime.framework")
 FILE_LIMITS = {
     "RaspRuntime": 64 * 1024 * 1024,
@@ -320,9 +322,7 @@ def main() -> None:
     runtime = repo / "runtime"
     plugins = runtime / "build/rt19-plugin-sources"
     source = source_identity(repo)
-    plugin_source = source_identity(plugins)
-    if (plugin_source["commit"], plugin_source["tree"]) != (PL05_COMMIT, PL05_TREE):
-        raise ValueError("PL05 source pin mismatch")
+    plugin_source = pl05_snapshot.verified_source(plugins)
     provenance: dict[str, typing.Any] = {
         "runtime_source": source,
         "source_mapping": source_mapping(repo, source, args.requested_head),
