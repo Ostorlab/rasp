@@ -9,7 +9,7 @@ Before you change anything here, read [CONTRIBUTING.md](CONTRIBUTING.md): it lis
 The code is grouped the same way at every level. `util/` holds generic helpers that know nothing about RASP. Every other folder is one domain module, named after the job it does, such as `checks/`, which produces the observations, and on Android, `payload/`, which recovers the app's protected code. When a module has a part shared by every platform, that part is in `core/`, and its platform part is in the folder with the same name under `ios/` or `android/`. Every built-in check is platform code, so the built-in checks are only in the platform folders.
 
 - `core/`: code shared by every platform. It uses no platform API.
-  - `include/rasp/config.h`: `Config`, the runtime's config that the packer writes into the app (the build id and the ids of the check groups to run), and `is_check_enabled`. Without a list of groups, no group runs.
+  - `include/rasp/config.h`: `Config`, the runtime's config that the packer writes into the app (the build id and the check groups, as a mask with one bit per group in the order the platform's monitoring runs them, or as a list of ids), and `is_check_enabled`. Without a mask or a list, no group runs.
   - `include/rasp/parse_config.h`: `parse_config`, which reads the config from the JSON the packer writes. Members it doesn't know are ignored.
   - `include/rasp/observation.h`: `Observation`, the raw fact a check reports (`signal`, `source`, `status`, `value`), and `observed`, `unsupported` and `failed`, which build one.
   - `include/rasp/util/`: generic helpers.
