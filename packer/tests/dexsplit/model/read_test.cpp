@@ -1322,5 +1322,879 @@ TEST(Read, read_whenATypeIndexIsOutOfRange_returnsMalformed)
     EXPECT_TRUE(contains(error.message, "type index 65535 is out of range")) << error.message;
 }
 
+TEST(Read, read_whenAFieldIndexIsOutOfRange_returnsMalformed)
+{
+    Error error = fibonacci_classify_insns_error({0x0360, 0xFFFF, 0x0311});
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_TRUE(contains(error.message, "field index 65535 is out of range")) << error.message;
+}
+
+TEST(Read, read_whenAMethodIndexIsOutOfRange_returnsMalformed)
+{
+    Error error = fibonacci_classify_insns_error({0x0071, 0xFFFF, 0x0000, 0x000E});
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_TRUE(contains(error.message, "method index 65535 is out of range")) << error.message;
+}
+
+TEST(Read, read_whenAPrototypeIndexIsOutOfRange_returnsMalformed)
+{
+    Error error = fibonacci_classify_insns_error({0x02FF, 0xFFFF, 0x000E});
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_TRUE(contains(error.message, "prototype index 65535 is out of range")) << error.message;
+}
+
+TEST(Read, read_whenCodeNamesAMethodHandleTheFileDoesNotHave_returnsMalformed)
+{
+    Error error = fibonacci_classify_insns_error({0x02FE, 0x0000, 0x000E});
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_TRUE(contains(error.message, "method handle index 0 is out of range")) << error.message;
+}
+
+TEST(Read, read_whenCodeNamesACallSiteTheFileDoesNotHave_returnsMalformed)
+{
+    Error error = fibonacci_classify_insns_error({0x00FC, 0x0000, 0x0000, 0x000E});
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_TRUE(contains(error.message, "call site index 0 is out of range")) << error.message;
+}
+
+TEST(Read, read_whenCodeHasAnUnusedOpcode_returnsMalformed)
+{
+    auto bytes = load_fixture("classes.dex");
+    constexpr std::size_t kReturnVoid = kClassesInitCode + kCodeInsns + 6;
+    ASSERT_EQ(bytes[kReturnVoid], 0x0E);
+    bytes[kReturnVoid] = 0x3E;
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+}
+
+TEST(Read, read_whenCodeIsMalformed_namesTheMethodInTheMessage)
+{
+    auto bytes = load_fixture("classes.dex");
+    constexpr std::size_t kReturnVoid = kClassesInitCode + kCodeInsns + 6;
+    ASSERT_EQ(bytes[kReturnVoid], 0x0E);
+    bytes[kReturnVoid] = 0x3E;
+
+    Error error = read_error(bytes);
+
+    EXPECT_TRUE(error.message.starts_with("LTestDex;-><init>()V: code offset 3: "))
+        << error.message;
+}
+
+TEST(Read, read_whenMethodHasOneTryBlock_returnsItsRangeAndItsTypedHandler)
+{
+    Dex dex = read_fixture("trycatch.dex", kNoDebugInfo);
+
+    const Code &code = code_of(dex, "LTryCatch;", "divide", "(II)I");
+
+    const std::vector<Item> expected_items{
+        Label{0},           Insn{Binary{BinaryOp::DivInt, 0, 0, 1}},
+        Label{1},           Insn{Return{ValueKind::Normal, 0}},
+        Label{2},           Insn{MoveException{0}},
+        Insn{Const{0, -1}}, Insn{Return{ValueKind::Normal, 0}},
+    };
+    const std::vector<TryRange> expected_tries{
+        TryRange{Label{0}, Label{1}, {Catch{"Ljava/lang/ArithmeticException;", Label{2}}}, {}},
+    };
+    EXPECT_EQ(code.items, expected_items);
+    EXPECT_EQ(code.tries, expected_tries);
+}
+
+TEST(Read, read_whenATryBlockHasATypedHandlerAndACatchAll_returnsBoth)
+{
+    Dex dex = read_fixture("trycatch.dex");
+
+    const Code &code =
+        code_of(dex, "LTryCatch;", "safeParse", "(Ljava/lang/String;)Ljava/lang/String;");
+
+    // Labels 0..6 are at code offsets 0x02, 0x0a, 0x10, 0x12, 0x13, 0x15 and 0x1b.
+    ASSERT_EQ(code.tries.size(), 2u);
+    EXPECT_EQ(
+        code.tries[0],
+        (TryRange{
+            Label{0}, Label{1}, {Catch{"Ljava/lang/NumberFormatException;", Label{3}}}, Label{2}}));
+}
+
+TEST(Read, read_whenATryBlockHasOnlyACatchAll_returnsNoTypedHandler)
+{
+    Dex dex = read_fixture("trycatch.dex");
+
+    const Code &code =
+        code_of(dex, "LTryCatch;", "safeParse", "(Ljava/lang/String;)Ljava/lang/String;");
+
+    ASSERT_EQ(code.tries.size(), 2u);
+    EXPECT_EQ(code.tries[1], (TryRange{Label{4}, Label{5}, {}, Label{2}}));
+}
+
+TEST(Read, read_whenTwoTryBlocksShareAHandler_placesItsLabelOnceBeforeMoveException)
+{
+    Dex dex = read_fixture("trycatch.dex", kNoDebugInfo);
+
+    const std::vector<Item> &items =
+        code_of(dex, "LTryCatch;", "safeParse", "(Ljava/lang/String;)Ljava/lang/String;").items;
+
+    std::vector<std::size_t> positions;
+    for (std::size_t i = 0; i < items.size(); ++i)
+        if (items[i] == Item{Label{2}})
+            positions.push_back(i);
+    ASSERT_EQ(positions.size(), 1u);
+    ASSERT_LT(positions[0] + 1, items.size());
+    EXPECT_EQ(items[positions[0] + 1], (Item{Insn{MoveException{2}}}));
+}
+
+TEST(Read, read_whenMethodHasNoTryBlock_returnsNoTryRanges)
+{
+    Dex dex = read_fixture("fibonacci.dex");
+
+    EXPECT_TRUE(code_of(dex, "LFibonacci;", "compute", "(I)J").tries.empty());
+}
+
+TEST(Read, read_whenATryRangeStartsInsideAnInstruction_returnsMalformed)
+{
+    auto bytes = load_fixture("trycatch.dex");
+    // safeParse has 33 code units, so its first try_item is at code item + 16 + 66 + 2.
+    constexpr std::size_t kStartAddr = kTrycatchSafeParseCode + 0x54;
+    ASSERT_EQ(get_u32(bytes, kStartAddr), 2u);
+    put_u32(bytes, kStartAddr, 3);
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_EQ(error.message,
+              "LTryCatch;->safeParse(Ljava/lang/String;)Ljava/lang/String;: try range at code "
+              "offset 3 does not cover whole instructions");
+}
+
+TEST(Read, read_whenATryRangeEndsInsideAnInstruction_returnsMalformed)
+{
+    auto bytes = load_fixture("trycatch.dex");
+    constexpr std::size_t kInsnCount = kTrycatchSafeParseCode + 0x58;
+    ASSERT_EQ(bytes[kInsnCount], 8);
+    bytes[kInsnCount] = 6;
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_TRUE(
+        contains(error.message, "try range at code offset 2 does not cover whole instructions"))
+        << error.message;
+}
+
+TEST(Read, read_whenATryRangeCoversNoInstruction_returnsMalformed)
+{
+    auto bytes = load_fixture("trycatch.dex");
+    constexpr std::size_t kInsnCount = kTrycatchSafeParseCode + 0x58;
+    ASSERT_EQ(bytes[kInsnCount], 8);
+    bytes[kInsnCount] = 0;
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_TRUE(
+        contains(error.message, "try range at code offset 2 does not cover whole instructions"))
+        << error.message;
+}
+
+TEST(Read, read_whenATryRangeNamesNoHandler_returnsMalformed)
+{
+    auto bytes = load_fixture("trycatch.dex");
+    constexpr std::size_t kHandlerOff = kTrycatchSafeParseCode + 0x5A;
+    ASSERT_EQ(bytes[kHandlerOff], 1);
+    bytes[kHandlerOff] = 0x7F;
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_TRUE(contains(error.message, "try range at code offset 2 has no handler at 127"))
+        << error.message;
+}
+
+TEST(Read, read_whenACatchHandlerIsNotAtAnInstruction_returnsMalformed)
+{
+    auto bytes = load_fixture("trycatch.dex");
+    // The handler address is the last byte of divide's encoded_catch_handler_list.
+    constexpr std::size_t kHandlerAddr = kTrycatchDivideCode + 0x27;
+    ASSERT_EQ(bytes[kHandlerAddr], 2);
+    bytes[kHandlerAddr] = 9;
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_TRUE(contains(error.message,
+                         "catch handler at code offset 0 goes to 9, which is not an instruction"))
+        << error.message;
+}
+
+TEST(Read, read_whenDebugInfoIsRead_returnsALineNumberBeforeTheInstructionAtEachPosition)
+{
+    Dex dex = read_fixture("classes.dex");
+
+    const Code &code = code_of(dex, "LTestDex;", "main", "([Ljava/lang/String;)V");
+
+    EXPECT_EQ(lines_with_insns_before(code),
+              (std::vector<std::pair<uint32_t, std::size_t>>{{14, 0}, {15, 4}}));
+}
+
+TEST(Read, read_whenDebugInfoDoesNotNameAParameter_returnsNoNameForIt)
+{
+    Dex dex = read_fixture("classes.dex");
+
+    const Code &code = code_of(dex, "LTestDex;", "main", "([Ljava/lang/String;)V");
+
+    EXPECT_EQ(code.parameter_names, (std::vector<std::optional<std::string>>{std::nullopt}));
+}
+
+TEST(Read, read_whenDebugInfoIsOff_returnsOnlyInstructionsAndLabels)
+{
+    Dex with_debug = read_fixture("fibonacci.dex");
+    Dex without_debug = read_fixture("fibonacci.dex", kNoDebugInfo);
+
+    const Code &with = code_of(with_debug, "LFibonacci;", "compute", "(I)J");
+    const Code &without = code_of(without_debug, "LFibonacci;", "compute", "(I)J");
+
+    EXPECT_EQ(count_of<LineNumber>(with), 13u);
+    EXPECT_EQ(count_of<Insn>(without) + count_of<Label>(without), without.items.size());
+}
+
+TEST(Read, read_whenDebugInfoIsOff_returnsNoParameterNames)
+{
+    Dex dex = read_fixture("classes.dex", kNoDebugInfo);
+
+    const Code &code = code_of(dex, "LTestDex;", "main", "([Ljava/lang/String;)V");
+
+    EXPECT_TRUE(code.parameter_names.empty());
+}
+
+TEST(Read, read_whenCodeHasNoDebugInfo_returnsOnlyInstructionsAndLabels)
+{
+    auto bytes = load_fixture("classes.dex");
+    put_u32(bytes, kClassesInitCode + kCodeDebugInfoOff, 0);
+
+    Dex dex = read_or_throw(bytes);
+
+    const Code &code = code_of(dex, "LTestDex;", "<init>", "()V");
+    EXPECT_EQ(code.items.size(), 2u);
+    EXPECT_TRUE(code.parameter_names.empty());
+}
+
+// The debug_info_items below are written by hand: line_start, parameters_size, names, opcodes.
+TEST(Read, read_whenDebugInfoNamesAParameter_returnsTheName)
+{
+    Code code =
+        fibonacci_classify_with_debug_info({1, 1, kStringNegativeP1, raw::DBG_END_SEQUENCE});
+
+    EXPECT_EQ(code.parameter_names, (std::vector<std::optional<std::string>>{"negative"}));
+}
+
+TEST(Read, read_whenDebugInfoStartsALocal_returnsItsRegisterNameAndType)
+{
+    Code code = fibonacci_classify_with_debug_info(
+        {1, 0, raw::DBG_START_LOCAL, 0, kStringSmallP1, kTypeLongP1, raw::DBG_END_SEQUENCE});
+
+    ASSERT_FALSE(code.items.empty());
+    EXPECT_EQ(code.items[0], (Item{LocalStart{0, LocalVariable{"small", "J", std::nullopt}}}));
+}
+
+TEST(Read, read_whenALocalHasNoNameAndNoType_returnsNeither)
+{
+    Code code = fibonacci_classify_with_debug_info(
+        {1, 0, raw::DBG_START_LOCAL, 3, 0, 0, raw::DBG_END_SEQUENCE});
+
+    ASSERT_FALSE(code.items.empty());
+    EXPECT_EQ(code.items[0],
+              (Item{LocalStart{3, LocalVariable{std::nullopt, std::nullopt, std::nullopt}}}));
+}
+
+TEST(Read, read_whenDebugInfoStartsAnExtendedLocal_returnsItsSignature)
+{
+    Code code =
+        fibonacci_classify_with_debug_info({1, 0, raw::DBG_START_LOCAL_EXTENDED, 1, kStringSmallP1,
+                                            kTypeLongP1, kStringLjP1, raw::DBG_END_SEQUENCE});
+
+    ASSERT_FALSE(code.items.empty());
+    EXPECT_EQ(code.items[0], (Item{LocalStart{1, LocalVariable{"small", "J", "LJ"}}}));
+}
+
+TEST(Read, read_whenDebugInfoEndsALocal_returnsLocalEndWithItsRegister)
+{
+    Code code =
+        fibonacci_classify_with_debug_info({1, 0, raw::DBG_END_LOCAL, 2, raw::DBG_END_SEQUENCE});
+
+    ASSERT_FALSE(code.items.empty());
+    EXPECT_EQ(code.items[0], Item{LocalEnd{2}});
+}
+
+TEST(Read, read_whenDebugInfoRestartsALocal_returnsLocalRestartWithItsRegister)
+{
+    Code code = fibonacci_classify_with_debug_info(
+        {1, 0, raw::DBG_RESTART_LOCAL, 2, raw::DBG_END_SEQUENCE});
+
+    ASSERT_FALSE(code.items.empty());
+    EXPECT_EQ(code.items[0], Item{LocalRestart{2}});
+}
+
+TEST(Read, read_whenDebugInfoMarksThePrologueEnd_returnsPrologueEnd)
+{
+    Code code = fibonacci_classify_with_debug_info(
+        {1, 0, raw::DBG_SET_PROLOGUE_END, raw::DBG_END_SEQUENCE});
+
+    ASSERT_FALSE(code.items.empty());
+    EXPECT_EQ(code.items[0], Item{PrologueEnd{}});
+}
+
+TEST(Read, read_whenDebugInfoMarksTheEpilogueBegin_returnsEpilogueBegin)
+{
+    Code code = fibonacci_classify_with_debug_info(
+        {1, 0, raw::DBG_SET_EPILOGUE_BEGIN, raw::DBG_END_SEQUENCE});
+
+    ASSERT_FALSE(code.items.empty());
+    EXPECT_EQ(code.items[0], Item{EpilogueBegin{}});
+}
+
+TEST(Read, read_whenDebugInfoSetsTheSourceFile_returnsItsName)
+{
+    Code code = fibonacci_classify_with_debug_info(
+        {1, 0, raw::DBG_SET_FILE, kStringFileNameP1, raw::DBG_END_SEQUENCE});
+
+    ASSERT_FALSE(code.items.empty());
+    EXPECT_EQ(code.items[0], Item{SetSourceFile{"Fibonacci.java"}});
+}
+
+TEST(Read, read_whenDebugInfoSetsAnUnknownSourceFile_returnsNoName)
+{
+    Code code =
+        fibonacci_classify_with_debug_info({1, 0, raw::DBG_SET_FILE, 0, raw::DBG_END_SEQUENCE});
+
+    ASSERT_FALSE(code.items.empty());
+    EXPECT_EQ(code.items[0], Item{SetSourceFile{std::nullopt}});
+}
+
+TEST(Read, read_whenASpecialOpcodeAddsNothing_returnsTheStartLineAtTheFirstInstruction)
+{
+    Code code = fibonacci_classify_with_debug_info({7, 0, 0x0E, raw::DBG_END_SEQUENCE});
+
+    EXPECT_EQ(lines_with_insns_before(code),
+              (std::vector<std::pair<uint32_t, std::size_t>>{{7, 0}}));
+}
+
+TEST(Read, read_whenASpecialOpcodeAdvancesLineAndAddress_returnsTheLineAtTheLaterInstruction)
+{
+    // 0x0a + 2 * 15 + (4 + 3): two code units forward, three lines down.
+    Code code = fibonacci_classify_with_debug_info({7, 0, 0x2F, raw::DBG_END_SEQUENCE});
+
+    EXPECT_EQ(lines_with_insns_before(code),
+              (std::vector<std::pair<uint32_t, std::size_t>>{{10, 1}}));
+}
+
+TEST(Read, read_whenDebugInfoAdvancesTheLine_addsTheSignedDifference)
+{
+    Code code = fibonacci_classify_with_debug_info(
+        {7, 0, raw::DBG_ADVANCE_LINE, 0x7E, 0x0E, raw::DBG_END_SEQUENCE});
+
+    EXPECT_EQ(lines_with_insns_before(code),
+              (std::vector<std::pair<uint32_t, std::size_t>>{{5, 0}}));
+}
+
+TEST(Read, read_whenDebugInfoAdvancesTheAddress_placesTheNextEventAtThatInstruction)
+{
+    Code code = fibonacci_classify_with_debug_info(
+        {7, 0, raw::DBG_ADVANCE_PC, 4, 0x0E, raw::DBG_END_SEQUENCE});
+
+    EXPECT_EQ(lines_with_insns_before(code),
+              (std::vector<std::pair<uint32_t, std::size_t>>{{7, 2}}));
+}
+
+TEST(Read, read_whenADebugPositionIsAtTheEndOfTheCode_keepsItAfterTheLastInstruction)
+{
+    Code code = fibonacci_classify_with_debug_info(
+        {7, 0, raw::DBG_ADVANCE_PC, 37, 0x0E, raw::DBG_END_SEQUENCE});
+
+    ASSERT_FALSE(code.items.empty());
+    EXPECT_EQ(code.items.back(), Item{LineNumber{7}});
+}
+
+TEST(Read, read_whenADebugPositionIsPastTheEndOfTheCode_dropsIt)
+{
+    Code code = fibonacci_classify_with_debug_info(
+        {7, 0, raw::DBG_ADVANCE_PC, 38, 0x0E, raw::DBG_END_SEQUENCE});
+
+    EXPECT_EQ(count_of<LineNumber>(code), 0u);
+}
+
+TEST(Read, read_whenALabelAndADebugEventShareAPosition_placesTheLabelFirst)
+{
+    Code code = fibonacci_classify_with_debug_info(
+        {7, 0, raw::DBG_ADVANCE_PC, 9, 0x0E, raw::DBG_END_SEQUENCE});
+
+    // classify's first branch target is at code offset 9, after five instructions.
+    ASSERT_GT(code.items.size(), 7u);
+    EXPECT_EQ(code.items[5], Item{Label{0}});
+    EXPECT_EQ(code.items[6], Item{LineNumber{7}});
+    EXPECT_TRUE(std::holds_alternative<Insn>(code.items[7]));
+}
+
+TEST(Read, read_whenDebugInfoNamesARegisterAboveV65535_returnsMalformed)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    set_debug_info(bytes, kFibonacciClassifyCode,
+                   {1, 0, raw::DBG_END_LOCAL, 0x80, 0x80, 0x04, raw::DBG_END_SEQUENCE});
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_EQ(error.message,
+              "LFibonacci;->classify(J)Ljava/lang/String;: debug info names register 65536");
+}
+
+TEST(Read, read_whenDebugInfoHasNoEndSequence_returnsMalformed)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    set_debug_info(bytes, kFibonacciClassifyCode, {1, 0, raw::DBG_ADVANCE_PC, 2});
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+}
+
+TEST(Read, read_whenDebugInfoIsBrokenButNotAskedFor_succeeds)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    set_debug_info(bytes, kFibonacciClassifyCode, {1, 0, raw::DBG_ADVANCE_PC, 2});
+
+    auto dex = read(bytes, kNoDebugInfo);
+
+    EXPECT_TRUE(dex.has_value());
+}
+
+TEST(Read, read_whenClassIsAnnotated_returnsTheAnnotationWithItsElementsInFileOrder)
+{
+    Dex dex = read_fixture("annotated.dex");
+
+    const std::vector<AnnotationItem> expected{AnnotationItem{
+        AnnotationVisibility::Runtime,
+        EncodedAnnotation{"LMarker;",
+                          {
+                              {"level", Value{Value::Int{3}}},
+                              {"name", Value{Value::String{"cls"}}},
+                              {"tags", Value{Value::Array{{Value{Value::String{"a"}},
+                                                           Value{Value::String{"b"}}}}}},
+                          }},
+    }};
+    EXPECT_EQ(class_of(dex, "LAnnotated;").annotations, expected);
+}
+
+TEST(Read, read_whenFieldIsAnnotated_returnsTheAnnotationOnThatField)
+{
+    Dex dex = read_fixture("annotated.dex");
+
+    const std::vector<AnnotationItem> expected{AnnotationItem{
+        AnnotationVisibility::Runtime,
+        EncodedAnnotation{"LMarker;", {{"name", Value{Value::String{"fld"}}}}},
+    }};
+    EXPECT_EQ(field_of(dex, "LAnnotated;", "MAGIC", "I").annotations, expected);
+}
+
+TEST(Read, read_whenFieldIsNotAnnotated_returnsNoAnnotations)
+{
+    Dex dex = read_fixture("annotated.dex");
+
+    EXPECT_TRUE(field_of(dex, "LAnnotated;", "BIG", "J").annotations.empty());
+}
+
+TEST(Read, read_whenMethodIsAnnotated_returnsTheAnnotationWithItsTypeValue)
+{
+    Dex dex = read_fixture("annotated.dex");
+
+    const std::vector<AnnotationItem> expected{AnnotationItem{
+        AnnotationVisibility::Runtime,
+        EncodedAnnotation{"LMarker;",
+                          {
+                              {"name", Value{Value::String{"mth"}}},
+                              {"target", Value{Value::Type{"Ljava/lang/String;"}}},
+                          }},
+    }};
+    EXPECT_EQ(method_of(dex, "LAnnotated;", "greet", "()Ljava/lang/String;").annotations, expected);
+}
+
+TEST(Read, read_whenAnAnnotationHasNoElements_returnsAnEmptyElementList)
+{
+    Dex dex = read_fixture("annotated.dex");
+
+    const std::vector<AnnotationItem> expected{AnnotationItem{
+        AnnotationVisibility::Runtime,
+        EncodedAnnotation{"Ljava/lang/Deprecated;", {}},
+    }};
+    EXPECT_EQ(method_of(dex, "LAnnotated;", "old", "()V").annotations, expected);
+}
+
+TEST(Read, read_whenMethodIsNotAnnotated_returnsNoAnnotations)
+{
+    Dex dex = read_fixture("annotated.dex");
+
+    const MethodDef &init = method_of(dex, "LAnnotated;", "<init>", "()V");
+    EXPECT_TRUE(init.annotations.empty());
+    EXPECT_TRUE(init.parameter_annotations.empty());
+}
+
+TEST(Read, read_whenAnAnnotationValueIsAnAnnotation_returnsTheNestedAnnotation)
+{
+    Dex dex = read_fixture("annotated.dex");
+
+    const std::vector<AnnotationItem> &annotations = class_of(dex, "LMarker;").annotations;
+
+    const AnnotationItem expected{
+        AnnotationVisibility::System,
+        EncodedAnnotation{"Ldalvik/annotation/AnnotationDefault;",
+                          {{"value", Value{Shared<EncodedAnnotation>(EncodedAnnotation{
+                                         "LMarker;",
+                                         {
+                                             {"level", Value{Value::Int{1}}},
+                                             {"tags", Value{Value::Array{}}},
+                                             {"target", Value{Value::Type{"Ljava/lang/Object;"}}},
+                                         }})}}}},
+    };
+    ASSERT_EQ(annotations.size(), 3u);
+    EXPECT_EQ(annotations[0], expected);
+}
+
+TEST(Read, read_whenAnAnnotationValueIsAnEnumConstant_returnsItsField)
+{
+    Dex dex = read_fixture("annotated.dex");
+
+    const std::vector<AnnotationItem> &annotations = class_of(dex, "LMarker;").annotations;
+
+    const AnnotationItem expected{
+        AnnotationVisibility::Runtime,
+        EncodedAnnotation{"Ljava/lang/annotation/Retention;",
+                          {{"value", Value{Value::Enum{FieldId{
+                                         "Ljava/lang/annotation/RetentionPolicy;", "RUNTIME",
+                                         "Ljava/lang/annotation/RetentionPolicy;"}}}}}},
+    };
+    ASSERT_EQ(annotations.size(), 3u);
+    EXPECT_EQ(annotations[1], expected);
+}
+
+TEST(Read, read_whenAnAnnotationValueIsAnArrayOfEnumConstants_returnsThemInOrder)
+{
+    Dex dex = read_fixture("annotated.dex");
+
+    const std::vector<AnnotationItem> &annotations = class_of(dex, "LMarker;").annotations;
+
+    auto element_type = [](const char *name) {
+        return Value{Value::Enum{FieldId{"Ljava/lang/annotation/ElementType;", name,
+                                         "Ljava/lang/annotation/ElementType;"}}};
+    };
+    const AnnotationItem expected{
+        AnnotationVisibility::Runtime,
+        EncodedAnnotation{
+            "Ljava/lang/annotation/Target;",
+            {{"value", Value{Value::Array{{element_type("TYPE"), element_type("METHOD"),
+                                           element_type("FIELD")}}}}}},
+    };
+    ASSERT_EQ(annotations.size(), 3u);
+    EXPECT_EQ(annotations[2], expected);
+}
+
+TEST(Read, read_whenAMethodHasASystemAnnotation_returnsTheSystemVisibility)
+{
+    Dex dex = read_fixture("annotated.dex");
+
+    const std::vector<AnnotationItem> expected{AnnotationItem{
+        AnnotationVisibility::System,
+        EncodedAnnotation{"Ldalvik/annotation/Signature;",
+                          {{"value", Value{Value::Array{{Value{Value::String{"()"}},
+                                                         Value{Value::String{"Ljava/lang/Class<"}},
+                                                         Value{Value::String{"*>;"}}}}}}}},
+    }};
+    EXPECT_EQ(method_of(dex, "LMarker;", "target", "()Ljava/lang/Class;").annotations, expected);
+}
+
+TEST(Read, read_whenAnAnnotationHasAnUnknownVisibility_returnsMalformed)
+{
+    auto bytes = load_fixture("annotated.dex");
+    std::size_t directory = get_u32(bytes, class_def_off(bytes, 0) + kAnnotationsOff);
+    std::size_t set = get_u32(bytes, directory);
+    std::size_t item = get_u32(bytes, set + 4);
+    ASSERT_EQ(bytes[item], 0x01);
+    bytes[item] = 0x03;
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_EQ(error.message, "LAnnotated;: bad annotation visibility 3");
+}
+
+TEST(Read, read_whenAnAnnotationItemIsOutsideTheFile_returnsMalformed)
+{
+    auto bytes = load_fixture("annotated.dex");
+    std::size_t directory = get_u32(bytes, class_def_off(bytes, 0) + kAnnotationsOff);
+    std::size_t set = get_u32(bytes, directory);
+    put_u32(bytes, set + 4, static_cast<uint32_t>(bytes.size()));
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_EQ(error.message, "LAnnotated;: annotation item is past the end of the file");
+}
+
+TEST(Read, read_whenTheAnnotationsDirectoryNamesAFieldTheClassDoesNotDefine_returnsMalformed)
+{
+    auto bytes = load_fixture("annotated.dex");
+    std::size_t directory = get_u32(bytes, class_def_off(bytes, 0) + kAnnotationsOff);
+    constexpr std::size_t kFirstFieldIdx = 16;
+    ASSERT_EQ(get_u32(bytes, directory + 4), 1u);
+    put_u32(bytes, directory + kFirstFieldIdx, 0xFFFF);
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_EQ(error.message,
+              "LAnnotated;: the annotations directory names a member the class does not define");
+}
+
+TEST(Read, read_whenClassDataIsOutsideTheFile_returnsMalformed)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    put_u32(bytes, class_def_off(bytes, 0) + kClassDataOff, static_cast<uint32_t>(bytes.size()));
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_TRUE(error.message.starts_with("LFibonacci;: ")) << error.message;
+}
+
+TEST(Read, read_whenClassDataListsAFieldOfAnotherClass_returnsMalformed)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    // Field 0 is Fibonacci.sumFib; type 4 is Ljava/lang/String;.
+    std::size_t field_class_idx = get_u32(bytes, kFieldIdsOff);
+    ASSERT_EQ(bytes[field_class_idx], 2);
+    bytes[field_class_idx] = 4;
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_EQ(error.message, "LFibonacci;: field Ljava/lang/String;.sumFib is listed in the class "
+                             "data of LFibonacci;");
+}
+
+TEST(Read, read_whenClassDataListsAMethodOfAnotherClass_returnsMalformed)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    // Method 0 is Fibonacci.<init>; type 4 is Ljava/lang/String;.
+    std::size_t method_class_idx = get_u32(bytes, kMethodIdsOff);
+    ASSERT_EQ(bytes[method_class_idx], 2);
+    bytes[method_class_idx] = 4;
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_EQ(error.message, "LFibonacci;: method Ljava/lang/String;-><init>()V is listed in the "
+                             "class data of LFibonacci;");
+}
+
+TEST(Read, read_whenBufferIsEmpty_returnsMalformed)
+{
+    Error error = read_error({});
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_EQ(error.message, "not a DEX file (bad magic)");
+}
+
+TEST(Read, read_whenMagicIsWrong_returnsMalformed)
+{
+    const std::vector<uint8_t> junk = {'n', 'o', 't', ' ', 'd', 'e', 'x', 0};
+
+    Error error = read_error(junk);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_EQ(error.message, "not a DEX file (bad magic)");
+}
+
+TEST(Read, read_whenVersionIsNotThreeDigits_returnsMalformed)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    bytes[5] = 'a';
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_EQ(error.message, "not a DEX file (bad magic)");
+}
+
+TEST(Read, read_whenMagicDoesNotEndWithANul_returnsMalformed)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    bytes[7] = '5';
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_EQ(error.message, "not a DEX file (bad magic)");
+}
+
+TEST(Read, read_whenVersionIsUnknown_returnsMalformed)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    bytes[6] = '6';
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+    EXPECT_EQ(error.message, "unknown DEX version 036");
+}
+
+TEST(Read, read_whenVersionIs41_returnsUnsupported)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    bytes[5] = '4';
+    bytes[6] = '1';
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Unsupported);
+    EXPECT_EQ(error.message, "DEX version 041 (containers) is not supported");
+}
+
+TEST(Read, read_whenVersionIs40_readsTheFile)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    bytes[5] = '4';
+    bytes[6] = '0';
+
+    Dex dex = read_or_throw(bytes);
+
+    EXPECT_EQ(dex.version, 40u);
+}
+
+TEST(Read, read_whenEndianTagIsBigEndian_returnsUnsupported)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    put_u32(bytes, kEndianTagOff, 0x78563412);
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Unsupported);
+    EXPECT_EQ(error.message, "big-endian DEX files are not supported");
+}
+
+TEST(Read, read_whenBufferHoldsOnlyTheMagic_returnsMalformed)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    bytes.resize(8);
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+}
+
+TEST(Read, read_whenFileIsCutAfterTheHeader_returnsMalformed)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    bytes.resize(0x70);
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+}
+
+TEST(Read, read_whenFileIsCutInHalf_returnsMalformed)
+{
+    auto bytes = load_fixture("fibonacci.dex");
+    bytes.resize(bytes.size() / 2);
+
+    Error error = read_error(bytes);
+
+    EXPECT_EQ(error.kind, Error::Kind::Malformed);
+}
+
+TEST(Read, read_whenReadFails_returnsNoProblems)
+{
+    Error error = read_error({});
+
+    EXPECT_TRUE(error.problems.empty());
+}
+
+class ReadFixture : public ::testing::TestWithParam<std::string>
+{
+};
+
+TEST_P(ReadFixture, read_whenFileIsWellFormed_succeeds)
+{
+    auto dex = read(load_fixture(GetParam()));
+
+    ASSERT_TRUE(dex.has_value()) << dex.error().message;
+    EXPECT_FALSE(dex->classes.empty());
+}
+
+TEST_P(ReadFixture, read_whenCalledTwice_returnsEqualModels)
+{
+    auto bytes = load_fixture(GetParam());
+
+    auto first = read(bytes);
+    auto second = read(bytes);
+
+    ASSERT_TRUE(first.has_value());
+    ASSERT_TRUE(second.has_value());
+    EXPECT_TRUE(*first == *second);
+}
+
+INSTANTIATE_TEST_SUITE_P(AllDexFiles, ReadFixture,
+                         ::testing::Values("annotated.dex", "casts.dex", "classes.dex",
+                                           "fibonacci.dex", "inherit.dex", "multistring.dex",
+                                           "polymorphic.dex", "shapes.dex", "trycatch.dex"),
+                         [](const ::testing::TestParamInfo<ReadFixture::ParamType> &info) {
+                             return info.param.substr(0, info.param.rfind('.'));
+                         });
+
+TEST(Read, readFile_whenPathIsAFixture_returnsTheSameModelAsRead)
+{
+    auto from_file = read_file(fixture_path("shapes.dex"));
+
+    ASSERT_TRUE(from_file.has_value()) << from_file.error().message;
+    EXPECT_TRUE(*from_file == read_fixture("shapes.dex"));
+}
+
+TEST(Read, readFile_whenOptionsTurnDebugInfoOff_readsWithoutDebugInfo)
+{
+    auto from_file = read_file(fixture_path("shapes.dex"), kNoDebugInfo);
+
+    ASSERT_TRUE(from_file.has_value()) << from_file.error().message;
+    EXPECT_TRUE(*from_file == read_fixture("shapes.dex", kNoDebugInfo));
+    EXPECT_FALSE(*from_file == read_fixture("shapes.dex"));
+}
+
+TEST(Read, readFile_whenPathDoesNotExist_returnsAnIoError)
+{
+    auto file = read_file("does/not/exist.dex");
+
+    ASSERT_FALSE(file.has_value());
+    EXPECT_EQ(file.error().kind, Error::Kind::Io);
+    EXPECT_EQ(file.error().message, "cannot open does/not/exist.dex");
+}
+
+TEST(Read, readFile_whenPathIsADirectory_returnsAnIoError)
+{
+    auto file = read_file(fixture_path(""));
+
+    ASSERT_FALSE(file.has_value());
+    EXPECT_EQ(file.error().kind, Error::Kind::Io);
+}
+
+TEST(Read, readFile_whenFileIsNotADexFile_returnsMalformed)
+{
+    auto file = read_file(__FILE__);
+
+    ASSERT_FALSE(file.has_value());
+    EXPECT_EQ(file.error().kind, Error::Kind::Malformed);
+    EXPECT_EQ(file.error().message, "not a DEX file (bad magic)");
+}
+
 } // namespace
 } // namespace dexsplit::model
