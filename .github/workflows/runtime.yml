@@ -187,7 +187,7 @@ jobs:
         # and the failure resurfacing later in Build or the canary with a misleading message.
         run: |
           set -o pipefail
-          cmake --preset ios 2>&1 | tee "$RUNNER_TEMP/ios-configure.log"
+          cmake --preset ios -DRASP_BUILD_KEY_COMPANION=ON 2>&1 | tee "$RUNNER_TEMP/ios-configure.log"
       - name: Build
         run: cmake --build --preset ios --parallel
       - name: Check the framework is obfuscated
@@ -242,7 +242,7 @@ jobs:
           "$RUNNER_TEMP/build-tools/bin/pip" install 'lief==1.0.0'
           "$RUNNER_TEMP/build-tools/bin/python" tools/verify_packaging.py "$binary" ios arm64
       - name: Configure the development build with the private storage plugin consumer
-        run: cmake --preset ios-dev -DRASP_PLUGINS=tests/plugins/private_storage
+        run: cmake --preset ios-dev -DRASP_BUILD_KEY_COMPANION=ON -DRASP_PLUGINS=tests/plugins/private_storage
       - name: Build the development build
         run: cmake --build --preset ios-dev --parallel
       - name: Install clang-tidy
@@ -283,6 +283,14 @@ jobs:
           policy_host="$RUNNER_TEMP/ios-policy-host/PolicyHost.app"
           xcrun vtool -show-build "$policy_host/PolicyHost" | grep -qxE ' *minos 12\.0'
           cmp build/ios-dev/ios/RaspRuntime.framework/RaspRuntime "$policy_host/Frameworks/RaspRuntime.framework/RaspRuntime"
+      - name: Check installed companion Apple consumers in Release and Debug
+        run: |
+          for config in ios ios-dev; do
+            stage="$RUNNER_TEMP/keys-$config"
+            cmake --install "build/$config" --prefix "$stage" --component key_companion
+            bash companion/tests/consumers/check_apple.sh "$stage" "$PWD/build/$config/ios/RaspRuntime.framework" "$RUNNER_TEMP/keys-consumers-$config"
+          done
+          run-clang-tidy -quiet -j 2 -p build/ios-dev "^$PWD/companion/src/.*\.cpp$"
       - name: Check the development build writes logs
         run: nm -u build/ios-dev/ios/RaspRuntime.framework/RaspRuntime | grep -q _os_log
 
@@ -323,7 +331,7 @@ jobs:
       - name: Select the NDK
         run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
       - name: Configure
-        run: cmake --preset android -DANDROID_ABI=${{ matrix.abi }}
+        run: cmake --preset android -DRASP_BUILD_KEY_COMPANION=ON -DANDROID_ABI=${{ matrix.abi }}
       - name: Build
         run: cmake --build --preset android --parallel
       - name: Check the Android code
@@ -362,7 +370,7 @@ jobs:
       - name: Link installed primitive C and C++ policy consumers
         run: bash tests/android/local_policy/check_library.sh "$RUNNER_TEMP/runtime-release" '${{ matrix.abi }}' "$RUNNER_TEMP/policy-release"
       - name: Configure the development build with the private storage plugin consumer
-        run: cmake --preset android-dev -DANDROID_ABI=${{ matrix.abi }} -DRASP_PLUGINS=tests/plugins/private_storage
+        run: cmake --preset android-dev -DRASP_BUILD_KEY_COMPANION=ON -DANDROID_ABI=${{ matrix.abi }} -DRASP_PLUGINS=tests/plugins/private_storage
       - name: Build the development build
         run: cmake --build --preset android-dev --parallel
       - name: Check the Android development code
@@ -375,6 +383,15 @@ jobs:
         run: |
           cmake --install build/android-dev --prefix "$RUNNER_TEMP/runtime-debug" --component runtime
           bash tests/android/local_policy/check_library.sh "$RUNNER_TEMP/runtime-debug" '${{ matrix.abi }}' "$RUNNER_TEMP/policy-debug"
+      - name: Check installed companion Android consumers in Release and Debug
+        run: |
+          for config in android android-dev; do
+            stage="$RUNNER_TEMP/keys-$config"
+            cmake --install "build/$config" --prefix "$stage" --component runtime
+            cmake --install "build/$config" --prefix "$stage" --component key_companion
+            bash companion/tests/consumers/check_android.sh "$stage" '${{ matrix.abi }}' "$RUNNER_TEMP/keys-consumers-$config"
+          done
+          run-clang-tidy -quiet -j 2 -p build/android-dev "^$PWD/companion/src/.*\.cpp$"
       - name: Build the stub
         run: |
           jar="$(ls -d "$ANDROID_HOME"/platforms/android-*/android.jar | sort -V | tail -1)"
