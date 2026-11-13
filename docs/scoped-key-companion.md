@@ -251,6 +251,14 @@ terminal failure.
 DELETE/RESET must acknowledge durable tombstones before OS deletion. Actual absence
 plus durable retirement is required before confirming deletion.
 
+An accepted DELETE/RESET_NAMESPACE cancelled while still queued, before its job is
+reserved for worker dispatch, may have no durable tombstone and no OS deletion yet.
+Targeted use remains invalidated in memory; absent a stronger fault, the affected
+namespace returns CLEANUP_PENDING for CREATE/REOPEN/DESCRIBE/SIGN. The host can
+explicitly retry DELETE by its original KeyId or RESET_NAMESPACE in the same original
+namespace, or close and reopen to validate the actual durable state. Reopening
+cannot reconstruct lost undurable intent or authorize deletion from it.
+
 A terminal DELETE/RESET request reporting CLEANUP_PENDING is not automatically
 redispatched. Durable tombstones keep CREATE/REOPEN/DESCRIBE/SIGN blocked in the
 affected namespace while cleanup remains pending.
@@ -276,8 +284,9 @@ original identities. Reinstall never adopts old-generation Apple Keychain orphan
 or claims uninstall securely erases them.
 
 Owned mutable message/signature/context buffers are wiped after the last borrower.
-Quarantined in-flight buffers remain bounded until safe release. This cannot hide
-plaintext from a compromised process, caller/GC/OS copies, dumps or prior observation.
+Quarantined in-flight buffers remain bounded until safe release.
+
+This cannot hide plaintext from a compromised process, caller/GC/OS copies, dumps or prior observation.
 There is no release telemetry/logging, malware verdict, process scanning/termination,
 legal-hold feature or widening of an unrelated deletion request.
 

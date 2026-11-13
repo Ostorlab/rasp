@@ -17,7 +17,9 @@ if(RASP_BUILD_TESTS)
   include(FetchContent)
   FetchContent_Declare(googletest
     URL https://github.com/google/googletest/releases/download/v1.17.0/googletest-1.17.0.tar.gz
-    URL_HASH SHA256=65fab701d9829d38cb77c14acdc431d2108bfdbf8979e40eb8ae567edf10b27c SYSTEM)
+    URL_HASH SHA256=65fab701d9829d38cb77c14acdc431d2108bfdbf8979e40eb8ae567edf10b27c
+    DOWNLOAD_EXTRACT_TIMESTAMP ON
+    SYSTEM)
   # Apply the shared test-only policy before this first GoogleTest consumer.
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
   set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
