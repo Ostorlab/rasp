@@ -60,7 +60,16 @@ jobs:
           ctest --preset dexsplit-host --parallel 2
           run-clang-tidy -quiet -j 2 -config-file "$PWD/dexsplit/.clang-tidy" -p build/dexsplit-host "^$PWD/dexsplit/.*\.cpp$"
       - name: Install independent Android format tools
-        run: sdkmanager "build-tools;35.0.1" "platforms;android-35"
+        run: |
+          : "${ANDROID_HOME:?ubuntu-24.04 runner must provide ANDROID_HOME}"
+          android_sdk_manager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$android_sdk_manager" ]]; then
+            echo "Expected Android SDK command-line tools at $android_sdk_manager" >&2
+            exit 1
+          fi
+          "$android_sdk_manager" --sdk_root="$ANDROID_HOME" "build-tools;35.0.1" "platforms;android-35"
+          test -x "$ANDROID_HOME/build-tools/35.0.1/dexdump"
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar"
       - name: Reproduce version feature fixtures and independently inspect them
         run: |
           build/dexsplit-host/dexsplit_fixtures build/version-fixtures
