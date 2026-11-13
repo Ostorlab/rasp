@@ -9,6 +9,11 @@ set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
+# Match the runtime/test factories: UBSan vptr checks cannot cross mixed RTTI layouts during discovery.
+foreach(target gtest gtest_main)
+  target_compile_options(${target} PRIVATE -fno-rtti)
+endforeach()
+
 include(GoogleTest)
 
 add_executable(rasp_core_test core/version_test.cpp)
@@ -87,6 +92,17 @@ foreach(check debugger hooks mitm)
     ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(rasp_android_${check}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
   gtest_discover_tests(rasp_android_${check}_test)
+endforeach()
+
+# Rename C APIs only in the actual collector object, keeping fixture/system declarations separate.
+foreach(platform android ios)
+  add_library(rasp_${platform}_network_source OBJECT ${PROJECT_SOURCE_DIR}/${platform}/src/checks/mitm.cpp)
+  target_compile_definitions(rasp_${platform}_network_source PRIVATE
+    getifaddrs=rasp_test_getifaddrs freeifaddrs=rasp_test_freeifaddrs)
+  target_include_directories(rasp_${platform}_network_source PRIVATE ${PROJECT_SOURCE_DIR}/${platform}/src)
+  target_link_libraries(rasp_${platform}_network_source PRIVATE rasp_core rasp_warnings rasp_language)
+  set_property(TARGET rasp_${platform}_mitm_test PROPERTY SOURCES
+    ${platform}/checks/mitm_test.cpp support/interfaces.cpp $<TARGET_OBJECTS:rasp_${platform}_network_source>)
 endforeach()
 
 # The hooks check reads system library files through the shared ELF reader, and its tests read the ELF fixtures.
@@ -373,15 +389,15 @@ if(Java_FOUND AND JNI_FOUND)
       DEPENDS ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class)
     add_test(NAME AndroidLocalPolicy.operationGate
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
-        $<TARGET_FILE:rasp_android_context_bridge_jni> 174e5db59a8f1bd3a657d8263d971b1507c66017b2513a2acda442deaa798cb0)
+        $<TARGET_FILE:rasp_android_context_bridge_jni> 2188f4db98271a481eb58acd3e16351f5762acceab1444731b6b5b1d2ea659f1)
     set_tests_properties(AndroidLocalPolicy.operationGate PROPERTIES TIMEOUT 30)
     add_test(NAME AndroidLocalPolicy.uint32MaxVersion
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
-        $<TARGET_FILE:rasp_android_context_bridge_jni> b6f92e142a82c468fa63caae4ca728ecfb2d8aa60bc5822dace6f05388f307c8 4294967295)
+        $<TARGET_FILE:rasp_android_context_bridge_jni> 70103069c9fdfd7cee619d1f0c0a7c295f71b53a7e81dfdb01c49edc71f3c5aa 4294967295)
     set_tests_properties(AndroidLocalPolicy.uint32MaxVersion PROPERTIES TIMEOUT 30)
     add_test(NAME AndroidLocalPolicy.reportOnlyAdmission
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
-        $<TARGET_FILE:rasp_android_context_bridge_jni> d18c67bccbd63e3a4a4d6d6724932caa862f4272ee825eb3b61b1eafffaa2453 1 report_only)
+        $<TARGET_FILE:rasp_android_context_bridge_jni> 0216b08756f8040f2fffb433c0debb1f15d63b972e0e7ecfb1aa58dd14319252 1 report_only)
     set_tests_properties(AndroidLocalPolicy.reportOnlyAdmission PROPERTIES TIMEOUT 30)
     add_test(NAME AndroidWindowBridge.lifecycle
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.WindowTest

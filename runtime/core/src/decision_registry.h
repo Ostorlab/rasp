@@ -39,7 +39,7 @@ struct Rule {
   LocalSeverity severity;
 };
 /// Explicit adoption pin: future catalogues cannot silently inherit predicates.
-inline constexpr std::string_view kCatalogueId = "fce392826ee1d9e5bab8046ca1584e2755af0eb3fd26922769eb20c64e32f736";
+inline constexpr std::string_view kCatalogueId = "e24617864ef1929ecca4d84ed0b62d530ca2ad602859272acd8f0aee3afc7733";
 /// All 125 adopted canonical tuples; 47 capture rows deliberately have no semantic predicate.
 inline constexpr auto kRules = std::to_array<Rule>({
     {

@@ -2,7 +2,7 @@
 
 No Git checkout, remote fetch, credential, history, build dependency download or
 native execution is involved. The raw pinned commit authenticates the tree; Git
-blob/tree encodings are reconstructed from all 214 regular source files.
+blob/tree encodings are reconstructed from all 215 regular source files.
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ import stat
 import tarfile
 import typing
 
-COMMIT = "1197b25162eadc202799abfe16008bef390e3482"
-TREE = "b15595265d8d907439227848e064f8f66fc89844"
-FILE_COUNT = 214
+COMMIT = "eb7e4306eeaf449031822910c73e1ecc9d0a34f2"
+TREE = "8e91681d074a16e4e1c444f1e88e2d244db4474e"
+FILE_COUNT = 215
 MAX_ARCHIVE = 8 * 1024 * 1024
 MAX_FILE = 2 * 1024 * 1024
 SNAPSHOT = pathlib.Path(__file__).resolve().parents[1] / "tests/provenance/pl05"

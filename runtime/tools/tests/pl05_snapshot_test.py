@@ -102,7 +102,7 @@ def testSnapshot_whenGenuineFrozenSource_matchesPinnedObjectsAndExtractsExactFil
     assert identity["kind"] == "frozen_verified_source"
     assert identity["commit"] == pl05_snapshot.COMMIT
     assert identity["tree"] == pl05_snapshot.TREE
-    assert len(identity["tracked_files"]) == 214
+    assert len(identity["tracked_files"]) == 215
     assert (destination / ".git").exists() is False
     assert pl05_snapshot.verified_source(destination) == identity
     for name, record in identity["tracked_files"].items():
@@ -306,3 +306,23 @@ def testGitTree_whenDirectoryPrefixOrderingAndExecutableMode_matchesRealGit(
         subprocess.check_output(["git", "write-tree"], cwd=tmp_path).decode().strip()
     )
     assert pl05_snapshot.tree_hash(files) == expected
+
+
+def testSnapshot_whenCurrentPinAssigned_matchesReviewedFinalDependency() -> None:
+    assert pl05_snapshot.COMMIT == "eb7e4306eeaf449031822910c73e1ecc9d0a34f2"
+    assert pl05_snapshot.TREE == "8e91681d074a16e4e1c444f1e88e2d244db4474e"
+    assert pl05_snapshot.FILE_COUNT == 215
+
+
+def testSnapshot_whenPrevious1197PinRequested_refusesHistoricalFallback(
+    snapshot: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    path = snapshot / "inventory.json"
+    document = json.loads(path.read_bytes())
+    document["commit"] = "1197b25162eadc202799abfe16008bef390e3482"
+    document["tree"] = "b15595265d8d907439227848e064f8f66fc89844"
+    path.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="pin"):
+        pl05_snapshot.extract_source(tmp_path / "output", snapshot)
+    assert (tmp_path / "output").exists() is False

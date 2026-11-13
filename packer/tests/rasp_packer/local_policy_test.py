@@ -351,7 +351,7 @@ def testSupport_whenUsingCatalogueTarget_bindsFixtureAndRejectsWrongFloor(
     fixture = (
         pathlib.Path(__file__).resolve().parents[3]
         / "docs/fixtures"
-        / f"local-policy-{platform}-v1.json"
+        / f"local-policy-{platform}-revision11.json"
     )
     policy = local_policy.load(fixture)
     local_policy.validate_for(policy, platform, ("debugger", "identity"), "demo-1")
@@ -417,3 +417,59 @@ def testPolicy_whenAbsent_matchesActualNativeDefaultHashes(
     assert output["effective_config_sha256"] == local_policy.effective_hash(
         build_id, checks, None
     )
+
+
+def testSelectors_whenCatalogueRebound_preservesExactHistoricalRulesAndVersions() -> (
+    None
+):
+    current = local_policy.selector_inventory()
+    assert current["catalogue_id"] == capabilities.catalogue_id()
+    previous = copy.deepcopy(current)
+    previous["catalogue_id"] = (
+        "fce392826ee1d9e5bab8046ca1584e2755af0eb3fd26922769eb20c64e32f736"
+    )
+    raw = (json.dumps(previous, indent=2) + "\n").encode()
+    assert (
+        hashlib.sha256(raw).hexdigest()
+        == "5eb768b4b12d5529a9cd7d2a1599cb60aed28d830751d6f27d1dfb17587e8f8b"
+    )
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected_digest"),
+    [
+        ("android", "4fc0472f79da9d12cd51ed776f8983e232540dbdeab3f8c4a4d4c4cde8ff1cc9"),
+        ("ios", "261338bd00015151a51a0bc3f338939f76d16843231659ddbc85e4a3fec6e405"),
+    ],
+)
+def testSelectors_whenCatalogueRebound_preservesIndependentPlatformDigest(
+    platform: str,
+    expected_digest: str,
+) -> None:
+    assert local_policy.selector_digest(platform) == expected_digest
+
+
+def testPolicy_whenPreviouslyValidCatalogueRequested_refusesHistoricalBinding() -> None:
+    document = policy_document()
+    document["catalogue_id"] = (
+        "fce392826ee1d9e5bab8046ca1584e2755af0eb3fd26922769eb20c64e32f736"
+    )
+    with pytest.raises(
+        errors.InvalidLocalPolicyError, match="unsupported policy platform/catalogue"
+    ):
+        local_policy.parse(json.dumps(document).encode())
+
+
+@pytest.mark.parametrize("platform", ["android", "ios"])
+def testPolicy_whenHistoricalReleaseFixtureLoaded_refusesNewCatalogue(
+    platform: str,
+) -> None:
+    fixture = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "docs/fixtures"
+        / f"local-policy-{platform}-v1.json"
+    )
+    with pytest.raises(
+        errors.InvalidLocalPolicyError, match="unsupported policy platform/catalogue"
+    ):
+        local_policy.load(fixture)

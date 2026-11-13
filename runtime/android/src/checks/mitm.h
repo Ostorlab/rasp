@@ -1,6 +1,5 @@
-/// The Android network-interception checks: the signs that the app's traffic is being routed through a
-/// man-in-the-middle, namely a tunnel interface that captures traffic and a user-installed certificate authority that
-/// lets a proxy decrypt TLS.
+/// Android environmental observations of interface-name candidates and user certificate-authority aliases.
+/// Interface/authority presence does not establish malware, TLS interception, or this connection's route.
 
 #pragma once
 
@@ -26,18 +25,16 @@ namespace rasp::android::checks {
 /// through user_cacerts.
 [[nodiscard]] std::vector<Observation> mitm();
 
-/// Reports the tunnel interfaces among `interface_names`, the names the process's own network interfaces carry.
-///
-/// A man-in-the-middle proxy often captures the app's traffic through a virtual tunnel interface, the `tun` or `tap`
-/// interface an on-device VPN app opens through the kernel's TUN/TAP driver. The same `tun` interface is the one a
-/// legitimate VPN opens, so the probe reports every tunnel it finds and the server weighs it. A device with no capture
-/// running carries only its physical interfaces, such as `wlan0` or `rmnet`, and reports nothing. On a device `mitm`
-/// reads the names through getifaddrs, which an app process can call where it can't read `/proc/net/route`; a test
-/// passes the names directly.
-///
-/// @param interface_names The names of the network interfaces to inspect, with or without duplicates.
-/// @return One mitm.tunnels observation through getifaddrs: the tunnel interface names, without duplicates, the 100
-/// smallest when there are more. It never has an error status; `mitm` reports the error when getifaddrs itself fails.
+/// Reads one owned current public interface view, with bounded names and accounted inspection work.
+/// @return Sorted unique matching names, or error without a value for an incomplete/invalid view.
+[[nodiscard]] Observation observe_interfaces();
+
+/// Reports current name candidates matching tun/tap followed entirely by digits, independent of flags/family.
+/// Every helper record charges sizeof(ifaddrs)+IFNAMSIZ against 65536 consumer bytes. Every name must be nonempty,
+/// shorter than IFNAMSIZ and contain no embedded NUL. Keep at most 64 distinct names; invalid/oversized input
+/// returns error without partial names. A complete empty result means only no matching name in this view.
+/// @param interface_names Complete names from a synthetic or current public view; duplicates are allowed.
+/// @return Sorted unique candidates, or error without a value. No VPN intent, absence or route is inferred.
 [[nodiscard]] Observation observe_tunnels(const std::vector<std::string>& interface_names);
 
 /// Reports the user-installed certificate authorities among `aliases`, the aliases of the `AndroidCAStore` KeyStore.

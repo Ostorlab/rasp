@@ -8,8 +8,10 @@
 #include <cstddef>
 #include <ifaddrs.h>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -17,8 +19,11 @@
 
 #ifdef __ANDROID__
 #include <jni.h>
+#include <linux/if.h>
 
 #include "util/jni.h"
+#else
+#include <net/if.h>
 #endif
 
 #include "rasp/observation.h"
@@ -45,10 +50,64 @@ constexpr std::string_view kUserCasSignal = "mitm.user_cas";
 /// The source of the user-authority probe.
 constexpr std::string_view kUserCasSource = "user_cacerts";
 
-/// The most tunnel interface names the tunnels observation reports, so a host with very many interfaces or addresses
-/// can't grow it without bound. The user-authority probe is not capped: the user decides which certificates to trust,
-/// so every one is reported.
-constexpr std::size_t kMaxEntries = 100;
+/// The existing cycle envelope accepts at most 64 names; larger views are error, never truncated success.
+constexpr std::size_t kMaxEntries = 64;
+/// Accounted inspection budget; getifaddrs allocation and freeifaddrs latency are outside this consumer bound.
+constexpr std::size_t kMaxInterfaceRecords = 65536 / (sizeof(ifaddrs) + IFNAMSIZ);
+
+/// Fixed call-lifetime name storage; only the final completed result allocates owned output strings.
+class InterfaceNames {
+ public:
+  /// Adds a previously validated name, with at most 64 bounded comparisons and no tree/string allocation.
+  [[nodiscard]] bool add(std::string_view name) {
+    for (const auto& slot : std::span(names_).first(size_)) {
+      if (std::string_view{slot.data()} == name) {
+        return true;
+      }
+    }
+    if (size_ == kMaxEntries) {
+      return false;
+    }
+    std::ranges::copy(name, std::span(names_)[size_].begin());
+    ++size_;
+    return true;
+  }
+
+  /// Copies at most 64 complete names into the owned observation and sorts them once.
+  [[nodiscard]] std::vector<std::string> value() const {
+    std::vector<std::string> result;
+    result.reserve(size_);
+    for (const auto& slot : std::span(names_).first(size_)) {
+      result.emplace_back(slot.data());
+    }
+    std::ranges::sort(result);
+    return result;
+  }
+
+ private:
+  std::array<std::array<char, IFNAMSIZ>, kMaxEntries> names_{};
+  std::size_t size_ = 0;
+};
+
+/// Validates a nullable OS name without reading beyond the platform interface-name bound.
+[[nodiscard]] std::optional<std::string_view> interface_name(const char* name) {
+  if (name == nullptr) {
+    return std::nullopt;
+  }
+  const char* cursor = name;
+  for (std::size_t length = 0; length < IFNAMSIZ; ++length) {
+    if (*cursor == '\0') {
+      return length == 0 ? std::nullopt : std::optional{std::string_view{name, length}};
+    }
+    cursor = std::next(cursor);
+  }
+  return std::nullopt;
+}
+
+/// Requires complete owned helper names, including nonmatching names.
+[[nodiscard]] bool valid_name(std::string_view name) {
+  return !name.empty() && name.size() < IFNAMSIZ && !name.contains('\0');
+}
 
 /// The prefix of a user-installed authority's alias in the `AndroidCAStore` KeyStore, followed by the authority's file
 /// name. The authorities the device ships with have the prefix `system:` instead.
@@ -75,44 +134,40 @@ constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"tun", "tap"})
   return std::ranges::any_of(kTunnelPrefixes, matches_prefix);
 }
 
-/// The tunnel interface names in `names`, the kMaxEntries smallest of them, without duplicates. getifaddrs lists an
-/// interface once per address, so a tunnel with several addresses would otherwise appear more than once.
-[[nodiscard]] std::vector<std::string> tunnel_names(const std::vector<std::string>& names) {
-  std::set<std::string> tunnels;
+/// Filters a complete finite helper inventory; an incomplete or malformed view has no partial value.
+[[nodiscard]] std::optional<std::vector<std::string>> tunnel_names(const std::vector<std::string>& names) {
+  if (names.size() > kMaxInterfaceRecords) {
+    return std::nullopt;
+  }
+  InterfaceNames tunnels;
   for (const std::string& name : names) {
-    if (!is_tunnel(name)) {
-      continue;
-    }
-    tunnels.insert(name);
-    if (tunnels.size() > kMaxEntries) {
-      tunnels.erase(std::prev(tunnels.end()));
+    if (!valid_name(name) || (is_tunnel(name) && !tunnels.add(name))) {
+      return std::nullopt;
     }
   }
-  return {tunnels.begin(), tunnels.end()};
+  return tunnels.value();
 }
 
-/// The tunnel interface names among this process's network interfaces, read through getifaddrs, the kMaxEntries
-/// smallest of them without duplicates, or nothing when getifaddrs fails. The names are filtered and bounded while the
-/// list is walked, so a device with very many interfaces or addresses doesn't grow an intermediate buffer without
-/// bound. getifaddrs reads the interfaces over a netlink socket, which an untrusted app process can open, unlike
-/// `/proc/net/route`, which Android denies it.
+/// Inspects one owned public API view; family and flags deliberately do not restrict Android's name predicate.
 [[nodiscard]] std::optional<std::vector<std::string>> tunnel_interface_names() {
   ifaddrs* list = nullptr;
   if (getifaddrs(&list) != 0) {
     return std::nullopt;
   }
-  std::set<std::string> tunnels;
-  for (const ifaddrs* entry = list; entry != nullptr; entry = entry->ifa_next) {
-    if (entry->ifa_name == nullptr || !is_tunnel(entry->ifa_name)) {
-      continue;
+  const std::unique_ptr<ifaddrs, decltype(&freeifaddrs)> owner(list, freeifaddrs);
+  InterfaceNames tunnels;
+  std::size_t records = 0;
+  for (const ifaddrs* entry = owner.get(); entry != nullptr; entry = entry->ifa_next) {
+    if (records == kMaxInterfaceRecords) {
+      return std::nullopt;
     }
-    tunnels.insert(entry->ifa_name);
-    if (tunnels.size() > kMaxEntries) {
-      tunnels.erase(std::prev(tunnels.end()));
+    ++records;
+    const auto name = interface_name(entry->ifa_name);
+    if (!name.has_value() || (is_tunnel(*name) && !tunnels.add(*name))) {
+      return std::nullopt;
     }
   }
-  freeifaddrs(list);
-  return std::vector<std::string>{tunnels.begin(), tunnels.end()};
+  return tunnels.value();
 }
 
 #ifdef __ANDROID__
@@ -211,8 +266,16 @@ using util::threw;
 
 }  // namespace
 
+Observation observe_interfaces() {
+  auto names = tunnel_interface_names();
+  return names.has_value() ? observed(kTunnelsSignal, kTunnelsSource, std::move(*names))
+                           : failed(kTunnelsSignal, kTunnelsSource);
+}
+
 Observation observe_tunnels(const std::vector<std::string>& interface_names) {
-  return observed(kTunnelsSignal, kTunnelsSource, tunnel_names(interface_names));
+  auto names = tunnel_names(interface_names);
+  return names.has_value() ? observed(kTunnelsSignal, kTunnelsSource, std::move(*names))
+                           : failed(kTunnelsSignal, kTunnelsSource);
 }
 
 Observation observe_user_cas(const std::vector<std::string>& aliases) {
@@ -229,8 +292,7 @@ std::vector<Observation> mitm() {
   if (!kOnAndroid) {
     return {unsupported(kTunnelsSignal, kTunnelsSource), unsupported(kUserCasSignal, kUserCasSource)};
   }
-  const std::optional<std::vector<std::string>> names = tunnel_interface_names();
-  Observation tunnels = names ? observe_tunnels(*names) : failed(kTunnelsSignal, kTunnelsSource);
+  Observation tunnels = observe_interfaces();
   std::vector<Observation> observations;
   observations.reserve(2);
   observations.push_back(std::move(tunnels));

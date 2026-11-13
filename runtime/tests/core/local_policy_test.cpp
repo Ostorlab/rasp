@@ -44,7 +44,7 @@ rasp::Config configuration(std::string_view mode = "gate") {
       std::string(
           R"({"build_id":"test","checks":["debugger"],"local_policy":{"schema_version":1,"engine_version":1,"policy_id":"demo","policy_version":1,"mode":")") +
       std::string(mode) +
-      R"(","scope":"host_calls_only","platform":"android","catalogue_id":"fce392826ee1d9e5bab8046ca1584e2755af0eb3fd26922769eb20c64e32f736","report_schema_version":1,"report_reason_version":1,"native_metadata_version":1,"operations":[{"name":"append_demo_receipt","max_evidence_age_ms":75000,"max_cycle_duration_ms":5000,"rules":[{"rule_id":"native.android.dbg.tracer_pid.proc_status","rule_version":1}]}]}})");
+      R"(","scope":"host_calls_only","platform":"android","catalogue_id":"e24617864ef1929ecca4d84ed0b62d530ca2ad602859272acd8f0aee3afc7733","report_schema_version":1,"report_reason_version":1,"native_metadata_version":1,"operations":[{"name":"append_demo_receipt","max_evidence_age_ms":75000,"max_cycle_duration_ms":5000,"rules":[{"rule_id":"native.android.dbg.tracer_pid.proc_status","rule_version":1}]}]}})");
 }
 /// All actual selected builtin identities, including unrelated baseline/context rows.
 std::vector<rasp::Observation> observations(std::int64_t tracer, rasp::Status status = rasp::Status::kOk) {
@@ -208,9 +208,9 @@ TEST(LocalPolicy, info_whenCanonicalized_matchesIndependentPythonFixtureHashes) 
   auto output = std::make_unique<struct RaspLocalPolicyInfoV1>();
   ASSERT_EQ(state.info(*output), RASP_LOCAL_OK);
   EXPECT_STREQ(std::span(output->policy_sha256).data(),
-               "174e5db59a8f1bd3a657d8263d971b1507c66017b2513a2acda442deaa798cb0");
+               "2188f4db98271a481eb58acd3e16351f5762acceab1444731b6b5b1d2ea659f1");
   EXPECT_STREQ(std::span(output->effective_config_sha256).data(),
-               "bf0a61e97c74a069e5fac2b5fc5e622bbcfd63aa9668b38cd6ab606c326c8c8a");
+               "5086dc0eb277813a33b1b8805d3310fc1eea25cb93faca5fdd5fb83cd59713c3");
 }
 TEST(LocalPolicy, parse_whenExplicitFieldsMalformed_cannotDowngradeToReportOnly) {
   const auto config = configuration();

@@ -1,6 +1,6 @@
-tree b15595265d8d907439227848e064f8f66fc89844
-parent ec15f461f0a47d679d7ea2d7a4279f3e83ded6f8
-author Alaeddine Mesbahi <alaeddine.mesbahi@ostorlab.dev> 1794517211 +0000
-committer Alaeddine Mesbahi <alaeddine.mesbahi@ostorlab.dev> 1794517211 +0000
+tree 8e91681d074a16e4e1c444f1e88e2d244db4474e
+parent 74af126bb0bf4f7c4d0c09d08cb7f4c2775be6dd
+author Alaeddine Mesbahi <alaeddine.mesbahi@ostorlab.dev> 1794574063 +0000
+committer Alaeddine Mesbahi <alaeddine.mesbahi@ostorlab.dev> 1794574063 +0000
 
-docs(reporting): clarify iOS profiles and bounded retention
+Keep owning values in asynchronous trust evaluation
