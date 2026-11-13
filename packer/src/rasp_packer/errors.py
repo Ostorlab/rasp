@@ -41,6 +41,10 @@ class InvalidAppError(Error):
     """The app file cannot be read, or is not a well-formed archive of a single app."""
 
 
+class DangerousAppError(Error):
+    """The app archive holds an unsafe entry (encrypted, a symlink, or escaping the root), or cannot be read."""
+
+
 class UnsupportedBinaryError(Error):
     """The app's executable cannot be protected: not an arm64 Mach-O, or encrypted."""
 

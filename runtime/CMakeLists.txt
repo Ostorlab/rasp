@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.4)
 
-project(rasp_runtime VERSION 0.4.2 LANGUAGES CXX)
+project(rasp_runtime VERSION 0.4.4 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -64,7 +64,16 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Android" OR RASP_BUILD_TESTS)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-  include(cmake/libcxx.cmake)
+  # RASP_IOS_SYSTEM_LIBCXX is a TEST-BUILD escape hatch: it skips the vendored LLVM-23 libc++ (which requires
+  # Xcode >= 26.4) and uses the Xcode SDK's own libc++ instead, so the framework builds on an older Xcode. It is
+  # NOT for shipping -- it drops the iOS-12 support and symbol hiding the vendored libc++ provides. Obfuscation is
+  # unaffected (O-MVLL works at the IR level). Default OFF: a normal build uses the vendored libc++.
+  option(RASP_IOS_SYSTEM_LIBCXX "Use the Xcode SDK's libc++ instead of the vendored one (test builds only)" OFF)
+  if(NOT RASP_IOS_SYSTEM_LIBCXX)
+    include(cmake/libcxx.cmake)
+  else()
+    message(WARNING "RASP_IOS_SYSTEM_LIBCXX is ON: using the SDK libc++ -- a test build, not shippable")
+  endif()
   add_subdirectory(ios)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
   add_subdirectory(android)

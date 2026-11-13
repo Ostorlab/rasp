@@ -23,12 +23,12 @@
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/embedded_config.h"
-#include "rasp/install_id.h"
 #include "rasp/heartbeat.h"
+#include "rasp/install_id.h"
 #include "rasp/observation.h"
 #include "rasp/panic.h"
-#include "rasp/schedule.h"
 #include "rasp/plugins/registry.h"
+#include "rasp/schedule.h"
 #include "rasp/util/logging.h"
 #include "util/app_storage.h"
 
@@ -79,10 +79,9 @@ namespace {
   return config;
 }
 
-/// The thread: beats the monitoring heartbeat, reads the runtime's config and initialises the plugins with it,
-/// then, until the process exits, observes and beats the heartbeat, runs the built-in checks the config enables,
-/// arms a panic when they detect something, and
-/// runs the plugins, then again every kCheckInterval, until the process exits. The config and the context the
+/// The thread: beats the monitoring heartbeat, reads the runtime's config and initialises the plugins with it, then,
+/// until the process exits, beats the heartbeat, runs the built-in checks the config enables, arms a panic when they
+/// detect something, runs the plugins, beats again and waits a random check_interval. The config and the context the
 /// plugins share are locals of this thread, which never returns, so they live as long as the process.
 ///
 /// @return Never returns.
@@ -93,10 +92,8 @@ void* monitor(void* /*argument*/) {
   rasp::plugins::Context context;
   rasp::plugins::init_plugins(rasp::plugins::compiled_in(), config, context);
   while (true) {
-    Observation alive = heartbeat.observe(std::chrono::steady_clock::now());
     heartbeat.beat(std::chrono::steady_clock::now());
     std::vector<Observation> builtin = run_checks(config);
-    builtin.push_back(std::move(alive));
     static_cast<void>(panic_on_detection(builtin, end_process));
     const std::vector<Observation> observations =
         rasp::plugins::run_plugins(rasp::plugins::compiled_in(), std::move(builtin), context);

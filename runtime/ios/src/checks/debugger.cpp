@@ -24,6 +24,7 @@
 #include <mach/thread_status.h>
 #include <ranges>
 #include <sys/proc.h>
+#include <sys/syscall.h>
 #include <sys/sysctl.h>
 #endif
 
@@ -41,12 +42,17 @@ constexpr bool kPhysicalDevice = false;
 
 /// The signal of the traced-flag probe.
 constexpr std::string_view kTracedSignal = "dbg.traced";
-/// The source of the traced-flag probe.
+/// The source of the traced-flag probe's first read, the libc sysctl.
 constexpr std::string_view kTracedSource = "sysctl";
+/// The source of the traced-flag probe's second read, a direct system call a hook on the libc sysctl never runs.
+constexpr std::string_view kTracedSyscallSource = "syscall";
 /// The signal of the parent-process probe.
 constexpr std::string_view kParentSignal = "dbg.parent";
-/// The source of the parent-process probe.
+/// The source of the parent-process probe's first read, the libc getppid.
 constexpr std::string_view kParentSource = "getppid";
+/// The source of the parent-process probe's second read, the `kinfo_proc` entry through a direct system call, which a
+/// hook on the libc getppid never runs.
+constexpr std::string_view kParentSyscallSource = "syscall";
 /// The signal of the exception-port probe.
 constexpr std::string_view kExceptionPortsSignal = "dbg.exception_ports";
 /// The source of the exception-port probe.
@@ -62,32 +68,93 @@ struct Probe {
   Observation (*observe)();
 };
 
-/// The probes the debugger checks run, in the order their observations are reported.
+/// The probes the debugger checks run, in the order their observations are reported. The traced and parent signals
+/// that one libc function can hide are each read through a second, independent source, so a hook on one source leaves
+/// the two disagreeing.
 constexpr std::array kProbes = {
     Probe{.signal = kTracedSignal, .source = kTracedSource, .observe = observe_traced},
+    Probe{.signal = kTracedSignal, .source = kTracedSyscallSource, .observe = observe_traced_syscall},
     Probe{.signal = kParentSignal, .source = kParentSource, .observe = observe_parent},
+    Probe{.signal = kParentSignal, .source = kParentSyscallSource, .observe = observe_parent_syscall},
     Probe{.signal = kExceptionPortsSignal, .source = kExceptionPortsSource, .observe = observe_exception_ports},
 };
+
+#ifdef __APPLE__
+/// Whether `info` has the kernel's traced flag set, which means a debugger is attached to the process.
+///
+/// @param info The process's `kinfo_proc` entry.
+/// @return Whether its `p_flag` has `P_TRACED`.
+[[nodiscard]] bool is_traced(const kinfo_proc& info) {
+  const auto flags = static_cast<std::uint32_t>(info.kp_proc.p_flag);
+  return (flags & static_cast<std::uint32_t>(P_TRACED)) != 0;
+}
+
+/// Reads the app's own `kinfo_proc` entry into `info`.
+///
+/// With `direct` false it makes the request through the libc sysctl; with `direct` true it makes the same request as
+/// a direct system call, which a hook on the libc sysctl never runs. A hook that lies to one path and not the other
+/// makes two reads of the same fact disagree.
+///
+/// @param info Set to the process's `kinfo_proc` entry when the read returns a whole one.
+/// @param direct Whether to make the request as a direct system call rather than through the libc sysctl.
+/// @return Whether the read returned a whole `kinfo_proc` entry.
+[[nodiscard]] bool read_process_info(kinfo_proc& info, bool direct) {
+  std::array<int, 4> name = {CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()};
+  std::size_t size = sizeof(info);
+  const auto length = static_cast<unsigned int>(name.size());
+  int result = 0;
+  if (direct) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
+    result = syscall(SYS_sysctl, name.data(), length, &info, &size, nullptr, 0);
+#pragma clang diagnostic pop
+  } else {
+    result = sysctl(name.data(), length, &info, &size, nullptr, 0);
+  }
+  return result == 0 && size == sizeof(info);
+}
+#endif
 
 }  // namespace
 
 Observation observe_traced() {
 #ifdef __APPLE__
-  std::array<int, 4> name = {CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()};
   kinfo_proc info{};
-  std::size_t size = sizeof(info);
-  if (sysctl(name.data(), static_cast<unsigned int>(name.size()), &info, &size, nullptr, 0) != 0 ||
-      size != sizeof(info)) {
+  if (!read_process_info(info, false)) {
     return failed(kTracedSignal, kTracedSource);
   }
-  const auto flags = static_cast<std::uint32_t>(info.kp_proc.p_flag);
-  return observed(kTracedSignal, kTracedSource, (flags & static_cast<std::uint32_t>(P_TRACED)) != 0);
+  return observed(kTracedSignal, kTracedSource, is_traced(info));
 #else
   return unsupported(kTracedSignal, kTracedSource);
 #endif
 }
 
+Observation observe_traced_syscall() {
+#ifdef __APPLE__
+  kinfo_proc info{};
+  if (!read_process_info(info, true)) {
+    return failed(kTracedSignal, kTracedSyscallSource);
+  }
+  return observed(kTracedSignal, kTracedSyscallSource, is_traced(info));
+#else
+  return unsupported(kTracedSignal, kTracedSyscallSource);
+#endif
+}
+
 Observation observe_parent() { return observed(kParentSignal, kParentSource, static_cast<std::int64_t>(getppid())); }
+
+Observation observe_parent_syscall() {
+#ifdef __APPLE__
+  kinfo_proc info{};
+  if (!read_process_info(info, true)) {
+    return failed(kParentSignal, kParentSyscallSource);
+  }
+  return observed(kParentSignal, kParentSyscallSource, static_cast<std::int64_t>(info.kp_eproc.e_ppid));
+#else
+  return unsupported(kParentSignal, kParentSyscallSource);
+#endif
+}
 
 Observation observe_exception_ports() {
 #ifdef __APPLE__

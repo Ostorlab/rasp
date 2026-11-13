@@ -35,12 +35,38 @@ TEST(Debugger, observeTraced_whenTheSystemHasNoProcessFlags_reportsUnsupported) 
 }
 #endif
 
+#ifdef __APPLE__
+TEST(Debugger, observeTracedSyscall_whenNoDebuggerIsAttached_reportsFalse) {
+  EXPECT_EQ(observe_traced_syscall(),
+            (Observation{.signal = "dbg.traced", .source = "syscall", .status = Status::kOk, .value = false}));
+}
+#else
+TEST(Debugger, observeTracedSyscall_whenTheSystemHasNoProcessFlags_reportsUnsupported) {
+  EXPECT_EQ(observe_traced_syscall(),
+            (Observation{.signal = "dbg.traced", .source = "syscall", .status = Status::kUnsupported, .value = {}}));
+}
+#endif
+
 TEST(Debugger, observeParent_whenCalled_reportsTheParentProcessId) {
   EXPECT_EQ(observe_parent(), (Observation{.signal = "dbg.parent",
                                            .source = "getppid",
                                            .status = Status::kOk,
                                            .value = static_cast<std::int64_t>(getppid())}));
 }
+
+#ifdef __APPLE__
+TEST(Debugger, observeParentSyscall_whenCalled_reportsTheSameParentProcessIdAsGetppid) {
+  EXPECT_EQ(observe_parent_syscall(), (Observation{.signal = "dbg.parent",
+                                                   .source = "syscall",
+                                                   .status = Status::kOk,
+                                                   .value = static_cast<std::int64_t>(getppid())}));
+}
+#else
+TEST(Debugger, observeParentSyscall_whenTheSystemHasNoProcessEntries_reportsUnsupported) {
+  EXPECT_EQ(observe_parent_syscall(),
+            (Observation{.signal = "dbg.parent", .source = "syscall", .status = Status::kUnsupported, .value = {}}));
+}
+#endif
 
 #ifdef __APPLE__
 TEST(Debugger, observeExceptionPorts_whenABreakpointPortIsSet_addsTheBreakpointMaskAndReleasesThePortRight) {
@@ -87,7 +113,9 @@ TEST(Debugger, observeExceptionPorts_whenTheSystemHasNoExceptionPorts_reportsUns
 TEST(Debugger, debugger_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(debugger(), (std::vector<Observation>{
                             {.signal = "dbg.traced", .source = "sysctl", .status = Status::kUnsupported, .value = {}},
+                            {.signal = "dbg.traced", .source = "syscall", .status = Status::kUnsupported, .value = {}},
                             {.signal = "dbg.parent", .source = "getppid", .status = Status::kUnsupported, .value = {}},
+                            {.signal = "dbg.parent", .source = "syscall", .status = Status::kUnsupported, .value = {}},
                             {.signal = "dbg.exception_ports",
                              .source = "task_get_exception_ports",
                              .status = Status::kUnsupported,

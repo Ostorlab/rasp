@@ -8,7 +8,7 @@ namespace rasp::android {
 ///
 /// It makes the exit_group system call itself, with the system call instruction of the ABI it is built for
 /// (arm64-v8a, armeabi-v7a, x86_64 or x86), without calling any function of libc. No exit handler runs, nothing is
-/// flushed, and the system shows no crash dialog. It is the end step of a panic that panic_on_detection armed.
+/// flushed, and the system shows no crash dialog. It is how the runtime ends the app after a detection.
 [[noreturn]] void end_process() noexcept;
 
 }  // namespace rasp::android
