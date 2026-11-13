@@ -163,6 +163,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Keep the actual CI merge and its parents for honest PR-head source mapping.
+          fetch-depth: 2
       - name: Select Xcode
         run: |
           sudo xcode-select --switch /Applications/Xcode_27.0.app
@@ -344,6 +346,28 @@ jobs:
           done
       - name: Check the development build writes logs
         run: nm -u build/ios-dev/ios/RaspRuntime.framework/RaspRuntime | grep -q _os_log
+
+      - name: Export validated pristine iPhoneOS Release frameworks
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          RT19_REQUESTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/build-tools/bin/python" tools/apple_artifacts.py \
+            --runner-temp "$RUNNER_TEMP" --requested-head "$RT19_REQUESTED_HEAD" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+      - name: Retain successful Apple validation inputs for independent IPA acceptance
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rt19-iphoneos-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rt19-apple-artifacts/apple-release-frameworks.tar
+            ${{ runner.temp }}/rt19-apple-artifacts/apple-release-frameworks.tar.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: false
 
   android:
     name: android (${{ matrix.abi }})

@@ -42,7 +42,7 @@ struct Native {
   static constexpr Port kNull{MACH_PORT_NULL};
   static constexpr Port kDead{MACH_PORT_DEAD};
   static constexpr auto kRegionFlavor = VM_REGION_BASIC_INFO_64;
-  static constexpr auto kRegionCount = static_cast<mach_msg_type_number_t>(VM_REGION_BASIC_INFO_COUNT_64);
+  static constexpr mach_msg_type_number_t kRegionCount{VM_REGION_BASIC_INFO_COUNT_64};
   static constexpr auto kReadProtection = VM_PROT_READ;
   /// Always selects this process's task; never an externally supplied target.
   static Port self() { return mach_task_self(); }

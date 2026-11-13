@@ -183,10 +183,12 @@ Result<ProvenanceImage> native_image(void* /*context*/, std::uint32_t index, Bud
   if (!copied) {
     return std::unexpected(copied.error());
   }
-  ProvenanceImage result{.name = std::move(*copied),
-                         .header_address = std::bit_cast<std::uintptr_t>(header),
-                         .slide = slide,
-                         .bytes = std::vector<std::uint8_t>(util::kMachHeaderSize)};
+  ProvenanceImage result{
+      .name = std::move(*copied),
+      .header_address = std::bit_cast<std::uintptr_t>(header),
+      .slide = slide,
+      .bytes = std::vector<std::uint8_t>(util::kMachHeaderSize),
+  };
   auto read = copy_memory(result.header_address, result.bytes, budget);
   if (!read) {
     return std::unexpected(read.error());

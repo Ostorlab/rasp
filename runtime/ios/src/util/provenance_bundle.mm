@@ -15,8 +15,12 @@ provenance::Locations provenance_bundle() {
     if ([path getCString:bytes.data() maxLength:bytes.size() encoding:NSUTF8StringEncoding] == NO) {
       return {};
     }
-    provenance::Locations result{
-        .apk_paths = {}, .native_directory = {}, .bundle_directory = std::string(bytes.data()), .available = true};
+    const provenance::Locations result{
+        .apk_paths = {},
+        .native_directory = {},
+        .bundle_directory = std::string(bytes.data()),
+        .available = true,
+    };
     return provenance::valid_locations(result) ? result : provenance::Locations{};
   }
 }
