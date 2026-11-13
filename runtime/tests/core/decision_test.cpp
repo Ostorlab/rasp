@@ -399,16 +399,23 @@ TEST(LocalDecision, evaluate_whenOverlayContextHasLossOrInconsistentClosure_neve
 }
 TEST(LocalDecision, evaluate_whenEveryCanonicalTupleEnumerated_hasClosedFiniteInventory) {
   std::size_t total = 0;
+  std::size_t diagnostic_only = 0;
   for (const auto* const platform : {"android", "ios"}) {
     const auto catalogue = rasp::cycle_catalogue(platform);
     const auto snapshot = run(platform, {}, {});
     for (const auto& output : catalogue.outputs) {
       const std::string suffix =
           "." + std::string(platform) + "." + std::string(output.signal) + "." + std::string(output.source);
+      const bool provenance =
+          output.signal.starts_with("hook.exec_modules") || output.signal.starts_with("hook.loader_chain");
       EXPECT_EQ(std::ranges::count_if(snapshot->local_decisions.rows,
                                       [&](const auto& decision) { return decision.rule_id.ends_with(suffix); }),
-                1);
-      ++total;
+                provenance ? 0 : 1);
+      if (provenance) {
+        ++diagnostic_only;
+      } else {
+        ++total;
+      }
     }
     EXPECT_LE(snapshot->local_decisions.rows.capacity(), 256U);
     EXPECT_LE(snapshot->local_decisions.relations.capacity(), 16U);
@@ -419,6 +426,7 @@ TEST(LocalDecision, evaluate_whenEveryCanonicalTupleEnumerated_hasClosedFiniteIn
     }
   }
   EXPECT_EQ(total, 125U);
+  EXPECT_EQ(diagnostic_only, 8U);
 }
 /// Owning callback handoff used by a real plugin consumer.
 constexpr rasp::plugins::Key<std::shared_ptr<const rasp::CycleSnapshot>> kRetained{"test.decision.retained"};

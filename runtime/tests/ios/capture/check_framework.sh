@@ -8,7 +8,8 @@ mkdir -p "$work"
 binary="$framework/RaspRuntime"
 # Inspect the actual adapter object as well as the shipped framework: Objective-C
 # containment must not introduce C++ exception or terminate paths, even if linked.
-adapter="$(dirname "$framework")/CMakeFiles/RaspRuntime.dir/src/capture/capture_bridge.mm.o"
+# Installed frameworks need the matching build-tree object as the third argument.
+adapter="${3:-$(dirname "$framework")/CMakeFiles/RaspRuntime.dir/src/capture/capture_bridge.mm.o}"
 nm -j "$adapter" > "$work/adapter-symbols.txt"
 if grep -E '(___cxa_|___gxx_personality|___clang_call_terminate|__ZSt9terminatev)' "$work/adapter-symbols.txt"; then
   echo "FAIL: the capture adapter references C++ exception or terminate machinery"

@@ -15,6 +15,7 @@
 #include "checks/integrity.h"
 #include "checks/jailbreak.h"
 #include "checks/mitm.h"
+#include "checks/module_provenance.h"
 #include "checks/virtualizer.h"
 #include "rasp/config.h"
 #include "rasp/observation.h"
@@ -32,6 +33,7 @@ std::vector<Observation> run_checks(const Config& config, std::string_view inser
   }
   if (is_check_enabled(config, "hooks")) {
     std::ranges::move(checks::hooks(inserted_libraries), std::back_inserter(builtin));
+    std::ranges::move(checks::module_provenance(), std::back_inserter(builtin));
   }
   if (is_check_enabled(config, "integrity")) {
     std::ranges::move(checks::integrity(), std::back_inserter(builtin));

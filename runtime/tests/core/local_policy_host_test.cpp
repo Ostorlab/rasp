@@ -19,7 +19,7 @@
 namespace {
 TEST(LocalPolicyHost, info_whenInstalledOnce_preservesProcessLifetimeAndFullUint32Version) {
   const auto config = rasp::parse_config(
-      R"({"build_id":"host","checks":[],"local_policy":{"schema_version":1,"engine_version":1,"policy_id":"max-version","policy_version":4294967295,"mode":"report_only","scope":"host_calls_only","platform":"android","catalogue_id":"2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d","report_schema_version":1,"report_reason_version":1,"native_metadata_version":1,"operations":[]}})");
+      R"({"build_id":"host","checks":[],"local_policy":{"schema_version":1,"engine_version":1,"policy_id":"max-version","policy_version":4294967295,"mode":"report_only","scope":"host_calls_only","platform":"android","catalogue_id":"fce392826ee1d9e5bab8046ca1584e2755af0eb3fd26922769eb20c64e32f736","report_schema_version":1,"report_reason_version":1,"native_metadata_version":1,"operations":[]}})");
   static auto* const kInstalled =
       rasp::install_local_policy(std::make_unique<rasp::LocalPolicyState>(config, "android"));
   ASSERT_NE(kInstalled, nullptr);

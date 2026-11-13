@@ -21,6 +21,8 @@ add_library(RaspRuntime SHARED
   src/checks/debugger.cpp
   src/checks/emulator.cpp
   src/checks/hooks.cpp
+  src/checks/module_provenance.cpp
+  src/util/provenance_bundle.mm
   src/checks/identity.cpp
   src/checks/integrity.cpp
   src/checks/jailbreak.cpp
@@ -39,6 +41,7 @@ add_custom_command(TARGET RaspRuntime POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:RaspRuntime>/Modules"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/module.modulemap "$<TARGET_BUNDLE_DIR:RaspRuntime>/Modules/module.modulemap"
   VERBATIM)
+set_source_files_properties(src/util/provenance_bundle.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-fno-objc-exceptions")
 set_source_files_properties(src/util/private_storage.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-fno-objc-exceptions")
 target_link_libraries(RaspRuntime PRIVATE rasp_core rasp_plugins rasp_tfpsacrypto rasp_warnings rasp_language
   rasp_shipped "$<LINK_LIBRARY:FRAMEWORK,UIKit>" "$<LINK_LIBRARY:FRAMEWORK,Foundation>" "$<LINK_LIBRARY:FRAMEWORK,CFNetwork>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>")

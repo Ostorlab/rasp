@@ -52,7 +52,9 @@ void check_observation(std::string_view group, const rasp::Observation& observat
   EXPECT_NE(expected->statuses & (1U << static_cast<unsigned int>(observation.status)), 0U);
   EXPECT_EQ(observation.value.index(), observation.status == rasp::Status::kOk ? expected->kind : 0U);
 #ifndef __APPLE__
-  EXPECT_EQ(observation.status, rasp::Status::kUnsupported);
+  const bool diagnostic =
+      observation.signal == "hook.exec_modules_meta" || observation.signal == "hook.loader_chain_meta";
+  EXPECT_EQ(observation.status, diagnostic ? rasp::Status::kOk : rasp::Status::kUnsupported);
 #endif
 }
 
@@ -99,9 +101,10 @@ TEST(Capabilities, statusVocabulary_whenGenerated_matchesNativeEnumsIncludingTim
   EXPECT_EQ(kStatusMasks[3], 1U << static_cast<unsigned>(rasp::Status::kTimeout));
 }
 
-TEST(Capabilities, statusVocabulary_whenCurrentBuiltinsHaveNoTimeout_doesNotInventDeclarations) {
+TEST(Capabilities, statusVocabulary_whenProvenanceUsesDeadline_limitsTimeoutToAllocatedDataSources) {
   for (const Expected& expected : kExpected) {
-    EXPECT_EQ(expected.statuses & kStatusMasks[static_cast<std::size_t>(rasp::Status::kTimeout)], 0U);
+    const bool provenance = expected.signal == "hook.exec_modules" || expected.signal == "hook.loader_chain";
+    EXPECT_EQ((expected.statuses & kStatusMasks[static_cast<std::size_t>(rasp::Status::kTimeout)]) != 0, provenance);
   }
 }
 

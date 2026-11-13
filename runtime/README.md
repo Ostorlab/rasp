@@ -318,3 +318,5 @@ See [opt-in Android root and environment context](../docs/android-root-context.m
 Android API31+ hosts can opt in to [bounded Activity/window touch observations](../docs/android-window-observations.md) through RuntimeBridge after supported Context initialization.
 
 Optional iOS `screenshot` and `screen_recording` groups require the matching public C host API and explicit main-thread opt-in. See [UIKit capture observations](../docs/ios-capture-observations.md) and the [harmless host fixture](tests/ios/capture/README.md). Packing alone does not create scene ownership or a healthy observer.
+
+Opt-in `hooks` includes bounded executable-module location and public loader topology diagnostics; see [module provenance](../docs/module-provenance.md) for bounds, source limits and inherited reporting/storage behavior.

@@ -74,8 +74,8 @@ or runtime execution. CLI status states this scope explicitly.
 Policy schema, engine, gate reason vocabulary and facade ABI are version 1.
 Report schema/reason vocabulary/native metadata version are separately pinned to
 1. Each selector pins its exact rule identifier and semantic version. The catalogue
-is exactly revision 9, ID
-`2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d`.
+is exactly revision 10, ID
+`fce392826ee1d9e5bab8046ca1584e2755af0eb3fd26922769eb20c64e32f736`.
 Future catalogues or rule versions require explicit adoption; there is no latest
 or signal/source alias fallback. Policy version is a positive uint32 deployment
 version, 1 through 4294967295, not a trusted rollback counter.

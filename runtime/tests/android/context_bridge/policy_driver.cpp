@@ -48,7 +48,7 @@ rasp::Config configuration() {
           R"({"build_id":"test","checks":["debugger"],"local_policy":{"schema_version":1,"engine_version":1,"policy_id":"demo","policy_version":)") +
       std::to_string(fixture_version().load()) + R"(,"mode":")" +
       (fixture_report_only().load() ? "report_only" : "gate") +
-      R"(","scope":"host_calls_only","platform":"android","catalogue_id":"2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d","report_schema_version":1,"report_reason_version":1,"native_metadata_version":1,"operations":[{"name":"append_demo_receipt","max_evidence_age_ms":75000,"max_cycle_duration_ms":5000,"rules":[{"rule_id":"native.android.dbg.tracer_pid.proc_status","rule_version":1}]}]}})");
+      R"(","scope":"host_calls_only","platform":"android","catalogue_id":"fce392826ee1d9e5bab8046ca1584e2755af0eb3fd26922769eb20c64e32f736","report_schema_version":1,"report_reason_version":1,"native_metadata_version":1,"operations":[{"name":"append_demo_receipt","max_evidence_age_ms":75000,"max_cycle_duration_ms":5000,"rules":[{"rule_id":"native.android.dbg.tracer_pid.proc_status","rule_version":1}]}]}})");
 }
 /// Test-only uint32/mode initialization before installation, never a runtime policy replacement.
 jboolean initialize_version(JNIEnv* env, jclass /*unused*/, jlongArray input) {

@@ -76,7 +76,7 @@ def testPolicy_whenActualInstalledArtifactsPacked_roundTripsPublicApiAndCli(
         platform=platforms.Platform.ANDROID,
         output=output,
         build_id="test",
-        checks=["debugger"],
+        checks=["debugger", "hooks"],
         local_policy=policy,
     )
     assert result.local_policy_bindings is not None
@@ -108,7 +108,7 @@ def testPolicy_whenActualInstalledArtifactsPacked_roundTripsPublicApiAndCli(
         "--build-id",
         "test",
         "--checks",
-        "debugger",
+        "debugger,hooks",
         "--output",
         str(tmp_path / ("cli." + artifact_format)),
     ]

@@ -7,6 +7,7 @@ import pathlib
 import re
 import runpy
 import sys
+from typing import Any
 
 import pytest
 
@@ -14,6 +15,37 @@ from rasp_packer import capabilities
 from rasp_packer import checks
 from rasp_packer import errors
 from rasp_packer import platforms
+
+
+def _revision_nine() -> dict[str, Any]:
+    """Invert only RT19's append, keeping every historical catalogue test exact."""
+    document = capabilities.catalogue()
+    assert document["revision"] == 10
+    for platform, count in (("android", 6), ("ios", 2)):
+        hooks = next(
+            group
+            for group in document["platforms"][platform]["groups"]
+            if group["name"] == "hooks"
+        )
+        assert all(
+            row["signal"]
+            in {
+                "hook.exec_modules",
+                "hook.exec_modules_meta",
+                "hook.loader_chain",
+                "hook.loader_chain_meta",
+            }
+            for row in hooks["observations"][-count:]
+        )
+        del hooks["observations"][-count:]
+    document["revision"] = 9
+    raw = (json.dumps(document, indent=2) + "\n").encode()
+    assert len(raw) == 87016
+    assert (
+        hashlib.sha256(raw).hexdigest()
+        == "45e3c9b2fa72008cfbc2926d971474041c12314cdbf81b422e87ec15dc58170f"
+    )
+    return document
 
 
 def testCatalogue_whenCurrent_hasRequiredIdentityAndTypedSources() -> None:
@@ -194,6 +226,18 @@ def testCatalogue_whenSourceInventoryCompared_coversEveryBuiltinSignal() -> None
             if filename == "capture" and platform == "ios":
                 prefix = "screenshot" if group["name"] == "screenshot" else "recording"
                 signals = set(re.findall(rf'"(capture\.{prefix}\.[a-z_]+)"', source))
+            if group["name"] == "hooks":
+                added_source = (
+                    runtime / platform / "src/checks/module_provenance.cpp"
+                ).read_text()
+                if platform == "android":
+                    added_source += (
+                        runtime / platform / "src/checks/loader_provenance.cpp"
+                    ).read_text()
+                added = set(
+                    re.findall(r'"(hook\.(?:exec_modules|loader_chain))"', added_source)
+                )
+                signals |= added | {name + "_meta" for name in added}
             assert signals == {row["signal"] for row in group["observations"]}
 
 
@@ -205,11 +249,14 @@ def testContractFixtures_whenSelectionResolved_matchEffectiveGroups() -> None:
         / "check-capabilities-v1.json"
     )
     document = json.loads(fixture.read_bytes())
-    assert document["catalogue"]["catalogue_id"] == capabilities.catalogue_id()
-    assert document["catalogue"]["revision"] == capabilities.catalogue()["revision"]
+    assert (
+        document["catalogue"]["catalogue_id"]
+        == hashlib.sha256(capabilities.canonical(_revision_nine())).hexdigest()
+    )
+    assert document["catalogue"]["revision"] == _revision_nine()["revision"]
     assert document["catalogue"]["observation_counts"] == {
         name: sum(len(group["observations"]) for group in platform["groups"])
-        for name, platform in capabilities.catalogue()["platforms"].items()
+        for name, platform in _revision_nine()["platforms"].items()
     }
     for case in document["cases"]:
         result = checks.resolve_checks(
@@ -305,10 +352,11 @@ def testParseCatalogue_whenTimeoutDeclared_roundTripsWithoutChangingProductionCa
     assert capabilities.canonical(parsed) == encoded
     assert capabilities.catalogue_id() == current_id
     assert (
-        current_id == "2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d"
+        current_id == "fce392826ee1d9e5bab8046ca1584e2755af0eb3fd26922769eb20c64e32f736"
     )
     assert all(
-        "timeout" not in output["statuses"]
+        ("timeout" in output["statuses"])
+        == (output["signal"] in {"hook.exec_modules", "hook.loader_chain"})
         for platform in capabilities.catalogue()["platforms"].values()
         for group in platform["groups"]
         for output in group["observations"]
@@ -383,7 +431,7 @@ def testCatalogue_whenInlineSourceRegistered_preservesBoundedUnknownContract() -
 def testCatalogue_whenAndroidServiceMetadataRegistered_preservesVersionedContext() -> (
     None
 ):
-    document = capabilities.catalogue()
+    document = _revision_nine()
     android = document["platforms"]["android"]
     groups = {group["name"]: group for group in android["groups"]}
     assert document["schema_version"] == 1
@@ -488,7 +536,7 @@ def testParseCatalogue_whenAndroidTruthIsUnavailable_acceptsUnsupportedWithNoVal
 def testCatalogue_whenAndroidSignerSetsRegistered_preservesLegacyScalarsAndCompleteSets() -> (
     None
 ):
-    document = capabilities.catalogue()
+    document = _revision_nine()
     groups = document["platforms"]["android"]["groups"]
     identity = next(group for group in groups if group["name"] == "identity")
     rows = {(row["signal"], row["source"]): row for row in identity["observations"]}
@@ -531,7 +579,10 @@ def testSignerContractFixture_whenCanonicalRegistrationCompared_matchesExactRows
     )
     rows = {(row["signal"], row["source"]): row for row in identity["observations"]}
     assert document["registration"] == "schema1_revision9"
-    assert document["catalogue_id"] == capabilities.catalogue_id()
+    assert (
+        document["catalogue_id"]
+        == hashlib.sha256(capabilities.canonical(_revision_nine())).hexdigest()
+    )
     assert len(document["observations"]) == 4
     for row in document["observations"]:
         assert row == rows[(row["signal"], row["source"])]
@@ -540,7 +591,7 @@ def testSignerContractFixture_whenCanonicalRegistrationCompared_matchesExactRows
 def testCatalogue_whenWindowObservationRegistered_preservesApprovedRevisionFiveExactly() -> (
     None
 ):
-    document = capabilities.catalogue()
+    document = _revision_nine()
     assert document["schema_version"] == 1
     assert document["revision"] == 9
     assert (
@@ -606,7 +657,10 @@ def testWindowContractFixture_whenCanonicalCompared_matchesExactRegisteredOutput
         if group["name"] == "overlay"
     )
     assert document["registration"] == "schema1_revision9"
-    assert document["catalogue_id"] == capabilities.catalogue_id()
+    assert (
+        document["catalogue_id"]
+        == hashlib.sha256(capabilities.canonical(_revision_nine())).hexdigest()
+    )
     assert document["observations"] == group["observations"]
     assert [row["value_kind"] for row in group["observations"]] == [
         "string",
@@ -621,7 +675,7 @@ def testWindowContractFixture_whenCanonicalCompared_matchesExactRegisteredOutput
 def testCatalogue_whenRootContextRegistered_preservesApprovedParentAndSixOptIns() -> (
     None
 ):
-    document = capabilities.catalogue()
+    document = _revision_nine()
     names = {"root_packages", "root_context", "proxy", "developer_settings"}
     groups = document["platforms"]["android"]["groups"]
     added = [group for group in groups if group["name"] in names]
@@ -675,7 +729,10 @@ def testRootContextFixture_whenCanonicalCompared_preservesExactStatusAndValueKin
     )
     document = json.loads(fixture.read_bytes())
     assert document["registration"] == "schema1_revision9"
-    assert document["catalogue_id"] == capabilities.catalogue_id()
+    assert (
+        document["catalogue_id"]
+        == hashlib.sha256(capabilities.canonical(_revision_nine())).hexdigest()
+    )
     names = {"root_packages", "root_context", "proxy", "developer_settings"}
     outputs = {
         (row["signal"], row["source"]): row
@@ -702,7 +759,7 @@ def testRootContextFixture_whenCanonicalCompared_preservesExactStatusAndValueKin
 
 
 def testCatalogue_whenCaptureRegistered_reconstructsExactRevisionSeven() -> None:
-    document = capabilities.catalogue()
+    document = _revision_nine()
     groups = document["platforms"]["android"]["groups"]
     added = [
         group for group in groups if group["name"] in {"screenshot", "screen_recording"}
@@ -732,7 +789,7 @@ def testCatalogue_whenCaptureRegistered_reconstructsExactRevisionSeven() -> None
 
 
 def testCatalogue_whenIOSCaptureAdded_reconstructsExactRevisionEight() -> None:
-    document = capabilities.catalogue()
+    document = _revision_nine()
     assert document["revision"] == 9
     ios_groups = document["platforms"]["ios"]["groups"]
     added = [
@@ -764,7 +821,10 @@ def testIOSCaptureFixture_whenCanonicalCompared_preservesExactScalarRows() -> No
     )
     document = json.loads(fixture.read_bytes())
     assert document["registration"] == "schema1_revision9"
-    assert document["catalogue_id"] == capabilities.catalogue_id()
+    assert (
+        document["catalogue_id"]
+        == hashlib.sha256(capabilities.canonical(_revision_nine())).hexdigest()
+    )
     expected = [
         group
         for group in capabilities.catalogue()["platforms"]["ios"]["groups"]
@@ -847,3 +907,32 @@ def testIOSCaptureDecisionRegistry_whenAdopted_preservesAllPriorRulesExactly() -
         actual.add((fields["group"], fields["signal"], fields["source"]))
     assert actual == expected
     assert len(actual) == 26
+
+
+def testCatalogue_whenModuleProvenanceAllocated_preservesExactHistoryAndPairedWireBounds() -> (
+    None
+):
+    fixture = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "docs/fixtures/module-provenance-v1.json"
+    )
+    declared = json.loads(fixture.read_bytes())
+    current = capabilities.catalogue()
+    assert current["revision"] == 10
+    assert declared["catalogue_id"] == capabilities.catalogue_id()
+    for platform, count, added in (("android", 79, 6), ("ios", 54, 2)):
+        groups = current["platforms"][platform]["groups"]
+        assert sum(len(group["observations"]) for group in groups) == count
+        hooks = next(group for group in groups if group["name"] == "hooks")
+        assert hooks["observations"][-added:] == declared["platforms"][platform]
+        for row in hooks["observations"][-added:]:
+            assert row["cardinality"] == "one"
+            assert row["statuses"] == (
+                ["ok"]
+                if row["signal"].endswith("_meta")
+                else ["ok", "error", "unsupported", "timeout"]
+            )
+    assert (
+        hashlib.sha256(capabilities.canonical(_revision_nine())).hexdigest()
+        == "2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d"
+    )

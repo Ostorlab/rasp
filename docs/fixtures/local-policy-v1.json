@@ -11,7 +11,7 @@
     "mode": "gate",
     "scope": "host_calls_only",
     "platform": "android",
-    "catalogue_id": "2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d",
+    "catalogue_id": "fce392826ee1d9e5bab8046ca1584e2755af0eb3fd26922769eb20c64e32f736",
     "report_schema_version": 1,
     "report_reason_version": 1,
     "native_metadata_version": 1,
