@@ -55,6 +55,7 @@ def testCommand_whenBinaryOpenFails_reapsActualChildAndPreservesPriorOutput(
                 [
                     sys.executable,
                     "-I",
+                    "-B",
                     "-c",
                     "import os,pathlib,time; pathlib.Path('live.pid').write_text(str(os.getpid())); time.sleep(20)",
                 ],
@@ -131,7 +132,9 @@ def testCommand_whenDeadlineExpires_killsAndReapsGroup(
         return process
 
     monkeypatch.setattr(subprocess, "Popen", capture)
-    result = runner.command([sys.executable, "-I", "-c", code], tmp_path, timeout=0.2)
+    result = runner.command(
+        [sys.executable, "-I", "-B", "-c", code], tmp_path, timeout=0.2
+    )
     assert result.reason == "timeout"
     assert result.returncode < 0
     assert len(processes) == 1
@@ -156,7 +159,8 @@ def testCommand_whenOutputOverflows_stopsWithoutTruncationSuccess(
     runner: typing.Any, tmp_path: pathlib.Path
 ) -> None:
     result = runner.command(
-        [sys.executable, "-I", "-c", "import os; os.write(1,b'x'*300000)"], tmp_path
+        [sys.executable, "-I", "-B", "-c", "import os; os.write(1,b'x'*300000)"],
+        tmp_path,
     )
     assert result.reason == "resource_limit"
     assert len(result.stdout) <= 262144
@@ -169,6 +173,7 @@ def testCommand_whenChildCrashes_preservesSignal(
         [
             sys.executable,
             "-I",
+            "-B",
             "-c",
             "import os,signal; os.kill(os.getpid(),signal.SIGKILL)",
         ],
@@ -182,7 +187,9 @@ def testCommand_whenClientTriesToAutostartDaemon_forkIsDenied(
     runner: typing.Any, tmp_path: pathlib.Path
 ) -> None:
     result = runner.command(
-        [sys.executable, "-I", "-c", "import os; os.fork()"], tmp_path, no_fork=True
+        [sys.executable, "-I", "-B", "-c", "import os; os.fork()"],
+        tmp_path,
+        no_fork=True,
     )
     assert result.returncode != 0
     assert b"Resource temporarily unavailable" in result.stderr
@@ -635,7 +642,7 @@ def testCommand_whenBinaryArtifactExceedsTextCap_retainsExactStream(
 ) -> None:
     destination = tmp_path / "artifact"
     result = runner.command(
-        [sys.executable, "-I", "-c", "import os; os.write(1,b'x'*300000)"],
+        [sys.executable, "-I", "-B", "-c", "import os; os.write(1,b'x'*300000)"],
         tmp_path,
         binary_path=destination,
     )
@@ -1620,7 +1627,7 @@ if sys.argv[1]=='normal': sys.exit(0)
 if sys.argv[1]=='overflow': os.write(1,b'x'*300000)
 time.sleep(20)
 \"\"\"
-result=run.command([sys.executable,'-I','-c',code,route],root,timeout=0.5)
+result=run.command([sys.executable,'-I','-B','-c',code,route],root,timeout=0.5)
 child=int((root/'descendant').read_text());deadline=time.monotonic()+2
 status=None
 try:
@@ -1667,7 +1674,7 @@ def testCommand_whenBinaryStreamExceedsPinnedSize_refusesWithinReservation(
 ) -> None:
     destination = tmp_path / "bounded.apk"
     result = runner.command(
-        [sys.executable, "-I", "-c", "import os; os.write(1,b'x'*20000)"],
+        [sys.executable, "-I", "-B", "-c", "import os; os.write(1,b'x'*20000)"],
         tmp_path,
         binary_path=destination,
         binary_limit=10000,
@@ -1758,7 +1765,7 @@ def testXmlOwnership_whenDumpCannotComplete_cleansOnlyAfterProcessAcquisition(
         if probe == "dump_baseline":
             # Replace the out-of-process executable with a real failing local child.
             return actual_command(
-                [sys.executable, "-I", "-c", "raise SystemExit(1)"], cwd, **kwargs
+                [sys.executable, "-I", "-B", "-c", "raise SystemExit(1)"], cwd, **kwargs
             )
         if kwargs.get("binary_path") is not None:
             kwargs["binary_path"].write_bytes(payloads["apk"])
@@ -1822,3 +1829,56 @@ def testPreflightDiagnostic_whenActualDependencyGuardRejects_retainsExactRowAndS
     assert (retained / "preflight-dependencies.json").read_bytes() == encoded
     assert str(linked) in " ".join(failure.value.__notes__)
     assert validation_runner.read_file is actual_read
+
+
+def testCommand_whenCurrentIsolatedChildStarts_preservesOwnedStartupCache(
+    runner: typing.Any, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise the current real child argv; every cache write is confined by CLI prefix."""
+    cache = tmp_path / "owned-cache"
+    actual_popen = subprocess.Popen
+    executions: list[list[str]] = []
+
+    def confined_start(
+        argv: list[str], **kwargs: typing.Any
+    ) -> subprocess.Popen[bytes]:
+        confined: list[str] = []
+        for argument in argv:
+            confined.append(argument)
+            if argument == sys.executable:
+                # Covers both the bounded helper and the actual isolated payload argv.
+                confined.extend(["-X", "pycache_prefix=" + str(cache)])
+        executions.append(confined)
+        return actual_popen(confined, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", confined_start)
+    testCommand_whenBinaryArtifactExceedsTextCap_retainsExactStream(runner, tmp_path)
+    assert len(executions) == 1
+    assert cache.exists() is False
+
+
+def testDependencies_whenAllProcessControlsFinished_preservesOriginalPreparedBindings() -> (
+    None
+):
+    """Check the producer's original records, including cached files, without rebinding."""
+    source = pathlib.Path(os.environ["VAL01_ANDROID_INPUTS"])
+    report = validation_runner.decode(
+        validation_runner.read_file(source, "result.json", 2 * validation_runner.MIB)
+    )
+    record = next(
+        row for row in report["input_files"] if row["role"] == "dependency_manifest"
+    )
+    data = validation_runner.read_file(source, record["path"], validation_runner.MIB)
+    assert (
+        len(data) == record["bytes"] and validation_runner.sha(data) == record["sha256"]
+    )
+    manifest = validation_runner.decode(data)
+    bindings = validation_runner.dependency_bindings(manifest)
+    assert len(bindings) == len(manifest["files"])
+    assert any(row["path"].endswith(".pyc") for row in manifest["files"])
+    runner_path = pathlib.Path(str(validation_runner.__file__)).resolve()
+    assert bindings[str(runner_path)]["sha256"] == validation_runner.sha(
+        validation_runner.read_file(
+            runner_path.parent, runner_path.name, 64 * validation_runner.MIB
+        )
+    )

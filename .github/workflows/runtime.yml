@@ -572,7 +572,7 @@ jobs:
           "$RUNNER_TEMP/val01-env/bin/python" -B -m pytest -v -p no:cacheprovider \
             --junitxml="$RUNNER_TEMP/val01-logs/tests.xml" \
             validation/tests/run_test.py validation/tests/prepare_test.py 2>&1 | tee "$RUNNER_TEMP/val01-logs/tests.log"
-          "$RUNNER_TEMP/val01-env/bin/python" -c 'import os,pathlib,xml.etree.ElementTree as x; cases=list(x.parse(pathlib.Path(os.environ["RUNNER_TEMP"])/"val01-logs/tests.xml").iter("testcase")); assert len(cases)>=60 and all(c.find("skipped") is None for c in cases), "incomplete foundation collection"'
+          "$RUNNER_TEMP/val01-env/bin/python" -B -c 'import os,pathlib,xml.etree.ElementTree as x; cases=list(x.parse(pathlib.Path(os.environ["RUNNER_TEMP"])/"val01-logs/tests.xml").iter("testcase")); assert len(cases)>=60 and all(c.find("skipped") is None for c in cases), "incomplete foundation collection"'
           "$RUNNER_TEMP/val01-env/bin/ruff" check validation 2>&1 | tee "$RUNNER_TEMP/val01-logs/ruff.log"
           "$RUNNER_TEMP/val01-env/bin/ruff" format --check validation 2>&1 | tee "$RUNNER_TEMP/val01-logs/format.log"
           "$RUNNER_TEMP/val01-env/bin/mypy" --strict --explicit-package-bases validation/run.py validation/prepare.py validation/tests/run_test.py validation/tests/prepare_test.py 2>&1 | tee "$RUNNER_TEMP/val01-logs/mypy.log"
