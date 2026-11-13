@@ -522,5 +522,926 @@ TEST(CodeEncoder, encode_whenMoveDestinationIsBetweenV16AndV255_usesTheFrom16For
     EXPECT_EQ(encoded_name(Move{ValueKind::Normal, 255, 1}), "move/from16");
 }
 
+TEST(CodeEncoder, encode_whenMoveDestinationIsAboveV255_usesThe16Form)
+{
+    raw::InsnFields fields = encoded_insn(Move{ValueKind::Normal, 256, 1});
+
+    EXPECT_EQ(name_of(fields), "move/16");
+    EXPECT_EQ(fields.a, 256u);
+    EXPECT_EQ(fields.b, 1u);
+}
+
+TEST(CodeEncoder, encode_whenMoveIsWide_usesTheWideOpcodeOfEachForm)
+{
+    EXPECT_EQ(encoded_name(Move{ValueKind::Wide, 1, 2}), "move-wide");
+    EXPECT_EQ(encoded_name(Move{ValueKind::Wide, 1, 300}), "move-wide/from16");
+    EXPECT_EQ(encoded_name(Move{ValueKind::Wide, 300, 1}), "move-wide/16");
+}
+
+TEST(CodeEncoder, encode_whenMoveIsAnObject_usesTheObjectOpcodeOfEachForm)
+{
+    EXPECT_EQ(encoded_name(Move{ValueKind::Object, 1, 2}), "move-object");
+    EXPECT_EQ(encoded_name(Move{ValueKind::Object, 1, 300}), "move-object/from16");
+    EXPECT_EQ(encoded_name(Move{ValueKind::Object, 300, 1}), "move-object/16");
+}
+
+TEST(CodeEncoder, encode_whenConstFitsFourBits_usesConst4)
+{
+    for (int32_t value : {0, 7, -8}) {
+        raw::InsnFields fields = encoded_insn(Const{15, value});
+
+        EXPECT_EQ(name_of(fields), "const/4") << value;
+        EXPECT_EQ(fields.a, 15u);
+        EXPECT_EQ(fields.literal, value);
+    }
+}
+
+TEST(CodeEncoder, encode_whenConstNeedsMoreThanFourBits_usesConst16)
+{
+    for (int32_t value : {8, -9, 32767, -32768}) {
+        raw::InsnFields fields = encoded_insn(Const{0, value});
+
+        EXPECT_EQ(name_of(fields), "const/16") << value;
+        EXPECT_EQ(fields.literal, value);
+    }
+}
+
+TEST(CodeEncoder, encode_whenConstRegisterIsAboveV15_usesConst16ForASmallValue)
+{
+    raw::InsnFields fields = encoded_insn(Const{16, 5});
+
+    EXPECT_EQ(name_of(fields), "const/16");
+    EXPECT_EQ(fields.a, 16u);
+    EXPECT_EQ(fields.literal, 5);
+}
+
+TEST(CodeEncoder, encode_whenConstHasOnlyHighBits_usesConstHigh16)
+{
+    const std::vector<std::pair<int32_t, int64_t>> cases{
+        {0x10000, 1}, {0x7FFF0000, 0x7FFF}, {kInt32Min, -32768}, {-65536, -1}};
+
+    for (const auto &[value, stored] : cases) {
+        raw::InsnFields fields = encoded_insn(Const{0, value});
+
+        EXPECT_EQ(name_of(fields), "const/high16") << value;
+        EXPECT_EQ(fields.literal, stored);
+    }
+}
+
+TEST(CodeEncoder, encode_whenConstNeedsAllItsBits_usesConst)
+{
+    for (int32_t value : {32768, -32769, 0x12345, kInt32Max}) {
+        raw::InsnFields fields = encoded_insn(Const{0, value});
+
+        EXPECT_EQ(name_of(fields), "const") << value;
+        EXPECT_EQ(fields.literal, value);
+    }
+}
+
+TEST(CodeEncoder, encode_whenConstWideFitsSixteenBits_usesConstWide16)
+{
+    for (int64_t value : {int64_t{0}, int64_t{7}, int64_t{32767}, int64_t{-32768}}) {
+        raw::InsnFields fields = encoded_insn(ConstWide{200, value});
+
+        EXPECT_EQ(name_of(fields), "const-wide/16") << value;
+        EXPECT_EQ(fields.a, 200u);
+        EXPECT_EQ(fields.literal, value);
+    }
+}
+
+TEST(CodeEncoder, encode_whenConstWideHasOnlyItsTopSixteenBits_usesConstWideHigh16)
+{
+    const std::vector<std::pair<int64_t, int64_t>> cases{
+        {int64_t{1} << 48, 1}, {kInt64Min, -32768}, {int64_t{0x7FFF} << 48, 0x7FFF}};
+
+    for (const auto &[value, stored] : cases) {
+        raw::InsnFields fields = encoded_insn(ConstWide{0, value});
+
+        EXPECT_EQ(name_of(fields), "const-wide/high16") << value;
+        EXPECT_EQ(fields.literal, stored);
+    }
+}
+
+TEST(CodeEncoder, encode_whenConstWideFitsThirtyTwoBits_usesConstWide32)
+{
+    for (int64_t value : {int64_t{32768}, int64_t{-32769}, int64_t{0x12345678}, int64_t{kInt32Max},
+                          int64_t{kInt32Min}}) {
+        raw::InsnFields fields = encoded_insn(ConstWide{0, value});
+
+        EXPECT_EQ(name_of(fields), "const-wide/32") << value;
+        EXPECT_EQ(fields.literal, value);
+    }
+}
+
+TEST(CodeEncoder, encode_whenConstWideNeedsAllItsBits_usesConstWide)
+{
+    for (int64_t value : {int64_t{kInt32Max} + 1, int64_t{kInt32Min} - 1, int64_t{0x123456789},
+                          (int64_t{1} << 48) + 1}) {
+        raw::InsnFields fields = encoded_insn(ConstWide{0, value});
+
+        EXPECT_EQ(name_of(fields), "const-wide") << value;
+        EXPECT_EQ(fields.literal, value);
+    }
+}
+
+TEST(CodeEncoder, encode_whenCodeMixesConstants_picksTheSmallestEncodingOfEach)
+{
+    const Code code =
+        code_of({Insn{Const{0, 5}}, Insn{Const{0, -8}}, Insn{Const{0, 100}}, Insn{Const{20, 5}},
+                 Insn{Const{0, 0x10000}}, Insn{Const{0, 0x12345}}, Insn{ConstWide{0, 7}},
+                 Insn{ConstWide{0, int64_t{1} << 48}}, Insn{ConstWide{0, 0x12345678}},
+                 Insn{ConstWide{0, 0x123456789}}, Insn{ReturnVoid{}}});
+
+    EXPECT_EQ(names_of(encode(code)),
+              (Names{"const/4", "const/4", "const/16", "const/16", "const/high16", "const",
+                     "const-wide/16", "const-wide/high16", "const-wide/32", "const-wide",
+                     "return-void"}));
+}
+
+TEST(CodeEncoder, encode_whenInsnIsConstString_writesTheStringIndex)
+{
+    const Code code = code_of({Insn{ConstString{0, "a"}}, Insn{ConstString{200, "b"}}});
+
+    raw::InsnFields fields = decode(encode(code).insns)[1].fields;
+    raw::InsnFields expected{.opcode = fields.opcode, .a = 200, .index = 1};
+
+    EXPECT_EQ(name_of(fields), "const-string");
+    EXPECT_TRUE(fields == expected);
+}
+
+TEST(CodeEncoder, encode_whenStringIndexIs65535_usesConstString)
+{
+    const Code code = code_of({Insn{ConstString{0, "text"}}});
+    Pools pools = pools_with_leading_strings(code, 65535);
+
+    raw::InsnFields fields = decode(encode(code, pools).insns)[0].fields;
+
+    EXPECT_EQ(name_of(fields), "const-string");
+    EXPECT_EQ(fields.index, 65535u);
+}
+
+TEST(CodeEncoder, encode_whenStringIndexIs65536_usesConstStringJumbo)
+{
+    const Code code = code_of({Insn{ConstString{200, "text"}}});
+    Pools pools = pools_with_leading_strings(code, 65536);
+
+    raw::InsnFields fields = decode(encode(code, pools).insns)[0].fields;
+
+    EXPECT_EQ(name_of(fields), "const-string/jumbo");
+    EXPECT_EQ(fields.a, 200u);
+    EXPECT_EQ(fields.index, 65536u);
+}
+
+TEST(CodeEncoder, encode_whenInsnNamesAType_writesTheTypeIndex)
+{
+    struct Case
+    {
+        Insn insn;
+        std::string name;
+        raw::InsnFields operands;
+    };
+    const std::vector<Case> cases{
+        {ConstClass{200, "LT;"}, "const-class", {.a = 200}},
+        {CheckCast{200, "LT;"}, "check-cast", {.a = 200}},
+        {InstanceOf{1, 2, "LT;"}, "instance-of", {.a = 1, .b = 2}},
+        {NewInstance{200, "LT;"}, "new-instance", {.a = 200}},
+        {NewArray{1, 2, "LT;"}, "new-array", {.a = 1, .b = 2}},
+    };
+
+    for (const Case &c : cases) {
+        const Code code = code_of({Insn{ConstString{0, "A"}}, Insn{ConstClass{0, "LA;"}}, c.insn});
+        Pools pools = pools_of(code);
+
+        raw::InsnFields fields = decode(encode(code, pools).insns)[2].fields;
+        raw::InsnFields expected = c.operands;
+        expected.opcode = fields.opcode;
+        expected.index = pools.type("LT;");
+
+        ASSERT_NE(pools.type("LT;"), pools.string("LT;"));
+        EXPECT_EQ(name_of(fields), c.name);
+        EXPECT_TRUE(fields == expected) << c.name;
+    }
+}
+
+TEST(CodeEncoder, encode_whenInsnIsConstMethodHandle_writesTheHandleIndex)
+{
+    const MethodHandle put{MethodHandleKind::StaticPut, FieldId{"LT;", "f", "I"}};
+    const MethodHandle get{MethodHandleKind::StaticGet, FieldId{"LT;", "f", "I"}};
+    const Code code = code_of({Insn{ConstMethodHandle{0, put}}, Insn{ConstMethodHandle{200, get}}});
+
+    raw::InsnFields fields = decode(encode(code).insns)[1].fields;
+
+    EXPECT_EQ(name_of(fields), "const-method-handle");
+    EXPECT_EQ(fields.a, 200u);
+    EXPECT_EQ(fields.index, 1u);
+}
+
+TEST(CodeEncoder, encode_whenInsnIsConstMethodType_writesThePrototypeIndex)
+{
+    const Code code =
+        code_of({Insn{ConstMethodType{0, "()I"}}, Insn{ConstMethodType{200, "(I)V"}}});
+    Pools pools = pools_of(code);
+
+    raw::InsnFields fields = decode(encode(code, pools).insns)[1].fields;
+
+    EXPECT_EQ(name_of(fields), "const-method-type");
+    EXPECT_EQ(fields.a, 200u);
+    EXPECT_EQ(fields.index, pools.proto("(I)V"));
+    EXPECT_EQ(fields.index, 1u);
+}
+
+TEST(CodeEncoder, encode_whenInsnIsCompare_writesTheOpcodeOfItsOperation)
+{
+    const std::vector<std::pair<CompareOp, std::string>> cases{
+        {CompareOp::CmplFloat, "cmpl-float"},   {CompareOp::CmpgFloat, "cmpg-float"},
+        {CompareOp::CmplDouble, "cmpl-double"}, {CompareOp::CmpgDouble, "cmpg-double"},
+        {CompareOp::CmpLong, "cmp-long"},
+    };
+
+    for (const auto &[op, name] : cases) {
+        raw::InsnFields fields = encoded_insn(Compare{op, 200, 201, 202});
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 200, .b = 201, .c = 202};
+
+        EXPECT_EQ(name_of(fields), name);
+        EXPECT_TRUE(fields == expected) << name;
+    }
+}
+
+TEST(CodeEncoder, encode_whenInsnIsArrayGet_writesTheOpcodeOfItsKind)
+{
+    for (const auto &[kind, suffix] : kKindSuffixes) {
+        raw::InsnFields fields = encoded_insn(ArrayGet{kind, 200, 201, 202});
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 200, .b = 201, .c = 202};
+
+        EXPECT_EQ(name_of(fields), "aget" + suffix);
+        EXPECT_TRUE(fields == expected) << suffix;
+    }
+}
+
+TEST(CodeEncoder, encode_whenInsnIsArrayPut_writesTheOpcodeOfItsKind)
+{
+    for (const auto &[kind, suffix] : kKindSuffixes) {
+        raw::InsnFields fields = encoded_insn(ArrayPut{kind, 200, 201, 202});
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 200, .b = 201, .c = 202};
+
+        EXPECT_EQ(name_of(fields), "aput" + suffix);
+        EXPECT_TRUE(fields == expected) << suffix;
+    }
+}
+
+TEST(CodeEncoder, encode_whenInsnIsInstanceGet_writesTheOpcodeOfItsKindAndTheFieldIndex)
+{
+    for (const auto &[kind, suffix] : kKindSuffixes) {
+        raw::InsnFields fields =
+            encoded_field_insn(InstanceGet{kind, 1, 2, FieldId{"LT;", "g", "I"}});
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 1, .b = 2, .index = 1};
+
+        EXPECT_EQ(name_of(fields), "iget" + suffix);
+        EXPECT_TRUE(fields == expected) << suffix;
+    }
+}
+
+TEST(CodeEncoder, encode_whenInsnIsInstancePut_writesTheOpcodeOfItsKindAndTheFieldIndex)
+{
+    for (const auto &[kind, suffix] : kKindSuffixes) {
+        raw::InsnFields fields =
+            encoded_field_insn(InstancePut{kind, 1, 2, FieldId{"LT;", "g", "I"}});
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 1, .b = 2, .index = 1};
+
+        EXPECT_EQ(name_of(fields), "iput" + suffix);
+        EXPECT_TRUE(fields == expected) << suffix;
+    }
+}
+
+TEST(CodeEncoder, encode_whenInsnIsStaticGet_writesTheOpcodeOfItsKindAndTheFieldIndex)
+{
+    for (const auto &[kind, suffix] : kKindSuffixes) {
+        raw::InsnFields fields = encoded_field_insn(StaticGet{kind, 200, FieldId{"LT;", "g", "I"}});
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 200, .index = 1};
+
+        EXPECT_EQ(name_of(fields), "sget" + suffix);
+        EXPECT_TRUE(fields == expected) << suffix;
+    }
+}
+
+TEST(CodeEncoder, encode_whenInsnIsStaticPut_writesTheOpcodeOfItsKindAndTheFieldIndex)
+{
+    for (const auto &[kind, suffix] : kKindSuffixes) {
+        raw::InsnFields fields = encoded_field_insn(StaticPut{kind, 200, FieldId{"LT;", "g", "I"}});
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 200, .index = 1};
+
+        EXPECT_EQ(name_of(fields), "sput" + suffix);
+        EXPECT_TRUE(fields == expected) << suffix;
+    }
+}
+
+TEST(CodeEncoder, encode_whenInsnIsUnary_writesTheOpcodeOfItsOperation)
+{
+    const std::vector<std::pair<UnaryOp, std::string>> cases{
+        {UnaryOp::NegInt, "neg-int"},
+        {UnaryOp::NotInt, "not-int"},
+        {UnaryOp::NegLong, "neg-long"},
+        {UnaryOp::NotLong, "not-long"},
+        {UnaryOp::NegFloat, "neg-float"},
+        {UnaryOp::NegDouble, "neg-double"},
+        {UnaryOp::IntToLong, "int-to-long"},
+        {UnaryOp::IntToFloat, "int-to-float"},
+        {UnaryOp::IntToDouble, "int-to-double"},
+        {UnaryOp::LongToInt, "long-to-int"},
+        {UnaryOp::LongToFloat, "long-to-float"},
+        {UnaryOp::LongToDouble, "long-to-double"},
+        {UnaryOp::FloatToInt, "float-to-int"},
+        {UnaryOp::FloatToLong, "float-to-long"},
+        {UnaryOp::FloatToDouble, "float-to-double"},
+        {UnaryOp::DoubleToInt, "double-to-int"},
+        {UnaryOp::DoubleToLong, "double-to-long"},
+        {UnaryOp::DoubleToFloat, "double-to-float"},
+        {UnaryOp::IntToByte, "int-to-byte"},
+        {UnaryOp::IntToChar, "int-to-char"},
+        {UnaryOp::IntToShort, "int-to-short"},
+    };
+
+    for (const auto &[op, name] : cases) {
+        raw::InsnFields fields = encoded_insn(Unary{op, 1, 2});
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 1, .b = 2};
+
+        EXPECT_EQ(name_of(fields), name);
+        EXPECT_TRUE(fields == expected) << name;
+    }
+}
+
+TEST(CodeEncoder, encode_whenBinaryHasThreeDifferentRegisters_usesTheThreeAddressForm)
+{
+    for (const auto &[op, name] : kBinaryNames) {
+        raw::InsnFields fields = encoded_insn(Binary{op, 200, 201, 202});
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 200, .b = 201, .c = 202};
+
+        EXPECT_EQ(name_of(fields), name);
+        EXPECT_TRUE(fields == expected) << name;
+    }
+}
+
+TEST(CodeEncoder, encode_whenBinaryWritesItsFirstOperandBelowV16_usesTheTwoAddressForm)
+{
+    for (const auto &[op, name] : kBinaryNames) {
+        raw::InsnFields fields = encoded_insn(Binary{op, 15, 15, 14});
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 15, .b = 14};
+
+        EXPECT_EQ(name_of(fields), name + "/2addr");
+        EXPECT_TRUE(fields == expected) << name;
+    }
+}
+
+TEST(CodeEncoder, encode_whenBinaryWritesItsFirstOperandAboveV15_usesTheThreeAddressForm)
+{
+    raw::InsnFields fields = encoded_insn(Binary{BinaryOp::AddInt, 16, 16, 2});
+
+    EXPECT_EQ(name_of(fields), "add-int");
+    EXPECT_EQ(fields.a, 16u);
+    EXPECT_EQ(fields.b, 16u);
+    EXPECT_EQ(fields.c, 2u);
+}
+
+TEST(CodeEncoder, encode_whenBinarySecondOperandIsAboveV15_usesTheThreeAddressForm)
+{
+    EXPECT_EQ(encoded_name(Binary{BinaryOp::AddInt, 1, 1, 16}), "add-int");
+}
+
+TEST(CodeEncoder, encode_whenBinaryWritesItsSecondOperand_usesTheThreeAddressForm)
+{
+    EXPECT_EQ(encoded_name(Binary{BinaryOp::SubInt, 2, 1, 2}), "sub-int");
+}
+
+TEST(CodeEncoder, encode_whenLiteralFitsEightBits_usesTheLit8Form)
+{
+    const std::vector<std::pair<LiteralOp, std::string>> cases{
+        {LiteralOp::Add, "add-int/lit8"},   {LiteralOp::Rsub, "rsub-int/lit8"},
+        {LiteralOp::Mul, "mul-int/lit8"},   {LiteralOp::Div, "div-int/lit8"},
+        {LiteralOp::Rem, "rem-int/lit8"},   {LiteralOp::And, "and-int/lit8"},
+        {LiteralOp::Or, "or-int/lit8"},     {LiteralOp::Xor, "xor-int/lit8"},
+        {LiteralOp::Shl, "shl-int/lit8"},   {LiteralOp::Shr, "shr-int/lit8"},
+        {LiteralOp::Ushr, "ushr-int/lit8"},
+    };
+
+    for (const auto &[op, name] : cases) {
+        raw::InsnFields fields = encoded_insn(BinaryLiteral{op, 200, 201, -128});
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 200, .b = 201, .literal = -128};
+
+        EXPECT_EQ(name_of(fields), name);
+        EXPECT_TRUE(fields == expected) << name;
+    }
+}
+
+TEST(CodeEncoder, encode_whenLiteralNeedsSixteenBits_usesTheLit16Form)
+{
+    const std::vector<std::pair<LiteralOp, std::string>> cases{
+        {LiteralOp::Add, "add-int/lit16"}, {LiteralOp::Rsub, "rsub-int"},
+        {LiteralOp::Mul, "mul-int/lit16"}, {LiteralOp::Div, "div-int/lit16"},
+        {LiteralOp::Rem, "rem-int/lit16"}, {LiteralOp::And, "and-int/lit16"},
+        {LiteralOp::Or, "or-int/lit16"},   {LiteralOp::Xor, "xor-int/lit16"},
+    };
+
+    for (const auto &[op, name] : cases) {
+        raw::InsnFields fields = encoded_insn(BinaryLiteral{op, 14, 15, -32768});
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 14, .b = 15, .literal = -32768};
+
+        EXPECT_EQ(name_of(fields), name);
+        EXPECT_TRUE(fields == expected) << name;
+    }
+}
+
+TEST(CodeEncoder, encode_whenLiteralIsAtTheEightBitLimits_usesTheLit8Form)
+{
+    EXPECT_EQ(encoded_name(BinaryLiteral{LiteralOp::Add, 1, 2, 127}), "add-int/lit8");
+    EXPECT_EQ(encoded_name(BinaryLiteral{LiteralOp::Add, 1, 2, -128}), "add-int/lit8");
+}
+
+TEST(CodeEncoder, encode_whenLiteralIsOnePastTheEightBitLimits_usesTheLit16Form)
+{
+    EXPECT_EQ(encoded_name(BinaryLiteral{LiteralOp::Add, 1, 2, 128}), "add-int/lit16");
+    EXPECT_EQ(encoded_name(BinaryLiteral{LiteralOp::Add, 1, 2, -129}), "add-int/lit16");
+}
+
+TEST(CodeEncoder, encode_whenAShiftLiteralNeedsSixteenBits_fails)
+{
+    Error error = encode_error(code_of({Insn{BinaryLiteral{LiteralOp::Shl, 1, 2, 300}}}));
+
+    EXPECT_EQ(error.kind, Error::Kind::Invalid);
+    EXPECT_EQ(error.message,
+              "LT;->m()V, item 0: the instruction's operands do not fit its encoding");
+}
+
+TEST(CodeEncoder, encode_whenARegisterDoesNotFitTheInstruction_failsNamingTheItem)
+{
+    const Code code = code_of(
+        {Insn{Nop{}}, Insn{InstanceGet{ValueKind::Normal, 16, 1, FieldId{"LT;", "f", "I"}}}});
+
+    Error error = encode_error(code);
+
+    EXPECT_EQ(error.kind, Error::Kind::Invalid);
+    EXPECT_EQ(error.message,
+              "LT;->m()V, item 1: the instruction's operands do not fit its encoding");
+}
+
+TEST(CodeEncoder, encode_whenInvokeHasUpToFiveRegistersBelowV16_listsThem)
+{
+    const std::vector<Reg> regs{15, 3, 9, 1, 12};
+    for (std::size_t count = 0; count <= regs.size(); ++count) {
+        const RegList args(std::span<const Reg>(regs.data(), count));
+        raw::InsnFields expected{.a = static_cast<uint32_t>(count)};
+        for (std::size_t i = 0; i < count; ++i)
+            expected.args[i] = regs[i];
+
+        raw::InsnFields fields =
+            encoded_insn(Invoke{Invoke::Kind::Virtual, args, MethodId{"LT;", "c", "()V"}});
+        expected.opcode = fields.opcode;
+
+        EXPECT_EQ(name_of(fields), "invoke-virtual") << count;
+        EXPECT_TRUE(fields == expected) << count;
+    }
+}
+
+TEST(CodeEncoder, encode_whenInsnIsInvoke_writesTheOpcodeOfItsKind)
+{
+    const std::vector<std::pair<Invoke::Kind, std::string>> cases{
+        {Invoke::Kind::Virtual, "invoke-virtual"},     {Invoke::Kind::Super, "invoke-super"},
+        {Invoke::Kind::Direct, "invoke-direct"},       {Invoke::Kind::Static, "invoke-static"},
+        {Invoke::Kind::Interface, "invoke-interface"},
+    };
+
+    for (const auto &[kind, name] : cases) {
+        const MethodId callee{"LT;", "c", "()V"};
+
+        EXPECT_EQ(encoded_name(Invoke{kind, {1}, callee}), name);
+        EXPECT_EQ(encoded_name(Invoke{kind, {16}, callee}), name + "/range");
+    }
+}
+
+TEST(CodeEncoder, encode_whenInsnIsInvoke_writesTheMethodIndex)
+{
+    const Code code =
+        code_of({Insn{Invoke{Invoke::Kind::Static, {}, MethodId{"LT;", "a", "()V"}}},
+                 Insn{Invoke{Invoke::Kind::Static, {}, MethodId{"LT;", "b", "()V"}}}});
+
+    EXPECT_EQ(decode(encode(code).insns)[1].fields.index, 1u);
+}
+
+TEST(CodeEncoder, encode_whenAnInvokeRegisterIsAboveV15_usesTheRangeForm)
+{
+    raw::InsnFields fields =
+        encoded_insn(Invoke{Invoke::Kind::Static, {16}, MethodId{"LT;", "c", "()V"}});
+    raw::InsnFields expected{.opcode = fields.opcode, .a = 1, .c = 16};
+
+    EXPECT_EQ(name_of(fields), "invoke-static/range");
+    EXPECT_TRUE(fields == expected);
+}
+
+TEST(CodeEncoder, encode_whenInvokeHasSixConsecutiveRegisters_usesTheRangeForm)
+{
+    raw::InsnFields fields = encoded_insn(
+        Invoke{Invoke::Kind::Static, RegList::range(3, 6), MethodId{"LT;", "c", "()V"}});
+    raw::InsnFields expected{.opcode = fields.opcode, .a = 6, .c = 3};
+
+    EXPECT_EQ(name_of(fields), "invoke-static/range");
+    EXPECT_TRUE(fields == expected);
+}
+
+TEST(CodeEncoder, encode_whenInvokeHasFiveConsecutiveRegistersBelowV16_listsThem)
+{
+    EXPECT_EQ(encoded_name(
+                  Invoke{Invoke::Kind::Static, RegList::range(3, 5), MethodId{"LT;", "c", "()V"}}),
+              "invoke-static");
+}
+
+TEST(CodeEncoder, encode_whenInvokeHas255ConsecutiveRegisters_usesTheRangeForm)
+{
+    raw::InsnFields fields = encoded_insn(
+        Invoke{Invoke::Kind::Static, RegList::range(65281, 255), MethodId{"LT;", "c", "()V"}});
+
+    EXPECT_EQ(name_of(fields), "invoke-static/range");
+    EXPECT_EQ(fields.a, 255u);
+    EXPECT_EQ(fields.c, 65281u);
+}
+
+TEST(CodeEncoder, encode_whenInvokeHas256ConsecutiveRegisters_fails)
+{
+    Error error = encode_error(code_of(
+        {Insn{Invoke{Invoke::Kind::Static, RegList::range(0, 256), MethodId{"LT;", "c", "()V"}}}}));
+
+    EXPECT_EQ(error.kind, Error::Kind::Invalid);
+    EXPECT_EQ(error.message,
+              "LT;->m()V, item 0: argument registers are neither five below v16 nor a run");
+}
+
+TEST(CodeEncoder, encode_whenInvokeHasSixRegistersThatAreNotARun_fails)
+{
+    Error error = encode_error(code_of(
+        {Insn{Invoke{Invoke::Kind::Static, {1, 3, 5, 7, 9, 11}, MethodId{"LT;", "c", "()V"}}}}));
+
+    EXPECT_EQ(error.kind, Error::Kind::Invalid);
+    EXPECT_EQ(error.message,
+              "LT;->m()V, item 0: argument registers are neither five below v16 nor a run");
+}
+
+TEST(CodeEncoder, encode_whenInvokeHasAHighRegisterOutsideARun_failsNamingTheItem)
+{
+    const Code code =
+        code_of({Insn{Nop{}}, Label{0},
+                 Insn{Invoke{Invoke::Kind::Static, {1, 2, 16}, MethodId{"LT;", "c", "()V"}}}});
+
+    Error error = encode_error(code);
+
+    EXPECT_EQ(error.kind, Error::Kind::Invalid);
+    EXPECT_EQ(error.message,
+              "LT;->m()V, item 2: argument registers are neither five below v16 nor a run");
+}
+
+TEST(CodeEncoder, encode_whenInsnIsFilledNewArray_listsItsRegistersAndTheTypeIndex)
+{
+    const Code code = code_of({Insn{ConstClass{0, "LA;"}}, Insn{FilledNewArray{{4, 2}, "[I"}}});
+    Pools pools = pools_of(code);
+
+    raw::InsnFields fields = decode(encode(code, pools).insns)[1].fields;
+    raw::InsnFields expected{
+        .opcode = fields.opcode, .a = 2, .index = pools.type("[I"), .args = {4, 2}};
+
+    EXPECT_EQ(name_of(fields), "filled-new-array");
+    EXPECT_EQ(expected.index, 1u);
+    EXPECT_TRUE(fields == expected);
+}
+
+TEST(CodeEncoder, encode_whenFilledNewArrayHasSixConsecutiveRegisters_usesTheRangeForm)
+{
+    raw::InsnFields fields = encoded_insn(FilledNewArray{RegList::range(20, 6), "[I"});
+    raw::InsnFields expected{.opcode = fields.opcode, .a = 6, .c = 20};
+
+    EXPECT_EQ(name_of(fields), "filled-new-array/range");
+    EXPECT_TRUE(fields == expected);
+}
+
+TEST(CodeEncoder, encode_whenInsnIsInvokePolymorphic_writesTheMethodAndThePrototypeIndex)
+{
+    const MethodId invoke{"Ljava/lang/invoke/MethodHandle;", "invoke",
+                          "([Ljava/lang/Object;)Ljava/lang/Object;"};
+    const Code code = code_of({Insn{Invoke{Invoke::Kind::Static, {}, MethodId{"LA;", "a", "()V"}}},
+                               Insn{InvokePolymorphic{{4, 2}, invoke, "(I)V"}}});
+    Pools pools = pools_of(code);
+
+    raw::InsnFields fields = decode(encode(code, pools).insns)[1].fields;
+    raw::InsnFields expected{.opcode = fields.opcode,
+                             .a = 2,
+                             .index = pools.method(invoke),
+                             .proto = pools.proto("(I)V"),
+                             .args = {4, 2}};
+
+    ASSERT_NE(expected.index, expected.proto);
+    EXPECT_EQ(name_of(fields), "invoke-polymorphic");
+    EXPECT_TRUE(fields == expected);
+}
+
+TEST(CodeEncoder, encode_whenInvokePolymorphicHasAHighRegister_usesTheRangeForm)
+{
+    const MethodId invoke{"Ljava/lang/invoke/MethodHandle;", "invoke",
+                          "([Ljava/lang/Object;)Ljava/lang/Object;"};
+    const Code code = code_of({Insn{InvokePolymorphic{RegList::range(20, 2), invoke, "(I)V"}}});
+    Pools pools = pools_of(code);
+
+    raw::InsnFields fields = decode(encode(code, pools).insns)[0].fields;
+    raw::InsnFields expected{.opcode = fields.opcode,
+                             .a = 2,
+                             .c = 20,
+                             .index = pools.method(invoke),
+                             .proto = pools.proto("(I)V")};
+
+    EXPECT_EQ(name_of(fields), "invoke-polymorphic/range");
+    EXPECT_TRUE(fields == expected);
+}
+
+TEST(CodeEncoder, encode_whenCallSitesHaveNoShareKey_numbersEachInvokeCustomInOrder)
+{
+    const Code code =
+        code_of({Insn{InvokeCustom{{}, call_site(0)}}, Insn{InvokeCustom{{4, 2}, call_site(0)}}});
+
+    std::vector<Decoded> insns = decode(encode(code).insns);
+    raw::InsnFields expected{.opcode = insns[1].fields.opcode, .a = 2, .index = 1, .args = {4, 2}};
+
+    EXPECT_EQ(name_of(insns[0].fields), "invoke-custom");
+    EXPECT_EQ(insns[0].fields.index, 0u);
+    EXPECT_TRUE(insns[1].fields == expected);
+}
+
+TEST(CodeEncoder, encode_whenCallSitesShareAKey_writesOneCallSiteIndex)
+{
+    const Code code =
+        code_of({Insn{InvokeCustom{{}, call_site(0)}}, Insn{InvokeCustom{{}, call_site(7)}},
+                 Insn{InvokeCustom{{}, call_site(7)}}});
+
+    std::vector<Decoded> insns = decode(encode(code).insns);
+
+    EXPECT_EQ(insns[1].fields.index, 1u);
+    EXPECT_EQ(insns[2].fields.index, 1u);
+}
+
+TEST(CodeEncoder, encode_whenCalledForTwoMethods_keepsNumberingCallSitesInTheSameList)
+{
+    const Code first = code_of({Insn{InvokeCustom{{}, call_site(0)}}});
+    const Code second = code_of({Insn{InvokeCustom{{}, call_site(0)}}});
+    Pools pools = pools_of(first);
+    CallSites sites;
+    CodeEncoder(pools, sites, kWhere).encode(method("()V", kPublicStatic), first, true);
+
+    CodeOut out =
+        CodeEncoder(pools, sites, kWhere).encode(method("()V", kPublicStatic), second, true);
+
+    EXPECT_EQ(decode(out.insns)[0].fields.index, 1u);
+    EXPECT_EQ(sites.list().size(), 2u);
+}
+
+TEST(CodeEncoder, encode_whenInvokeCustomHasAHighRegister_usesTheRangeForm)
+{
+    raw::InsnFields fields = encoded_insn(InvokeCustom{RegList::range(20, 3), call_site(0)});
+    raw::InsnFields expected{.opcode = fields.opcode, .a = 3, .c = 20};
+
+    EXPECT_EQ(name_of(fields), "invoke-custom/range");
+    EXPECT_TRUE(fields == expected);
+}
+
+TEST(CodeEncoder, encode_whenGotoTargetsTheNextInstruction_usesGotoWithOffsetOne)
+{
+    CodeOut out = encode(forward_branch(Goto{Label{0}}, 0));
+
+    EXPECT_EQ(out.insns, (Units{0x0128, 0x000e}));
+}
+
+TEST(CodeEncoder, encode_whenGotoIs127UnitsBeforeItsTarget_usesGoto)
+{
+    raw::InsnFields fields = decode(encode(forward_branch(Goto{Label{0}}, 126)).insns)[0].fields;
+
+    EXPECT_EQ(name_of(fields), "goto");
+    EXPECT_EQ(fields.offset, 127);
+}
+
+TEST(CodeEncoder, encode_whenGotoIsMoreThan127UnitsBeforeItsTarget_usesGoto16)
+{
+    raw::InsnFields fields = decode(encode(forward_branch(Goto{Label{0}}, 127)).insns)[0].fields;
+
+    EXPECT_EQ(name_of(fields), "goto/16");
+    EXPECT_EQ(fields.offset, 129);
+}
+
+TEST(CodeEncoder, encode_whenGotoIs128UnitsAfterItsTarget_usesGoto)
+{
+    Decoded last = decode(encode(backward_branch(Goto{Label{0}}, 128)).insns).back();
+
+    EXPECT_EQ(name_of(last.fields), "goto");
+    EXPECT_EQ(last.fields.offset, -128);
+}
+
+TEST(CodeEncoder, encode_whenGotoIs129UnitsAfterItsTarget_usesGoto16)
+{
+    Decoded last = decode(encode(backward_branch(Goto{Label{0}}, 129)).insns).back();
+
+    EXPECT_EQ(name_of(last.fields), "goto/16");
+    EXPECT_EQ(last.fields.offset, -129);
+}
+
+TEST(CodeEncoder, encode_whenGotoIs32767UnitsBeforeItsTarget_usesGoto16)
+{
+    raw::InsnFields fields = decode(encode(forward_branch(Goto{Label{0}}, 32765)).insns)[0].fields;
+
+    EXPECT_EQ(name_of(fields), "goto/16");
+    EXPECT_EQ(fields.offset, 32767);
+}
+
+TEST(CodeEncoder, encode_whenGotoIsMoreThan32767UnitsBeforeItsTarget_usesGoto32)
+{
+    raw::InsnFields fields = decode(encode(forward_branch(Goto{Label{0}}, 32766)).insns)[0].fields;
+
+    EXPECT_EQ(name_of(fields), "goto/32");
+    EXPECT_EQ(fields.offset, 32769);
+}
+
+TEST(CodeEncoder, encode_whenGotoIs32768UnitsAfterItsTarget_usesGoto16)
+{
+    Decoded last = decode(encode(backward_branch(Goto{Label{0}}, 32768)).insns).back();
+
+    EXPECT_EQ(name_of(last.fields), "goto/16");
+    EXPECT_EQ(last.fields.offset, -32768);
+}
+
+TEST(CodeEncoder, encode_whenGotoIs32769UnitsAfterItsTarget_usesGoto32)
+{
+    Decoded last = decode(encode(backward_branch(Goto{Label{0}}, 32769)).insns).back();
+
+    EXPECT_EQ(name_of(last.fields), "goto/32");
+    EXPECT_EQ(last.fields.offset, -32769);
+}
+
+TEST(CodeEncoder, encode_whenGotoTargetsItself_usesGoto32WithOffsetZero)
+{
+    CodeOut out = encode(code_of({Label{0}, Insn{Goto{Label{0}}}}));
+
+    EXPECT_EQ(out.insns, (Units{0x002a, 0, 0}));
+}
+
+TEST(CodeEncoder, encode_whenIfIsNearItsTarget_writesItsOpcodeRegistersAndOffset)
+{
+    const std::vector<std::pair<Condition, std::string>> cases{
+        {Condition::Eq, "if-eq"}, {Condition::Ne, "if-ne"}, {Condition::Lt, "if-lt"},
+        {Condition::Ge, "if-ge"}, {Condition::Gt, "if-gt"}, {Condition::Le, "if-le"},
+    };
+
+    for (const auto &[cond, name] : cases) {
+        raw::InsnFields fields =
+            decode(encode(forward_branch(If{cond, 14, 15, Label{0}}, 3)).insns)[0].fields;
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 14, .b = 15, .offset = 5};
+
+        EXPECT_EQ(name_of(fields), name);
+        EXPECT_TRUE(fields == expected) << name;
+    }
+}
+
+TEST(CodeEncoder, encode_whenIfZeroIsNearItsTarget_writesItsOpcodeRegisterAndOffset)
+{
+    const std::vector<std::pair<Condition, std::string>> cases{
+        {Condition::Eq, "if-eqz"}, {Condition::Ne, "if-nez"}, {Condition::Lt, "if-ltz"},
+        {Condition::Ge, "if-gez"}, {Condition::Gt, "if-gtz"}, {Condition::Le, "if-lez"},
+    };
+
+    for (const auto &[cond, name] : cases) {
+        raw::InsnFields fields =
+            decode(encode(forward_branch(IfZero{cond, 200, Label{0}}, 3)).insns)[0].fields;
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 200, .offset = 5};
+
+        EXPECT_EQ(name_of(fields), name);
+        EXPECT_TRUE(fields == expected) << name;
+    }
+}
+
+TEST(CodeEncoder, encode_whenIfIs32767UnitsBeforeItsTarget_usesOneIf)
+{
+    std::vector<Decoded> insns =
+        decode(encode(forward_branch(IfZero{Condition::Eq, 0, Label{0}}, 32765)).insns);
+
+    EXPECT_EQ(name_of(insns[0].fields), "if-eqz");
+    EXPECT_EQ(insns[0].fields.offset, 32767);
+    EXPECT_EQ(name_of(insns[1].fields), "nop");
+}
+
+TEST(CodeEncoder, encode_whenIfIsMoreThan32767UnitsBeforeItsTarget_branchesOverAGoto32)
+{
+    std::vector<Decoded> insns =
+        decode(encode(forward_branch(IfZero{Condition::Eq, 0, Label{0}}, 32766)).insns);
+
+    EXPECT_EQ(name_of(insns[0].fields), "if-nez");
+    EXPECT_EQ(insns[0].fields.offset, 5);
+    EXPECT_EQ(insns[1].address, 2u);
+    EXPECT_EQ(name_of(insns[1].fields), "goto/32");
+    EXPECT_EQ(insns[1].fields.offset, 32769);
+}
+
+TEST(CodeEncoder, encode_whenIfIs32768UnitsAfterItsTarget_usesOneIf)
+{
+    Decoded last =
+        decode(encode(backward_branch(IfZero{Condition::Eq, 0, Label{0}}, 32768)).insns).back();
+
+    EXPECT_EQ(name_of(last.fields), "if-eqz");
+    EXPECT_EQ(last.fields.offset, -32768);
+}
+
+TEST(CodeEncoder, encode_whenIfIs32769UnitsAfterItsTarget_branchesOverAGoto32)
+{
+    std::vector<Decoded> insns =
+        decode(encode(backward_branch(IfZero{Condition::Eq, 0, Label{0}}, 32769)).insns);
+    const Decoded &branch = insns[insns.size() - 2];
+    const Decoded &jump = insns.back();
+
+    EXPECT_EQ(branch.address, 32769u);
+    EXPECT_EQ(name_of(branch.fields), "if-nez");
+    EXPECT_EQ(branch.fields.offset, 5);
+    EXPECT_EQ(name_of(jump.fields), "goto/32");
+    EXPECT_EQ(jump.fields.offset, -32771);
+}
+
+TEST(CodeEncoder, encode_whenAFarIfComparesTwoRegisters_turnsTheConditionAroundAndKeepsThem)
+{
+    const std::vector<std::pair<Condition, std::string>> cases{
+        {Condition::Eq, "if-ne"}, {Condition::Ne, "if-eq"}, {Condition::Lt, "if-ge"},
+        {Condition::Ge, "if-lt"}, {Condition::Gt, "if-le"}, {Condition::Le, "if-gt"},
+    };
+
+    for (const auto &[cond, name] : cases) {
+        raw::InsnFields fields =
+            decode(encode(forward_branch(If{cond, 14, 15, Label{0}}, 40000)).insns)[0].fields;
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 14, .b = 15, .offset = 5};
+
+        EXPECT_EQ(name_of(fields), name);
+        EXPECT_TRUE(fields == expected) << name;
+    }
+}
+
+TEST(CodeEncoder, encode_whenAFarIfComparesWithZero_turnsTheConditionAroundAndKeepsTheRegister)
+{
+    const std::vector<std::pair<Condition, std::string>> cases{
+        {Condition::Eq, "if-nez"}, {Condition::Ne, "if-eqz"}, {Condition::Lt, "if-gez"},
+        {Condition::Ge, "if-ltz"}, {Condition::Gt, "if-lez"}, {Condition::Le, "if-gtz"},
+    };
+
+    for (const auto &[cond, name] : cases) {
+        raw::InsnFields fields =
+            decode(encode(forward_branch(IfZero{cond, 200, Label{0}}, 40000)).insns)[0].fields;
+        raw::InsnFields expected{.opcode = fields.opcode, .a = 200, .offset = 5};
+
+        EXPECT_EQ(name_of(fields), name);
+        EXPECT_TRUE(fields == expected) << name;
+    }
+}
+
+TEST(CodeEncoder, encode_whenIfZeroTargetsItself_branchesBackToANop)
+{
+    const Code code =
+        code_of({Label{0}, Insn{IfZero{Condition::Eq, 0, Label{0}}}, Insn{ReturnVoid{}}});
+
+    // nop; if-eqz v0, -1; return-void
+    EXPECT_EQ(encode(code).insns, (Units{0x0000, 0x0038, 0xffff, 0x000e}));
+}
+
+TEST(CodeEncoder, encode_whenIfTargetsItself_branchesBackToANop)
+{
+    const Code code =
+        code_of({Label{0}, Insn{If{Condition::Lt, 1, 2, Label{0}}}, Insn{ReturnVoid{}}});
+
+    // nop; if-lt v1, v2, -1; return-void
+    EXPECT_EQ(encode(code).insns, (Units{0x0000, 0x2134, 0xffff, 0x000e}));
+}
+
+TEST(CodeEncoder, encode_whenAnIfTargetsItself_putsLaterLabelsAfterTheAddedNop)
+{
+    const Code code = code_of({Label{0}, Insn{IfZero{Condition::Eq, 0, Label{0}}}, Label{1},
+                               Insn{ReturnVoid{}}, Insn{Goto{Label{1}}}});
+
+    std::vector<Decoded> insns = decode(encode(code).insns);
+
+    EXPECT_EQ(insns.back().address, 4u);
+    EXPECT_EQ(insns.back().fields.offset, -1);
+}
+
+TEST(CodeEncoder, encode_whenAGrowingBranchPushesAnotherOutOfRange_growsThatOneToo)
+{
+    std::vector<Item> items{Insn{Goto{Label{0}}}, Insn{Goto{Label{1}}}};
+    items.insert(items.end(), 125, Item{Insn{Nop{}}});
+    items.push_back(Label{0});
+    items.insert(items.end(), 10, Item{Insn{Nop{}}});
+    items.push_back(Label{1});
+    items.push_back(Insn{ReturnVoid{}});
+
+    std::vector<Decoded> insns = decode(encode(code_of(std::move(items))).insns);
+
+    EXPECT_EQ(name_of(insns[0].fields), "goto/16");
+    EXPECT_EQ(insns[0].fields.offset, 129);
+    EXPECT_EQ(name_of(insns[1].fields), "goto/16");
+    EXPECT_EQ(insns[1].fields.offset, 137);
+}
+
 } // namespace
 } // namespace dexsplit::model::detail
