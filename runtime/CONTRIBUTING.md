@@ -55,7 +55,7 @@ Fix clang-tidy findings instead of silencing them with `NOLINT`. If a check is w
 
 ## Never crash the app
 
-Detections are the one exception, and they end the app on purpose: when a built-in check detects something, `panic_on_detection` (`core/include/rasp/panic.h`) ends it a few seconds later, through a direct system call. A development build only logs what would have ended it. No other code ends the app on purpose. The sections below are about the ways our code could still end it by accident, and how to avoid them.
+Detections are the one exception, and they end the app on purpose: when a built-in check detects something, `panic_on_detection` (`core/include/rasp/panic.h`) ends it a few seconds later, through a direct system call. A development build only logs what would have ended it. No other code ends the app on purpose. A check that calls `fork` ends the child it created with `_exit`, but that child is a throwaway copy of the process, not the app (see `fork` below). The sections below are about the ways our code could still end it by accident, and how to avoid them.
 
 ### Errors are values, never exceptions
 
