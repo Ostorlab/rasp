@@ -1,5 +1,5 @@
 /// The dex store: an index of the packer's class map, and the reads and decryption that turn a class name into the
-/// decrypted dex that defines it, under the key schedule's sensor guard.
+/// decrypted dex that defines it.
 
 #pragma once
 
@@ -10,8 +10,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-
-#include "payload/key_schedule.h"
 
 namespace rasp::android::payload {
 
@@ -31,9 +29,8 @@ struct EncryptedDex {
 struct DexStore {
   /// The path of the APK that holds the encrypted dexes.
   std::string apk;
-  /// The master of every business dex's frame key before the guard: the root key bound to the map frame as shipped.
-  /// It never decrypts a frame by itself: every decryption derives through the sensors observed then.
-  Key seed{};
+  /// The key that decrypts every dex, exactly kKeySize bytes.
+  std::vector<std::uint8_t> key;
   /// Every dex the map names, each with its APK entry name and its classes.
   std::vector<EncryptedDex> dexes;
   /// The index into `dexes` of the dex that defines each class, by binary class name.
@@ -42,16 +39,15 @@ struct DexStore {
 
 /// Builds a dex store from the app's own APK.
 ///
-/// It reads the encrypted class map from the APK, derives its frame key from `root` and its nonce, decrypts and
-/// indexes it, and keeps the dex master — `root` bound to the map frame as shipped — for the dexes. Each map line is
+/// It reads the encrypted class map from the APK, decrypts it with `key`, and indexes it. Each map line is
 /// `binary.class.Name,<path>`, where `<path>` is a dex's path under kAssetPrefix. A line with no comma, nothing before
 /// the comma, or nothing after it is skipped. When a class is on more than one line, the first line decides its dex,
-/// and the class is listed only under that dex. The decrypted map is wiped once it is indexed.
+/// and the class is listed only under that dex.
 ///
 /// @param apk The path of the APK to read the map and, later, the dexes from. It is kept in the returned store.
-/// @param root The root key recovered from the schedule (key_schedule.h).
+/// @param key The key that decrypts the map and every dex. It is copied into the returned store.
 /// @return The store. Nothing when the map entry is absent or does not decrypt, in which case no class can be served.
-[[nodiscard]] std::optional<DexStore> open_dex_store(std::string apk, const Key& root);
+[[nodiscard]] std::optional<DexStore> open_dex_store(std::string apk, std::span<const std::uint8_t> key);
 
 /// The dex that defines `class_name`, or null when no dex in the store defines it.
 ///
@@ -60,19 +56,15 @@ struct DexStore {
 /// @return A pointer into `store`, valid while `store` lives, or null when the store has no such class.
 [[nodiscard]] const EncryptedDex* dex_of(const DexStore& store, const std::string& class_name);
 
-/// Reads and decrypts `dex`, under the sensor guard.
+/// Reads and decrypts `dex`.
 ///
-/// It reads the dex's entry from the APK, observes the process's sensors, and derives its frame key from the store's
-/// seed, the observed sensor guard, the frame's nonce and the entry's own name. A clean process folds the same block
-/// every time; a debugger attached between loads, or a hook patched into the library's code, folds a different one,
-/// and the frame's tag fails, with no branch anywhere that says why. It decrypts on every call; the caller caches the
-/// result when it wants to, and wipes it once it has handed the dex to the class loader.
+/// It reads the dex's entry from the APK and decrypts it, on every call; the caller caches the result when it wants to.
 ///
-/// @param store The store `dex` came from, which holds the APK path and the seed.
+/// @param store The store `dex` came from, which holds the APK path and the key.
 /// @param dex A dex that dex_of returned for `store`.
-/// @return The decrypted dex bytes. Nothing when the entry can't be read, a sensor observation fails, or the frame
-/// does not decrypt. Since the packer writes every dex the map names, encrypted under the schedule, nothing means the
-/// APK was changed or the process was tampered with; the caller can treat it as a signal.
+/// @return The decrypted dex bytes. Nothing when the entry can't be read or does not decrypt. Since the packer writes
+/// every dex the map names, encrypted under the key, nothing means the APK was changed; the caller can treat it as a
+/// signal.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> decrypt_dex(const DexStore& store, const EncryptedDex& dex);
 
 }  // namespace rasp::android::payload

@@ -1,6 +1,5 @@
 /// Builds and reads the dex store: parses the decrypted class map into an index, and reads and decrypts one dex on
-/// demand. The map, the keys, the reads, and the decryption all stay in native code, and the decrypted map is wiped
-/// once it is indexed.
+/// demand. The map, the key, the read, and the decrypt all stay in native code.
 
 #include "payload/dex_store.h"
 
@@ -18,7 +17,6 @@
 #include "apk/archive.h"
 #include "payload/assets.h"
 #include "payload/cipher.h"
-#include "payload/key_schedule.h"
 
 namespace rasp::android::payload {
 
@@ -53,46 +51,23 @@ void index_map(std::string_view text, DexStore& store) {
   }
 }
 
-/// The frame key of the encrypted entry `frame` holds, derived for `entry`.
-///
-/// @param master The stage's master key: the root for the map, the guarded master for a dex.
-/// @param frame The frame, which starts with its nonce.
-/// @param entry The frame's full APK entry name.
-/// @return The frame key. Nothing when the frame is too short to hold a nonce, or the derivation fails.
-[[nodiscard]] std::optional<Key> key_of(const Key& master, std::span<const std::uint8_t> frame,
-                                        std::string_view entry) {
-  if (frame.size() < kNonceSize + kTagSize) {
-    return std::nullopt;
-  }
-  return frame_key(master, frame.first(kNonceSize), entry);
-}
-
 }  // namespace
 
-std::optional<DexStore> open_dex_store(std::string apk, const Key& root) {
+std::optional<DexStore> open_dex_store(std::string apk, std::span<const std::uint8_t> key) {
   const std::optional<std::vector<std::uint8_t>> frame = rasp::android::apk::read_stored_entry(apk, kMapEntry);
   if (!frame.has_value()) {
     return std::nullopt;
   }
-  const std::optional<Key> map_key = key_of(root, *frame, kMapEntry);
-  if (!map_key.has_value()) {
-    return std::nullopt;
-  }
-  std::optional<std::vector<std::uint8_t>> map = decrypt(*map_key, *frame);
+  const std::optional<std::vector<std::uint8_t>> map = decrypt(key, *frame);
   if (!map.has_value()) {
-    return std::nullopt;
-  }
-  const std::optional<Key> seed = seed_from(root, *frame);
-  if (!seed.has_value()) {
     return std::nullopt;
   }
 
   DexStore store;
   store.apk = std::move(apk);
-  store.seed = *seed;
+  store.key.assign(key.begin(), key.end());
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
   index_map(std::string_view(reinterpret_cast<const char*>(map->data()), map->size()), store);
-  wipe(*map);
   return store;
 }
 
@@ -109,16 +84,7 @@ std::optional<std::vector<std::uint8_t>> decrypt_dex(const DexStore& store, cons
   if (!frame.has_value()) {
     return std::nullopt;
   }
-  const Sensors sensors = observe_sensors();
-  const std::optional<Key> master = guarded_master(store.seed, sensor_block(sensors));
-  if (!master.has_value()) {
-    return std::nullopt;
-  }
-  const std::optional<Key> key = key_of(*master, *frame, dex.entry);
-  if (!key.has_value()) {
-    return std::nullopt;
-  }
-  return decrypt(*key, *frame);
+  return decrypt(store.key, *frame);
 }
 
 }  // namespace rasp::android::payload

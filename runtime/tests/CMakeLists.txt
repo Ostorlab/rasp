@@ -149,12 +149,8 @@ endif()
 
 add_executable(rasp_android_dex_store_test android/payload/dex_store_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/dex_store.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp)
 target_include_directories(rasp_android_dex_store_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_dex_store_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
@@ -166,20 +162,4 @@ target_include_directories(rasp_android_cipher_test PRIVATE ${PROJECT_SOURCE_DIR
 target_link_libraries(rasp_android_cipher_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
   GTest::gtest_main)
 gtest_discover_tests(rasp_android_cipher_test)
-
-# The key schedule's tests check the same fixed vectors as the packer's tests (key_schedule_test.py), and drive the
-# recovery with a library and an APK the packer's tools made, so the ELF reader, the digests, the HKDF and the fold are
-# exercised end to end without a device.
-add_executable(rasp_android_key_schedule_test android/payload/key_schedule_test.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp)
-target_include_directories(rasp_android_key_schedule_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
-  ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(rasp_android_key_schedule_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
-  GTest::gtest_main)
-gtest_discover_tests(rasp_android_key_schedule_test)
 
