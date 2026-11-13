@@ -6,6 +6,7 @@
 #include <expected>
 #include <gtest/gtest.h>
 #include <span>
+#include <type_traits>
 #if defined(__APPLE__) || defined(__linux__)
 #include <sys/mman.h>
 #include <unistd.h>
@@ -64,6 +65,7 @@ KernelState& kernel() {
 std::int64_t clock() { return kernel().tick; }
 /// Same operation/type contract as the native descriptor; this does not claim a Darwin ABI or header layout.
 struct ProbeVm {
+  using Port = std::uint32_t;
   using Address = std::uint64_t;
   using Size = std::uint64_t;
   struct RegionInfo {
@@ -72,12 +74,12 @@ struct ProbeVm {
   using InfoPointer = int*;
   static constexpr int kSuccess = 0;
   static constexpr int kDenied = 2;
-  static constexpr std::uint32_t kNull = 0;
-  static constexpr std::uint32_t kDead = UINT32_MAX;
+  static constexpr int kNull = 0;
+  static constexpr Port kDead = UINT32_MAX;
   static constexpr int kRegionFlavor = 9;
   static constexpr std::uint32_t kRegionCount = 1;
   static constexpr int kReadProtection = 1;
-  static std::uint32_t self() { return 7; }
+  static Port self() { return 7; }
   static constexpr auto kCopy = [](std::uint32_t task, Address address, Size size, Address destination, Size* copied) {
     kernel().copy = {.task = task, .address = address, .size = size, .destination = destination};
     EXPECT_EQ(task, self());
@@ -89,7 +91,7 @@ struct ProbeVm {
     return kernel().copy_result;
   };
   static constexpr auto kRegion = [](std::uint32_t task, Address* address, Size* size, int flavor, InfoPointer info,
-                                     std::uint32_t* count, std::uint32_t* object) {
+                                     std::uint32_t* count, Port* object) {
     EXPECT_EQ(task, self());
     kernel().region = {.address = *address, .size = *size, .count = *count, .object = *object};
     EXPECT_EQ(flavor, kRegionFlavor);
@@ -113,6 +115,10 @@ struct ProbeVm {
     return kernel().release_result;
   };
 };
+/// Keep the actual failure condition: raw null has signed macro type, while returned rights are unsigned.
+static_assert(std::is_signed_v<decltype(ProbeVm::kNull)>);
+static_assert(std::is_unsigned_v<ProbeVm::Port>);
+static_assert(!std::is_same_v<std::remove_cv_t<decltype(ProbeVm::kNull)>, ProbeVm::Port>);
 class IosVmContractTest : public testing::Test {
  protected:
   void SetUp() override { kernel() = {}; }
@@ -210,7 +216,7 @@ TEST_F(IosVmContractTest, region_whenQueryCountExtentProtectionOrCoverageInvalid
   }
 }
 TEST_F(IosVmContractTest, region_whenPortNullOrDead_neverDeallocatesInvalidRights) {
-  for (const auto port : {ProbeVm::kNull, ProbeVm::kDead}) {
+  for (const auto port : std::array<ProbeVm::Port, 2>{ProbeVm::kNull, ProbeVm::kDead}) {
     for (const auto query : {0, 1, 999}) {
       kernel().object = port;
       kernel().region_result = query;

@@ -29,6 +29,7 @@ namespace rasp::ios::util::provenance_vm {
 #ifdef __APPLE__
 /// Public iOS Mach VM signatures/types; own-task authority is never supplied by observations or configuration.
 struct Native {
+  using Port = mach_port_t;
   using Address = vm_address_t;
   using Size = vm_size_t;
   using RegionInfo = vm_region_basic_info_data_64_t;
@@ -38,13 +39,13 @@ struct Native {
   static constexpr auto kDeallocate = mach_port_deallocate;
   static constexpr auto kSuccess = KERN_SUCCESS;
   static constexpr auto kDenied = KERN_PROTECTION_FAILURE;
-  static constexpr auto kNull = MACH_PORT_NULL;
-  static constexpr auto kDead = MACH_PORT_DEAD;
+  static constexpr Port kNull{MACH_PORT_NULL};
+  static constexpr Port kDead{MACH_PORT_DEAD};
   static constexpr auto kRegionFlavor = VM_REGION_BASIC_INFO_64;
   static constexpr auto kRegionCount = static_cast<mach_msg_type_number_t>(VM_REGION_BASIC_INFO_COUNT_64);
   static constexpr auto kReadProtection = VM_PROT_READ;
   /// Always selects this process's task; never an externally supplied target.
-  static mach_port_t self() { return mach_task_self(); }
+  static Port self() { return mach_task_self(); }
 };
 #endif
 
@@ -95,6 +96,12 @@ template <typename Vm>
   if (pointer == 0) {
     return std::unexpected(provenance::Error::kMalformed);
   }
+  using Port = Vm::Port;
+  static_assert(std::is_unsigned_v<Port>);
+  static_assert(std::is_same_v<decltype(Vm::self()), Port>);
+  constexpr Port kNull{Vm::kNull};
+  constexpr Port kDead{Vm::kDead};
+  static_assert(kNull != kDead);
   const auto task = Vm::self();
   auto address = static_cast<Vm::Address>(pointer);
   typename Vm::Size size = 0;
@@ -102,9 +109,9 @@ template <typename Vm>
   std::array<Word, Vm::kRegionCount> words{};
   static_assert(sizeof(words) == sizeof(typename Vm::RegionInfo));
   auto count = Vm::kRegionCount;
-  auto object = Vm::kNull;
+  Port object = kNull;
   const auto result = Vm::kRegion(task, &address, &size, Vm::kRegionFlavor, words.data(), &count, &object);
-  if (object != Vm::kNull && object != Vm::kDead && Vm::kDeallocate(task, object) != Vm::kSuccess) {
+  if (object != kNull && object != kDead && Vm::kDeallocate(task, object) != Vm::kSuccess) {
     return std::unexpected(provenance::Error::kCleanup);
   }
   if (result != Vm::kSuccess || count != Vm::kRegionCount || size == 0 || address > pointer ||
