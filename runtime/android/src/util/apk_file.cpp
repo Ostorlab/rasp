@@ -170,9 +170,16 @@ struct ApkEntryPath {
   return apk.subspan(static_cast<std::size_t>(data_offset), entry.uncompressed_size);
 }
 
-/// Reads the entry named by `target` from its APK file, or nothing when it can't be read or found.
+/// The largest APK file read. The `limit` a caller passes bounds the library entry wanted inside the APK, not the APK
+/// that holds it: a real app's APK is far larger than the runtime library, so bounding the container read by the
+/// library limit would reject the whole APK on any sizeable app. This caps the container read instead, large enough
+/// for any shippable APK yet still bounding what a forged file would allocate.
+constexpr std::size_t kMaxApkSize = std::size_t{2} << 30U;
+
+/// Reads the entry named by `target` from its APK file, or nothing when it can't be read or found. `limit` bounds the
+/// uncompressed entry returned, not the APK that holds it.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_apk_entry(const ApkEntryPath& target, std::size_t limit) {
-  const std::optional<std::string> file = rasp::util::read_file(target.apk_path, limit);
+  const std::optional<std::string> file = rasp::util::read_file(target.apk_path, kMaxApkSize);
   if (!file) {
     return std::nullopt;
   }
@@ -186,7 +193,7 @@ struct ApkEntryPath {
     return std::nullopt;
   }
   const std::optional<std::span<const std::uint8_t>> bytes = stored_entry_bytes(apk, *central);
-  if (!bytes) {
+  if (!bytes || bytes->size() > limit) {
     return std::nullopt;
   }
   return std::vector<std::uint8_t>(bytes->begin(), bytes->end());
