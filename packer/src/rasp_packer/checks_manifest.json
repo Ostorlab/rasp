@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 10,
+  "revision": 11,
   "plugins": "unmodelled",
   "platforms": {
     "android": {
@@ -412,7 +412,7 @@
                 "unsupported"
               ],
               "supported_on": "android",
-              "behavior": "One observation per invocation; an empty list is a value, not a missing observation."
+              "behavior": "One current owned getifaddrs view per selected cycle; sorted/deduplicated matching names only, complete or no value. At most64 distinct matches; 65th is error without partial success. Every record, including duplicates/nonmatching/null-address records, charges sizeof(ifaddrs)+IFNAMSIZ against65536 consumer bytes; overflow is error. Validate every name before matching: nonnull, nonempty, NUL within IFNAMSIZ; malformed names are error. API failure is error; successful empty view is ok empty list. Free every nonnull successful list exactly once, including error exits; no cached/borrowed results. These bounds exclude OS list allocation and allocation/free latency; no whole-call timeout or hostile-pointer isolation. No addresses, scope IDs, routes or full inventory emitted. Environmental name candidates only: no VPN absence, intent, malware, interception or connection routing proof. Android preserves tun/tap followed entirely by digits, regardless of family or flags, including null-address/down named entries; off Android unsupported."
             },
             {
               "signal": "mitm.user_cas",
@@ -1604,7 +1604,7 @@
                 "unsupported"
               ],
               "supported_on": "ios_device",
-              "behavior": "Only up interfaces with IPv4 tunnel names; IPv6-only tunnels can be absent; simulator/non-iOS unsupported."
+              "behavior": "One current owned getifaddrs view per selected cycle; sorted/deduplicated matching names only, complete or no value. At most64 distinct matches; 65th is error without partial success. Every record, including duplicates/nonmatching/null-address records, charges sizeof(ifaddrs)+IFNAMSIZ against65536 consumer bytes; overflow is error. Validate every name before matching: nonnull, nonempty, NUL within IFNAMSIZ; malformed names are error. API failure is error; successful empty view is ok empty list. Free every nonnull successful list exactly once, including error exits; no cached/borrowed results. These bounds exclude OS list allocation and allocation/free latency; no whole-call timeout or hostile-pointer isolation. No addresses, scope IDs, routes or full inventory emitted. Environmental name candidates only: no VPN absence, intent, malware, interception or connection routing proof. Physical iOS requires IFF_UP, AF_INET or AF_INET6 and utun/ipsec/ppp/tun/tap followed entirely by digits; null/non-IP addresses skipped after name validation; simulator/non-iOS unsupported."
             },
             {
               "signal": "mitm.proxies",

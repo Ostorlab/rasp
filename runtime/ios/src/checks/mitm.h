@@ -1,12 +1,12 @@
-/// The iOS network-interception checks: the signs that the app's traffic is being routed through a man-in-the-middle,
-/// namely a tunnel interface that a VPN or an on-device capture app opens and carries an IPv4 address on, a proxy that
-/// the system's proxy settings configure, and the user-installed certificate authorities that iOS doesn't expose.
+/// iOS environmental observations of interface-name candidates, current proxy settings, and unavailable CA listing.
+/// These observations do not establish malware, TLS interception, or routing of a particular connection.
 
 #pragma once
 
 #include <cstdint>
 #include <span>
 #include <string>
+#include <sys/socket.h>
 #include <vector>
 
 #include "rasp/observation.h"
@@ -17,6 +17,8 @@ namespace rasp::ios::checks {
 constexpr std::uint32_t kInterfaceUp = 1;
 /// The address family of an IPv4 address, `AF_INET`.
 constexpr std::uint32_t kFamilyIPv4 = 2;
+/// The native IPv6 family, whose numeric value differs between Darwin and host fixtures.
+constexpr std::uint32_t kFamilyIPv6 = static_cast<std::uint32_t>(AF_INET6);
 
 /// One entry of the list getifaddrs returns: a network interface, with one of its addresses.
 struct InterfaceAddress {
@@ -59,31 +61,21 @@ struct ProxySettings {
 /// CFNetworkCopySystemProxySettings, and mitm.user_cas through trust_store, which is always unsupported.
 [[nodiscard]] std::vector<Observation> mitm();
 
-/// Reports the tunnel interfaces among `entries` that are up and carry an IPv4 address.
-///
-/// A man-in-the-middle proxy on iOS, or a VPN, captures the app's traffic through a virtual tunnel interface: the
-/// `utun` interface a Network Extension packet tunnel opens, the `ipsec` interface of a built-in IKEv2 or IPsec VPN,
-/// the `ppp` interface of an older PPP VPN, or a `tun` or `tap` interface. A name matches when it is one of these
-/// prefixes followed by a run of digits and nothing else, such as `utun3`, `ipsec0` or `ppp0`. Stock iOS keeps several
-/// `utun` interfaces open for its own services, so a name alone would match on every device. An interface is therefore
-/// reported only when one of its entries has kInterfaceUp in its flags and an address of the kFamilyIPv4 family, the
-/// kind of address a VPN app normally assigns to its tunnel. A tunnel whose only addresses are IPv6 is not reported,
-/// whether it belongs to the system or to a VPN that assigns no IPv4 address. A legitimate VPN opens the same
-/// interfaces as a capture app, so the probe reports every tunnel it finds and the server weighs it.
-///
-/// @param entries The entries to look at, such as the list getifaddrs returns, with an interface once per address.
-/// @return One mitm.tunnels observation through getifaddrs: the names of the matching interfaces, sorted and without
-/// duplicates, the 100 smallest when there are more. An empty list is a real answer, not a failure.
+/// Reports UP interface-name candidates with an AF_INET or AF_INET6 entry, including link-local IPv6.
+/// Known forms are utun/ipsec/ppp/tun/tap followed entirely by digits. System services and legitimate VPNs can
+/// match; unknown names can be missed. An empty result means only that no entry matched this source's scope.
+/// Every record charges sizeof(ifaddrs)+IFNAMSIZ against 65536 consumer bytes. Names must be nonempty,
+/// shorter than IFNAMSIZ and contain no embedded NUL, including names of ineligible entries. More than 64
+/// distinct matches, invalid names or an incomplete view return error without partial names.
+/// @param entries Complete entries from a synthetic or current public view, including repeated address families.
+/// @return Sorted/deduplicated matching names, or error without a value.
 [[nodiscard]] Observation observe_tunnels(std::span<const InterfaceAddress> entries);
 
-/// Reports the tunnel interfaces of the process that are up and carry an IPv4 address, read through getifaddrs.
-///
-/// The probe walks the list getifaddrs returns, matches each entry the way observe_tunnels does, and frees the list on
-/// every path. The interfaces are read again on every call, so the probe also sees a tunnel opened after the app
-/// started. getifaddrs exists on every POSIX system, so the probe also runs on a Mac or a Linux host.
-///
-/// @return One mitm.tunnels observation through getifaddrs, as observe_tunnels reports it. It has an error status
-/// when getifaddrs fails.
+/// Reads one current public getifaddrs view using the same complete filtering/bounds as observe_tunnels.
+/// Copies matching names before freeing the owned list exactly once on each nonnull-success exit. Null names,
+/// missing terminators, API errors and consumer overflows are error; null/non-IP addresses are skipped safely.
+/// OS allocation/free cost and latency have no caller-supplied hard bound. This does not prove current routing.
+/// @return Owned names or error without a value. Successful empty list is a scoped empty observation.
 [[nodiscard]] Observation observe_interfaces();
 
 /// Reports the proxies that `settings` configure, one string per proxy.
@@ -104,11 +96,9 @@ struct ProxySettings {
 /// Reports the proxies that the system's current proxy settings configure, read through
 /// CFNetworkCopySystemProxySettings.
 ///
-/// The probe reads the manual HTTP proxy and the proxy auto-config of the settings, which apply to the device's
-/// primary network, and reports them as observe_proxies does. A VPN that carries the device's traffic becomes the
-/// primary network, so while it is connected the probe reports the VPN's proxies, usually none, and not those of the
-/// Wi-Fi network: the traffic then goes through the tunnel, not through the Wi-Fi proxy, and the tunnel is reported by
-/// mitm.tunnels. A host or URL longer than 1024 bytes of UTF-8 is cut to
+/// The probe reads the exposed manual HTTP proxy and proxy auto-config keys from current systemwide settings.
+/// These settings do not establish whether a particular connection uses a proxy or tunnel. A host or URL longer
+/// than 1024 bytes of UTF-8 is cut to
 /// its first 1024 bytes, at a character boundary. The settings are read again on every call, so the probe also sees a
 /// proxy set after the app started. CFNetwork exists only on Apple systems, so anywhere else the observation is
 /// unsupported.

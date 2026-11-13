@@ -309,5 +309,5 @@ def testExport_whenSourceIsVerifiedFrozenSnapshot_recordsActualKindAndFullInvent
             recorded = json.load(stream)["provenance"]["pl05_source"]
     assert recorded == expected
     assert recorded["kind"] == "frozen_verified_source"
-    assert len(recorded["tracked_files"]) == 214
+    assert len(recorded["tracked_files"]) == 215
     assert "parents" not in recorded

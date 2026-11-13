@@ -17,9 +17,42 @@ from rasp_packer import errors
 from rasp_packer import platforms
 
 
+def _revision_ten() -> dict[str, Any]:
+    """Invert only RT22's two behavior edits; prove exact revision-10 bytes and identity."""
+    document = capabilities.catalogue()
+    assert document["revision"] == 11
+    old_behaviors = {
+        "android": "One observation per invocation; an empty list is a value, not a missing observation.",
+        "ios": "Only up interfaces with IPv4 tunnel names; IPv6-only tunnels can be absent; simulator/non-iOS unsupported.",
+    }
+    for platform, behavior in old_behaviors.items():
+        group = next(
+            group
+            for group in document["platforms"][platform]["groups"]
+            if group["name"] == "mitm"
+        )
+        row = next(
+            row
+            for row in group["observations"]
+            if (row["signal"], row["source"]) == ("mitm.tunnels", "getifaddrs")
+        )
+        row["behavior"] = behavior
+    document["revision"] = 10
+    raw = (json.dumps(document, indent=2) + "\n").encode()
+    assert (
+        hashlib.sha256(raw).hexdigest()
+        == "aa6ab44f65d7ad6e9b5cc0b6ba95be8743f08409d645b642855cc4c793333692"
+    )
+    assert (
+        hashlib.sha256(capabilities.canonical(document)).hexdigest()
+        == "fce392826ee1d9e5bab8046ca1584e2755af0eb3fd26922769eb20c64e32f736"
+    )
+    return document
+
+
 def _revision_nine() -> dict[str, Any]:
     """Invert only RT19's append, keeping every historical catalogue test exact."""
-    document = capabilities.catalogue()
+    document = _revision_ten()
     assert document["revision"] == 10
     for platform, count in (("android", 6), ("ios", 2)):
         hooks = next(
@@ -352,7 +385,7 @@ def testParseCatalogue_whenTimeoutDeclared_roundTripsWithoutChangingProductionCa
     assert capabilities.canonical(parsed) == encoded
     assert capabilities.catalogue_id() == current_id
     assert (
-        current_id == "fce392826ee1d9e5bab8046ca1584e2755af0eb3fd26922769eb20c64e32f736"
+        current_id == "e24617864ef1929ecca4d84ed0b62d530ca2ad602859272acd8f0aee3afc7733"
     )
     assert all(
         ("timeout" in output["statuses"])
@@ -917,9 +950,12 @@ def testCatalogue_whenModuleProvenanceAllocated_preservesExactHistoryAndPairedWi
         / "docs/fixtures/module-provenance-v1.json"
     )
     declared = json.loads(fixture.read_bytes())
-    current = capabilities.catalogue()
+    current = _revision_ten()
     assert current["revision"] == 10
-    assert declared["catalogue_id"] == capabilities.catalogue_id()
+    assert (
+        declared["catalogue_id"]
+        == hashlib.sha256(capabilities.canonical(current)).hexdigest()
+    )
     for platform, count, added in (("android", 79, 6), ("ios", 54, 2)):
         groups = current["platforms"][platform]["groups"]
         assert sum(len(group["observations"]) for group in groups) == count
@@ -936,3 +972,41 @@ def testCatalogue_whenModuleProvenanceAllocated_preservesExactHistoryAndPairedWi
         hashlib.sha256(capabilities.canonical(_revision_nine())).hexdigest()
         == "2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d"
     )
+
+
+def testCatalogue_whenNetworkSemanticsRevised_preservesEveryOtherRowAndHistory() -> (
+    None
+):
+    current = capabilities.catalogue()
+    assert current["revision"] == 11
+    previous = _revision_ten()
+    for platform in ("android", "ios"):
+        groups = current["platforms"][platform]["groups"]
+        old_groups = previous["platforms"][platform]["groups"]
+        changes = [
+            (row, old_row)
+            for group, old_group in zip(groups, old_groups, strict=True)
+            for row, old_row in zip(
+                group["observations"], old_group["observations"], strict=True
+            )
+            if row != old_row
+        ]
+        assert len(changes) == 1
+        row, old_row = changes[0]
+        assert (row["signal"], row["source"]) == ("mitm.tunnels", "getifaddrs")
+        assert {key: value for key, value in row.items() if key != "behavior"} == {
+            key: value for key, value in old_row.items() if key != "behavior"
+        }
+        for marker in (
+            "64",
+            "65536",
+            "IFNAMSIZ",
+            "error",
+            "partial",
+            "intent",
+            "routing",
+        ):
+            assert marker in row["behavior"]
+        assert ("AF_INET6" in row["behavior"]) is (platform == "ios")
+    assert capabilities.parse_catalogue(capabilities.canonical(previous)) == previous
+    assert capabilities.parse_catalogue(capabilities.canonical(current)) == current

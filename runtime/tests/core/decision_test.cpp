@@ -251,6 +251,9 @@ TEST(LocalDecision, evaluate_whenCatalogueSyntheticFutureOrForeign_refusesFallba
   EXPECT_EQ(rasp::evaluate_local_decisions(snapshot->metadata, {}, catalogue).reason,
             rasp::LocalReason::kCatalogueUnknown);
   auto metadata = snapshot->metadata;
+  metadata.catalogue_id = "fce392826ee1d9e5bab8046ca1584e2755af0eb3fd26922769eb20c64e32f736";
+  catalogue.catalogue_id = metadata.catalogue_id;
+  EXPECT_EQ(rasp::evaluate_local_decisions(metadata, {}, catalogue).reason, rasp::LocalReason::kCatalogueUnknown);
   metadata.catalogue_id = "c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf";
   catalogue.catalogue_id = metadata.catalogue_id;
   EXPECT_EQ(rasp::evaluate_local_decisions(metadata, {}, catalogue).reason, rasp::LocalReason::kCatalogueUnknown);

@@ -10,7 +10,9 @@
 #include <cstdint>
 #include <ifaddrs.h>
 #include <iterator>
-#include <set>
+#include <memory>
+#include <net/if.h>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -27,8 +29,7 @@
 #include <CoreFoundation/CFNumber.h>
 #include <CoreFoundation/CFString.h>
 #include <TargetConditionals.h>
-#include <net/if.h>
-#include <optional>
+#include <net/if_var.h>
 #endif
 
 namespace rasp::ios::checks {
@@ -63,9 +64,64 @@ constexpr std::string_view kHttpProxyPrefix = "http ";
 /// The proxies observation's text for proxy auto-config, followed by a space and the URL when there is one.
 constexpr std::string_view kAutoConfigProxy = "pac";
 
-/// The most tunnel interface names the tunnels observation reports, so a device with very many interfaces or addresses
-/// can't grow it without bound.
-constexpr std::size_t kMaxTunnels = 100;
+/// The existing cycle envelope accepts at most 64 names; larger views are error, never truncated success.
+constexpr std::size_t kMaxTunnels = 64;
+/// Accounted inspection budget; getifaddrs allocation and freeifaddrs latency are outside this consumer bound.
+constexpr std::size_t kMaxInterfaceRecords = 65536 / (sizeof(ifaddrs) + IFNAMSIZ);
+
+/// Fixed call-lifetime name storage; only the final completed result allocates owned output strings.
+class InterfaceNames {
+ public:
+  /// Adds a previously validated name, with at most 64 bounded comparisons and no tree/string allocation.
+  [[nodiscard]] bool add(std::string_view name) {
+    for (const auto& slot : std::span(names_).first(size_)) {
+      if (std::string_view{slot.data()} == name) {
+        return true;
+      }
+    }
+    if (size_ == kMaxTunnels) {
+      return false;
+    }
+    std::ranges::copy(name, std::span(names_)[size_].begin());
+    ++size_;
+    return true;
+  }
+
+  /// Copies at most 64 complete names into the owned observation and sorts them once.
+  [[nodiscard]] std::vector<std::string> value() const {
+    std::vector<std::string> result;
+    result.reserve(size_);
+    for (const auto& slot : std::span(names_).first(size_)) {
+      result.emplace_back(slot.data());
+    }
+    std::ranges::sort(result);
+    return result;
+  }
+
+ private:
+  std::array<std::array<char, IFNAMSIZ>, kMaxTunnels> names_{};
+  std::size_t size_ = 0;
+};
+
+/// Validates a nullable OS name without reading beyond the platform interface-name bound.
+[[nodiscard]] std::optional<std::string_view> interface_name(const char* name) {
+  if (name == nullptr) {
+    return std::nullopt;
+  }
+  const char* cursor = name;
+  for (std::size_t length = 0; length < IFNAMSIZ; ++length) {
+    if (*cursor == '\0') {
+      return length == 0 ? std::nullopt : std::optional{std::string_view{name, length}};
+    }
+    cursor = std::next(cursor);
+  }
+  return std::nullopt;
+}
+
+/// Requires complete owned helper names, including nonmatching names.
+[[nodiscard]] bool valid_name(std::string_view name) {
+  return !name.empty() && name.size() < IFNAMSIZ && !name.contains('\0');
+}
 
 #ifdef __APPLE__
 /// The most bytes of UTF-8 the proxy probe keeps of a proxy's host or auto-config URL, so a forged setting can't grow
@@ -79,6 +135,7 @@ constexpr std::size_t kMaxProxyTextBytes = 1024;
 constexpr auto kTunnelPrefixes = std::to_array<std::string_view>({"utun", "ipsec", "ppp", "tun", "tap"});
 
 static_assert(kFamilyIPv4 == static_cast<std::uint32_t>(AF_INET));
+static_assert(kFamilyIPv6 == static_cast<std::uint32_t>(AF_INET6));
 #ifdef __APPLE__
 static_assert(kInterfaceUp == static_cast<std::uint32_t>(IFF_UP));
 #endif
@@ -101,27 +158,14 @@ static_assert(kInterfaceUp == static_cast<std::uint32_t>(IFF_UP));
   return std::ranges::any_of(kTunnelPrefixes, matches_prefix);
 }
 
-/// Whether an entry of getifaddrs is one the tunnels observation reports: a tunnel interface that is up, with an IPv4
-/// address.
+/// Whether an entry is an UP name candidate with an IPv4 or IPv6 address family.
 ///
 /// @param name The interface's name.
 /// @param flags The interface's flags, as `IFF_*` bits.
 /// @param family The address family of the entry's address, or 0 when it has none.
-/// @return Whether the entry names a tunnel that is up and carries an IPv4 address.
+/// @return Whether the entry qualifies as environmental name context.
 [[nodiscard]] bool is_reported(std::string_view name, std::uint32_t flags, std::uint32_t family) {
-  return (flags & kInterfaceUp) != 0 && family == kFamilyIPv4 && is_tunnel_name(name);
-}
-
-/// Adds `name` to `tunnels`, then drops the largest name when `tunnels` holds more than kMaxTunnels, so the set keeps
-/// the kMaxTunnels smallest names without duplicates.
-///
-/// @param tunnels The tunnel names found so far.
-/// @param name The tunnel name to add.
-void add_tunnel(std::set<std::string>& tunnels, std::string_view name) {
-  tunnels.emplace(name);
-  if (tunnels.size() > kMaxTunnels) {
-    tunnels.erase(std::prev(tunnels.end()));
-  }
+  return (flags & kInterfaceUp) != 0 && (family == kFamilyIPv4 || family == kFamilyIPv6) && is_tunnel_name(name);
 }
 
 /// Writes a manual HTTP proxy the way the proxies observation reports it: `http <host>:<port>`, with the host between
@@ -229,13 +273,16 @@ void add_tunnel(std::set<std::string>& tunnels, std::string_view name) {
 }  // namespace
 
 Observation observe_tunnels(std::span<const InterfaceAddress> entries) {
-  std::set<std::string> tunnels;
+  if (entries.size() > kMaxInterfaceRecords) {
+    return failed(kTunnelsSignal, kTunnelsSource);
+  }
+  InterfaceNames tunnels;
   for (const InterfaceAddress& entry : entries) {
-    if (is_reported(entry.name, entry.flags, entry.family)) {
-      add_tunnel(tunnels, entry.name);
+    if (!valid_name(entry.name) || (is_reported(entry.name, entry.flags, entry.family) && !tunnels.add(entry.name))) {
+      return failed(kTunnelsSignal, kTunnelsSource);
     }
   }
-  return observed(kTunnelsSignal, kTunnelsSource, std::vector<std::string>{tunnels.begin(), tunnels.end()});
+  return observed(kTunnelsSignal, kTunnelsSource, tunnels.value());
 }
 
 Observation observe_interfaces() {
@@ -243,19 +290,25 @@ Observation observe_interfaces() {
   if (getifaddrs(&list) != 0) {
     return failed(kTunnelsSignal, kTunnelsSource);
   }
-  std::set<std::string> tunnels;
-  for (const ifaddrs* entry = list; entry != nullptr; entry = entry->ifa_next) {
-    if (entry->ifa_name == nullptr) {
-      continue;
+  const std::unique_ptr<ifaddrs, decltype(&freeifaddrs)> owner(list, freeifaddrs);
+  InterfaceNames tunnels;
+  std::size_t records = 0;
+  for (const ifaddrs* entry = owner.get(); entry != nullptr; entry = entry->ifa_next) {
+    if (records == kMaxInterfaceRecords) {
+      return failed(kTunnelsSignal, kTunnelsSource);
+    }
+    ++records;
+    const auto name = interface_name(entry->ifa_name);
+    if (!name.has_value()) {
+      return failed(kTunnelsSignal, kTunnelsSource);
     }
     const std::uint32_t family =
         entry->ifa_addr == nullptr ? 0 : static_cast<std::uint32_t>(entry->ifa_addr->sa_family);
-    if (is_reported(entry->ifa_name, static_cast<std::uint32_t>(entry->ifa_flags), family)) {
-      add_tunnel(tunnels, entry->ifa_name);
+    if (is_reported(*name, static_cast<std::uint32_t>(entry->ifa_flags), family) && !tunnels.add(*name)) {
+      return failed(kTunnelsSignal, kTunnelsSource);
     }
   }
-  freeifaddrs(list);
-  return observed(kTunnelsSignal, kTunnelsSource, std::vector<std::string>{tunnels.begin(), tunnels.end()});
+  return observed(kTunnelsSignal, kTunnelsSource, tunnels.value());
 }
 
 Observation observe_proxies(const ProxySettings& settings) {

@@ -12,7 +12,33 @@ def main() -> None:
     root = pathlib.Path(sys.argv[1])
     manifest = root / "packer/src/rasp_packer/checks_manifest.json"
     current = json.loads(manifest.read_bytes())
-    assert current["revision"] == 10
+    assert current["revision"] == 11
+    for platform, behavior in (
+        (
+            "android",
+            "One observation per invocation; an empty list is a value, not a missing observation.",
+        ),
+        (
+            "ios",
+            "Only up interfaces with IPv4 tunnel names; IPv6-only tunnels can be absent; simulator/non-iOS unsupported.",
+        ),
+    ):
+        group = next(
+            group
+            for group in current["platforms"][platform]["groups"]
+            if group["name"] == "mitm"
+        )
+        output = next(
+            row
+            for row in group["observations"]
+            if (row["signal"], row["source"]) == ("mitm.tunnels", "getifaddrs")
+        )
+        output["behavior"] = behavior
+    current["revision"] = 10
+    assert (
+        hashlib.sha256((json.dumps(current, indent=2) + "\n").encode()).hexdigest()
+        == "aa6ab44f65d7ad6e9b5cc0b6ba95be8743f08409d645b642855cc4c793333692"
+    )
     for platform, count, total in (("android", 6, 79), ("ios", 2, 54)):
         spec = current["platforms"][platform]
         assert sum(len(group["observations"]) for group in spec["groups"]) == total
@@ -61,7 +87,7 @@ def main() -> None:
             == digest
         )
     print(
-        "RT19 exact revision9 history, all semantic rules/selectors and HD02 exports verified"
+        "RT22 exact revision10 and RT19 revision9 history, all semantic rules/selectors and HD02 exports verified"
     )
 
 

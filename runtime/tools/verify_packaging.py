@@ -60,7 +60,7 @@ def main() -> None:
     policy_file = (
         pathlib.Path(__file__).resolve().parents[2]
         / "docs/fixtures"
-        / f"local-policy-{args.platform}-v1.json"
+        / f"local-policy-{args.platform}-revision11.json"
     )
     policy = local_policy.parse(policy_file.read_bytes())
     explicit = runtime_config.RuntimeConfig(
