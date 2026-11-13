@@ -1,4 +1,9 @@
-# Validation foundation v1 — DESIGN, awaiting root review
+# Validation foundation v1
+
+The initial design through “Minimal file list and acceptance handoff” is
+historical, including its source and dispatch restrictions. Root subsequently
+accepted implementation; the [accepted implementation addendum](#accepted-implementation-addendum)
+records that authorization and supersedes corresponding historical details.
 
 Source is exactly `e7886a8598ad0dc369ee01835ba5a8b7b4bb3850`, tree
 `1780520ac0ba0f45b4f778a12d30d3e070609881`. This contract authorizes no implementation.
@@ -25,22 +30,25 @@ Later VAL02/VAL03 own framework, performance collection and attack adapters.
 
 ## Closed records and bounds
 
-All dictionaries below have exactly the named required keys. Unknown/missing or
-duplicate JSON keys, duplicate IDs/paths, unsupported versions, trailing documents,
-NaN/Infinity, floats/exponents, booleans as integers, control characters and excess
-depth/size are rejected. JSON is UTF-8 without BOM; maximum nesting is 12. Arrays
-retain order unless a hash rule below explicitly sorts them. No free-form metadata.
-
-`ID` is `[a-z][a-z0-9_]{0,47}`; `HASH` is 64 lowercase hex characters; Git identities
-are 40 lowercase hex characters. General labels are printable ASCII, 1..128 bytes.
-Paths are relative ASCII components `[A-Za-z0-9_.-]+`, total <=240 bytes, with no
-empty, `.` or `..` component. Reject symlinks, hard links, devices/FIFOs/sockets,
-absolute paths, escapes, file replacement during reading and nonregular inputs.
-The caller must prevalidate and trust the root and its ancestor chain. The bounded
-reader refuses a symlink in the root’s final component or any relative descendant;
-it does not verify ancestors above that root. Open bounded files below that root
-without following links, check identity before/after reading,
-snapshot into a new private directory and execute only the checked snapshot.
+- **JSON:** All dictionaries below have exactly the named required keys.
+  Unknown/missing or duplicate JSON keys, duplicate IDs/paths, unsupported versions,
+  trailing documents, NaN/Infinity, floats/exponents, booleans as integers, control
+  characters and excess depth/size are rejected. JSON is UTF-8 without BOM;
+  maximum nesting is 12. Arrays retain order unless a hash rule below explicitly
+  sorts them. No free-form metadata.
+- **IDs and labels:** `ID` is `[a-z][a-z0-9_]{0,47}`; `HASH` is 64 lowercase hex
+  characters; Git identities are 40 lowercase hex characters. General labels are
+  printable ASCII, 1..128 bytes.
+- **Paths:** Paths are relative ASCII components `[A-Za-z0-9_.-]+`, total <=240
+  bytes, with no empty, `.` or `..` component. Reject symlinks, hard links,
+  devices/FIFOs/sockets, absolute paths, escapes, file replacement during reading
+  and nonregular inputs. The caller must prevalidate and trust the root and its
+  ancestor chain. The bounded reader refuses a symlink in the root’s final
+  component or any relative descendant; it does not verify ancestors above that
+  root.
+- **Reading:** Open bounded files below that root without following links, check
+  identity before/after reading, snapshot into a new private directory and execute
+  only the checked snapshot.
 
 | Record | Exact keys and values |
 |---|---|

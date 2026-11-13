@@ -148,7 +148,23 @@ fails offline verification. Cleanup force-stops only `fixture.validation`, delet
 only the nonce XML, verifies absence/PID termination and rechecks the installed
 APK. It does not claim to inspect process memory after termination.
 
-## Checks and detector review
+## Input trust and verification
+
+The file reader assumes a caller-prevalidated, trusted root and ancestor chain.
+It rejects the root’s final symlink and relative descendant links; it does not
+validate ancestors above that root. Run in a private location with trusted parents.
+The unique retained config must match the actual installed production config’s
+canonical bytes. Offline Android verification checks pure provisioning predicates,
+command success, empty absence output and the fixed ordered prerequisites without
+accessing live credentials or devices. APK capacity reserves both pre/post streams
+before acquisition, within the existing ceilings. Remote cleanup begins only after
+identity/environment/APK admission and touching the fixture; nonce XML removal
+also requires confirmed absence followed by actual dump process acquisition.
+Local alive/budget/process-acquisition refusals acquire no XML ownership. A
+launched dump that fails still owns bounded XML cleanup; the twenty-second
+cleanup reserve and all existing ceilings remain unchanged.
+
+## Run the validation suite
 
 ```sh
 VAL01_HOST=/tmp/val01-build/tests/rasp_validation_host \
@@ -160,6 +176,14 @@ ANDROID_BUILD_TOOLS=/path/to/real/sdk/build-tools/35.0.1 \
     validation/tests/run_test.py validation/tests/prepare_test.py
 ```
 
+The installed-validator integration controls require the genuine prepared inputs
+and a read-only pinned ADB byte snapshot (never executed). Set
+`VAL01_ANDROID_INPUTS` to the directory containing the prepared `result.json` and
+its recorded inputs, and `VAL01_ADB_SNAPSHOT` to that snapshot. Run the suite with
+the Python environment bound by the prepared dependency manifest, alongside
+`VAL01_HOST`. Synthetic protocol records supply no signing, device or security
+credit. Missing prerequisites fail; these controls are not silently skipped.
+
 The suite exercises real killed/reaped local children and the production C gate,
 plus artifact/source/policy/setup/cleanup forgery, cross-phase/duplicate evidence,
 bounds and missing cells. Labelled Android transport fixtures exercise protocol
@@ -168,6 +192,8 @@ Paired measurement records require 30..64 expected pairs, <=64 actual pairs acro
 the suite, two distinct <=8 KiB evidence files/pair and exact missing-index lists.
 No collector/budget or performance acceptance exists here. VAL02 owns performance
 collection/budgets; VAL03 owns the broader benign/false-positive matrix.
+
+## Detector change review checklist
 
 Every detector change review records:
 
@@ -185,45 +211,28 @@ directories with 0600 data and 0700 executable snapshots. Lab owners retain them
 through review/recovery, then explicitly erase them. The runner never uploads
 evidence, logs credentials or automatically erases failure evidence.
 
-
-The file reader assumes a caller-prevalidated, trusted root and ancestor chain.
-It rejects the root’s final symlink and relative descendant links; it does not
-validate ancestors above that root. Run in a private location with trusted parents.
-The unique retained config must match the actual installed production config’s
-canonical bytes. Offline Android verification checks pure provisioning predicates,
-command success, empty absence output and the fixed ordered prerequisites without
-accessing live credentials or devices. APK capacity reserves both pre/post streams
-before acquisition, within the existing ceilings. Remote cleanup begins only after
-identity/environment/APK admission and touching the fixture; nonce XML removal
-also requires confirmed absence followed by actual dump process acquisition.
-Local alive/budget/process-acquisition refusals acquire no XML ownership. A
-launched dump that fails still owns bounded XML cleanup; the twenty-second
-cleanup reserve and all existing ceilings remain unchanged.
-
-The installed-validator integration controls require the genuine prepared inputs
-and a read-only pinned ADB byte snapshot (never executed). Set
-`VAL01_ANDROID_INPUTS` to the directory containing the prepared `result.json` and
-its recorded inputs, and `VAL01_ADB_SNAPSHOT` to that snapshot. Run the suite with
-the Python environment bound by the prepared dependency manifest, alongside
-`VAL01_HOST`. Synthetic protocol records supply no signing, device or security
-credit. Missing prerequisites fail; these controls are not silently skipped.
-
-
 ## Produce the complete offline inventory
 
 `python -B -m validation.prepare` compiles the fixed fixture with the real public
 SDK, uses the installed production packer, and emits `result.json[input_files]`,
 canonical config, injection records and measured installed dependency bindings.
 It verifies the inventory through actual production preflight before emitting the
-report. It also copies the explicitly supplied, digest-pinned ADB bytes to
+report.
+
+It also copies the explicitly supplied, digest-pinned ADB bytes to
 `adb.snapshot` with mode 0400. It never invokes ADB, including help/discovery, and
-never signs, installs or connects to a device. Preparation is separate from a
-runtime result bundle and provides no device/release evidence. A failure retains
-its partial output for inspection; choose a fresh output directory for a retry.
+never signs, installs or connects to a device.
+
+Preparation is separate from a runtime result bundle and provides no
+device/release evidence.
+
+A failure retains its partial output for inspection; choose a fresh output
+directory for a retry.
 
 Run on Linux from the repository root with Python 3.14, uv, pinned CMake/Clang, NDK, Java,
 zip/unzip and genuine SDK prerequisites. Set `ANDROID_NDK_HOME`, `ANDROID_JAR`
 (API 35) and `ANDROID_BUILD_TOOLS` (35.0.1) to their real installed locations.
+
 The complete recipe below builds matching inputs; an externally reviewed build
 may instead supply the same genuine wheel, bridge and host products. Do not use
 an editable packer install or a wheel without the runtime resources/sidecars.
