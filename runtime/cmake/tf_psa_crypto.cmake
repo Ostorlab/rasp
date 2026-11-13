@@ -26,3 +26,6 @@ set(ENABLE_TESTING OFF CACHE BOOL "Build TF-PSA-Crypto tests" FORCE)
 set(GEN_FILES OFF CACHE BOOL "Generate TF-PSA-Crypto's generated files" FORCE)
 set(TF_PSA_CRYPTO_FATAL_WARNINGS OFF CACHE BOOL "Treat TF-PSA-Crypto's compiler warnings as errors" FORCE)
 add_subdirectory(${RASP_TF_PSA_CRYPTO_DIR} ${CMAKE_BINARY_DIR}/tf-psa-crypto-build EXCLUDE_FROM_ALL SYSTEM)
+
+# The reporting plugin owns a separate crypto island and must not inherit the runtime target namespace.
+unset(TF_PSA_CRYPTO_TARGET_PREFIX)

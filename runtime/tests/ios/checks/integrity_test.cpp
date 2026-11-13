@@ -16,7 +16,9 @@
 #include <utility>
 #include <vector>
 
+#include "rasp/decision.h"
 #include "rasp/observation.h"
+#include "support/decision.h"
 #include "support/files.h"
 
 namespace rasp::ios::checks {
@@ -405,6 +407,10 @@ TEST(Integrity, observeTextHashes_whenMemoryWasPatched_reportsTheHashOfThePatche
 
   EXPECT_EQ(observe(file, memory),
             (std::vector<Observation>{hashed("file", kFixtureTextHash), hashed("memory", kPatchedTextHash)}));
+  const auto snapshot = test_support::decide("ios", observe(file, memory));
+  EXPECT_TRUE(std::ranges::any_of(snapshot->local_decisions.rows, [](const auto& decision) {
+    return decision.rule_id == "local.ios.integrity_pair" && decision.reason == LocalReason::kHashesDiffer;
+  }));
 }
 
 TEST(Integrity, observeTextHashes_whenTheImageIsEncrypted_reportsTheFileAsUnsupported) {

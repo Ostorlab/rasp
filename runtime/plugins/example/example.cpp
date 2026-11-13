@@ -3,12 +3,14 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
 
 #include "rasp/config.h"
 #include "rasp/context.h"
+#include "rasp/cycle.h"
 #include "rasp/observation.h"
 #include "rasp/plugin.h"
 
@@ -76,12 +78,25 @@ void count(std::span<const Observation> observations, Context& /*context*/) {
   memory().seen = static_cast<std::int64_t>(observations.size());
 }
 
+/// Keeps one owning cycle for the example consumer; asynchronous users retain the entire unit, not spans or rows.
+/// @param snapshot Same immutable snapshot published by the owning CycleMonitor, including report-only decisions.
+/// @param context Plugin-local storage; the example replaces its previous retained cycle.
+void retain_cycle(const std::shared_ptr<const CycleSnapshot>& snapshot, Context& context) {
+  constexpr Key<std::shared_ptr<const CycleSnapshot>> kRetainedCycle{"example.owned_cycle.v1"};
+  context.put(kRetainedCycle, snapshot);
+}
+
 /// The plugin's checks.
 constexpr std::array<Check, 3> kChecks{build_id, runs, seen};
 
 }  // namespace
 
 /// The example plugin.
-extern constexpr Plugin kPlugin{.init = remember, .checks = kChecks, .on_observations = count};
+extern constexpr Plugin kPlugin{
+    .init = remember,
+    .checks = kChecks,
+    .on_observations = count,
+    .on_cycle = retain_cycle,
+};
 
 }  // namespace rasp::plugins::example

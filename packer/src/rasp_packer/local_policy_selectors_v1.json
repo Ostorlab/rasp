@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "catalogue_id": "fce392826ee1d9e5bab8046ca1584e2755af0eb3fd26922769eb20c64e32f736",
+  "rules": [
+    {
+      "platform": "android",
+      "group": "debugger",
+      "rule_id": "local.android.dbg.tracer_pid.proc_status_syscall",
+      "rule_version": 1
+    },
+    {
+      "platform": "android",
+      "group": "hooks",
+      "rule_id": "local.android.hook.inline.prologue",
+      "rule_version": 1
+    },
+    {
+      "platform": "android",
+      "group": "hooks",
+      "rule_id": "local.android.hook.maps_hits.proc_maps_syscall",
+      "rule_version": 1
+    },
+    {
+      "platform": "android",
+      "group": "hooks",
+      "rule_id": "local.android.hook.threads.proc_task",
+      "rule_version": 1
+    },
+    {
+      "platform": "android",
+      "group": "root",
+      "rule_id": "local.android.root.fs_paths.faccessat_syscall",
+      "rule_version": 1
+    },
+    {
+      "platform": "android",
+      "group": "root",
+      "rule_id": "local.android.root.mounts.proc_mounts_syscall",
+      "rule_version": 1
+    },
+    {
+      "platform": "ios",
+      "group": "debugger",
+      "rule_id": "local.ios.dbg.traced.sysctl_syscall",
+      "rule_version": 1
+    },
+    {
+      "platform": "android",
+      "group": "debugger",
+      "rule_id": "native.android.dbg.java_debugger.debug_api",
+      "rule_version": 1
+    },
+    {
+      "platform": "android",
+      "group": "debugger",
+      "rule_id": "native.android.dbg.java_debugger.jdwp_threads",
+      "rule_version": 1
+    },
+    {
+      "platform": "android",
+      "group": "debugger",
+      "rule_id": "native.android.dbg.tracer_pid.proc_status",
+      "rule_version": 1
+    },
+    {
+      "platform": "android",
+      "group": "hooks",
+      "rule_id": "native.android.hook.maps_hits.proc_maps",
+      "rule_version": 1
+    },
+    {
+      "platform": "android",
+      "group": "root",
+      "rule_id": "native.android.root.fs_paths.access",
+      "rule_version": 1
+    },
+    {
+      "platform": "android",
+      "group": "root",
+      "rule_id": "native.android.root.fs_paths.stat",
+      "rule_version": 1
+    },
+    {
+      "platform": "android",
+      "group": "root",
+      "rule_id": "native.android.root.mounts.proc_mounts",
+      "rule_version": 1
+    },
+    {
+      "platform": "ios",
+      "group": "debugger",
+      "rule_id": "native.ios.dbg.traced.sysctl",
+      "rule_version": 1
+    },
+    {
+      "platform": "ios",
+      "group": "hooks",
+      "rule_id": "native.ios.hook.maps_hits.dyld",
+      "rule_version": 1
+    },
+    {
+      "platform": "ios",
+      "group": "jailbreak",
+      "rule_id": "native.ios.jb.fork_ok.fork",
+      "rule_version": 1
+    },
+    {
+      "platform": "ios",
+      "group": "jailbreak",
+      "rule_id": "native.ios.jb.fs_paths.access",
+      "rule_version": 1
+    },
+    {
+      "platform": "ios",
+      "group": "jailbreak",
+      "rule_id": "native.ios.jb.fs_paths.stat",
+      "rule_version": 1
+    },
+    {
+      "platform": "ios",
+      "group": "jailbreak",
+      "rule_id": "native.ios.jb.sandbox_escape.open",
+      "rule_version": 1
+    }
+  ]
+}

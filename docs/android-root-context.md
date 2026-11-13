@@ -1,6 +1,6 @@
 # Android root and environment context
 
-Canonical schema 1, revision 7 declares 52 Android and 26 iOS outputs, catalogue `c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`.
+Canonical schema 1, revision 9 declares 73 Android and 52 iOS outputs, catalogue `2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d`.
 These six outputs extend the approved revision 6 without modifying its original rows.
 
 Four Android groups are explicit opt-ins: `root_packages`, `root_context`, `proxy` and `developer_settings`.

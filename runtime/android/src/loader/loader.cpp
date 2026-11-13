@@ -19,8 +19,10 @@
 
 #include "apk/archive.h"
 #include "apk/location.h"
+#include "events/capture_bridge.h"
 #include "events/window_bridge.h"
 #include "loader/loader_dex.h"
+#include "local_policy_bridge.h"
 #include "payload/assets.h"
 #include "payload/cipher.h"
 #include "payload/dex_store.h"
@@ -474,5 +476,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
   }
   static_cast<void>(rasp::android::util::register_context_bridge(env));
   static_cast<void>(rasp::android::events::register_window_bridge(env));
+  static_cast<void>(rasp::android::events::register_capture_bridge(env));
+  static_cast<void>(rasp::android::register_local_policy_bridge(env));
   return JNI_VERSION_1_6;
 }

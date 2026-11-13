@@ -16,13 +16,33 @@ target_link_libraries(rasp_core_test PRIVATE rasp_core rasp_warnings rasp_langua
 target_compile_definitions(rasp_core_test PRIVATE RASP_EXPECTED_VERSION="${PROJECT_VERSION}")
 gtest_discover_tests(rasp_core_test)
 
-foreach(test config context cycle embedded_config install_id observation parse_config plugins/init_plugins plugins/plugin plugins/registry plugins/run_plugins)
+foreach(test config context cycle decision embedded_config install_id observation parse_config local_policy plugins/init_plugins plugins/plugin plugins/registry plugins/run_plugins)
   cmake_path(GET test FILENAME name)
   add_executable(rasp_core_${name}_test core/${test}_test.cpp)
   target_link_libraries(rasp_core_${name}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
   gtest_discover_tests(rasp_core_${name}_test)
 endforeach()
 target_include_directories(rasp_core_install_id_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(rasp_core_local_policy_test PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
+# Startup assertions and the process-lifetime installed owner require separate executables.
+foreach(test local_policy_host local_policy_host_uninitialized)
+  add_executable(rasp_${test}_test core/${test}_test.cpp ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp)
+  target_include_directories(rasp_${test}_test PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
+  target_link_libraries(rasp_${test}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_${test}_test)
+endforeach()
+add_executable(rasp_local_policy_c_host host/local_policy_host.c ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp)
+set_property(TARGET rasp_local_policy_c_host PROPERTY C_STANDARD 17)
+target_include_directories(rasp_local_policy_c_host PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
+target_link_libraries(rasp_local_policy_c_host PRIVATE rasp_core rasp_language)
+target_compile_options(rasp_local_policy_c_host PRIVATE -Wall -Wextra -Werror)
+add_test(NAME LocalPolicyHost.actualCConsumer COMMAND rasp_local_policy_c_host)
+add_executable(rasp_local_policy_probe core/local_policy_probe.cpp)
+target_include_directories(rasp_local_policy_probe PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
+target_link_libraries(rasp_local_policy_probe PRIVATE rasp_core rasp_warnings rasp_language)
+target_link_libraries(rasp_core_decision_test PRIVATE rasp_yyjson)
+target_compile_definitions(rasp_core_decision_test PRIVATE
+  RASP_ASSESSMENT_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/core/assessment_vectors.json")
 list(LENGTH rasp_compiled_plugins rasp_expected_plugin_count)
 target_link_libraries(rasp_core_registry_test PRIVATE rasp_plugins)
 target_compile_definitions(rasp_core_registry_test PRIVATE RASP_EXPECTED_PLUGIN_COUNT=${rasp_expected_plugin_count})
@@ -149,7 +169,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(rasp_android_archive_fault_test PRIVATE
     RASP_TEST_CERTIFICATE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/android/apk/data")
   target_link_options(rasp_android_archive_fault_test PRIVATE
-    -Wl,--wrap=pread -Wl,--wrap=fstat -Wl,--wrap=stat -Wl,--wrap=close -Wl,--wrap=mmap)
+    -Wl,--wrap=pread -Wl,--wrap=fstat -Wl,--wrap=stat -Wl,--wrap=close)
   gtest_discover_tests(rasp_android_archive_fault_test)
 endif()
 
@@ -241,12 +261,12 @@ foreach(platform android ios)
       ${expectations_dir}/capability_expectations.h ${platform}
     COMMAND_ERROR_IS_FATAL ANY)
   if(platform STREQUAL "android")
-    set(capability_checks debugger emulator hooks identity integrity mitm root service_exposure overlay context_exposure root_namespace)
+    set(capability_checks debugger emulator hooks identity integrity mitm root service_exposure overlay context_exposure root_namespace capture)
     set(capability_util events/window_events.cpp util/signing_certificates.cpp util/system_property.cpp util/app_storage.cpp util/apk_file.cpp util/direct_syscall.cpp
       util/elf.cpp util/service_components.cpp)
   else()
-    set(capability_checks debugger emulator hooks identity integrity jailbreak mitm virtualizer)
-    set(capability_util util/macho.cpp util/sha256.cpp util/process_query.cpp)
+    set(capability_checks debugger emulator hooks identity integrity jailbreak mitm virtualizer capture)
+    set(capability_util util/macho.cpp util/sha256.cpp util/process_query.cpp capture/capture_events.cpp)
   endif()
   set(capability_sources ${PROJECT_SOURCE_DIR}/${platform}/src/builtin.cpp)
   foreach(check IN LISTS capability_checks)
@@ -300,6 +320,12 @@ if(Java_FOUND AND JNI_FOUND)
       ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/include ${PROJECT_SOURCE_DIR}/android/src)
     target_link_libraries(rasp_android_identity_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
     add_library(rasp_android_context_bridge_jni SHARED android/context_bridge/driver.cpp android/events/driver.cpp
+      android/context_bridge/policy_driver.cpp
+      ${PROJECT_SOURCE_DIR}/core/src/local_policy_host.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/local_policy_bridge.cpp
+      android/events/capture_driver.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/events/capture_bridge.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/events/capture_events.cpp
       ${PROJECT_SOURCE_DIR}/android/src/events/window_bridge.cpp
       ${PROJECT_SOURCE_DIR}/android/src/events/window_events.cpp
       ${PROJECT_SOURCE_DIR}/android/src/util/application_context.cpp
@@ -321,12 +347,18 @@ if(Java_FOUND AND JNI_FOUND)
       $<TARGET_OBJECTS:rasp_android_identity_dispatch>
       ${PROJECT_SOURCE_DIR}/android/src/util/jni.cpp)
     target_include_directories(rasp_android_context_bridge_jni PRIVATE ${JNI_INCLUDE_DIRS}
-      ${PROJECT_SOURCE_DIR}/android/src ${CMAKE_CURRENT_SOURCE_DIR})
+      ${PROJECT_SOURCE_DIR}/android/src ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/core/src)
     add_library(rasp_android_overlay_dispatch OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/overlay.cpp)
     target_compile_definitions(rasp_android_overlay_dispatch PRIVATE __ANDROID__)
     target_include_directories(rasp_android_overlay_dispatch PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
     target_link_libraries(rasp_android_overlay_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
     target_sources(rasp_android_context_bridge_jni PRIVATE $<TARGET_OBJECTS:rasp_android_overlay_dispatch>)
+    add_library(rasp_android_capture_dispatch OBJECT ${PROJECT_SOURCE_DIR}/android/src/checks/capture.cpp)
+    target_compile_definitions(rasp_android_capture_dispatch PRIVATE __ANDROID__)
+    target_include_directories(rasp_android_capture_dispatch PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/android/context_bridge/include)
+    target_link_libraries(rasp_android_capture_dispatch PRIVATE rasp_core rasp_warnings rasp_language)
+    target_sources(rasp_android_context_bridge_jni PRIVATE $<TARGET_OBJECTS:rasp_android_capture_dispatch>)
     target_link_libraries(rasp_android_context_bridge_jni PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language JNI::JVM Threads::Threads ${CMAKE_DL_LIBS})
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
       target_link_options(rasp_android_context_bridge_jni PRIVATE -Wl,--no-undefined)
@@ -339,10 +371,28 @@ if(Java_FOUND AND JNI_FOUND)
       DEPENDS ${bridge_java} ${bridge_test_java} VERBATIM)
     add_custom_target(rasp_android_context_bridge_java ALL
       DEPENDS ${bridge_test_classes}/co/ostorlab/rasp/BridgeTest.class)
+    add_test(NAME AndroidLocalPolicy.operationGate
+      COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
+        $<TARGET_FILE:rasp_android_context_bridge_jni> 174e5db59a8f1bd3a657d8263d971b1507c66017b2513a2acda442deaa798cb0)
+    set_tests_properties(AndroidLocalPolicy.operationGate PROPERTIES TIMEOUT 30)
+    add_test(NAME AndroidLocalPolicy.uint32MaxVersion
+      COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
+        $<TARGET_FILE:rasp_android_context_bridge_jni> b6f92e142a82c468fa63caae4ca728ecfb2d8aa60bc5822dace6f05388f307c8 4294967295)
+    set_tests_properties(AndroidLocalPolicy.uint32MaxVersion PROPERTIES TIMEOUT 30)
+    add_test(NAME AndroidLocalPolicy.reportOnlyAdmission
+      COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.PolicyTest
+        $<TARGET_FILE:rasp_android_context_bridge_jni> d18c67bccbd63e3a4a4d6d6724932caa862f4272ee825eb3b61b1eafffaa2453 1 report_only)
+    set_tests_properties(AndroidLocalPolicy.reportOnlyAdmission PROPERTIES TIMEOUT 30)
     add_test(NAME AndroidWindowBridge.lifecycle
       COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.WindowTest
         $<TARGET_FILE:rasp_android_context_bridge_jni>)
     set_tests_properties(AndroidWindowBridge.lifecycle PROPERTIES TIMEOUT 30)
+    foreach(api 31 33 34 35)
+      add_test(NAME AndroidCaptureBridge.api${api}
+        COMMAND ${Java_JAVA_EXECUTABLE} -Xcheck:jni -cp ${bridge_test_classes} co.ostorlab.rasp.CaptureTest
+          $<TARGET_FILE:rasp_android_context_bridge_jni> ${api})
+      set_tests_properties(AndroidCaptureBridge.api${api} PROPERTIES TIMEOUT 30)
+    endforeach()
     set(identity_java_command ${Java_JAVA_EXECUTABLE})
     set(identity_process_alias "")
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -462,6 +512,7 @@ target_link_libraries(rasp_android_service_components_test PRIVATE rasp_core ras
 gtest_discover_tests(rasp_android_service_components_test)
 
 add_library(rasp_android_builtin_support OBJECT ${PROJECT_SOURCE_DIR}/android/src/builtin.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/capture.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/overlay.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/emulator.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp
@@ -529,6 +580,11 @@ target_include_directories(rasp_android_window_events_test PRIVATE ${PROJECT_SOU
 target_link_libraries(rasp_android_window_events_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_window_events_test)
 
+add_executable(rasp_android_capture_events_test android/events/capture_events_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/events/capture_events.cpp)
+target_include_directories(rasp_android_capture_events_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_capture_events_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_capture_events_test)
 add_executable(rasp_android_root_namespace_test android/checks/root_namespace_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/root_namespace.cpp)
 target_include_directories(rasp_android_root_namespace_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src ${CMAKE_CURRENT_SOURCE_DIR})
@@ -539,3 +595,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(rasp_android_root_namespace_test PRIVATE RASP_TEST_WRAP_FSTAT)
   target_link_options(rasp_android_root_namespace_test PRIVATE -Wl,--wrap=fstat)
 endif()
+
+add_executable(rasp_ios_capture_events_test ios/capture/capture_events_test.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/capture/capture_events.cpp)
+target_include_directories(rasp_ios_capture_events_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_capture_events_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_ios_capture_events_test)
+
+target_sources(rasp_ios_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/checks/capture.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/capture/capture_events.cpp)
+
+# Stage A collectors exist only in tests; no production target or catalogue references them.
+add_subdirectory(provenance)

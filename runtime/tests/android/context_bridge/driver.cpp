@@ -15,8 +15,12 @@
 #include <thread>
 #include <vector>
 
+#include "android/context_bridge/policy_driver.h"
+#include "android/events/capture_driver.h"
 #include "builtin.h"
+#include "events/capture_bridge.h"
 #include "events/window_bridge.h"
+#include "local_policy_bridge.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/cycle.h"
@@ -373,6 +377,9 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
   if (!rasp::android::events::register_window_bridge(env)) {
     return JNI_ERR;
   }
+  if (!rasp::android::register_local_policy_bridge(env) || !register_policy_test(env)) {
+    return JNI_ERR;
+  }
   jclass test = env->FindClass("co/ostorlab/rasp/BridgeTest");
   auto read_name = std::to_array("readCertificate");
   auto has_name = std::to_array("hasContext");
@@ -424,5 +431,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     return JNI_ERR;
   }
   env->DeleteLocalRef(test);
-  return register_window_test(env) ? JNI_VERSION_1_6 : JNI_ERR;
+  return register_capture_test(env) && rasp::android::events::register_capture_bridge(env) && register_window_test(env)
+             ? JNI_VERSION_1_6
+             : JNI_ERR;
 }

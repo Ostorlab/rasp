@@ -22,6 +22,12 @@ public final class HostApplication extends Application {
                     throw new AssertionError("window start result " + started);
                 }
                 Log.i("WindowBridgeFixture", "window adapter started");
+                int capture = RuntimeBridge.startCaptureObservation(HostApplication.this, true, true);
+                if (capture != RuntimeBridge.INITIALIZED && capture != RuntimeBridge.PARTIAL
+                        && capture != RuntimeBridge.UNSUPPORTED && capture != RuntimeBridge.PERMISSION_REQUIRED) {
+                    throw new AssertionError("capture start result " + capture);
+                }
+                Log.i("CaptureBridgeFixture", "capture lifecycle adapter started: " + capture);
                 Log.i("ContextBridgeFixture", "initialized after attachment");
             }
         }, 10000);

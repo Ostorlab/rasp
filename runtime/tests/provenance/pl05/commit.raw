@@ -1,0 +1,6 @@
+tree b15595265d8d907439227848e064f8f66fc89844
+parent ec15f461f0a47d679d7ea2d7a4279f3e83ded6f8
+author Alaeddine Mesbahi <alaeddine.mesbahi@ostorlab.dev> 1794517211 +0000
+committer Alaeddine Mesbahi <alaeddine.mesbahi@ostorlab.dev> 1794517211 +0000
+
+docs(reporting): clarify iOS profiles and bounded retention

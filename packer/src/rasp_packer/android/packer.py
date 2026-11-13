@@ -206,7 +206,10 @@ def _pack_apk(
     )
 
     patched_manifest = apk_manifest_module.set_app_component_factory(
-        apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
+        apk_manifest_module.ensure_capture_permissions(
+            apk_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
+            config.checks,
+        ),
         resources_module.STUB_FACTORY_CLASS,
     )
     if "root_packages" in config.checks:
@@ -223,6 +226,11 @@ def _pack_apk(
     libraries = injection.library_entries(apk, artifacts)
     bindings = resources_module.bindings(
         artifacts, (name.split("/")[1] for name in libraries)
+    )
+    policy_bindings = resources_module.policy_bindings(
+        artifacts,
+        (name.split("/")[1] for name in libraries),
+        required=config.local_policy is not None,
     )
     added = {
         KEY_ENTRY: key,
@@ -247,7 +255,10 @@ def _pack_apk(
         expected_entries={apk_archive.MANIFEST_ENTRY: patched_manifest, **added},
     )
     return dataclasses.replace(
-        app_identity, effective_checks=config.checks, bindings=bindings
+        app_identity,
+        effective_checks=config.checks,
+        bindings=bindings,
+        local_policy_bindings=policy_bindings,
     )
 
 
@@ -283,7 +294,10 @@ def _pack_aab(
     result = splitter(dex_entries, app_identity.package_name, mapping)
 
     patched_manifest = aab_manifest_module.set_app_component_factory(
-        aab_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
+        aab_manifest_module.ensure_capture_permissions(
+            aab_manifest_module.raise_min_sdk_version(manifest, MINIMUM_API_LEVEL),
+            config.checks,
+        ),
         resources_module.STUB_FACTORY_CLASS,
     )
     if "root_packages" in config.checks:
@@ -304,6 +318,9 @@ def _pack_aab(
     }
     abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
     bindings = resources_module.bindings(artifacts, abis)
+    policy_bindings = resources_module.policy_bindings(
+        artifacts, abis, required=config.local_policy is not None
+    )
     lib_entries = {
         f"base/lib/{abi}/{resources_module.RUNTIME_LIBRARY}": runtime_library.write_config(
             artifacts.libraries[abi], config
@@ -330,7 +347,10 @@ def _pack_aab(
         expected_entries={aab_archive.MANIFEST_ENTRY: patched_manifest, **added},
     )
     return dataclasses.replace(
-        app_identity, effective_checks=config.checks, bindings=bindings
+        app_identity,
+        effective_checks=config.checks,
+        bindings=bindings,
+        local_policy_bindings=policy_bindings,
     )
 
 

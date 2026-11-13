@@ -1,5 +1,10 @@
 # Native measurement cycle contract v1
 
+The same owning snapshot also contains [local decision evidence](local-decisions-contract.md),
+with an independent report/reason version. Evaluation uses only the retained builtin producer prefix;
+plugin outputs cannot supply missing builtins or participate in builtin comparisons. This adds no
+cycle-wire fields or authority. All callbacks see the completed report on the same immutable owner.
+
 Consumer entry point: `rasp/cycle.h`, shared by the Android and iOS monitors and
 native plugins. The compiled catalogue comes from the same validated
 `checks_manifest.json` and canonical SHA-256 as the packer release binding.
@@ -104,8 +109,8 @@ additive backend schema and transport rollout before transmission. Network/DNS
 plugin implementation is coordinated separately; native availability may precede
 it. Legacy metadata remains unavailable. The compiled catalogue includes inline-hook observations, service
 metadata, signer current sets and rotation history, window observations, and root/context observations.
-Canonical schema 1, revision 7 declares 52 Android and 26 iOS identities, with catalogue ID
-`c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`.
+Canonical schema 1, revision 9 declares 73 Android and 52 iOS identities, with catalogue ID
+`2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d`.
 Identity has nine expected outputs; malformed signer sources remain present error observations. Real-JVM caller
 and attached-worker fixtures exercise the actual identity dispatcher through this immutable cycle handoff. See the durable
 [signer observation contract](android-signer-observations.md) and
@@ -118,8 +123,8 @@ supported compiler CI remain necessary validation; host execution is no device
 health evidence. Session/run generation does not depend on installation storage.
 
 
-The combined runtime preserves RT10's ordinary merge of the exact approved RT09 parent. Canonical schema 1, revision 7 declares **52 Android/26 iOS**
-identities, catalogue `c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`. The ten opt-in window outputs consume one bounded FIFO drain per selected actual
+The combined runtime preserves RT10's ordinary merge of the exact approved RT09 parent. Canonical schema 1, revision 9 declares **73 Android/52 iOS**
+identities, catalogue `2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d`. The ten opt-in window outputs consume one bounded FIFO drain per selected actual
 measurement cycle through the same production builtin dispatcher; disabled selection does not drain. Legacy and
 additive callbacks retain the same immutable snapshot, including interval/loss metadata and observations, across
 later drains and Context destruction. Real-JVM caller and attached-native-worker tests exercise that handoff.

@@ -143,8 +143,8 @@ allows repeatable measurement after real Application attachment without adding a
 and host tests do not establish physical-device, vendor/profile, minified-host or service effectiveness results.
 [Portable positive, benign and unknown examples](fixtures/android-service-observations-v1.json) define exact output
 names and semantics for coordinated backend/UI adoption. They deliberately contain no malware-family or automatic
-malware verdict. These four outputs, introduced in schema 1, revision 4, remain unchanged in schema 1, revision 7, catalogue `c6ed667281a13f3072a886b6b1cbc10d352b354299266669438239045a5b6daf`,
+malware verdict. These four outputs, introduced in schema 1, revision 4, remain unchanged in schema 1, revision 9, catalogue `2a9b706406907d297b139d0b24c70acb41c0dc452f6cad826dfd08d3487f553d`,
 alongside the inherited inline-hook and second-source contracts. Native CMake emits sidecars
-for this combined source; a pristine revision 3 sidecar remains foreign to its revision 7 consumer.
+for this combined source; a pristine revision 3 sidecar remains foreign to its revision 9 consumer.
 See [binding and expected-output semantics](check-capabilities.md). Backend/UI adoption remains
 a separate coordinated change.

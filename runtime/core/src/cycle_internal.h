@@ -1,5 +1,6 @@
 /// Internal saturating counters for bounded cycle metadata.
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -10,6 +11,12 @@
 namespace rasp {
 /// Mutable call-lifetime state; only its immutable snapshot escapes dispatch.
 struct CycleDispatch {
+  /// Optional approved private gate publisher; never a host callback or independent monitor.
+  LocalPolicyState* policy_state = nullptr;
+  /// Call-lifetime catalogue used by the actual dispatcher, validated by local decisions.
+  CycleCatalogue catalogue;
+  /// Retained builtin prefix before any plugin can append colliding identities.
+  std::size_t builtin_observations = 0;
   /// Bounded metadata assembled for this run.
   CycleMetadata metadata;
   /// Initial clock sample.

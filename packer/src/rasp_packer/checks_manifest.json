@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 7,
+  "revision": 10,
   "plugins": "unmodelled",
   "platforms": {
     "android": {
@@ -278,6 +278,87 @@
               ],
               "supported_on": "android",
               "behavior": "Fixed libc/libdl entry comparison: at most 32 distinct changed function names in fixed resolution order; empty only after all 32 comparisons succeed. Compare min(16, nonzero symbol size) bytes from immutable executable ELF code with actual RX non-writable mapped addresses via checked own-process reads. Maps limited to 4 MiB/8192-byte lines, library 32 MiB; native ARM/Thumb, AArch64, x86 and x86_64 only. Missing/duplicate/reserved/IFUNC symbols, malformed metadata, text relocations, unavailable resolution, denied/short/stale reads or incomplete coverage produce error with no value and no partial list; unsupported off Android or for an unimplemented build architecture. Raw differences can include authorized instrumentation; matching disk/memory, unlisted/renamed targets, other inline sites, hidden modules and hookable APIs remain limitations, not malware or clean-device verdicts."
+            },
+            {
+              "signal": "hook.exec_modules",
+              "source": "proc_maps_v1",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported",
+                "timeout"
+              ],
+              "supported_on": "android",
+              "behavior": "Own-process executable mappings from actual permission fields; two complete bounded snapshots, 4 MiB/read, 8192 records and 8192 bytes/line. First32 reduced ASCII rows of at most192bytes, no paths/addresses/stable IDs. Lexical app/OS/other location and backing are unverified; loader correlation is unknown for changed/failed brackets or unavailable native source. Malformed, denied, cleanup or input-limit failures have no value; cooperative100ms deadline is timeout. Legitimate ART/JIT/memfd/plugin mappings are not malware or code-authenticity verdicts."
+            },
+            {
+              "signal": "hook.exec_modules_meta",
+              "source": "proc_maps_v1",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok"
+              ],
+              "supported_on": "android",
+              "behavior": "One fixed ASCII v=1 diagnostic string of at most256bytes per invocation, including unsupported platform/data failures. Status is always ok when the diagnostic is produced, not collection success. Fixed outcome/reason/seen/eligible/emitted/sample_truncated/scope/correlation/stability fields; unavailable counts are na and non-ok data has emitted0. Underlying data platform gate applies to its source, not diagnostic availability. No raw paths, classes, addresses, arbitrary errors, malware verdict or attestation."
+            },
+            {
+              "signal": "hook.exec_modules",
+              "source": "dl_iterate_phdr_v1",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported",
+                "timeout"
+              ],
+              "supported_on": "android",
+              "behavior": "Public own-process native loader executable PT_LOAD declarations with owned bounded copies:4096images,1024headers/image,2MiBheaders,4MiBnames,16384intervals; page-aware names at most4096bytes. First32 location/segment/flag rows of at most192bytes, no paths/addresses/stable IDs. Error/timeout has no partial value. Not exhaustive ART/JIT/memfd/linker-namespace coverage or attestation."
+            },
+            {
+              "signal": "hook.exec_modules_meta",
+              "source": "dl_iterate_phdr_v1",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok"
+              ],
+              "supported_on": "android",
+              "behavior": "One fixed ASCII v=1 diagnostic string of at most256bytes per invocation, including unsupported platform/data failures. Status is always ok when the diagnostic is produced, not collection success. Fixed outcome/reason/seen/eligible/emitted/sample_truncated/scope/correlation/stability fields; unavailable counts are na and non-ok data has emitted0. Underlying data platform gate applies to its source, not diagnostic availability. No raw paths, classes, addresses, arbitrary errors, malware verdict or attestation."
+            },
+            {
+              "signal": "hook.loader_chain",
+              "source": "application_classloader_v1",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported",
+                "timeout"
+              ],
+              "supported_on": "android",
+              "behavior": "Supplied Application public ClassLoader parent topology and concrete Class name reduction only; two passes,16nodes,256UTF16units/name,64local slots and at most2048JNI operations. At most16 fixed ASCII rows of96bytes, no class names/paths/object IDs or named class loading/private fields. Missing context/platform is unsupported; probe/race/cleanup/input errors and cooperative timeout have no partial chain. Legitimate custom and in-memory loaders imply no malware verdict."
+            },
+            {
+              "signal": "hook.loader_chain_meta",
+              "source": "application_classloader_v1",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok"
+              ],
+              "supported_on": "android",
+              "behavior": "One fixed ASCII v=1 diagnostic string of at most256bytes per invocation, including unsupported platform/data failures. Status is always ok when the diagnostic is produced, not collection success. Fixed outcome/reason/seen/eligible/emitted/sample_truncated/scope/correlation/stability fields; unavailable counts are na and non-ok data has emitted0. Underlying data platform gate applies to its source, not diagnostic availability. No raw paths, classes, addresses, arbitrary errors, malware verdict or attestation."
             }
           ]
         },
@@ -812,6 +893,306 @@
               "behavior": "Always unsupported with no value: current public DEVELOPMENT_SETTINGS_ENABLED contract sanitizes third-party reads tozero. No settings lookup/zero default or disabled inference; no historical OS truth guarantee."
             }
           ]
+        },
+        {
+          "name": "screenshot",
+          "required": false,
+          "observations": [
+            {
+              "signal": "capture.screenshot.observer_state",
+              "source": "activity_screen_capture",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Availability enum below, final snapshot."
+            },
+            {
+              "signal": "capture.screenshot.permission",
+              "source": "activity_screen_capture",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Permission enum below, last checked state."
+            },
+            {
+              "signal": "capture.screenshot.coverage",
+              "source": "activity_screen_capture",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "`unknown`, `best_effort`, `loss_detected`."
+            },
+            {
+              "signal": "capture.screenshot.active_activities",
+              "source": "activity_screen_capture",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Successful currently owned screenshot registrations, 0..32; never number of captured Activities."
+            },
+            {
+              "signal": "capture.screenshot.callback_events",
+              "source": "activity_screen_capture",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Accepted notifications in all segments since previous selected source drain. Not unique screenshots."
+            },
+            {
+              "signal": "capture.screenshot.lost_registrations",
+              "source": "activity_screen_capture",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Detected loss/failure counter for that interval."
+            },
+            {
+              "signal": "capture.screenshot.invalid_events",
+              "source": "activity_screen_capture",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Rejected native inputs for that interval."
+            },
+            {
+              "signal": "capture.screenshot.counter_overflow",
+              "source": "activity_screen_capture",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "A source interval counter saturated and an additional increment was attempted."
+            },
+            {
+              "signal": "capture.screenshot.interval_ms",
+              "source": "activity_screen_capture",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Checked monotonic drain-to-drain duration, or -1 when unavailable."
+            }
+          ]
+        },
+        {
+          "name": "screen_recording",
+          "required": false,
+          "observations": [
+            {
+              "signal": "capture.recording.observer_state",
+              "source": "window_manager_recording",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Availability enum below, final snapshot."
+            },
+            {
+              "signal": "capture.recording.permission",
+              "source": "window_manager_recording",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Permission enum below, last checked state."
+            },
+            {
+              "signal": "capture.recording.coverage",
+              "source": "window_manager_recording",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "`unknown`, `best_effort`, `loss_detected`."
+            },
+            {
+              "signal": "capture.recording.active_activities",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Eligible resumed host Activities while the shared recording registration is healthy, 0..32; zero on failure/no registration. Not recorded-Activity count."
+            },
+            {
+              "signal": "capture.recording.visibility",
+              "source": "window_manager_recording",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "`visible`, `not_visible`, `unknown`; UID visibility from current registration's initial/latest accepted state. Unknown after registration-owner/final eligible detach or registration failure."
+            },
+            {
+              "signal": "capture.recording.initial_samples",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Successful initial state returns accepted since previous source drain."
+            },
+            {
+              "signal": "capture.recording.callback_events",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Accepted later callbacks, including repeated identical states. Initial return is excluded."
+            },
+            {
+              "signal": "capture.recording.visibility_changes",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Accepted later states differing from the current known state within the same registration. Reattachment's initial state is not a transition."
+            },
+            {
+              "signal": "capture.recording.lost_registrations",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Detected loss/failure/handover counter for that interval."
+            },
+            {
+              "signal": "capture.recording.invalid_events",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Rejected native inputs for that interval."
+            },
+            {
+              "signal": "capture.recording.counter_overflow",
+              "source": "window_manager_recording",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Counter increment exceeded signed-int64 capacity in this interval."
+            },
+            {
+              "signal": "capture.recording.interval_ms",
+              "source": "window_manager_recording",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported"
+              ],
+              "supported_on": "android",
+              "behavior": "Checked monotonic drain-to-drain duration, or -1 when unavailable."
+            }
+          ]
         }
       ]
     },
@@ -1014,6 +1395,33 @@
               ],
               "supported_on": "ios_device",
               "behavior": "One observation per invocation; simulator/non-iOS returns unsupported with no value; list values have variable length."
+            },
+            {
+              "signal": "hook.exec_modules",
+              "source": "dyld_v1",
+              "value_kind": "string_list",
+              "cardinality": "one",
+              "value_cardinality": "variable",
+              "statuses": [
+                "ok",
+                "error",
+                "unsupported",
+                "timeout"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical-iOS public dyld image declarations with owned exact copies and two bounded passes sharing a cooperative100ms budget:4096images/pass,4096commands/image,64KiBcommands/image,8MiBheaders/4MiBnames/pass. First32 executable-declaration rows of at most192bytes; no paths/addresses/stable IDs. Short/denied/malformed/racing/limit copies fail without partial value. Simulator/non-device is unsupported; declared flags are not live VM permissions or exhaustive executable memory/code authenticity."
+            },
+            {
+              "signal": "hook.exec_modules_meta",
+              "source": "dyld_v1",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "One fixed ASCII v=1 diagnostic string of at most256bytes per invocation, including unsupported platform/data failures. Status is always ok when the diagnostic is produced, not collection success. Fixed outcome/reason/seen/eligible/emitted/sample_truncated/scope/correlation/stability fields; unavailable counts are na and non-ok data has emitted0. Underlying data platform gate applies to its source, not diagnostic availability. No raw paths, classes, addresses, arbitrary errors, malware verdict or attestation."
             }
           ]
         },
@@ -1223,6 +1631,382 @@
               ],
               "supported_on": "never",
               "behavior": "Always unsupported; user trust store enumeration is not implemented."
+            }
+          ]
+        },
+        {
+          "name": "screenshot",
+          "required": false,
+          "observations": [
+            {
+              "signal": "capture.screenshot.observer_state",
+              "source": "uiapplication_screenshot",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Availability enum above, independent of scene selection. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.coverage",
+              "source": "uiapplication_screenshot",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. unknown / best_effort / loss_detected. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.session_epoch",
+              "source": "uiapplication_screenshot",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Process-local opt-in epoch; 0 before first start. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.callback_events",
+              "source": "uiapplication_screenshot",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Accepted notifications since last selected screenshot drain, not unique captures. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.ignored_events",
+              "source": "uiapplication_screenshot",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Rejected stale/inactive or invalid ingress in that interval. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.loss_events",
+              "source": "uiapplication_screenshot",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Detected registration/lifecycle/ownership gaps or failures, not missed-screenshot count. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.counter_overflow",
+              "source": "uiapplication_screenshot",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Additional counter increment beyond INT64_MAX attempted. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.interval_ms",
+              "source": "uiapplication_screenshot",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Selected drain-to-drain interval, -1 unavailable. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.screenshot.heartbeat_age_ms",
+              "source": "uiapplication_screenshot",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. UIApplication screenshot notification is after capture, not scene-attributed. Last confirmed main-thread observer/activity age, -1 unavailable. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            }
+          ]
+        },
+        {
+          "name": "screen_recording",
+          "required": false,
+          "observations": [
+            {
+              "signal": "capture.recording.observer_state",
+              "source": "uikit_capture_observer",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Effective selected-path availability, including stale. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.coverage",
+              "source": "uikit_capture_observer",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. unknown / best_effort / loss_detected. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.scope",
+              "source": "uikit_capture_observer",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. none / selected_scene / selected_screen; never device-wide. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.scene_availability",
+              "source": "uikit_scene_trait",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Per-scene-path reason; unsupported below iOS 17, not_selected on legacy path. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.state",
+              "source": "uikit_scene_trait",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Only fresh, actually owned samples have values; unsupported API is unsupported, absent/stale/error state has error with no value. Fresh measured active / inactive / unspecified only. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.screen_availability",
+              "source": "uikit_screen_capture",
+              "value_kind": "string",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Fallback reason, not_selected on modern scene path. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.state",
+              "source": "uikit_screen_capture",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Only fresh, actually owned samples have values; unsupported API is unsupported, absent/stale/error state has error with no value. Fresh sampled selected screen.isCaptured only. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.selection_epoch",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Process-local selected-object segment; 0 before selection; no scene identifier. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.sample_age_ms",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Age of last selected-path sample, -1 unavailable. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.initial_samples",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Initial/resume/selection samples, not transitions. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.callback_events",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Accepted trait/screen change callbacks, including same-state repeats. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.state_changes",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Changes between known states in one open generation, excludes initial/unspecified/gaps. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.resamples",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Timer/explicit refresh reads, not callback events. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.ignored_events",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Rejected old-object/generation/off-main/invalid ingress. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.loss_events",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Detected gaps/failures including selection transfer and resample-discovered change. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.counter_overflow",
+              "source": "uikit_capture_observer",
+              "value_kind": "boolean",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Saturated interval counter had a further increment. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
+            },
+            {
+              "signal": "capture.recording.interval_ms",
+              "source": "uikit_capture_observer",
+              "value_kind": "integer",
+              "cardinality": "one",
+              "value_cardinality": "scalar",
+              "statuses": [
+                "ok",
+                "unsupported",
+                "error"
+              ],
+              "supported_on": "ios_device",
+              "behavior": "Physical iOS only; explicit host opt-in independent of check selection. One host-selected UIWindowScene; iOS17+ scene trait, iOS12-16 display-scoped screen fallback only. Selected recording drain interval, -1 unavailable. Independent selected-group drain; conservative 15s freshness and explicit interval/loss metadata; no capture prevention or attestation."
             }
           ]
         }

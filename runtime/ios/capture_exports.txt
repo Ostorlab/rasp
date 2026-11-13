@@ -1,0 +1,8 @@
+_rasp_ios_capture_clear_selection
+_rasp_ios_capture_refresh
+_rasp_ios_capture_select_legacy_window
+_rasp_ios_capture_select_scene
+_rasp_ios_capture_start
+_rasp_ios_capture_stop
+_rasp_local_policy_gate_v1
+_rasp_local_policy_info_v1

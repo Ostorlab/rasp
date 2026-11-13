@@ -1,0 +1,30 @@
+# Exact source-byte guard, independent of collector test results or build metadata.
+if(NOT DEFINED RASP_SOURCE_ROOT)
+  message(FATAL_ERROR "RASP_SOURCE_ROOT is required")
+endif()
+set(parent 0fd8b4d01f6d9e398904dea28f85d193daeb1edb)
+execute_process(COMMAND git -C "${RASP_SOURCE_ROOT}" merge-base --is-ancestor ${parent} HEAD
+  COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND git -C "${RASP_SOURCE_ROOT}" diff --name-only --diff-filter=MDRTUXB ${parent} --
+  OUTPUT_VARIABLE changed OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+string(REPLACE "\n" ";" paths "${changed}")
+foreach(path IN LISTS paths)
+  if(NOT path STREQUAL "runtime/tests/CMakeLists.txt" AND NOT path STREQUAL "")
+    message(FATAL_ERROR "Stage A changed inherited bytes outside the test graph: ${path}")
+  endif()
+endforeach()
+execute_process(COMMAND git -C "${RASP_SOURCE_ROOT}" ls-files --others --exclude-standard
+  OUTPUT_VARIABLE added OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND git -C "${RASP_SOURCE_ROOT}" diff --name-only --diff-filter=A ${parent} --
+  OUTPUT_VARIABLE tracked_added OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+string(APPEND added "\n${tracked_added}")
+string(REPLACE "\n" ";" additions "${added}")
+foreach(path IN LISTS additions)
+  if(path STREQUAL "")
+    continue()
+  endif()
+  if(NOT path MATCHES "^runtime/(android/src/checks/(loader_provenance\\.(h|cpp)|module_provenance\\.(h|cpp)|(module_provenance_io|loader_provenance_jni)\\.(c|h))|ios/src/(checks/module_provenance\\.(h|cpp)|util/provenance_bundle\\.(h|mm))|posix/include/rasp/posix/provenance\\.h|tests/provenance/.*)$")
+    message(FATAL_ERROR "Unreviewed Stage A addition: ${path}")
+  endif()
+endforeach()
+message(STATUS "All inherited production/ABI/manifest/packer/resource bytes equal exact approved parent")

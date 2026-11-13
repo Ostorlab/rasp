@@ -2,17 +2,23 @@
 
 import contextlib
 import errno
+import json
 import os
 import pathlib
+import zipfile
 from importlib import metadata
 
 import pytest
 
+from rasp_packer import capabilities
 from rasp_packer import cli
 from rasp_packer import identity
 from rasp_packer import packer
 from rasp_packer import runtime_config
+from rasp_packer.android import cipher
 from rasp_packer.android import packer as android_packer
+from rasp_packer.android import resources as android_resources
+from rasp_packer.android import runtime_library
 from rasp_packer.ios import resources as ios_resources
 
 _BUILD_ID = "a" * 64
@@ -236,7 +242,8 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     assert capsys.readouterr().out.strip() == (
         f"packed ios app: {tmp_path / 'out.ipa'} "
         f"(package dev.ostorlab.demo, version 1.2.3, build {_BUILD_ID}; unsigned, structurally verified)"
-        "\ncapabilities unknown (legacy runtime artifacts); effective checks"
+        "\ncapabilities unknown (legacy runtime artifacts); effective checks "
+        "\nlocal policy report_only; hash ; effective config ; host calls only, adaptation unverified"
     )
 
 
@@ -362,3 +369,105 @@ def testMain_whenNoMapping_passesNoneAsTheMapping(
     cli.main(_pack_arguments(tmp_path))
 
     assert captured["mapping"] is None
+
+
+@pytest.mark.parametrize("data", [b"{}", b" " * 2049])
+def testMain_whenExplicitPolicyIsInvalid_failsBeforeCreatingOutput(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str], data: bytes
+) -> None:
+    filename = tmp_path / "policy.json"
+    filename.write_bytes(data)
+    result = cli.main([*_pack_arguments(tmp_path), "--local-policy", str(filename)])
+    assert result == cli.EXIT_FAILED
+    assert "policy" in capsys.readouterr().err
+    assert (tmp_path / "out.ipa").exists() is False
+
+
+@pytest.mark.skipif(
+    os.environ.get("RASP_POLICY_HOST_APK") is None,
+    reason="requires explicit installed-artifact gate (RASP_POLICY_HOST_APK)",
+)
+@pytest.mark.parametrize("kind", ["apk", "aab"])
+@pytest.mark.parametrize("damage", ["none", "mapping", "policy"])
+def testMain_whenMappingAndLocalPolicyGiven_preservesBothProductionPaths(
+    tmp_path: pathlib.Path, kind: str, damage: str
+) -> None:
+    artifacts = android_resources.load()
+    assert set(artifacts.libraries) == {"arm64-v8a", "armeabi-v7a", "x86", "x86_64"}
+    assert set(artifacts.manifests) == set(artifacts.libraries)
+    assert set(artifacts.policy_manifests) == set(artifacts.libraries)
+    source = pathlib.Path(__file__).parents[1] / "apps/android/InsecureBankv2.aab"
+    app = source
+    package = "com.android.insecurebankv2"
+    if kind == "apk":
+        package = "com.example.withapp"
+        app = tmp_path / "input.apk"
+        manifest = (
+            pathlib.Path(__file__).parent
+            / "android/apk/fixtures/manifest_with_application_and_version.bin"
+        )
+        with zipfile.ZipFile(source) as original, zipfile.ZipFile(app, "w") as target:
+            target.writestr("AndroidManifest.xml", manifest.read_bytes())
+            for name in original.namelist():
+                if name.startswith("base/dex/classes") and name.endswith(".dex"):
+                    target.writestr(name.removeprefix("base/dex/"), original.read(name))
+    mapping_file = tmp_path / "mapping.txt"
+    mapped_class = (
+        "absent.Class"
+        if damage == "mapping"
+        else "com.android.insecurebankv2.CryptoClass"
+    )
+    mapping_file.write_text(
+        f"{package}.Original -> {mapped_class}:\n", encoding="utf-8"
+    )
+    policy_file = tmp_path / "policy.json"
+    document = {
+        "schema_version": 1,
+        "engine_version": 1,
+        "policy_id": "combined-options",
+        "policy_version": 1,
+        "mode": "report_only",
+        "scope": "host_calls_only",
+        "platform": "android",
+        "catalogue_id": capabilities.catalogue_id(),
+        "report_schema_version": 1,
+        "report_reason_version": 1,
+        "native_metadata_version": 1,
+        "operations": [],
+    }
+    policy_file.write_text(
+        "{}" if damage == "policy" else json.dumps(document), encoding="utf-8"
+    )
+    output = tmp_path / f"protected.{kind}"
+    result = cli.main(
+        [
+            "pack",
+            str(app),
+            "--platform",
+            "android",
+            "--build-id",
+            _BUILD_ID,
+            "--output",
+            str(output),
+            "--mapping",
+            str(mapping_file),
+            "--local-policy",
+            str(policy_file),
+        ]
+    )
+    assert list(tmp_path.glob(".rasp-*")) == []
+    if damage != "none":
+        assert result == cli.EXIT_FAILED
+        assert output.exists() is False
+        return
+    assert result == cli.EXIT_OK
+    prefix = "base/" if kind == "aab" else ""
+    with zipfile.ZipFile(output) as packed:
+        key = packed.read(prefix + "assets/rasp/key.bin")
+        class_map = cipher.decrypt(key, packed.read(prefix + "assets/rasp/map.bin"))
+        assert b"com.android.insecurebankv2.CryptoClass," in class_map
+        for abi in artifacts.libraries:
+            library = packed.read(f"{prefix}lib/{abi}/librasp.so")
+            config = json.loads(runtime_library.read_config(library))
+            assert config["local_policy"] == document
+            assert config["build_id"] == _BUILD_ID

@@ -92,6 +92,12 @@ DATA_READ_LITERALS = re.compile(
     rb"|x86_64|arm64|i386"
     rb"|assets/rasp/(?:[a-z]+\.bin|r)"
     rb"|/(?:proc|sys)/.*"
+    # Provenance source identifiers and fixed arrays are consumed through data pointers.
+    rb"|proc_maps_v1|dl_iterate_phdr_v1|application_classloader_v1|dyld_v1"
+    rb"|none|platform|context_absent|native_unavailable|denied|io|malformed|input_limit|jni|cleanup|race|deadline"
+    rb"|complete|unsupported|error|timeout|custom|path|dex|inmemory|delegate_last|runtime_named|boot_named"
+    rb"|dalvik\.system\.(?:PathClassLoader|DexClassLoader|InMemoryDexClassLoader|DelegateLastClassLoader)"
+    rb"|co\.ostorlab\.rasp\.GeneratingClassLoader|java\.lang\.BootClassLoader"
     rb"|TracerPid:"
     rb"|__rasp_config"
     rb"|__DATA"

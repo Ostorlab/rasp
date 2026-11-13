@@ -8,7 +8,18 @@ can treat both formats uniformly.
 
 from rasp_packer import errors
 from rasp_packer import identity
+from rasp_packer.android import capture_permissions
 from rasp_packer.android.aab import proto_manifest
+
+
+def ensure_capture_permissions(data: bytes, checks: tuple[str, ...]) -> bytes:
+    """Add only selected normal capture permissions to the base protobuf manifest."""
+    for permission in capture_permissions.selected(checks):
+        try:
+            data = proto_manifest.ensure_uses_permission(data, permission)
+        except proto_manifest.ProtoManifestError as error:
+            raise errors.ManifestError(str(error)) from error
+    return data
 
 
 def app_identity(manifest: bytes) -> identity.AppIdentity:
