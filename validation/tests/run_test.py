@@ -18,6 +18,8 @@ from xml.sax import saxutils
 
 import pytest
 
+from validation import run as validation_runner
+
 
 def testCommand_whenBinaryOpenFails_reapsActualChildAndPreservesPriorOutput(
     runner: typing.Any, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
@@ -830,6 +832,8 @@ def testAndroidAdmission_whenRefused_preservesRemotePackageAndXml(
     }
 
     class TransportOnly:
+        xml_owned = False
+
         def __init__(self, *args: typing.Any) -> None:
             self.stage = "setup"
             self.server = object()
@@ -1560,3 +1564,109 @@ def testCommand_whenBinaryStreamExceedsPinnedSize_refusesWithinReservation(
     )
     assert result.reason == "resource_limit"
     assert destination.stat().st_size <= 10000
+
+
+@pytest.mark.parametrize("failure", ["budget", "acquisition", "launched_dump"])
+def testXmlOwnership_whenDumpCannotComplete_cleansOnlyAfterProcessAcquisition(
+    failure: str,
+    android_protocol_bundle: typing.Any,
+    runner: typing.Any,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Actual adapter/Recorder/command; only external transport and server are stand-ins."""
+    plan, _, payloads = android_protocol_bundle
+    recorder = runner.Recorder(plan, tmp_path)
+    lab = json.loads(payloads["lab"])
+    cell = plan["cells"][0]
+    trace: list[str] = []
+    sessions: list[typing.Any] = []
+    processes: list[subprocess.Popen[bytes]] = []
+    actual_command = runner.command
+    actual_popen = subprocess.Popen
+
+    class TransportBoundary(validation_runner.AdbSession):
+        def __init__(self, *args: typing.Any) -> None:
+            self.recorder, self.cell, self.nonce, self.lab, self.preflight = args
+            self.stage = "setup"
+            self.refs: dict[str, list[str]] = {stage: [] for stage in runner.PHASES}
+            self.streams_reserved = False
+            self.remaining_streams = 0
+            self.work = tmp_path
+            self.adb = tmp_path / "unused_adb"
+            self.endpoint = "localfilesystem:/UNUSED"
+            self.env = {"PATH": "/usr/bin:/bin", "LANG": "C"}
+            self.probe = ""
+            sessions.append(self)
+
+        def start(self) -> None:
+            trace.append("local_start")
+
+        def alive(self) -> None:
+            pass
+
+        def call(
+            self,
+            probe: str,
+            args: list[str],
+            allow_absent: bool = False,
+            artifact_path: pathlib.Path | None = None,
+        ) -> bytes:
+            self.probe = probe
+            if probe == "dump_baseline" and failure == "budget":
+                self.recorder.cell_deadline = time.monotonic() + 19
+            return super().call(probe, args, allow_absent, artifact_path)
+
+        def close(self) -> None:
+            trace.append("local_close")
+
+    def acquire(*args: typing.Any, **kwargs: typing.Any) -> subprocess.Popen[bytes]:
+        trace.append("dump_acquisition")
+        if failure == "acquisition":
+            raise OSError(errno.EMFILE, "forced dump process acquisition refusal")
+        process = actual_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    props = {
+        "get_state": b"device",
+        "env_api": b"35",
+        "env_os_version": b"15",
+        "env_model": b"UNIT",
+        "env_abi": b"arm64-v8a",
+        "env_emulator": b"0",
+        "env_fingerprint": b"SYNTHETIC_NOT_A_DEVICE",
+        "env_pages": b"4096",
+        "package_path": b"package:/data/app/UNIT/base.apk",
+    }
+
+    def transport(
+        argv: list[str], cwd: pathlib.Path, **kwargs: typing.Any
+    ) -> typing.Any:
+        probe = sessions[-1].probe
+        trace.append(probe)
+        if probe == "dump_baseline":
+            # Replace the out-of-process executable with a real failing local child.
+            return actual_command(
+                [sys.executable, "-I", "-c", "raise SystemExit(1)"], cwd, **kwargs
+            )
+        if kwargs.get("binary_path") is not None:
+            kwargs["binary_path"].write_bytes(payloads["apk"])
+        return runner.CommandResult(
+            props.get(probe, b""),
+            b"",
+            1 if probe.startswith(("xml_", "process_")) else 0,
+            "none",
+            1,
+        )
+
+    monkeypatch.setattr(runner, "AdbSession", TransportBoundary)
+    monkeypatch.setattr(runner, "command", transport)
+    monkeypatch.setattr(subprocess, "Popen", acquire)
+    result = runner.android_run(recorder, cell, "f" * 32, lab, {"abis": ["arm64-v8a"]})
+    assert result["outcome"] == "error" and result["cleanup"]["state"] == "verified"
+    assert trace[-1] == "local_close"
+    assert trace.count("remove_xml") == (1 if failure == "launched_dump" else 0)
+    assert trace.count("dump_baseline") == (0 if failure == "budget" else 1)
+    assert len(processes) == (1 if failure == "launched_dump" else 0)
+    assert all(process.returncode is not None for process in processes)

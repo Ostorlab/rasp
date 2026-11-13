@@ -154,7 +154,10 @@ APK. It does not claim to inspect process memory after termination.
 VAL01_HOST=/tmp/val01-build/tests/rasp_validation_host \
 VAL01_ANDROID_INPUTS=/tmp/val01-prepared-inputs \
 VAL01_ADB_SNAPSHOT=/tmp/val01-read-only-adb-snapshot \
-  /path/to/pinned-packer/bin/python -m pytest -p no:cacheprovider validation/tests/run_test.py
+ANDROID_JAR=/path/to/real/sdk/platforms/android-35/android.jar \
+ANDROID_BUILD_TOOLS=/path/to/real/sdk/build-tools/35.0.1 \
+  /path/to/pinned-packer/bin/python -B -m pytest -p no:cacheprovider \
+    validation/tests/run_test.py validation/tests/prepare_test.py
 ```
 
 The suite exercises real killed/reaped local children and the production C gate,
@@ -192,7 +195,10 @@ command success, empty absence output and the fixed ordered prerequisites withou
 accessing live credentials or devices. APK capacity reserves both pre/post streams
 before acquisition, within the existing ceilings. Remote cleanup begins only after
 identity/environment/APK admission and touching the fixture; nonce XML removal
-also requires confirmed absence followed by our own dump attempt.
+also requires confirmed absence followed by actual dump process acquisition.
+Local alive/budget/process-acquisition refusals acquire no XML ownership. A
+launched dump that fails still owns bounded XML cleanup; the twenty-second
+cleanup reserve and all existing ceilings remain unchanged.
 
 The installed-validator integration controls require the genuine prepared inputs
 and a read-only pinned ADB byte snapshot (never executed). Set
@@ -201,3 +207,78 @@ its recorded inputs, and `VAL01_ADB_SNAPSHOT` to that snapshot. Run the suite wi
 the Python environment bound by the prepared dependency manifest, alongside
 `VAL01_HOST`. Synthetic protocol records supply no signing, device or security
 credit. Missing prerequisites fail; these controls are not silently skipped.
+
+
+## Produce the complete offline inventory
+
+`python -B -m validation.prepare` compiles the fixed fixture with the real public
+SDK, uses the installed production packer, and emits `result.json[input_files]`,
+canonical config, injection records and measured installed dependency bindings.
+It verifies the inventory through actual production preflight before emitting the
+report. It also copies the explicitly supplied, digest-pinned ADB bytes to
+`adb.snapshot` with mode 0400. It never invokes ADB, including help/discovery, and
+never signs, installs or connects to a device. Preparation is separate from a
+runtime result bundle and provides no device/release evidence. A failure retains
+its partial output for inspection; choose a fresh output directory for a retry.
+
+Run on Linux from the repository root with Python 3.14, uv, pinned CMake/Clang, NDK, Java,
+zip/unzip and genuine SDK prerequisites. Set `ANDROID_NDK_HOME`, `ANDROID_JAR`
+(API 35) and `ANDROID_BUILD_TOOLS` (35.0.1) to their real installed locations.
+The complete recipe below builds matching inputs; an externally reviewed build
+may instead supply the same genuine wheel, bridge and host products. Do not use
+an editable packer install or a wheel without the runtime resources/sidecars.
+
+```bash
+set -euo pipefail
+: "${ANDROID_NDK_HOME:?real NDK required}"
+: "${ANDROID_JAR:?real android-35/android.jar required}"
+: "${ANDROID_BUILD_TOOLS:?real build-tools/35.0.1 required}"
+export CMAKE_BUILD_PARALLEL_LEVEL=2 CTEST_PARALLEL_LEVEL=2
+export CC=clang CXX=clang++ PYTHONDONTWRITEBYTECODE=1 UV_LINK_MODE=copy
+work="$(mktemp -d /tmp/val01-offline.XXXXXX)"
+export UV_CACHE_DIR="$work/uv-cache"
+cmake --preset host -S runtime -B "$work/host" -DRASP_PLUGINS=
+cmake --build "$work/host" --target rasp_validation_host --parallel 2
+for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+  cmake --preset android -S runtime -B "$work/native-$abi" -DANDROID_ABI="$abi" -DRASP_PLUGINS=
+  cmake --build "$work/native-$abi" --parallel 2
+  cmake --install "$work/native-$abi" --prefix "$work/stage" --component runtime
+done
+D8="$ANDROID_BUILD_TOOLS/d8" bash runtime/android/stub/build.sh "$work/stub"
+cp -R packer "$work/packer-source"
+resources="$work/packer-source/src/rasp_packer/android/resources"
+mkdir -p "$resources"
+cp -R "$work/stage/rasp_packer/android/resources/." "$resources/"
+cp "$work/stub/stub.dex" "$resources/stub.dex"
+uv build --wheel --out-dir "$work/wheels" "$work/packer-source"
+uv venv --python 3.14 "$work/env"
+uv pip install --python "$work/env/bin/python" --link-mode copy \
+  "$work"/wheels/*.whl pytest==9.1.1 ruff==0.16.10 mypy==2.4.0
+curl -fL --max-time 60 -o "$work/platform-tools.zip" \
+  https://dl.google.com/android/repository/platform-tools_r35.0.2-linux.zip
+echo "acfdcccb123a8718c46c46c059b2f621140194e5ec1ac9d81715be3d6ab6cd0a  $work/platform-tools.zip" | sha256sum -c -
+unzip -q "$work/platform-tools.zip" -d "$work/tools"
+chmod 400 "$work/tools/platform-tools/adb"
+"$work/env/bin/python" -B -m validation.prepare \
+  --wheel "$work"/wheels/*.whl \
+  --bridge "$work/stub/runtime-bridge-compile-only.jar" \
+  --android-jar "$ANDROID_JAR" --build-tools "$ANDROID_BUILD_TOOLS" \
+  --adb "$work/tools/platform-tools/adb" \
+  --adb-sha256 c46d072d4b4ba6d2f961ef6d0f01ffc35ed8093f1c263296659ebf56bccfc777 \
+  --output "$work/inputs"
+export VAL01_HOST="$work/host/tests/rasp_validation_host"
+export VAL01_ANDROID_INPUTS="$work/inputs" VAL01_ADB_SNAPSHOT="$work/inputs/adb.snapshot"
+"$work/env/bin/python" -B -m pytest -v -p no:cacheprovider \
+  validation/tests/run_test.py validation/tests/prepare_test.py
+```
+
+The [Runtime workflow](../.github/workflows/runtime.yml) uses one serial
+`validation-foundation` job after the existing host/four-ABI Android gates. It
+consumes those actual same-run artifacts, builds the matching stub/bridge and
+resource-bearing wheel, installs a private copy-mode environment, prepares the
+inventory, and explicitly collects both test files from the repository root.
+The job requires at least 60 cases and zero skips, checks format/lint/strict types,
+and retains source IDs, input/log hashes and JUnit/software logs. It adds no
+platform matrix and performs no device action. The pinned official platform-tools
+archive and ADB digests above were measured from the same genuine 35.0.2 archive;
+version text or a marker file is not used as a substitute for actual artifact bytes.

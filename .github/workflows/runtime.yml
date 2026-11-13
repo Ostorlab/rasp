@@ -94,6 +94,15 @@ jobs:
         run: cmake --build --preset host --parallel
       - name: Tests
         run: ctest --preset host
+      - name: Retain the actual validation host for the serial Python gate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: val01-host-${{ github.sha }}
+          path: runtime/build/host/tests/rasp_validation_host
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: false
 
   host-asan:
     runs-on: ubuntu-24.04
@@ -467,3 +476,112 @@ jobs:
           ANDROID_JAR="$jar" D8="$d8" ./android/stub/build.sh "$RUNNER_TEMP"
           test -s "$RUNNER_TEMP/stub.dex"
           ANDROID_JAR="$jar" ANDROID_BUILD_TOOLS="$(dirname "$d8")" bash tests/android/local_policy/device/build.sh "$RUNNER_TEMP/policy-host" "$RUNNER_TEMP/runtime-bridge-compile-only.jar"
+
+      - name: Retain genuine release ABI inputs for the serial Python gate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: val01-android-${{ matrix.abi }}-${{ github.sha }}
+          path: ${{ runner.temp }}/runtime-release/rasp_packer/android/resources/lib/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: false
+
+  validation-foundation:
+    needs: [host, android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      UV_LINK_MODE: copy
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: '3.14'
+      - name: Install pinned native and SDK build tools
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}"
+          echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
+          python3 -m venv "$RUNNER_TEMP/val01-build-tools"
+          "$RUNNER_TEMP/val01-build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
+          echo "$RUNNER_TEMP/val01-build-tools/bin" >> "$GITHUB_PATH"
+          : "${ANDROID_HOME:?runner must supply the real Android SDK}"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" "build-tools;35.0.1" "platforms;android-35"
+          echo "ANDROID_JAR=$ANDROID_HOME/platforms/android-35/android.jar" >> "$GITHUB_ENV"
+          echo "ANDROID_BUILD_TOOLS=$ANDROID_HOME/build-tools/35.0.1" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: val01-host-${{ github.sha }}
+          path: ${{ runner.temp }}/val01-host
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: val01-android-*-${{ github.sha }}
+          path: ${{ runner.temp }}/val01-libs
+          merge-multiple: true
+      - name: Build and install the matching resource-bearing production wheel
+        run: |
+          set -euo pipefail
+          ANDROID_JAR="$ANDROID_JAR" D8="$ANDROID_BUILD_TOOLS/d8" bash runtime/android/stub/build.sh "$RUNNER_TEMP/val01-stub"
+          cp -R packer "$RUNNER_TEMP/val01-packer"
+          resources="$RUNNER_TEMP/val01-packer/src/rasp_packer/android/resources"
+          mkdir -p "$resources/lib"
+          cp -R "$RUNNER_TEMP/val01-libs/." "$resources/lib/"
+          cp "$RUNNER_TEMP/val01-stub/stub.dex" "$resources/stub.dex"
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            test -s "$resources/lib/$abi/librasp.so"
+            test -s "$resources/lib/$abi/librasp.so.capabilities.json"
+            test -s "$resources/lib/$abi/librasp.so.local-policy.json"
+          done
+          uv build --wheel --out-dir "$RUNNER_TEMP/val01-wheels" "$RUNNER_TEMP/val01-packer"
+          uv venv --python 3.14 "$RUNNER_TEMP/val01-env"
+          uv pip install --python "$RUNNER_TEMP/val01-env/bin/python" --link-mode copy "$RUNNER_TEMP"/val01-wheels/*.whl pytest==9.1.1 ruff==0.16.10 mypy==2.4.0
+          chmod 700 "$RUNNER_TEMP/val01-host/rasp_validation_host"
+      - name: Prepare pinned offline inputs without invoking ADB
+        run: |
+          set -euo pipefail
+          curl -fL --max-time 60 -o "$RUNNER_TEMP/val01-platform-tools.zip" https://dl.google.com/android/repository/platform-tools_r35.0.2-linux.zip
+          echo "acfdcccb123a8718c46c46c059b2f621140194e5ec1ac9d81715be3d6ab6cd0a  $RUNNER_TEMP/val01-platform-tools.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/val01-platform-tools.zip" -d "$RUNNER_TEMP/val01-platform-tools"
+          chmod 400 "$RUNNER_TEMP/val01-platform-tools/platform-tools/adb"
+          mkdir -m 700 "$RUNNER_TEMP/val01-logs"
+          git rev-parse HEAD 'HEAD^{tree}' | tee "$RUNNER_TEMP/val01-logs/source.txt"
+          "$RUNNER_TEMP/val01-env/bin/python" -B -m validation.prepare \
+            --wheel "$RUNNER_TEMP"/val01-wheels/*.whl \
+            --bridge "$RUNNER_TEMP/val01-stub/runtime-bridge-compile-only.jar" \
+            --android-jar "$ANDROID_JAR" --build-tools "$ANDROID_BUILD_TOOLS" \
+            --adb "$RUNNER_TEMP/val01-platform-tools/platform-tools/adb" \
+            --adb-sha256 c46d072d4b4ba6d2f961ef6d0f01ffc35ed8093f1c263296659ebf56bccfc777 \
+            --output "$RUNNER_TEMP/val01-inputs" 2>&1 | tee "$RUNNER_TEMP/val01-logs/preparation.log"
+          echo "VAL01_ANDROID_INPUTS=$RUNNER_TEMP/val01-inputs" >> "$GITHUB_ENV"
+          echo "VAL01_ADB_SNAPSHOT=$RUNNER_TEMP/val01-inputs/adb.snapshot" >> "$GITHUB_ENV"
+          echo "VAL01_HOST=$RUNNER_TEMP/val01-host/rasp_validation_host" >> "$GITHUB_ENV"
+          sha256sum "$RUNNER_TEMP/val01-inputs/result.json" "$RUNNER_TEMP/val01-inputs/dependencies" "$RUNNER_TEMP/val01-inputs/adb.snapshot" "$RUNNER_TEMP/val01-host/rasp_validation_host" "$RUNNER_TEMP"/val01-wheels/*.whl | tee "$RUNNER_TEMP/val01-logs/inputs.sha256"
+      - name: Collect the complete foundation suite from the repository root
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/val01-env/bin/python" -B -m pytest -v -p no:cacheprovider \
+            --junitxml="$RUNNER_TEMP/val01-logs/tests.xml" \
+            validation/tests/run_test.py validation/tests/prepare_test.py 2>&1 | tee "$RUNNER_TEMP/val01-logs/tests.log"
+          "$RUNNER_TEMP/val01-env/bin/python" -c 'import os,pathlib,xml.etree.ElementTree as x; cases=list(x.parse(pathlib.Path(os.environ["RUNNER_TEMP"])/"val01-logs/tests.xml").iter("testcase")); assert len(cases)>=60 and all(c.find("skipped") is None for c in cases), "incomplete foundation collection"'
+          "$RUNNER_TEMP/val01-env/bin/ruff" check validation 2>&1 | tee "$RUNNER_TEMP/val01-logs/ruff.log"
+          "$RUNNER_TEMP/val01-env/bin/ruff" format --check validation 2>&1 | tee "$RUNNER_TEMP/val01-logs/format.log"
+          "$RUNNER_TEMP/val01-env/bin/mypy" --strict --explicit-package-bases validation/run.py validation/prepare.py validation/tests/run_test.py validation/tests/prepare_test.py 2>&1 | tee "$RUNNER_TEMP/val01-logs/mypy.log"
+          git diff --exit-code
+          sha256sum "$RUNNER_TEMP"/val01-logs/*.log "$RUNNER_TEMP/val01-logs/tests.xml" > "$RUNNER_TEMP/val01-logs/logs.sha256"
+      - name: Retain software-only source and gate logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: val01-offline-logs-${{ github.sha }}
+          path: ${{ runner.temp }}/val01-logs/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false

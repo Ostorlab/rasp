@@ -476,3 +476,14 @@ Both APK stream slots and their pinned byte sizes are reserved within the existi
 Remote cleanup requires admitted identity/environment/APK and a touched fixture;
 XML deletion also requires prior absence and our own creation attempt. Local
 process-group ownership persists until the last signal, followed by reaping.
+
+
+Root’s XML/public-reproduction correction places nonce XML ownership at successful
+dump process acquisition, after all local alive, budget and acquisition refusals,
+inside the command’s ownership cleanup. Failed launched dumps retain cleanup;
+local refusals acquire none. The existing twenty-second cleanup reserve remains.
+`validation.prepare` is the separate offline SDK/installed-production input
+producer for the same closed formats, not a third execution route. The serial
+Runtime workflow consumer reuses existing host/four-ABI build artifacts and runs
+the full Python suite with genuine prepared inputs and zero prerequisite skips.
+No actual ADB invocation, signing/install, live lab or device proof is introduced.

@@ -374,6 +374,7 @@ def command(
     env: dict[str, str] | None = None,
     no_fork: bool = False,
     binary_limit: int = 64 * MIB,
+    on_spawn: typing.Callable[[], None] | None = None,
 ) -> CommandResult:
     """Drain both pipes under deadline; kill/reap the owned group on every exit."""
     require(0 < timeout <= 15, "command deadline")
@@ -410,6 +411,8 @@ def command(
     )
     binary: typing.BinaryIO | None = None
     try:
+        if on_spawn is not None:
+            on_spawn()
         require(
             process.stdout is not None and process.stderr is not None, "missing pipes"
         )
@@ -1058,6 +1061,7 @@ class Recorder:
         env: dict[str, str] | None = None,
         no_fork: bool = False,
         binary_limit: int = 64 * MIB,
+        on_spawn: typing.Callable[[], None] | None = None,
     ) -> CommandResult:
         """Never extend a cell/suite budget, including during cleanup."""
         self.commands += 1
@@ -1074,6 +1078,7 @@ class Recorder:
             env=env,
             no_fork=no_fork,
             binary_limit=binary_limit,
+            on_spawn=on_spawn,
         )
 
 
@@ -1687,6 +1692,8 @@ def tool_closure(executable: str, bindings: dict[str, dict[str, typing.Any]]) ->
 class AdbSession:
     """A single supervised private server; clients cannot fork an automatic daemon."""
 
+    xml_owned = False
+
     def __init__(
         self,
         recorder: Recorder,
@@ -1870,6 +1877,9 @@ class AdbSession:
             env=self.env,
             no_fork=True,
             binary_limit=limit,
+            on_spawn=self.own_xml
+            if probe in {"dump_baseline", "dump_execution"}
+            else None,
         )
         artifact: dict[str, typing.Any] | None = None
         if (
@@ -1904,6 +1914,10 @@ class AdbSession:
         )
         check_probe(probe, result.stdout, result.stderr, result.returncode, None)
         return result.stdout
+
+    def own_xml(self) -> None:
+        """Own nonce XML cleanup only after a dump process has actually been acquired."""
+        self.xml_owned = True
 
     def close(self) -> None:
         """Kill/reap only our server, capture its bounded output and remove its endpoint."""
@@ -1981,7 +1995,6 @@ def android_run(
     package_path: str | None = None
     device_admitted = False
     fixture_touched = False
-    xml_owned = False
     try:
         session.start()
         require(
@@ -2104,7 +2117,6 @@ def android_run(
                 ],
             )
             for attempt in range(15):
-                xml_owned = True
                 session.call(
                     "dump_" + stage, ["shell", "-n", "uiautomator", "dump", remote_xml]
                 )
@@ -2163,7 +2175,7 @@ def android_run(
                     "force_stop_post",
                     ["shell", "-n", "am", "force-stop", "fixture.validation"],
                 )
-                if xml_owned is True:
+                if session.xml_owned is True:
                     session.call("remove_xml", ["shell", "-n", "rm", "-f", remote_xml])
                     require(
                         session.call(
