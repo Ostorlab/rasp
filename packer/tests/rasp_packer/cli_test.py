@@ -383,14 +383,19 @@ def testMain_whenExplicitPolicyIsInvalid_failsBeforeCreatingOutput(
     assert (tmp_path / "out.ipa").exists() is False
 
 
+@pytest.mark.skipif(
+    os.environ.get("RASP_POLICY_HOST_APK") is None,
+    reason="requires explicit installed-artifact gate (RASP_POLICY_HOST_APK)",
+)
 @pytest.mark.parametrize("kind", ["apk", "aab"])
 @pytest.mark.parametrize("damage", ["none", "mapping", "policy"])
 def testMain_whenMappingAndLocalPolicyGiven_preservesBothProductionPaths(
     tmp_path: pathlib.Path, kind: str, damage: str
 ) -> None:
     artifacts = android_resources.load()
-    if len(artifacts.policy_manifests) == 0:
-        pytest.skip("requires installed native policy-support resources")
+    assert set(artifacts.libraries) == {"arm64-v8a", "armeabi-v7a", "x86", "x86_64"}
+    assert set(artifacts.manifests) == set(artifacts.libraries)
+    assert set(artifacts.policy_manifests) == set(artifacts.libraries)
     source = pathlib.Path(__file__).parents[1] / "apps/android/InsecureBankv2.aab"
     app = source
     package = "com.android.insecurebankv2"
