@@ -28,11 +28,13 @@
 #include "checks/jailbreak.h"
 #include "checks/mitm.h"
 #include "checks/virtualizer.h"
+#include "panic/end_process.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/embedded_config.h"
 #include "rasp/install_id.h"
 #include "rasp/observation.h"
+#include "rasp/panic.h"
 #include "rasp/plugins/registry.h"
 #include "rasp/util/logging.h"
 
@@ -149,6 +151,7 @@ void* monitor(void* argument) {
     if (is_check_enabled(config, "mitm")) {
       std::ranges::move(checks::mitm(), std::back_inserter(builtin));
     }
+    static_cast<void>(panic_on_detection(builtin, end_process));
     const std::vector<Observation> observations =
         rasp::plugins::run_plugins(rasp::plugins::compiled_in(), std::move(builtin), context);
     if constexpr (kLoggingEnabled) {

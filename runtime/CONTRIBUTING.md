@@ -55,6 +55,8 @@ Fix clang-tidy findings instead of silencing them with `NOLINT`. If a check is w
 
 ## Never crash the app
 
+Detections are the one exception, and they end the app on purpose: when a built-in check detects something, `panic_on_detection` (`core/include/rasp/panic.h`) ends it a few seconds later, through a direct system call. A development build only logs what would have ended it. No other code ends the app on purpose. A check that calls `fork` ends the child it created with `_exit`, but that child is a throwaway copy of the process, not the app (see `fork` below). The sections below are about the ways our code could still end it by accident, and how to avoid them.
+
 ### Errors are values, never exceptions
 
 The runtime is built without exceptions and without RTTI. An exception that escapes our code ends the app, and we can't guarantee that every path catches it. So a function that can fail returns `std::expected`, `std::optional` or a status, marked `[[nodiscard]]` so the caller can't ignore it.
@@ -83,7 +85,7 @@ Some state is shared by the whole process: signal handlers, the signal mask, env
 
 | Functions | Why |
 |---|---|
-| `exit`, `_Exit`, `quick_exit`, `abort`, `std::terminate` | They end the process, which is the customer's app. A check that fails reports an error status and returns. |
+| `exit`, `_Exit`, `quick_exit`, `abort`, `std::terminate` | They end the process, which is the customer's app. A check that fails reports an error status and returns. `panic_on_detection` is the only place the runtime ends the app on purpose, and it doesn't call these. |
 | `signal`, `sigaction`, `sigprocmask`, `pthread_sigmask` | Our handler would replace the app's, or its crash reporter's. On Android, the runtime itself handles `SIGSEGV` to turn null pointers into Java exceptions; taking it over turns those into crashes. |
 | `setenv`, `putenv`, `unsetenv`, `setlocale` | They aren't thread-safe. An app thread reading the environment or the locale at the same moment can crash. |
 | `setrlimit` | A lower limit makes the app's own calls fail. |
