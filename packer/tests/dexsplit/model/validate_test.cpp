@@ -653,5 +653,640 @@ TEST(Validate, validate_whenAMethodBreaksARule_namesTheMethodInWhere)
               (std::vector<std::string>{"LT;-><foo>()V"}));
 }
 
+TEST(Validate, validate_whenAMethodPrototypeIsNotAPrototype_reportsIt)
+{
+    Dex dex = valid();
+    method(dex).proto = "(V)V";
+
+    EXPECT_TRUE(reports(dex, "invalid prototype \"(V)V\""));
+}
+
+TEST(Validate, validate_whenMethodAccessFlagsHaveAnUnknownBit_reportsThem)
+{
+    Dex dex = valid();
+    method(dex).access = static_cast<AccessFlags>(0x40009);
+
+    EXPECT_TRUE(reports(dex, "invalid method access flags 0x40009"));
+}
+
+TEST(Validate, validate_whenAMethodIsDeclaredSynchronized_returnsNoProblems)
+{
+    Dex dex = valid();
+    method(dex).access =
+        AccessFlags::Public | AccessFlags::Static | AccessFlags::DeclaredSynchronized;
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAMethodHasTwoVisibilities_reportsIt)
+{
+    Dex dex = valid();
+    method(dex).access = AccessFlags::Public | AccessFlags::Protected | AccessFlags::Static;
+
+    EXPECT_TRUE(reports(dex, "more than one of public, protected and private"));
+}
+
+TEST(Validate, validate_whenAMethodOtherThanAConstructorHasTheConstructorFlag_reportsIt)
+{
+    Dex dex = valid();
+    method(dex).access = AccessFlags::Public | AccessFlags::Constructor;
+
+    EXPECT_TRUE(reports(dex, "only <init> and <clinit> can be marked constructor"));
+}
+
+TEST(Validate, validate_whenInitIsAPublicConstructor_returnsNoProblems)
+{
+    Dex dex = valid();
+    method(dex).name = "<init>";
+    method(dex).access = AccessFlags::Public | AccessFlags::Constructor;
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenClinitIsAStaticConstructor_returnsNoProblems)
+{
+    Dex dex = valid();
+    dex.version = 37;
+    method(dex).name = "<clinit>";
+    method(dex).access = AccessFlags::Static | AccessFlags::Constructor;
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenClinitIsNotStaticInVersion37_reportsIt)
+{
+    Dex dex = valid();
+    dex.version = 37;
+    method(dex).name = "<clinit>";
+    method(dex).access = AccessFlags::Public | AccessFlags::Constructor;
+
+    EXPECT_TRUE(reports(dex, "<clinit> must be static"));
+}
+
+TEST(Validate, validate_whenClinitIsNotStaticInVersion35_returnsNoProblems)
+{
+    Dex dex = valid();
+    method(dex).name = "<clinit>";
+    method(dex).access = AccessFlags::Public | AccessFlags::Constructor;
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenInitIsStaticInVersion37_reportsIt)
+{
+    Dex dex = valid();
+    dex.version = 37;
+    method(dex).name = "<init>";
+
+    EXPECT_TRUE(reports(dex, "<init> must not be static"));
+}
+
+TEST(Validate, validate_whenInitIsStaticInVersion35_doesNotReportTheVersion37Rule)
+{
+    Dex dex = valid();
+    method(dex).name = "<init>";
+
+    EXPECT_FALSE(reports(dex, "<init> must not be static"));
+}
+
+TEST(Validate, validate_whenClinitTakesAParameter_reportsIt)
+{
+    Dex dex = valid();
+    method(dex).name = "<clinit>";
+    method(dex).proto = "(I)V";
+
+    EXPECT_TRUE(reports(dex, "<clinit> must have the prototype ()V"));
+}
+
+TEST(Validate, validate_whenInitDoesNotReturnVoid_reportsIt)
+{
+    Dex dex = valid();
+    method(dex).name = "<init>";
+    method(dex).access = AccessFlags::Public | AccessFlags::Constructor;
+    method(dex).proto = "()I";
+
+    EXPECT_TRUE(reports(dex, "<init> must return void"));
+}
+
+TEST(Validate, validate_whenInitHasAFlagAConstructorCannotHave_reportsIt)
+{
+    Dex dex = valid();
+    method(dex).name = "<init>";
+    method(dex).access = AccessFlags::Public | AccessFlags::Final | AccessFlags::Constructor;
+
+    EXPECT_TRUE(reports(dex, "invalid access flags for <init>"));
+}
+
+TEST(Validate, validate_whenAMethodWithoutCodeIsNotAbstractOrNative_reportsIt)
+{
+    Dex dex = valid();
+    method(dex).code.reset();
+
+    EXPECT_TRUE(reports(dex, "a method without code must be abstract or native"));
+}
+
+TEST(Validate, validate_whenANativeMethodHasNoCode_returnsNoProblems)
+{
+    Dex dex = valid();
+    method(dex).access = AccessFlags::Public | AccessFlags::Static | AccessFlags::Native;
+    method(dex).code.reset();
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAnAbstractMethodHasNoCode_returnsNoProblems)
+{
+    Dex dex = valid();
+    method(dex).access = AccessFlags::Public | AccessFlags::Abstract;
+    method(dex).code.reset();
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAConstructorHasNoCodeInVersion37_reportsIt)
+{
+    Dex dex = valid();
+    dex.version = 37;
+    method(dex).name = "<init>";
+    method(dex).access = AccessFlags::Public | AccessFlags::Native | AccessFlags::Constructor;
+    method(dex).code.reset();
+
+    EXPECT_TRUE(reports(dex, "a constructor must have code"));
+}
+
+TEST(Validate, validate_whenAConstructorHasNoCodeInVersion35_returnsNoProblems)
+{
+    Dex dex = valid();
+    method(dex).name = "<init>";
+    method(dex).access = AccessFlags::Public | AccessFlags::Native | AccessFlags::Constructor;
+    method(dex).code.reset();
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAnAbstractMethodHasAFlagItCannotHave_reportsIt)
+{
+    for (AccessFlags flag : {AccessFlags::Private, AccessFlags::Static, AccessFlags::Final,
+                             AccessFlags::Native, AccessFlags::Strict, AccessFlags::Synchronized}) {
+        Dex dex = valid();
+        method(dex).access = AccessFlags::Abstract | flag;
+        method(dex).code.reset();
+
+        EXPECT_TRUE(reports(dex, "an abstract method cannot be private, static, final, native, "
+                                 "strictfp or synchronized"))
+            << "flag 0x" << std::hex << static_cast<uint32_t>(flag);
+    }
+}
+
+TEST(Validate, validate_whenAnAbstractMethodHasCode_reportsIt)
+{
+    Dex dex = valid();
+    method(dex).access = AccessFlags::Public | AccessFlags::Abstract;
+
+    EXPECT_TRUE(reports(dex, "an abstract or native method cannot have code"));
+}
+
+TEST(Validate, validate_whenANativeMethodHasCode_reportsIt)
+{
+    Dex dex = valid();
+    method(dex).access = AccessFlags::Public | AccessFlags::Static | AccessFlags::Native;
+
+    EXPECT_TRUE(reports(dex, "an abstract or native method cannot have code"));
+}
+
+TEST(Validate, requiredVersion_whenAnInterfaceHasADefaultMethod_returns37)
+{
+    Dex dex = valid_interface(35);
+    method(dex).access = AccessFlags::Public;
+
+    EXPECT_EQ(required_version(dex), 37u);
+}
+
+TEST(Validate, requiredVersion_whenAnInterfaceHasAPrivateMethod_returns37)
+{
+    Dex dex = valid_interface(35);
+    method(dex).access = AccessFlags::Private | AccessFlags::Static;
+
+    EXPECT_EQ(required_version(dex), 37u);
+}
+
+TEST(Validate, requiredVersion_whenAnInterfaceHasAStaticMethod_returns35)
+{
+    Dex dex = valid_interface(35);
+
+    EXPECT_EQ(required_version(dex), 35u);
+}
+
+TEST(Validate, requiredVersion_whenAnInterfaceHasOnlyAnAbstractMethod_returns35)
+{
+    Dex dex = valid_interface(35);
+    method(dex).access = AccessFlags::Public | AccessFlags::Abstract;
+    method(dex).code.reset();
+
+    EXPECT_EQ(required_version(dex), 35u);
+}
+
+TEST(Validate, requiredVersion_whenAnInterfaceHasAPrivateStaticInitializer_returns35)
+{
+    Dex dex = valid_interface(35);
+    method(dex).name = "<clinit>";
+    method(dex).access = AccessFlags::Private | AccessFlags::Static | AccessFlags::Constructor;
+
+    EXPECT_EQ(required_version(dex), 35u);
+}
+
+TEST(Validate, requiredVersion_whenAClassHasAPrivateMethod_returns35)
+{
+    Dex dex = valid();
+    method(dex).access = AccessFlags::Private;
+
+    EXPECT_EQ(required_version(dex), 35u);
+}
+
+TEST(Validate, validate_whenAnInterfaceHasADefaultMethodInVersion37_returnsNoProblems)
+{
+    Dex dex = valid_interface(37);
+    method(dex).access = AccessFlags::Public;
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAnInterfaceHasADefaultMethodInVersion35_returnsNoProblems)
+{
+    Dex dex = valid_interface(35);
+    method(dex).access = AccessFlags::Public;
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAnInterfaceHasAStaticMethodInVersion35_returnsNoProblems)
+{
+    Dex dex = valid_interface(35);
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAnInterfaceMethodIsOnlyProtectedInVersion37_reportsIt)
+{
+    Dex dex = valid_interface(37);
+    method(dex).access = AccessFlags::Protected;
+
+    EXPECT_TRUE(reports(dex, "an interface method must be public, private or static"));
+}
+
+TEST(Validate, validate_whenAnInterfaceMethodIsOnlyProtectedInVersion35_returnsNoProblems)
+{
+    Dex dex = valid_interface(35);
+    method(dex).access = AccessFlags::Protected;
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAnInterfaceMethodWithoutCodeIsNotPublicInVersion37_reportsIt)
+{
+    Dex dex = valid_interface(37);
+    method(dex).access = AccessFlags::Abstract;
+    method(dex).code.reset();
+
+    EXPECT_TRUE(reports(dex, "an interface method without code must be public and abstract"));
+}
+
+TEST(Validate, validate_whenAnInterfaceMethodWithoutCodeIsNotPublicInVersion35_returnsNoProblems)
+{
+    Dex dex = valid_interface(35);
+    method(dex).access = AccessFlags::Abstract;
+    method(dex).code.reset();
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAnInterfaceMethodIsPublicAndAbstractInVersion37_returnsNoProblems)
+{
+    Dex dex = valid_interface(37);
+    method(dex).access = AccessFlags::Public | AccessFlags::Abstract;
+    method(dex).code.reset();
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAnAnnotationIsWellFormed_returnsNoProblems)
+{
+    Dex dex = valid();
+    cls(dex).annotations = {
+        annotation("LA;", {{"x", Value{Value::Int{1}}}, {"y", Value{Value::String{"text"}}}}),
+        annotation("LB;"),
+    };
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAnAnnotationSetsAnElementTwice_reportsIt)
+{
+    Dex dex = valid();
+    cls(dex).annotations = {
+        annotation("LA;", {{"x", Value{Value::Int{1}}}, {"x", Value{Value::Int{2}}}})};
+
+    EXPECT_TRUE(reports(dex, "annotation LA; sets element \"x\" twice"));
+}
+
+TEST(Validate, validate_whenAnAnnotationTypeIsPresentTwice_reportsIt)
+{
+    Dex dex = valid();
+    cls(dex).annotations = {annotation("LA;"), annotation("LA;")};
+
+    EXPECT_TRUE(reports(dex, "annotation LA; is present twice"));
+}
+
+TEST(Validate, validate_whenAnAnnotationVisibilityIsUnknown_reportsIt)
+{
+    Dex dex = valid();
+    AnnotationItem a = annotation("LA;");
+    a.visibility = static_cast<AnnotationVisibility>(3);
+    cls(dex).annotations = {a};
+
+    EXPECT_TRUE(reports(dex, "bad annotation visibility"));
+}
+
+TEST(Validate, validate_whenAnAnnotationHasEachKnownVisibility_returnsNoProblems)
+{
+    Dex dex = valid();
+    AnnotationItem build = annotation("LA;");
+    AnnotationItem runtime = annotation("LB;");
+    AnnotationItem system = annotation("LC;");
+    build.visibility = AnnotationVisibility::Build;
+    runtime.visibility = AnnotationVisibility::Runtime;
+    system.visibility = AnnotationVisibility::System;
+    cls(dex).annotations = {build, runtime, system};
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAnAnnotationTypeIsNotAClassDescriptor_reportsIt)
+{
+    Dex dex = valid();
+    cls(dex).annotations = {annotation("[I")};
+
+    EXPECT_TRUE(reports(dex, "invalid class descriptor \"[I\""));
+}
+
+TEST(Validate, validate_whenAnAnnotationElementNameIsNotAMemberName_reportsIt)
+{
+    Dex dex = valid();
+    cls(dex).annotations = {annotation("LA;", {{"a.b", Value{Value::Int{1}}}})};
+
+    EXPECT_TRUE(reports(dex, "invalid member name \"a.b\""));
+}
+
+TEST(Validate, validate_whenAFieldAnnotationBreaksARule_namesTheFieldInWhere)
+{
+    FieldDef f = field("x", "I", kNoFlags);
+    f.annotations = {annotation("LA;"), annotation("LA;")};
+    Dex dex = with_field(f);
+
+    EXPECT_EQ(where_reported(dex, "annotation LA; is present twice"),
+              (std::vector<std::string>{"LT;->x:I"}));
+}
+
+TEST(Validate, validate_whenAMethodAnnotationBreaksARule_namesTheMethodInWhere)
+{
+    Dex dex = valid();
+    method(dex).annotations = {annotation("LA;"), annotation("LA;")};
+
+    EXPECT_EQ(where_reported(dex, "annotation LA; is present twice"),
+              (std::vector<std::string>{"LT;->m()V"}));
+}
+
+TEST(Validate, validate_whenAParameterAnnotationBreaksARule_namesTheMethodInWhere)
+{
+    Dex dex = valid();
+    method(dex).parameter_annotations = {{}, {annotation("LA;"), annotation("LA;")}};
+
+    EXPECT_EQ(where_reported(dex, "annotation LA; is present twice"),
+              (std::vector<std::string>{"LT;->m()V"}));
+}
+
+TEST(Validate, validate_whenTwoParametersCarryTheSameAnnotationType_returnsNoProblems)
+{
+    Dex dex = valid();
+    method(dex).parameter_annotations = {{annotation("LA;")}, {annotation("LA;")}};
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAStringValueIsNotValidUtf8_reportsIt)
+{
+    Dex dex = with_annotation_value(Value{Value::String{kInvalidUtf8}});
+
+    EXPECT_TRUE(reports(dex, "a string value is not valid UTF-8 / WTF-8"));
+}
+
+TEST(Validate, validate_whenAStringValueHasAnUnpairedSurrogate_returnsNoProblems)
+{
+    Dex dex = with_annotation_value(Value{Value::String{"\xED\xA0\x80"}});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenATypeValueIsNotATypeDescriptor_reportsIt)
+{
+    Dex dex = with_annotation_value(Value{Value::Type{"Q"}});
+
+    EXPECT_TRUE(reports(dex, "invalid type descriptor \"Q\""));
+}
+
+TEST(Validate, validate_whenATypeValueIsVoid_returnsNoProblems)
+{
+    Dex dex = with_annotation_value(Value{Value::Type{"V"}});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAFieldValueNamesAnInvalidClass_reportsIt)
+{
+    Dex dex = with_annotation_value(Value{Value::Field{FieldId{"T", "f", "I"}}});
+
+    EXPECT_TRUE(reports(dex, "invalid class descriptor \"T\""));
+}
+
+TEST(Validate, validate_whenAFieldValueHasAnInvalidName_reportsIt)
+{
+    Dex dex = with_annotation_value(Value{Value::Field{FieldId{"LT;", "a.b", "I"}}});
+
+    EXPECT_TRUE(reports(dex, "invalid member name \"a.b\""));
+}
+
+TEST(Validate, validate_whenAFieldValueHasAnInvalidType_reportsIt)
+{
+    Dex dex = with_annotation_value(Value{Value::Field{FieldId{"LT;", "f", "V"}}});
+
+    EXPECT_TRUE(reports(dex, "invalid field type \"V\""));
+}
+
+TEST(Validate, validate_whenAnEnumValueNamesAnInvalidField_reportsIt)
+{
+    Dex dex = with_annotation_value(Value{Value::Enum{FieldId{"LT;", "a.b", "LT;"}}});
+
+    EXPECT_TRUE(reports(dex, "invalid member name \"a.b\""));
+}
+
+TEST(Validate, validate_whenAnEnumValueNamesAValidField_returnsNoProblems)
+{
+    Dex dex = with_annotation_value(Value{Value::Enum{FieldId{"LE;", "RED", "LE;"}}});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAMethodValueNamesAPrimitiveClass_reportsIt)
+{
+    Dex dex = with_annotation_value(Value{Value::Method{MethodId{"I", "m", "()V"}}});
+
+    EXPECT_TRUE(reports(dex, "invalid method class \"I\""));
+}
+
+TEST(Validate, validate_whenAMethodValueNamesAnArrayClass_returnsNoProblems)
+{
+    Dex dex = with_annotation_value(
+        Value{Value::Method{MethodId{"[I", "clone", "()Ljava/lang/Object;"}}});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAMethodValueHasAnInvalidName_reportsIt)
+{
+    Dex dex = with_annotation_value(Value{Value::Method{MethodId{"LT;", "a.b", "()V"}}});
+
+    EXPECT_TRUE(reports(dex, "invalid member name \"a.b\""));
+}
+
+TEST(Validate, validate_whenAMethodValueHasAnInvalidPrototype_reportsIt)
+{
+    Dex dex = with_annotation_value(Value{Value::Method{MethodId{"LT;", "m", "(V)V"}}});
+
+    EXPECT_TRUE(reports(dex, "invalid prototype \"(V)V\""));
+}
+
+TEST(Validate, validate_whenAMethodTypeValueIsNotAPrototype_reportsIt)
+{
+    Dex dex = with_annotation_value(Value{Value::MethodType{"(V)V"}});
+
+    EXPECT_TRUE(reports(dex, "invalid prototype \"(V)V\""));
+}
+
+TEST(Validate, requiredVersion_whenAValueIsAMethodType_returns38)
+{
+    Dex dex = with_annotation_value(Value{Value::MethodType{"()V"}});
+
+    EXPECT_EQ(required_version(dex), 38u);
+}
+
+TEST(Validate, requiredVersion_whenAValueIsAMethodHandle_returns38)
+{
+    Dex dex = with_annotation_value(
+        Value{MethodHandle{MethodHandleKind::InvokeStatic, MethodId{"LT;", "m", "()V"}}});
+
+    EXPECT_EQ(required_version(dex), 38u);
+}
+
+TEST(Validate, requiredVersion_whenAnInitialValueIsAMethodType_returns38)
+{
+    Dex dex = with_static_field("Ljava/lang/invoke/MethodType;", Value{Value::MethodType{"()V"}});
+
+    EXPECT_EQ(required_version(dex), 38u);
+}
+
+TEST(Validate, requiredVersion_whenFeaturesNeedDifferentVersions_returnsTheHighest)
+{
+    Dex dex = valid_interface(35);
+    method(dex).access = AccessFlags::Public;
+    cls(dex).annotations = {annotation("LA;", {{"x", Value{Value::MethodType{"()V"}}}})};
+
+    EXPECT_EQ(required_version(dex), 38u);
+}
+
+TEST(Validate, validate_whenAMethodHandleValueIsWellFormed_returnsNoProblems)
+{
+    Dex dex = with_annotation_value(
+        Value{MethodHandle{MethodHandleKind::InvokeStatic, MethodId{"LT;", "m", "()V"}}});
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenAMethodHandleKindIsUnknown_reportsIt)
+{
+    Dex dex = with_annotation_value(
+        Value{MethodHandle{static_cast<MethodHandleKind>(9), MethodId{"LT;", "m", "()V"}}});
+
+    EXPECT_TRUE(reports(dex, "bad method handle kind 9"));
+}
+
+TEST(Validate, validate_whenAFieldMethodHandleNamesAMethod_reportsIt)
+{
+    Dex dex = with_annotation_value(
+        Value{MethodHandle{MethodHandleKind::StaticGet, MethodId{"LT;", "m", "()V"}}});
+
+    EXPECT_TRUE(reports(dex, "a field method handle names a method"));
+}
+
+TEST(Validate, validate_whenAnInvokeMethodHandleNamesAField_reportsIt)
+{
+    Dex dex = with_annotation_value(
+        Value{MethodHandle{MethodHandleKind::InvokeStatic, FieldId{"LT;", "f", "I"}}});
+
+    EXPECT_TRUE(reports(dex, "an invoke method handle names a field"));
+}
+
+TEST(Validate, validate_whenAMethodHandleNamesAnInvalidMethod_reportsIt)
+{
+    Dex dex = with_annotation_value(
+        Value{MethodHandle{MethodHandleKind::InvokeStatic, MethodId{"LT;", "a.b", "()V"}}});
+
+    EXPECT_TRUE(reports(dex, "invalid member name \"a.b\""));
+}
+
+TEST(Validate, validate_whenAMethodHandleNamesAnInvalidField_reportsIt)
+{
+    Dex dex = with_annotation_value(
+        Value{MethodHandle{MethodHandleKind::InstanceGet, FieldId{"LT;", "f", "V"}}});
+
+    EXPECT_TRUE(reports(dex, "invalid field type \"V\""));
+}
+
+TEST(Validate, validate_whenAnArrayValueHoldsAnInvalidValue_reportsIt)
+{
+    Dex dex =
+        with_annotation_value(Value{Value::Array{{Value{Value::Int{1}}, Value{Value::Type{"Q"}}}}});
+
+    EXPECT_TRUE(reports(dex, "invalid type descriptor \"Q\""));
+}
+
+TEST(Validate, validate_whenANestedAnnotationHasAnInvalidType_reportsIt)
+{
+    Dex dex = with_annotation_value(Value{Shared<EncodedAnnotation>(EncodedAnnotation{"[I", {}})});
+
+    EXPECT_TRUE(reports(dex, "invalid class descriptor \"[I\""));
+}
+
+TEST(Validate, validate_whenANestedAnnotationSetsAnElementTwice_reportsIt)
+{
+    Dex dex = with_annotation_value(Value{Shared<EncodedAnnotation>(
+        EncodedAnnotation{"LB;", {{"y", Value{Value::Int{1}}}, {"y", Value{Value::Int{2}}}}})});
+
+    EXPECT_TRUE(reports(dex, "annotation LB; sets element \"y\" twice"));
+}
+
+TEST(Validate, validate_whenValuesNest64Levels_returnsNoProblems)
+{
+    Dex dex = with_annotation_value(nested_arrays(64));
+
+    EXPECT_TRUE(validate(dex).empty());
+}
+
+TEST(Validate, validate_whenValuesNest65Levels_reportsIt)
+{
+    Dex dex = with_annotation_value(nested_arrays(65));
+
+    EXPECT_TRUE(reports(dex, "values nest too deeply"));
+}
+
 } // namespace
 } // namespace dexsplit::model
