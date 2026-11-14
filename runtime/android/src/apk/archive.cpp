@@ -17,6 +17,7 @@
 #include <string_view>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <type_traits>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -221,16 +222,6 @@ struct LocalEntry {
   return path->substr(separator);
 }
 
-/// Computes the digest over the APK's qualifying entries — every entry, stored or deflated — the core of
-/// read_apk_digest. Walks the central directory and feeds each qualifying entry's name, compression method,
-/// CRC-32, compressed size, uncompressed size, and — for a stored entry — its content into one SHA-256, sorted
-/// by name, the way the packer does. A deflated entry contributes its metadata: an entry added, removed,
-/// recompressed or whose content changed produces a different CRC-32 or size, and the digest changes.
-///
-/// @param file The APK's whole file bytes, memory-mapped.
-/// @param own_library The runtime library's filename, with its directory separator, or the legacy name.
-/// @return The 32-byte digest. Nothing when the archive is malformed or the hash fails.
-
 /// The binary-XML chunk types the manifest reader walks: the string pool, the resource map, and start elements.
 constexpr std::uint16_t kAxmlStringPoolType = 0x0001;
 constexpr std::uint16_t kAxmlStartElementType = 0x0102;
@@ -293,7 +284,7 @@ constexpr std::uint8_t kAxmlTypeBoolean = 0x12;
 
 /// The string pool of one binary XML document, held with the offsets the reader needs.
 struct StringPool {
-  /// The pool chunk's whole bytes, from its chunk header on.
+  /// The pool chunk's bytes, from its chunk header to the end its own size gives. Every string is read from inside it.
   std::span<const std::uint8_t> chunk;
   /// The pool chunk's own size, header included.
   std::uint32_t chunk_size = 0;
@@ -320,73 +311,143 @@ struct StringPool {
   // The document's first chunk is the XML file header, eight bytes; the string pool follows it.
   const std::span<const std::uint8_t> pool_chunk = document.subspan(8);
   StringPool pool;
-  pool.chunk = pool_chunk;
   pool.chunk_size = read_u32(pool_chunk.subspan(4));
   pool.count = read_u32(pool_chunk.subspan(8));
   pool.flags = read_u32(pool_chunk.subspan(16));
   pool.data_start = read_u32(pool_chunk.subspan(20));
-  if (pool.chunk_size < kAxmlPoolHeaderSize || pool.chunk_size > document.size() - 8) {
+  if (pool.chunk_size < kAxmlPoolHeaderSize || pool.chunk_size > pool_chunk.size()) {
     return std::nullopt;
   }
-  if (pool.data_start < kAxmlPoolHeaderSize || pool.data_start > document.size()) {
+  // The offsets table and the string data both lie inside the pool's own chunk, so the strings start inside it too.
+  if (pool.data_start < kAxmlPoolHeaderSize || pool.data_start > pool.chunk_size) {
     return std::nullopt;
   }
   if (kAxmlPoolHeaderSize + 4ULL * pool.count > pool.data_start) {
     return std::nullopt;
   }
+  // Bounding the pool by its own size, not by the rest of the document, keeps every string read inside the pool.
+  pool.chunk = pool_chunk.first(pool.chunk_size);
   return pool;
+}
+
+/// Reads one UTF-8 string of a pool: two lengths, the string's length in UTF-16 units and then in bytes, each one byte
+/// or two (a set high bit marks the two-byte form), then the bytes and a null.
+///
+/// @param at The string's bytes, up to the end of the pool's chunk.
+/// @return The string's bytes. Nothing when a length or the bytes run past the pool's chunk.
+[[nodiscard]] std::optional<std::string> utf8_pool_string(std::span<const std::uint8_t> at) {
+  std::size_t used = 0;
+  // Reads the length at `used`, checking that each of its bytes is there before reading it.
+  const auto take_length = [&at, &used]() -> std::optional<std::uint32_t> {
+    if (used >= at.size()) {
+      return std::nullopt;
+    }
+    std::uint32_t length = at[used++];
+    if ((length & 0x80U) != 0) {
+      if (used >= at.size()) {
+        return std::nullopt;
+      }
+      length = ((length & 0x7FU) << 8U) | at[used++];
+    }
+    return length;
+  };
+  // The first length counts UTF-16 units. The second, the byte count, is the one that bounds the bytes.
+  if (!take_length().has_value()) {
+    return std::nullopt;
+  }
+  const std::optional<std::uint32_t> length = take_length();
+  if (!length.has_value() || at.size() - used < std::size_t{*length} + 1) {
+    return std::nullopt;
+  }
+  return std::string(reinterpret_cast<const char*>(at.data()) + used, *length);
+}
+
+/// Appends `code_point` to `out`, encoded as UTF-8.
+void append_utf8(std::string& out, std::uint32_t code_point) {
+  if (code_point < 0x80U) {
+    out.push_back(static_cast<char>(code_point));
+  } else if (code_point < 0x800U) {
+    out.push_back(static_cast<char>(0xC0U | (code_point >> 6U)));
+    out.push_back(static_cast<char>(0x80U | (code_point & 0x3FU)));
+  } else if (code_point < 0x10000U) {
+    out.push_back(static_cast<char>(0xE0U | (code_point >> 12U)));
+    out.push_back(static_cast<char>(0x80U | ((code_point >> 6U) & 0x3FU)));
+    out.push_back(static_cast<char>(0x80U | (code_point & 0x3FU)));
+  } else {
+    out.push_back(static_cast<char>(0xF0U | (code_point >> 18U)));
+    out.push_back(static_cast<char>(0x80U | ((code_point >> 12U) & 0x3FU)));
+    out.push_back(static_cast<char>(0x80U | ((code_point >> 6U) & 0x3FU)));
+    out.push_back(static_cast<char>(0x80U | (code_point & 0x3FU)));
+  }
+}
+
+/// Reads one UTF-16 string of a pool: its length in UTF-16 units, one unit or two (a set high bit marks the two-unit
+/// form), then the units and a null unit. The string comes back in UTF-8, the encoding the packer hashes the
+/// manifest's strings in, so a string beyond ASCII gives the same bytes on both sides.
+///
+/// @param at The string's bytes, up to the end of the pool's chunk; at least two.
+/// @return The string in UTF-8. Nothing when the units run past the pool's chunk, or hold a surrogate without its
+/// pair, which no string the packer wrote can hold.
+[[nodiscard]] std::optional<std::string> utf16_pool_string(std::span<const std::uint8_t> at) {
+  std::uint32_t length = read_u16(at);
+  std::size_t used = 2;
+  if ((length & 0x8000U) != 0) {
+    if (at.size() < 4) {
+      return std::nullopt;
+    }
+    length = ((length & 0x7FFFU) << 16U) | read_u16(at.subspan(2));
+    used = 4;
+  }
+  if (at.size() - used < 2ULL * length + 2) {
+    return std::nullopt;
+  }
+  const std::span<const std::uint8_t> units = at.subspan(used, 2ULL * length);
+  std::string out;
+  out.reserve(length);
+  std::size_t unit = 0;
+  while (unit < length) {
+    const std::uint32_t first = read_u16(units.subspan(2 * unit));
+    unit++;
+    if (first < 0xD800U || first > 0xDFFFU) {
+      append_utf8(out, first);
+      continue;
+    }
+    // A high surrogate followed by a low one encodes a code point above U+FFFF.
+    if (first > 0xDBFFU || unit == length) {
+      return std::nullopt;
+    }
+    const std::uint32_t second = read_u16(units.subspan(2 * unit));
+    unit++;
+    if (second < 0xDC00U || second > 0xDFFFU) {
+      return std::nullopt;
+    }
+    append_utf8(out, 0x10000U + ((first - 0xD800U) << 10U) + (second - 0xDC00U));
+  }
+  return out;
 }
 
 /// Reads one string of the pool by its index.
 ///
 /// @param pool The pool.
 /// @param index The string's index.
-/// @return The string's bytes without its terminator. Nothing when the index is out of bounds or the string does not
-/// fit the pool's data.
+/// @return The string in UTF-8, without its terminator. Nothing when the index is out of bounds, or the string does not
+/// fit the pool's chunk or does not decode.
 [[nodiscard]] std::optional<std::string> pool_string(const StringPool& pool, std::uint32_t index) {
   if (index >= pool.count) {
     return std::nullopt;
   }
   const std::uint32_t offset = read_u32(pool.chunk.subspan(kAxmlPoolHeaderSize + 4ULL * index));
-  if (pool.data_start + offset + 2 > pool.chunk.size()) {
+  // Both numbers come from the file and are 32-bit. They are added in 64-bit arithmetic, where a large offset cannot
+  // wrap the sum back to a small value that looks in bounds.
+  const std::uint64_t start = std::uint64_t{pool.data_start} + offset;
+  if (start > pool.chunk.size() || pool.chunk.size() - start < 2) {
     return std::nullopt;
   }
-  const std::uint8_t* at = pool.chunk.data() + pool.data_start + offset;
-  const std::size_t left = pool.chunk.size() - pool.data_start - offset;
+  const std::span<const std::uint8_t> at = pool.chunk.subspan(static_cast<std::size_t>(start));
   if ((pool.flags & kAxmlPoolUtf8) != 0) {
-    // Two lengths: the character count and the byte count, each one or two bytes, then the bytes.
-    std::size_t used = 0;
-    std::uint32_t length = at[used++];
-    if ((length & 0x80) != 0) {
-      length = ((length & 0x7F) << 8) | at[used++];
-    }
-    length = at[used++];
-    if ((length & 0x80) != 0) {
-      length = ((length & 0x7F) << 8) | at[used++];
-    }
-    if (used + length + 1 > left) {
-      return std::nullopt;
-    }
-    return std::string(reinterpret_cast<const char*>(at) + used, length);
+    return utf8_pool_string(at);
   }
-  std::uint32_t length = read_u16({at, 2});
-  std::size_t used = 2;
-  if ((length & 0x8000) != 0) {
-    if (left < 4) {
-      return std::nullopt;
-    }
-    length = ((length & 0x7FFF) << 16) | read_u16({at + 2, 2});
-    used = 4;
-  }
-  if (used + 2ULL * length + 2 > left) {
-    return std::nullopt;
-  }
-  std::string out;
-  out.resize(length);
-  for (std::uint32_t i = 0; i < length; i++) {
-    out[i] = static_cast<char>(read_u16({at + used + 2ULL * i, 2}));
-  }
-  return out;
+  return utf16_pool_string(at);
 }
 
 /// The names of the attributes the build and store toolchains stamp on their own: aapt2 records the compile SDK
@@ -607,9 +668,11 @@ struct MalformedScheme {};
 }
 
 /// The result of `read` over the whole file at `apk_path`, memory-mapped read-only for the call, or nothing when the
-/// file can't be opened, is empty, or can't be mapped.
+/// file can't be opened, is empty, or can't be mapped. `read` returns an optional, and this returns it as it is. Every
+/// reader of an APK file goes through here, so the mapping and its cleanup on each path live in one place.
 template <typename Read>
-[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_mapped(const std::string& apk_path, Read read) {
+[[nodiscard]] std::invoke_result_t<Read, std::span<const std::uint8_t>> read_mapped(const std::string& apk_path,
+                                                                                    Read read) {
   // open is a libc variadic function, and its flags come from the included <fcntl.h>.
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
   const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
@@ -629,7 +692,7 @@ template <typename Read>
     return std::nullopt;
   }
   const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
-  std::optional<std::vector<std::uint8_t>> data = read(file);
+  std::invoke_result_t<Read, std::span<const std::uint8_t>> data = read(file);
   munmap(mapping, size);
   return data;
 }
@@ -754,59 +817,50 @@ template <typename Read>
 /// @param count_dexes Whether a class dex counts as a hit; a launch wrapper always does.
 /// @return Whether the APK holds such an entry. Nothing when the file can't be mapped or the archive is malformed.
 [[nodiscard]] std::optional<bool> split_holds_code(const std::string& path, bool count_dexes) {
-  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
-  const int descriptor = open(path.c_str(), O_RDONLY | O_CLOEXEC);
-  if (descriptor < 0) {
-    return std::nullopt;
-  }
-  struct stat status = {};
-  if (fstat(descriptor, &status) != 0 || status.st_size <= 0 || !std::in_range<std::size_t>(status.st_size)) {
-    close(descriptor);
-    return std::nullopt;
-  }
-  const auto size = static_cast<std::size_t>(status.st_size);
-  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
-  void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
-  close(descriptor);
-  if (mapping == MAP_FAILED) {
-    return std::nullopt;
-  }
-  const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
-  const std::optional<std::span<const std::uint8_t>> record = find_end_record(file);
-  if (!record.has_value()) {
-    munmap(mapping, size);
-    return std::nullopt;
-  }
-  const std::uint16_t count = read_u16(record->subspan(10));
-  const std::uint32_t directory_size = read_u32(record->subspan(12));
-  const std::uint32_t directory_offset = read_u32(record->subspan(16));
-  bool holds_code = false;
-  if (directory_offset <= file.size() && directory_size <= file.size() - directory_offset) {
-    std::span<const std::uint8_t> rest = file.subspan(directory_offset, directory_size);
-    for (std::uint16_t index = 0; index < count && !holds_code; ++index) {
-      if (rest.size() < kCentralEntrySize || read_u32(rest) != kCentralSignature) {
-        break;
-      }
-      const std::size_t name_length = read_u16(rest.subspan(28));
-      const std::size_t extra_length = read_u16(rest.subspan(30));
-      const std::size_t comment_length = read_u16(rest.subspan(32));
-      if (rest.size() < kCentralEntrySize + name_length) {
-        break;
-      }
-      const std::string_view name(reinterpret_cast<const char*>(rest.data()) + kCentralEntrySize, name_length);
-      holds_code = (count_dexes && is_classes_entry(name)) || name.ends_with("wrap.sh");
-      const std::size_t entry_size = kCentralEntrySize + name_length + extra_length + comment_length;
-      if (rest.size() < entry_size) {
-        break;
-      }
-      rest = rest.subspan(entry_size);
+  return read_mapped(path, [count_dexes](std::span<const std::uint8_t> file) -> std::optional<bool> {
+    const std::optional<std::span<const std::uint8_t>> record = find_end_record(file);
+    if (!record.has_value()) {
+      return std::nullopt;
     }
-  }
-  munmap(mapping, size);
-  return holds_code;
+    const std::uint16_t count = read_u16(record->subspan(10));
+    const std::uint32_t directory_size = read_u32(record->subspan(12));
+    const std::uint32_t directory_offset = read_u32(record->subspan(16));
+    bool holds_code = false;
+    if (directory_offset <= file.size() && directory_size <= file.size() - directory_offset) {
+      std::span<const std::uint8_t> rest = file.subspan(directory_offset, directory_size);
+      for (std::uint16_t index = 0; index < count && !holds_code; ++index) {
+        if (rest.size() < kCentralEntrySize || read_u32(rest) != kCentralSignature) {
+          break;
+        }
+        const std::size_t name_length = read_u16(rest.subspan(28));
+        const std::size_t extra_length = read_u16(rest.subspan(30));
+        const std::size_t comment_length = read_u16(rest.subspan(32));
+        if (rest.size() < kCentralEntrySize + name_length) {
+          break;
+        }
+        const std::string_view name(reinterpret_cast<const char*>(rest.data()) + kCentralEntrySize, name_length);
+        holds_code = (count_dexes && is_classes_entry(name)) || name.ends_with("wrap.sh");
+        const std::size_t entry_size = kCentralEntrySize + name_length + extra_length + comment_length;
+        if (rest.size() < entry_size) {
+          break;
+        }
+        rest = rest.subspan(entry_size);
+      }
+    }
+    return holds_code;
+  });
 }
 
+/// Computes the digest over the APK's qualifying entries — every entry, stored or deflated — the core of
+/// read_apk_digest. Walks the central directory and feeds each qualifying entry's name, compression method, CRC-32,
+/// uncompressed size, and — for a stored entry — its content into one SHA-256, sorted by name, the way the packer
+/// does. A deflated entry contributes its metadata: an entry added, removed, switched between stored and deflated, or
+/// whose content changed changes the digest. The compressed size is not bound, because it varies by zlib version and
+/// build tool.
+///
+/// @param file The APK's whole file bytes, memory-mapped.
+/// @param own_library The runtime library's filename, with its directory separator, or the legacy name.
+/// @return The 32-byte digest. Nothing when the archive is malformed or the hash fails.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> find_apk_digest(std::span<const std::uint8_t> file,
                                                                        std::string_view own_library) {
   const std::optional<std::span<const std::uint8_t>> record = find_end_record(file);
@@ -840,9 +894,11 @@ template <typename Read>
     }
     const std::string_view name(reinterpret_cast<const char*>(rest.data()) + kCentralEntrySize, name_length);
     if (is_digest_entry(name, own_library)) {
-      // The entry's metadata contribution: method, CRC-32, compressed size, uncompressed size — little-endian.
+      // The entry's metadata contribution: method, CRC-32 and uncompressed size, little-endian. Only the name and the
+      // three fields are reserved: a stored entry's content is appended once read_local_data has checked its size
+      // against the file, so a forged size in the central directory never drives an allocation.
       std::vector<std::uint8_t> blob;
-      blob.reserve(name.size() + 16 + (method == kStored ? stored_size : 0));
+      blob.reserve(name.size() + 12);
       blob.insert(blob.end(), name.begin(), name.end());
       const auto push32 = [&blob](std::uint32_t value) {
         blob.push_back(static_cast<std::uint8_t>(value & 0xFFU));
@@ -896,6 +952,120 @@ template <typename Read>
   return std::vector<std::uint8_t>(digest.begin(), digest.end());
 }
 
+/// Finds the stub dex in an APK's bytes, the core of read_stub_entry: the highest-numbered `classesN.dex` entry, which
+/// the packer always adds last and stored.
+///
+/// @param file The APK's whole file bytes, memory-mapped.
+/// @return The stub dex's bytes. Nothing when the archive is malformed, it holds no class dex, or its highest-numbered
+/// class dex is compressed. A compressed stub is refused, never replaced by the next stored dex down, which would be
+/// the app's own dex.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> find_stub_entry(std::span<const std::uint8_t> file) {
+  const std::optional<std::span<const std::uint8_t>> record = find_end_record(file);
+  if (!record.has_value()) {
+    return std::nullopt;
+  }
+  const std::uint16_t count = read_u16(record->subspan(10));
+  const std::uint32_t directory_size = read_u32(record->subspan(12));
+  const std::uint32_t directory_offset = read_u32(record->subspan(16));
+  if (directory_offset > file.size() || directory_size > file.size() - directory_offset) {
+    return std::nullopt;
+  }
+  std::span<const std::uint8_t> rest = file.subspan(directory_offset, directory_size);
+  std::uint32_t best_number = 0;
+  bool best_stored = false;
+  std::optional<LocalEntry> best_entry;
+  for (std::uint16_t index = 0; index < count; ++index) {
+    if (rest.size() < kCentralEntrySize || read_u32(rest) != kCentralSignature) {
+      return std::nullopt;
+    }
+    const std::uint16_t method = read_u16(rest.subspan(10));
+    const std::uint32_t stored_size = read_u32(rest.subspan(20));
+    const std::size_t name_length = read_u16(rest.subspan(28));
+    const std::size_t extra_length = read_u16(rest.subspan(30));
+    const std::size_t comment_length = read_u16(rest.subspan(32));
+    const std::uint32_t local_offset = read_u32(rest.subspan(42));
+    if (rest.size() < kCentralEntrySize + name_length) {
+      return std::nullopt;
+    }
+    const std::string_view name(reinterpret_cast<const char*>(rest.data()) + kCentralEntrySize, name_length);
+    // Every class dex takes part, stored or compressed, so the highest number is found whatever its method.
+    if (is_classes_entry(name)) {
+      const std::uint32_t number = classes_number(name);
+      if (number > best_number) {
+        best_number = number;
+        best_stored = method == kStored;
+        best_entry = LocalEntry{.local_offset = local_offset, .data_size = stored_size};
+      }
+    }
+    const std::size_t entry_size = kCentralEntrySize + name_length + extra_length + comment_length;
+    if (rest.size() < entry_size) {
+      return std::nullopt;
+    }
+    rest = rest.subspan(entry_size);
+  }
+  if (!best_entry.has_value() || !best_stored) {
+    return std::nullopt;
+  }
+  return read_local_data(file, *best_entry);
+}
+
+/// Finds the digest over an APK's signing certificates in its bytes, the core of read_signer_digest: the concatenated
+/// DER certificates of the first v3 or v2 scheme pair of the APK Signing Block, hashed once.
+///
+/// @param file The APK's whole file bytes, memory-mapped.
+/// @return The 32-byte digest. Nothing when the APK has no signing block, no v3 or v2 pair, or a pair's length runs
+/// past the block.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> find_signer_digest(std::span<const std::uint8_t> file) {
+  // The end record's central-directory offset: the APK signing block, when present, ends there, with
+  // its trailing size and magic filling the 24 bytes before it.
+  std::optional<std::vector<std::uint8_t>> result;
+  std::size_t end_scan = file.size() >= 0xFFFF + 22 ? file.size() - 22 - 0xFFFF : 0;
+  for (std::size_t position = file.size() >= 22 ? file.size() - 22 : 0; position >= end_scan && position > 0;
+       position--) {
+    if (read_u32(file.subspan(position)) != kZipEndRecordSignature) {
+      continue;
+    }
+    const std::uint32_t directory_offset = read_u32(file.subspan(position + 16));
+    if (directory_offset >= 24 && directory_offset <= file.size() &&
+        std::string_view(reinterpret_cast<const char*>(file.data()) + directory_offset - 16, 16) ==
+            kApkSigningBlockMagic) {
+      // The block's size field counts the pairs and the trailing size and magic, so the pairs start
+      // at the offset the size field names before the central directory's end.
+      const std::uint64_t block_size = read_u64(file.subspan(directory_offset - 24));
+      // The block spans its leading size field, the pairs, and the trailing size and magic, so its
+      // named size can reach the central directory's offset less the leading field.
+      if (block_size > directory_offset - 8 || block_size < 24) {
+        break;
+      }
+      const std::size_t pairs_start = directory_offset - static_cast<std::size_t>(block_size);
+      std::size_t pair = pairs_start;
+      while (pair + 12 <= directory_offset - 24) {
+        const std::uint64_t pair_size = read_u64(file.subspan(pair));
+        // The room left after the pair's own length field, found by subtraction: the loop's condition keeps it
+        // positive, and a size near 2^64 read from the file cannot wrap a sum back to a small, in-bounds value.
+        if (pair_size < 4 || pair_size > (directory_offset - 24) - pair - 8) {
+          break;
+        }
+        const std::uint32_t scheme = read_u32(file.subspan(pair + 8));
+        if (scheme == kApkSignatureSchemeV3 || scheme == kApkSignatureSchemeV2) {
+          const std::span<const std::uint8_t> value = file.subspan(pair + 12, static_cast<std::size_t>(pair_size) - 4);
+          const std::optional<std::vector<std::uint8_t>> certificates = signer_certificates(value);
+          if (certificates.has_value()) {
+            const std::optional<std::array<std::uint8_t, checks::kDigestSize>> digest = checks::sha256(*certificates);
+            if (digest.has_value()) {
+              result = std::vector<std::uint8_t>(digest->begin(), digest->end());
+              break;
+            }
+          }
+        }
+        pair += 8 + static_cast<std::size_t>(pair_size);
+      }
+    }
+    break;
+  }
+  return result;
+}
+
 }  // namespace
 
 std::optional<std::vector<std::uint8_t>> find_signing_certificate(std::span<const std::uint8_t> apk,
@@ -944,129 +1114,17 @@ std::optional<std::vector<std::uint8_t>> read_signing_certificate(const std::str
       apk_path, [api_level](std::span<const std::uint8_t> file) { return find_signing_certificate(file, api_level); });
 }
 std::optional<std::vector<std::uint8_t>> read_stored_entry(const std::string& apk_path, std::string_view name) {
-  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
-  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
-  if (descriptor < 0) {
-    return std::nullopt;
-  }
-  struct stat status = {};
-  if (fstat(descriptor, &status) != 0 || status.st_size <= 0 || !std::in_range<std::size_t>(status.st_size)) {
-    close(descriptor);
-    return std::nullopt;
-  }
-  const auto size = static_cast<std::size_t>(status.st_size);
-  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
-  void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
-  close(descriptor);
-  if (mapping == MAP_FAILED) {
-    return std::nullopt;
-  }
-  const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
-  const std::optional<std::vector<std::uint8_t>> data = find_stored_entry(file, name);
-  munmap(mapping, size);
-  return data;
+  return read_mapped(apk_path, [name](std::span<const std::uint8_t> file) { return find_stored_entry(file, name); });
 }
 
 std::optional<std::vector<std::uint8_t>> read_stub_entry(const std::string& apk_path) {
-  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
-  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
-  if (descriptor < 0) {
-    return std::nullopt;
-  }
-  struct stat status = {};
-  if (fstat(descriptor, &status) != 0 || status.st_size <= 0 || !std::in_range<std::size_t>(status.st_size)) {
-    close(descriptor);
-    return std::nullopt;
-  }
-  const auto size = static_cast<std::size_t>(status.st_size);
-  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
-  void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
-  close(descriptor);
-  if (mapping == MAP_FAILED) {
-    return std::nullopt;
-  }
-  const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
-
-  // Walk the central directory for the highest-numbered classesN.dex entry.
-  const std::optional<std::span<const std::uint8_t>> record = find_end_record(file);
-  if (!record.has_value()) {
-    munmap(mapping, size);
-    return std::nullopt;
-  }
-  const std::uint16_t count = read_u16(record->subspan(10));
-  const std::uint32_t directory_size = read_u32(record->subspan(12));
-  const std::uint32_t directory_offset = read_u32(record->subspan(16));
-  if (directory_offset > file.size() || directory_size > file.size() - directory_offset) {
-    munmap(mapping, size);
-    return std::nullopt;
-  }
-  std::span<const std::uint8_t> rest = file.subspan(directory_offset, directory_size);
-  std::uint32_t best_number = 0;
-  std::optional<LocalEntry> best_entry;
-  for (std::uint16_t index = 0; index < count; ++index) {
-    if (rest.size() < kCentralEntrySize || read_u32(rest) != kCentralSignature) {
-      munmap(mapping, size);
-      return std::nullopt;
-    }
-    const std::uint16_t method = read_u16(rest.subspan(10));
-    const std::uint32_t stored_size = read_u32(rest.subspan(20));
-    const std::size_t name_length = read_u16(rest.subspan(28));
-    const std::size_t extra_length = read_u16(rest.subspan(30));
-    const std::size_t comment_length = read_u16(rest.subspan(32));
-    const std::uint32_t local_offset = read_u32(rest.subspan(42));
-    if (rest.size() < kCentralEntrySize + name_length) {
-      munmap(mapping, size);
-      return std::nullopt;
-    }
-    const std::string_view name(reinterpret_cast<const char*>(rest.data()) + kCentralEntrySize, name_length);
-    if (method == kStored && is_classes_entry(name)) {
-      const std::uint32_t number = classes_number(name);
-      if (number > best_number) {
-        best_number = number;
-        best_entry = LocalEntry{.local_offset = local_offset, .data_size = stored_size};
-      }
-    }
-    const std::size_t entry_size = kCentralEntrySize + name_length + extra_length + comment_length;
-    if (rest.size() < entry_size) {
-      munmap(mapping, size);
-      return std::nullopt;
-    }
-    rest = rest.subspan(entry_size);
-  }
-  if (!best_entry.has_value()) {
-    munmap(mapping, size);
-    return std::nullopt;
-  }
-  const std::optional<std::vector<std::uint8_t>> data = read_local_data(file, *best_entry);
-  munmap(mapping, size);
-  return data;
+  return read_mapped(apk_path, find_stub_entry);
 }
 
 std::optional<std::vector<std::uint8_t>> read_apk_digest(const std::string& apk_path) {
-  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
-  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
-  if (descriptor < 0) {
-    return std::nullopt;
-  }
-  struct stat status = {};
-  if (fstat(descriptor, &status) != 0 || status.st_size <= 0 || !std::in_range<std::size_t>(status.st_size)) {
-    close(descriptor);
-    return std::nullopt;
-  }
-  const auto size = static_cast<std::size_t>(status.st_size);
-  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
-  void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
-  close(descriptor);
-  if (mapping == MAP_FAILED) {
-    return std::nullopt;
-  }
-  const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
-  const std::optional<std::vector<std::uint8_t>> result = find_apk_digest(file, own_library_suffix());
-  munmap(mapping, size);
-  return result;
+  const std::string own_library = own_library_suffix();
+  return read_mapped(apk_path,
+                     [&own_library](std::span<const std::uint8_t> file) { return find_apk_digest(file, own_library); });
 }
 
 std::optional<std::vector<std::uint8_t>> read_split_digest(const std::string& apk_path) {
@@ -1111,28 +1169,7 @@ std::optional<std::vector<std::string>> list_split_apks(const std::string& apk_p
 }
 
 std::optional<std::vector<std::uint8_t>> read_dex_digest(const std::string& apk_path) {
-  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
-  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
-  if (descriptor < 0) {
-    return std::nullopt;
-  }
-  struct stat status = {};
-  if (fstat(descriptor, &status) != 0 || status.st_size <= 0 || !std::in_range<std::size_t>(status.st_size)) {
-    close(descriptor);
-    return std::nullopt;
-  }
-  const auto size = static_cast<std::size_t>(status.st_size);
-  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
-  void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
-  close(descriptor);
-  if (mapping == MAP_FAILED) {
-    return std::nullopt;
-  }
-  const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
-  const std::optional<std::vector<std::uint8_t>> result = find_dex_digest(file);
-  munmap(mapping, size);
-  return result;
+  return read_mapped(apk_path, find_dex_digest);
 }
 
 std::optional<std::vector<std::uint8_t>> read_split_dex_flag(const std::string& apk_path) {
@@ -1174,73 +1211,7 @@ std::optional<std::vector<std::uint8_t>> read_manifest_semantics(const std::stri
 }
 
 std::optional<std::vector<std::uint8_t>> read_signer_digest(const std::string& apk_path) {
-  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
-  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
-  if (descriptor < 0) {
-    return std::nullopt;
-  }
-  struct stat status = {};
-  if (fstat(descriptor, &status) != 0 || status.st_size <= 0 || !std::in_range<std::size_t>(status.st_size)) {
-    close(descriptor);
-    return std::nullopt;
-  }
-  const auto size = static_cast<std::size_t>(status.st_size);
-  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
-  void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
-  close(descriptor);
-  if (mapping == MAP_FAILED) {
-    return std::nullopt;
-  }
-  const std::span<const std::uint8_t> file(static_cast<const std::uint8_t*>(mapping), size);
-
-  // The end record's central-directory offset: the APK signing block, when present, ends there, with
-  // its trailing size and magic filling the 24 bytes before it.
-  std::optional<std::vector<std::uint8_t>> result;
-  std::size_t end_scan = file.size() >= 0xFFFF + 22 ? file.size() - 22 - 0xFFFF : 0;
-  for (std::size_t position = file.size() >= 22 ? file.size() - 22 : 0; position >= end_scan && position > 0;
-       position--) {
-    if (read_u32(file.subspan(position)) != kZipEndRecordSignature) {
-      continue;
-    }
-    const std::uint32_t directory_offset = read_u32(file.subspan(position + 16));
-    if (directory_offset >= 24 && directory_offset <= file.size() &&
-        std::string_view(reinterpret_cast<const char*>(file.data()) + directory_offset - 16, 16) ==
-            kApkSigningBlockMagic) {
-      // The block's size field counts the pairs and the trailing size and magic, so the pairs start
-      // at the offset the size field names before the central directory's end.
-      const std::uint64_t block_size = read_u64(file.subspan(directory_offset - 24));
-      // The block spans its leading size field, the pairs, and the trailing size and magic, so its
-      // named size can reach the central directory's offset less the leading field.
-      if (block_size > directory_offset - 8 || block_size < 24) {
-        break;
-      }
-      const std::size_t pairs_start = directory_offset - static_cast<std::size_t>(block_size);
-      std::size_t pair = pairs_start;
-      while (pair + 12 <= directory_offset - 24) {
-        const std::uint64_t pair_size = read_u64(file.subspan(pair));
-        if (pair_size < 4 || pair + 8 + pair_size > directory_offset - 24) {
-          break;
-        }
-        const std::uint32_t scheme = read_u32(file.subspan(pair + 8));
-        if (scheme == kApkSignatureSchemeV3 || scheme == kApkSignatureSchemeV2) {
-          const std::span<const std::uint8_t> value = file.subspan(pair + 12, static_cast<std::size_t>(pair_size) - 4);
-          const std::optional<std::vector<std::uint8_t>> certificates = signer_certificates(value);
-          if (certificates.has_value()) {
-            const std::optional<std::array<std::uint8_t, checks::kDigestSize>> digest = checks::sha256(*certificates);
-            if (digest.has_value()) {
-              result = std::vector<std::uint8_t>(digest->begin(), digest->end());
-              break;
-            }
-          }
-        }
-        pair += 8 + static_cast<std::size_t>(pair_size);
-      }
-    }
-    break;
-  }
-  munmap(mapping, size);
-  return result;
+  return read_mapped(apk_path, find_signer_digest);
 }
 
 }  // namespace rasp::android::apk
