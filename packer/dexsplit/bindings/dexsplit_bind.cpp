@@ -82,6 +82,8 @@ void register_model(py::module_ &m)
             "read",
             [](py::buffer data) {
                 py::buffer_info info = data.request();
+                if (PyBuffer_IsContiguous(info.view(), 'C') == 0)
+                    throw py::value_error("DEX data must be a contiguous buffer");
                 auto bytes = std::span<const uint8_t>(
                     static_cast<const uint8_t *>(info.ptr),
                     static_cast<std::size_t>(info.size) * static_cast<std::size_t>(info.itemsize));

@@ -1,6 +1,7 @@
 """Tests for the editable DEX model, over a small committed DEX fixture."""
 
 import pathlib
+import typing
 
 import pytest
 
@@ -100,3 +101,20 @@ def testWrite_whenTheVersionDoesNotExist_raisesValueError() -> None:
 def testPoolOverflowError_whenCaughtAsValueError_isCaught() -> None:
     assert issubclass(_dex.PoolOverflowError, ValueError) is True
     assert issubclass(_dex.VersionTooLowError, ValueError) is True
+
+
+@pytest.mark.parametrize("step", [2, -1])
+def testRead_whenBufferIsStrided_rejectsItBeforeParsing(step: int) -> None:
+    data = memoryview(_SAMPLE.read_bytes())[::step]
+
+    with pytest.raises(ValueError, match="contiguous"):
+        _dex.Model.read(typing.cast(bytes, data))
+
+
+def testRead_whenBufferIsContiguous_readsEveryClass() -> None:
+    data = memoryview(_SAMPLE.read_bytes())
+
+    model = _dex.Model.read(typing.cast(bytes, data))
+
+    assert len(model.class_descriptors) == 12
+    assert _A_CLASS in model.class_descriptors
