@@ -134,9 +134,10 @@ def apk_digest(
     """Computes the digest over the APK's entries, the way the runtime does at recovery.
 
     The runtime walks the APK's central directory and feeds each qualifying entry's name, compression
-    method, CRC-32, compressed size, uncompressed size, and — for a stored entry — its content into one
-    SHA-256, sorted by name. Deflated entries contribute their metadata: an entry added, removed,
-    recompressed or whose content changed produces a different CRC-32 or size, and the digest changes.
+    method, CRC-32, uncompressed size, and — for a stored entry — its content into one SHA-256, sorted by
+    name. Deflated entries contribute their metadata: an entry added, removed, switched between stored and
+    deflated, or whose content changed changes the digest. The compressed size is not bound, because it
+    varies by zlib version and build tool.
     Both sides skip `META-INF/` (the signing step adds those), `assets/rasp/` and `assets/business/`
     (the fold's own outputs), and the runtime's own libraries (chain A already covers their bytes, and
     the packer gathers its digest before it writes the fold's outputs into them). The libraries are
@@ -146,7 +147,7 @@ def apk_digest(
     Args:
         entries: The APK's entries by name, each a (data, method, compressed_size) triple: the
             uncompressed bytes, the ZIP compression method (0 for stored, 8 for deflated), and the
-            size of the compressed bytes in the APK.
+            size of the compressed bytes in the APK, which the digest does not bind.
         library_filenames: The runtime library's filename under `lib/<abi>/`, which the digest skips.
 
     Returns:
