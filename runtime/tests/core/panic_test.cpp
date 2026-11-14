@@ -270,6 +270,15 @@ TEST(Panic, panicDelay_whenCalled_isWithinTheBounds) {
   }
 }
 
+TEST(Panic, severePanicDelay_whenCalled_isWithinTheBounds) {
+  for (int round = 0; round < 1000; ++round) {
+    const milliseconds delay = severe_panic_delay();
+
+    EXPECT_GE(delay, kMinSeverePanicDelay);
+    EXPECT_LE(delay, kMaxSeverePanicDelay);
+  }
+}
+
 TEST(Panic, armPanic_whenArmed_endsTheProcessOnAnotherThreadAfterTheDelay) {
   const int before = end_calls().load();
   const steady_clock::time_point start = steady_clock::now();
