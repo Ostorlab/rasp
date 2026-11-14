@@ -18,7 +18,6 @@
 #include <vector>
 
 #include "rasp/observation.h"
-#include "rasp/util/obfuscation.h"
 #include "rasp/util/read_file.h"
 #include "util/system_property.h"
 
@@ -288,11 +287,6 @@ Observation observe_build_props(util::PropertyReader read_property) {
 }
 
 std::vector<Observation> root() {
-  static constexpr std::array kObfuscatedLiterals = {
-      kPathsSignal,   kAccessSource,  kStatSource,  kMountsSignal, kRwMountsSignal, kMountsSource,
-      kSelinuxSignal, kSelinuxSource, kPropsSignal, kPropsSource,  kMountsPath,     kEnforcePath,
-  };
-  rasp::util::anchor_literals(kObfuscatedLiterals);
   if (!kOnAndroid) {
     // Off Android the files, mounts and properties are not Android ones: report every probe as unsupported.
     std::vector<Observation> observations;
