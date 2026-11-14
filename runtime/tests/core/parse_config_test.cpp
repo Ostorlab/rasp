@@ -79,6 +79,22 @@ TEST(ParseConfig, parseConfig_whenTheJsonIsMalformed_leavesTheChecksEmpty) {
   EXPECT_FALSE(parse_config(R"({"checks":["debugger"])").checks.has_value());
 }
 
+TEST(ParseConfig, parseConfig_whenTheMaskIsValid_readsIt) { EXPECT_EQ(parse_config(R"({"m":127})").checks_mask, 127U); }
+
+TEST(ParseConfig, parseConfig_whenTheMaskIsZero_preservesTheExplicitEmptyMask) {
+  EXPECT_EQ(parse_config(R"({"m":0,"checks":["root"]})").checks_mask, 0U);
+}
+
+TEST(ParseConfig, parseConfig_whenTheMaskIsMissing_leavesItUnset) {
+  EXPECT_FALSE(parse_config("{}").checks_mask.has_value());
+}
+
+TEST(ParseConfig, parseConfig_whenTheMaskIsNotAnUnsignedInteger_leavesItUnset) {
+  for (const std::string& json : {R"({"m":-1})", R"({"m":"127"})", R"({"m":127.5})", R"({"m":null})"}) {
+    EXPECT_FALSE(parse_config(json).checks_mask.has_value()) << json;
+  }
+}
+
 TEST(ParseConfig, parseConfig_whenGivenThePackersJsonWithTheStubClass_readsIt) {
   const std::optional<std::string> stub_class =
       parse_config(R"({"build_id":"build-7","m":127,"s":"bv.Yeebcwrvmwqiqzhgvsnsio"})").stub_class;
