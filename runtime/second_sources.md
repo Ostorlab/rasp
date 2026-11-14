@@ -20,7 +20,7 @@ mount change can produce legitimate divergence. Hooked user-space and compromise
 
 The complete Android hooks vector is maps hits/libc, RWX/libc, maps hits/syscall, threads. Root continues with the
 existing SELinux and property sources. JNI uses the current attached-env/local-frame implementation and retains the
-existing `debug_api` name; the superseded PR178 JNI discovery path does not replace it.
+existing `debug_api` name; an earlier JNI debugger-discovery implementation does not replace it.
 
 Every source keeps its own status/value even if another succeeds or disagrees. `kError` and `kUnsupported` have
 no value (monostate), never a guessed zero, false, or empty list. Path lookups return absent only for ENOENT/ENOTDIR;
@@ -59,9 +59,9 @@ public sysctl/getppid/Mach interfaces, iOS12 deployment target and API31 Android
 Host tests exercise real file parsing, typed denied/error/short/invalid-count syscall fixtures, source divergence,
 compiled Android hooks() dispatch on Linux own-process procfs, and the real plugin callback. The opaque iOS native
 transport fixtures exercise PID/carry/result/size checks through the production query helper; they do not execute
-Darwin instructions or decode an actual device kinfo_proc. Original PR178 arm64 iOS CI passed, but it does not validate
-these final sources. Exact final-head supported LLVM23 and macOS/Xcode iOS release/dev/tidy/artifact CI remains required
-after approved publication. Physical stock/rooted/debugged-device calibration remains separate and unperformed here.
+Darwin instructions or decode an actual device kinfo_proc. Earlier arm64 iOS CI passed, but it does not validate
+these final sources. Supported LLVM23 and macOS/Xcode iOS release/dev/tidy/artifact CI must exercise the final sources.
+Physical stock/rooted/debugged-device calibration remains separate and unperformed here.
 
 Expected-source manifests must be versioned per release/platform/architecture/config. Register the syscall sources
 above alongside existing ones; retain unsupported entries on unsupported architectures and do not require successful

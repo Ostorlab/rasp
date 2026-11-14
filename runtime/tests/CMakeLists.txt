@@ -235,6 +235,7 @@ target_link_libraries(rasp_android_direct_syscall_test PRIVATE rasp_core rasp_wa
 gtest_discover_tests(rasp_android_direct_syscall_test)
 
 target_sources(rasp_ios_debugger_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
+target_sources(rasp_ios_builtin_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
 add_executable(rasp_ios_process_query_test ios/util/process_query_test.cpp
   ${PROJECT_SOURCE_DIR}/ios/src/util/process_query.cpp)
 target_include_directories(rasp_ios_process_query_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
