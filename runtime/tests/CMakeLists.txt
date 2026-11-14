@@ -163,3 +163,13 @@ target_link_libraries(rasp_android_cipher_test PRIVATE rasp_core rasp_tfpsacrypt
   GTest::gtest_main)
 gtest_discover_tests(rasp_android_cipher_test)
 
+add_executable(rasp_android_key_schedule_bounds_test android/payload/key_schedule_bounds_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
+target_include_directories(rasp_android_key_schedule_bounds_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_key_schedule_bounds_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings
+  rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_key_schedule_bounds_test DISCOVERY_MODE PRE_TEST)
