@@ -259,3 +259,27 @@ def testSplitFromDexEntries_whenNoMappingAndASmallAppHasClassesUnderPackage_does
         split.split_from_dex_entries(entries, "android.support.annotation")
 
     assert caplog.records == []
+
+
+def testSplitFromDexEntries_whenMappingSelectsDefaultPackage_protectsOnlyDefaultPackageClasses() -> (
+    None
+):
+    fixtures = pathlib.Path(__file__).resolve().parents[2] / "dexsplit" / "fixtures"
+    default_package = (fixtures / "shapes.dex").read_bytes()
+    named_packages = _SMALL_DEX.read_bytes()
+    class_mapping = mapping.ClassMapping(renames={"myapp.Entry": "Shape"})
+
+    result = split.split_from_dex_entries(
+        {"classes.dex": default_package, "classes2.dex": named_packages},
+        "myapp",
+        class_mapping,
+    )
+
+    business = {name for dex in result.business for name in dex.classes}
+    framework = {
+        descriptor
+        for data in result.framework
+        for descriptor in _dex.Model.read(data).class_descriptors
+    }
+    assert business == {"Shape", "AbstractShape", "Circle", "Rectangle"}
+    assert framework == set(_dex.Model.read(named_packages).class_descriptors)

@@ -281,3 +281,28 @@ def testPackAab_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     )
     assert app_identity.package_name == _PACKAGE
     assert app_identity.version == "1.0"
+
+
+def testPack_whenAabAndMappingGiven_parsesItAndPassesItToTheSplitter(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "app.aab"
+    _make_aab(app)
+    mapping_file = tmp_path / "mapping.txt"
+    mapping_file.write_text(f"myapp.Entry -> {_PACKAGE}.a:\n", encoding="utf-8")
+    captured: list[tuple[dict[str, bytes], str, mapping.ClassMapping | None]] = []
+
+    packer.pack(
+        app=app,
+        output=tmp_path / "out.aab",
+        config=_CONFIG,
+        mapping=mapping_file,
+        artifacts=_artifacts(),
+        aab_splitter=_recorded_aab_split(captured),
+    )
+
+    assert len(captured) == 1
+    _, package, class_mapping = captured[0]
+    assert package == _PACKAGE
+    assert class_mapping is not None
+    assert class_mapping.business_packages("myapp") == frozenset({_PACKAGE})
