@@ -125,10 +125,12 @@ target_include_directories(rasp_android_app_storage_test PRIVATE ${PROJECT_SOURC
 target_link_libraries(rasp_android_app_storage_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_app_storage_test)
 
-add_executable(rasp_android_archive_test android/apk/archive_test.cpp ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp)
+add_executable(rasp_android_archive_test android/apk/archive_test.cpp ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/android/src/apk/location.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
 target_include_directories(rasp_android_archive_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(rasp_android_archive_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+target_link_libraries(rasp_android_archive_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_archive_test)
 
 add_executable(rasp_android_apk_file_test android/util/apk_file_test.cpp
@@ -152,9 +154,11 @@ add_executable(rasp_android_dex_store_test android/payload/dex_store_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/apk/location.cpp)
 target_include_directories(rasp_android_dex_store_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_dex_store_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
@@ -172,11 +176,13 @@ gtest_discover_tests(rasp_android_cipher_test)
 # exercised end to end without a device.
 add_executable(rasp_android_key_schedule_test android/payload/key_schedule_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/apk/location.cpp)
 target_include_directories(rasp_android_key_schedule_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_key_schedule_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language

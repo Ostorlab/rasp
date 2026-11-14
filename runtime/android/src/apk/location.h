@@ -37,4 +37,15 @@ namespace rasp::android::apk {
 /// @return The native-library directory, or nothing when it cannot be found.
 [[nodiscard]] std::optional<std::string> self_library_dir();
 
+/// Whether the process's uid is the one that owns the package's data directory, as an installed app's process
+/// always is. The package's name comes from the APK's install path, the way the schedule's package record reads
+/// it, and `/data/user/<user>/<package>` is stat-ed, where the user is the process uid's user id. A host that
+/// runs a genuine install inside another app's process carries the host's uid, which does not own the package's
+/// directory, so the fact flips; a stat that fails reads as a flip, so nothing decrypts on the process's own
+/// failure either.
+///
+/// @param apk_path The base APK's path, as the runtime resolved it.
+/// @return Whether the process's uid owns the package's data directory.
+[[nodiscard]] bool owns_package_data(const std::string& apk_path);
+
 }  // namespace rasp::android::apk
