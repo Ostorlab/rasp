@@ -34,10 +34,11 @@ namespace rasp::android::apk {
 /// the entry is compressed.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_stub_entry(const std::string& apk_path);
 
-/// Reads a digest over every stored entry of the APK, excluding the entries the signing step adds (`META-INF/`),
-/// the fold's own outputs (`assets/rasp/`, `assets/business/`), and the runtime library itself (`lib/<abi>/librasp.so`,
-/// whose bytes chain A already covers). The key schedule folds this digest into the root key, so a repackaged APK
-/// that edits any dex, the manifest, a resource, or adds any library derives a different key and nothing decrypts.
+/// Reads a digest over every entry of the APK, stored or deflated: each entry's name, compression method, CRC-32 and
+/// uncompressed size, and a stored entry's content too. It leaves out the entries the signing step adds (`META-INF/`),
+/// the fold's own outputs (`assets/rasp/`, `assets/business/`), and the runtime's own library, matched by its filename
+/// (chain A already covers its bytes). The key schedule folds this digest into the root key, so a repackaged APK that
+/// edits any dex, the manifest, a resource, or adds any library derives a different key and nothing decrypts.
 ///
 /// @param apk_path The APK file to read.
 /// @return The 32-byte digest. Nothing when the file can't be mapped or the archive is malformed.
