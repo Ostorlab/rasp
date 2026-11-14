@@ -778,8 +778,9 @@ struct Catch
 
 /** The instructions between `start` and `end` are protected: an exception
  *  goes to the first matching `catches` entry, else to `catch_all`.  Ranges
- *  may nest or overlap; where they do, the range listed first wins, as in a
- *  Java exception table. */
+ *  may nest or overlap; where they do, their catches are combined in range
+ *  order until a catch-all. The first matching catch wins, as in a Java
+ *  exception table. */
 struct TryRange
 {
     Label start;

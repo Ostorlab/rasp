@@ -76,8 +76,9 @@ struct WriteOptions
  *  output gives the same model up to normalization: classes ordered so
  *  supertypes come first, members and annotation elements sorted, labels
  *  renumbered in code order, switch cases that only fall through removed,
- *  overlapping try ranges flattened and neighbouring ones with the same
- *  handlers joined.  Writing that model again gives the same bytes. */
+ *  overlapping try ranges flattened by combining their catches in range order
+ *  until a catch-all, and neighbouring ranges with the same handlers joined.
+ *  Writing that model again gives the same bytes. */
 [[nodiscard]] std::expected<std::vector<uint8_t>, Error> write(const Dex &dex,
                                                                const WriteOptions &options = {});
 [[nodiscard]] std::expected<void, Error> write_file(const Dex &dex, const std::string &path,
