@@ -1,9 +1,15 @@
 # Security audit findings
 
-Found by inspecting the built artifacts of the `feature/android-fold-program` branch: the packed Alkahf APK, its
-shipped `librasp.so`, the stub dex, and the packer and runtime sources. Each finding says what leaks or breaks,
-the evidence, and the fix. Items marked **done** were delivered in the quick-wins pass (PR #190); items marked
-**open** remain.
+Historical findings from inspecting the built artifacts of the `feature/android-fold-program` branch: the packed
+Alkahf APK, its shipped `librasp.so`, the stub dex, and the packer and runtime sources. Each finding preserves the
+reported evidence and remediation from that audit and its later rounds. “Fixed” and “Verified” in those accounts
+refer to the audited builds; they are not verification of the source revision carrying this document.
+
+**Status at the PR #324 baseline (`6e06a415`)**: the runtime reads the W3 check mask, but the packer still writes the
+check-name list, so W3 is only partially integrated. W2 still uses `.rasp_config`; W5 still preserves the debug
+attribute; the W6/W7 and W16–W20 package, naming, split, process, manifest and signer fixes described below are not
+present at this revision. W11 still folds only `no_tracer` and `text_intact` and remains open. Historical completion
+labels below identify fixes recorded on other branches, not protections delivered by this documentation PR.
 
 ## Shipped library at rest
 
@@ -20,12 +26,12 @@ of `.text.hot`, derives the ChaCha20 key, and decrypts the whole library without
 **Fix**: derive the content key from the library's own content (fold-style) instead of storing the IKM, or scatter
 it under material derived from the library's bytes. Changes the bootstrap's derivation and the packer's mirror.
 
-### W2 — `.rasp_config` section name shipped **done**
+### W2 — `.rasp_config` section name shipped **open here; historical fix below**
 
 The packer renamed `.stubcode`, `.packmeta` and `.stubrodata` but not `.rasp_config`. **Fixed**: the section now
 ships as `.init`, and the runtime reads either name (`runtime_library.py`'s `_space`, PR #190).
 
-### W3 — Check names in the config JSON **done**
+### W3 — Check names in the config JSON **partial here; historical fix below**
 
 The shipped library's config read `{"build_id":"…","checks":["debugger","emulator",…]}` — a list of exactly which
 detectors to bypass. **Fixed**: the config ships `{"build_id":"…","m":127}` — a mask, one bit per group in run order
@@ -39,13 +45,13 @@ move the problem.
 
 ## The APK surface
 
-### W5 — The packer preserved `android:debuggable=true` **done**
+### W5 — The packer preserved `android:debuggable=true` **open here; historical fix below**
 
 A debug build ships debuggable; the packed app accepted a Java debugger over JDWP, which `dbg.tracer_pid` (native
 only) never sees. **Fixed**: the packer sets the attribute false on the APK manifest (in-place AXML edit) and removes
 it on the AAB proto manifest (span edit), for both packaging flows (PR #190).
 
-### W6 — Nothing bound the app identity into the fold **done (package bound)**
+### W6 — Nothing bound the app identity into the fold **open here; historical partial fix below**
 
 The fold's chain S gathered only the runtime's own artifacts; a repackaged APK with patched clear code or a
 different package name still decrypted. **Partially fixed**: the fold now binds the package name (the `kPackage`
@@ -56,7 +62,7 @@ has no inflater to read compressed entries.
 **Remaining**: fold a digest of the app's clear dexes and manifest. Needs a stored-entry (uncompressed) path or an
 inflater in the runtime; larger than a quick win.
 
-### W7 — Fixed vendor markers in the shipped APK **done (surface), open (assets)**
+### W7 — Fixed vendor markers in the shipped APK **open here; historical partial fix below**
 
 `appComponentFactory="co.ostorlab.rasp.RaspStub"` in the manifest, `assets/rasp/*` entry names, `assets/business/`
 prefix, `co/ostorlab/rasp/*` classes in the stub dex. Any packed app was fingerprinted as Ostorlab-protected in
@@ -76,7 +82,7 @@ The keystore share compensates per ABI so every ABI recovers the same root: emul
 as emulating the arm64 one. An app that ships both slices hands the analyst the cheaper architecture. Per-ABI
 roots would need per-ABI dex assets, which multiplies the APK's encrypted entries; not proposed.
 
-### W20 — A same-signed sharedUserId companion runs in the genuine process **done (pinned), done unpinned (manifest seal)**
+### W20 — A same-signed sharedUserId companion runs in the genuine process **open here; historical fix below**
 
 Two same-class bypasses from the same root: the runtime never pinned the signing certificate, so an attacker
 re-signs the target with a throwaway key and presents same-cert companion packages. `am instrument` runs an
@@ -109,7 +115,7 @@ bypass closes by the same pinning: a target re-signed with an attacker key never
 refuses), and a target left under the developer's key admits no attacker instrumentation package (the platform
 requires the same certificate, which the attacker cannot produce).
 
-### W19 — The AAB base manifest and config-split content are unbound → debuggable + wrap.sh **done**
+### W19 — The AAB base manifest and config-split content are unbound → debuggable + wrap.sh **open here; historical fix below**
 
 After W18 bound the AAB base dexes and code-carrying splits, two surfaces stayed unbound on the AAB
 path: the base manifest (the store regenerates its bytes, so the packer cannot bind them) and the
@@ -137,7 +143,7 @@ same bindings: `profileable` (no code-loading mechanism), `uses-native-library` 
 shadowing the runtime library from a split (chain A binds its bytes), repointing
 `appComponentFactory` at an existing class (no code injection without a new dex).
 
-### W18 — The AAB pack skipped the APK-set bindings **done**
+### W18 — The AAB pack skipped the APK-set bindings **open here; historical fix below**
 
 The entry digest and the installed-APK-set record were drawn only for APK packs: the packer cannot
 predict how the store splits an AAB, so `_pack_aab` folded nothing in their place — and AAB is the
@@ -161,7 +167,7 @@ a clean device-split install of the packed AAB runs. The remaining unbound surfa
 install: the base manifest and resources the store regenerates (a manifest edit alone cannot load
 code once the dexes are bound), and any dynamic-feature modules, which the packer does not yet read.
 
-### W17 — A host app runs a genuine install inside its own process **done**
+### W17 — A host app runs a genuine install inside its own process **open here; historical fix below**
 
 The schedule's bindings cover the app's *files*: the base APK's entries, the APKs installed beside it,
 the package in the install path. They did not cover the *process*: any app can read another app's
@@ -185,7 +191,7 @@ External channels on a release build were re-verified blocked: ptrace (`EPERM`, 
 code runs). A host extracting the library into its own data dir already failed the foreign-library
 guard; the surviving variant — loading from the real install — is what the two new gates close.
 
-### W16 — A split APK installed beside a genuine base **done (APK), open (AAB)**
+### W16 — A split APK installed beside a genuine base **open here; historical partial fix below**
 
 The entry binding covers `base.apk` only, but Android runs code from split APKs installed beside the
 base (`install-multiple`): a split shares the app's process and class loader while the base stays
@@ -201,7 +207,7 @@ stays absent, the way the APK entry digest does.
 
 ## The stub and the Java arm
 
-### W9 — The stub dex is a plain, unobfuscated 4 KB dex **open (reduced)**
+### W9 — The stub dex is a plain, unobfuscated 4 KB dex **open here; historical reduction below**
 
 `JArm.hkdf`, `observe`, `run`, `info`, and the `install/program/arm` natives decompile in minutes — but since the
 per-app rename (W7) they no longer name the vendor: the classes, the source file and the library name are random per
@@ -215,7 +221,7 @@ reader that would step over the app's *own* classes, which a fake loader must an
 
 ## The on-device guards
 
-### W11 — The sensor guard folds only two bits **open**
+### W11 — The sensor guard folds only two bits **open at this revision**
 
 `Sensors{no_tracer, text_intact}` — both bypassable without touching the runtime: Frida Gadget runs in-process with
 no ptrace; Java-level hooks (LSPosed) never write `librasp`'s `.text`; JDWP is invisible to `TracerPid`. A fully
@@ -253,9 +259,11 @@ product. Keep raw artifacts private.
 
 ---
 
-*Audit of the `feature/android-fold-program` branch, 2026-11-09. Quick wins W2/W3/W5/W6 delivered in PR #190;
+*Historical audit of the `feature/android-fold-program` branch, 2026-11-09. The original account attributed
+quick wins W2/W3/W5/W6 to PR #190;
 W7's surface (per-app names for the manifest, the classes, the library and the stub's origin) delivered on
-`feature/lifecycle-checks`; the rest ordered by leverage: W7's asset names, W11 (sensor guard widening, delivered),
+`feature/lifecycle-checks`; the remaining work was ordered by leverage: W7's asset names, W11 (sensor guard
+widening reported in later audited work, absent at this revision),
 W1 (IKM), W9 (stub methods), W13 (enrollment). Renaming the classes also binds them: the armed master folds the
 class name the runtime resolves, so a renamed-by-analyst stub class derives a wrong key and nothing decrypts.
 Later rounds on `feature/lifecycle-checks`: W16 (the split-APK set bound into the fold), W17 (the process bound to
