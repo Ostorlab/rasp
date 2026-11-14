@@ -621,6 +621,25 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenTheLibraryCodeIsPatched_givesADiffere
   EXPECT_NE(*recovered, from_key(kRootHex));
 }
 
+TEST_F(KeyScheduleTest, recoverRootKey_whenOnlyTheExpectedTextDigestIsPatched_givesADifferentRoot) {
+  ASSERT_TRUE(write_vectors());
+  const std::optional<Key> original = recover_root_key(kCleanEnvironment, library_path(), apk_path());
+  ASSERT_TRUE(original.has_value() && *original == from_key(kRootHex));
+  std::vector<std::uint8_t> library = from_hex(kLibraryHex);
+  const std::optional<checks::SectionRegion> section = checks::find_section_region(library, ".rasp_config");
+  if (!section.has_value()) {
+    FAIL() << "the vector library has no config section";
+    return;
+  }
+  const auto digest_offset = static_cast<std::size_t>(section->file_offset + section->size - (2 * kKeySize));
+  library[digest_offset] = static_cast<std::uint8_t>(library[digest_offset] ^ 0x01U);
+  ASSERT_TRUE(write_file(library_path(), std::string(library.begin(), library.end())));
+
+  const std::optional<Key> recovered = recover_root_key(kCleanEnvironment, library_path(), apk_path());
+
+  EXPECT_TRUE(recovered.has_value() && *recovered != from_key(kRootHex));
+}
+
 TEST_F(KeyScheduleTest, recoverRootKey_whenTheFoldProgramIsPatched_givesADifferentRoot) {
   ASSERT_TRUE(write_vectors());
   std::vector<std::uint8_t> library = from_hex(kLibraryHex);
