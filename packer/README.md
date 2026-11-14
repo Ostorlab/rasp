@@ -33,7 +33,7 @@ The packer adds a prebuilt runtime, which comes from the runtime build and is no
 
 For Android the packer protects the app's code:
 
-- it sorts the app's classes with the bundled `split-dex` tool. The classes under the app's package are the app's own code. The other classes, such as libraries, stay in the clear, as `classes.dex`, `classes2.dex`, ...;
+- it sorts the app's classes in process with the `dexsplit` package. The classes under the app's package are the app's own code. The other classes, such as libraries, stay in the clear, as `classes.dex`, `classes2.dex`, ...;
 - it encrypts the app's own classes, in dex files of their own, and stores each of these files as the asset `assets/business/<i>.dex`. It also stores the class map as `assets/rasp/map.bin`, encrypted too: the map names the dex file that defines each of these classes. The keys are not stored anywhere: each app's key schedule is a per-app fold of digests of the shipped library and APK entries, and only that library's own keystore share, written into its `.rasp_config` section, lets it recover the root key (`android/key_schedule.py`). The dexes are sealed one stage deeper: the packer also invents a per-app Java program (`assets/rasp/j.bin`), and the stub must run it through the real Android runtime — resolving the classes it names, walking the hierarchies it asks for — before the runtime folds the program's share into the dex master, so an emulator that executes the native side alone still cannot decrypt anything (`android/java_program.py`);
 - it adds a small stub as the last dex file (`classesN.dex`), and sets `<application android:appComponentFactory>` to the stub's class, `co.ostorlab.rasp.RaspStub`, while leaving the app's own `<application android:name>` alone;
 - it adds the native runtime as `lib/<abi>/librasp.so`, for each ABI the app has native libraries for, or for every ABI the runtime is built for when the app has none. Android installs the native libraries of one ABI only, so each of the app's ABIs needs the runtime. An app with native libraries for an ABI the runtime isn't built for is refused with `UnsupportedAbiError`. The packer writes the runtime config, which holds the build id and the check mask, into the `.rasp_config` section of each `librasp.so`, encrypts the library's own code and read-only data (a load-time self-decrypt bootstrap decrypts them before any other code runs, `android/self_encrypt.py`), renames the bootstrap's and the config's sections so the shipped library names neither, and ships the expected plaintext code digest for the integrity check;
@@ -73,13 +73,13 @@ No key is stored in the app: the keys come from a per-app fold the packer invent
     - `manifest.py`: the layer over `axml.py` for the component factory, the app's package and version, and its minimum API level.
   - `aab/`: reading and editing the AAB, and its manifest, which is in protobuf format.
   - `cipher.py`: the authenticated cipher for the class map and the app's own dex files.
-  - `split.py`: runs the bundled `split-dex` tool, which sorts the app's classes into the app's own and the others.
+  - `split.py`: calls the in-process `dexsplit` package, which sorts the app's classes into the app's own and the others.
   - `loader_map.py`: the class map, which names the dex file that defines each of the app's own classes.
   - `key_schedule.py`: the per-app fold, the random recipe of real inputs and decoys that recovers the root key, and the reference interpreter the packer side of the tests shares.
   - `java_program.py`: the Java arm, a per-app program of resolution steps the stub executes through the real Android runtime, and the reference chain whose share the dex master is sealed under.
   - `self_encrypt.py`: the library's own encryption at rest, with the load-time self-decrypt bootstrap's metadata, and the expected plaintext code digest the bootstrap verifies after decrypting.
   - `runtime_library.py`: writes the runtime config, the fold program, the keystore share and the expected text digest into the `.rasp_config` section of `librasp.so`.
-  - `resources.py`: locating the prebuilt stub and native libraries, and the bundled `split-dex` tool.
+  - `resources.py`: locating the prebuilt stub and native libraries.
 - `tests/`: one test file per source file, at the same path, named `<module>_test.py`.
 
 ## Development
