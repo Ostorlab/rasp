@@ -11,6 +11,7 @@ from rasp_packer.android import cipher
 from rasp_packer.android import key_schedule
 from rasp_packer.android import packer
 from rasp_packer.android import resources
+from rasp_packer.android import runtime_library
 from rasp_packer.android import split
 from rasp_packer.android.aab import proto_manifest
 from tests.rasp_packer import conftest
@@ -314,20 +315,14 @@ def testPackAab_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
 
 def runtime_config_read_config(library: bytes) -> bytes:
     """Reads the packed library's config."""
-    from rasp_packer.android import runtime_library
-
     return runtime_library.read_config(library)
 
 
 def keystore_of(library: bytes) -> bytes:
     """Reads the packed library's keystore share."""
-    from rasp_packer.android import runtime_library
-
     return runtime_library.keystore(library)
 
 
 def program_of(library: bytes) -> bytes:
     """Reads the packed library's fold program."""
-    from rasp_packer.android import runtime_library
-
     return runtime_library.program(library)

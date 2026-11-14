@@ -265,7 +265,7 @@ def _schedule_libraries(
         ConfigTooLargeError: The config does not fit in a library's section.
     """
     generator = random.SystemRandom()
-    sections = frozenset().union(
+    sections = frozenset(key_schedule.SECTION_NAMES).intersection(
         *(runtime_library.fold_sections(library) for library in libraries.values())
     )
     smallest = min((len(library) for library in libraries.values()), default=0)

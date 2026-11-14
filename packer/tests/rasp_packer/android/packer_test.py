@@ -3,6 +3,7 @@
 import collections.abc
 import io
 import pathlib
+import random
 import zipfile
 
 import lief
@@ -14,6 +15,7 @@ from rasp_packer.android import cipher
 from rasp_packer.android import key_schedule
 from rasp_packer.android import packer
 from rasp_packer.android import resources
+from rasp_packer.android import runtime_library
 from rasp_packer.android import split
 from rasp_packer.android.apk import axml
 from tests.rasp_packer import conftest
@@ -394,12 +396,20 @@ def testPack_whenASensorWouldFail_theDexesNoLongerDecrypt(
                 cipher.decrypt(key, encrypted)
 
 
+@pytest.mark.parametrize("seed", range(10))
 def testPack_whenTheAppShipsTwoAbis_bothRecoverTheSameRoot(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, seed: int
 ) -> None:
+    monkeypatch.setattr(random, "SystemRandom", lambda: random.Random(seed))
+    other_library = bytearray(_ARM64_SO.replace(b".rela.dyn\0", b".rela.dyz\0"))
+    elf = lief.ELF.parse(io.BytesIO(other_library))
+    assert isinstance(elf, lief.ELF.Binary)
+    text = elf.get_section(".text")
+    assert text is not None
+    other_library[text.offset] ^= 1
     artifacts = resources.Artifacts(
         stub_dex=_STUB_DEX,
-        libraries={"arm64-v8a": _ARM64_SO, "x86_64": _ARM64_SO},
+        libraries={"arm64-v8a": _ARM64_SO, "x86_64": bytes(other_library)},
     )
     output = _pack(
         tmp_path,
@@ -528,20 +538,14 @@ def testPack_whenValidApk_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
 
 def runtime_library_read_config(library: bytes) -> bytes:
     """Reads the packed library's config, for the assertions that the packer wrote it."""
-    from rasp_packer.android import runtime_library
-
     return runtime_library.read_config(library)
 
 
 def runtime_library_keystore(library: bytes) -> bytes:
     """Reads the packed library's keystore share."""
-    from rasp_packer.android import runtime_library
-
     return runtime_library.keystore(library)
 
 
 def runtime_library_program(library: bytes) -> bytes:
     """Reads the packed library's fold program."""
-    from rasp_packer.android import runtime_library
-
     return runtime_library.program(library)
