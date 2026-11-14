@@ -1,4 +1,4 @@
-/// The Android integrity check: whether librasp.so's own executable code is the same in memory as on disk.
+/// The Android integrity check: the expected and running plaintext digests of librasp.so's executable code.
 
 #pragma once
 
@@ -20,11 +20,11 @@ inline constexpr std::size_t kDigestSize = 32;
 
 /// Runs the self-integrity check and returns what it observed.
 ///
-/// It computes the SHA-256 of the executable code (the `.text` section) of librasp.so twice: once from the installed
-/// file, under `lib/<abi>/` inside the APK, and once from the same code in the process's memory. On a device that
-/// hasn't been tampered with the two hashes are equal. They differ when the code was patched in memory, for example by
-/// a tool such as Frida that rewrites a check to always report a safe value. The check only reports the two hashes;
-/// the server compares them.
+/// The memory source is the SHA-256 of the running `.text` section. On packed builds, the file source is the expected
+/// plaintext digest written into `.rasp_config` at pack time; the installed `.text` bytes are ciphertext and are not
+/// hashed for this observation. On unpacked builds, the file source is computed from the installed `.text` bytes.
+/// Equal values mean the running code matches that expectation. The digest slot is attacker-patchable in the file;
+/// this observation does not authenticate it. The key schedule's fold binds the slot into payload-key recovery.
 ///
 /// On Android it locates librasp.so through its own loaded image and reads both hashes. Anywhere else, such as on a
 /// Linux host, every observation is unsupported instead, so the server still sees that the check ran.
@@ -36,8 +36,9 @@ inline constexpr std::size_t kDigestSize = 32;
 ///
 /// Both ranges hold the same `size` bytes. `file_offset` is the section's offset in the file (its `sh_offset`).
 /// `memory_address` is where those bytes sit in the running process, the library's load address plus the section's
-/// virtual address (its `sh_addr`). Because `.text` is allocated, non-writable code, the loader maps it unchanged and
-/// applies no relocation to it, so the file bytes and the memory bytes are identical when nothing patched them.
+/// virtual address (its `sh_addr`). The loader applies no relocation to this allocated, non-writable code. On an
+/// unpacked library the file and memory bytes match when unpatched; on a packed library the file holds ciphertext
+/// and the bootstrap restores plaintext in memory.
 struct TextRegion {
   /// The offset of the section's bytes in the file.
   std::uint64_t file_offset = 0;
@@ -104,9 +105,11 @@ struct SectionRegion {
 /// The integ.text_sha256 observations for the library whose file is `library_path` and whose `.text` bytes are at
 /// `text_memory` in the process.
 ///
-/// It reads the file, finds its `.text` section, hashes those bytes from the file and the same count of bytes from
-/// `text_memory`, and reports one observation per source. It is the part of the check that does not itself touch the
-/// dynamic loader, so a test can drive it with a file and a span of its own choosing.
+/// It reads the file, finds its `.text` section and hashes the same count of bytes from `text_memory`. For the file
+/// source, a nonzero expected plaintext digest in `.rasp_config` is reported directly; otherwise it hashes the
+/// installed
+/// `.text` bytes. The slot is attacker-patchable: its binding is enforced by the key schedule's fold, not by this
+/// observation. This function does not touch the dynamic loader, so tests can supply their own file and memory span.
 ///
 /// @param library_path The path of the installed library file.
 /// @param text_memory The library's loaded image, starting at its load address. The function reads only the `.text`
