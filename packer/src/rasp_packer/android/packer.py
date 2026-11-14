@@ -167,7 +167,7 @@ def _pack_apk(
         libraries[name] = self_encrypt.encrypt_library(configured)
         digests[name] = hashlib.sha256(runtime_library.text_region(configured)).digest()
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
-        libraries, digests, config
+        libraries, digests
     )
     map_frame, dex_entries = _encrypt_payload(result.business, root)
     base_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
@@ -232,7 +232,7 @@ def _pack_aab(
             runtime_library.text_region(configured)
         ).digest()
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
-        libraries, digests, config
+        libraries, digests
     )
     map_frame, dex_data_entries = _encrypt_payload(result.business, root)
     base_dexes = {
@@ -260,7 +260,6 @@ def _pack_aab(
 def _schedule_libraries(
     libraries: dict[str, bytes],
     digests: dict[str, bytes],
-    config: runtime_config.RuntimeConfig,
 ) -> tuple[bytes, bytes, dict[str, bytes], dict[str, bytes]]:
     """Builds the schedule's fold over the app's runtime libraries.
 
@@ -269,7 +268,6 @@ def _schedule_libraries(
     Args:
         libraries: The runtime libraries with their config written and their code and read-only data self-encrypted, by APK entry name. Each already carries the same config.
         digests: The SHA-256 of each library's plaintext `.text` section, by APK entry name.
-        config: The runtime's config.
 
     Returns:
         The root key, the asset share to ship as the s.bin entry, the finished libraries, by APK
@@ -277,7 +275,6 @@ def _schedule_libraries(
 
     Raises:
         InvalidRuntimeError: A library is not an ELF file or has no required section.
-        ConfigTooLargeError: The config does not fit in a library's section.
     """
     generator = random.SystemRandom()
     sections = frozenset().union(
@@ -301,9 +298,7 @@ def _schedule_libraries(
     lib_entries: dict[str, bytes] = {}
     for name, library in libraries.items():
         with_digest = runtime_library.write_text_digest(
-            runtime_library.write_program(
-                runtime_library.write_config(library, config), encoded
-            ),
+            runtime_library.write_program(library, encoded),
             digests[name],
         )
         gather = _resolver(with_digest, program, share_asset, decoys)

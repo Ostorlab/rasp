@@ -1,6 +1,7 @@
 """End-to-end tests of the Android packer, with a recorded split."""
 
 import collections.abc
+import hashlib
 import io
 import pathlib
 import zipfile
@@ -440,6 +441,10 @@ def testPack_whenValidApk_addsTheRuntimeLibraryWithTheConfigProgramAndKeystore(
     assert library != runtime_library.write_config(_ARM64_SO, _CONFIG)
     assert runtime_library.read_config(library) == _CONFIG.to_json()
     assert len(runtime_library.keystore(library)) == key_schedule.KEY_SIZE
+    assert (
+        runtime_library.text_digest(library)
+        == hashlib.sha256(runtime_library.text_region(_ARM64_SO)).digest()
+    )
     assert key_schedule.decode_program(runtime_library.program(library)) is not None
     assert "assets/rasp/config.json" not in names
 
