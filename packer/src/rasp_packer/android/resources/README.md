@@ -12,7 +12,7 @@ The packer looks for these files in this folder, `packer/src/rasp_packer/android
 
 The packer writes these into the APK, made for each app when it is packed, so they are not files of this folder:
 
-- `assets/rasp/s.bin`: one input of the key schedule's fold, stored uncompressed. It is one input of the chains that rebuild the payload's root key, not a key by itself (`key_schedule`).
+- `assets/rasp/s.bin`: one input of the key schedule's fold, stored uncompressed. It feeds the chains that rebuild the payload's root key, but it is not a key by itself (`key_schedule`).
 - `assets/rasp/r<i>.bin`: the decoy entries the fold program names, stored. Their digests are inputs of the chains, indistinguishable from the real inputs to anything short of a full reversal of the runtime.
 - `assets/rasp/map.bin`: the class map, encrypted and stored. It names, per class, the business dex that defines it. `loader_map` builds it and `cipher` describes the frame format; its key is derived from the schedule's root.
 - `assets/business/<i>.dex`: one encrypted business dex per file, stored. Each is one `cipher` frame under its own key, derived from the schedule's seed, the sensor guard of a clean process, and the frame's own nonce, so no two frames share a key.

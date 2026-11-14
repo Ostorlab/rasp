@@ -1,8 +1,8 @@
 # Vendored O-MVLL plugin for the Android runtime
 
 O-MVLL (https://obfuscator.re/o-mvll/) is the obfuscator the Android runtime
-uses. It is a clang pass plugin: clang loads it with `-fpass-plugin` and it
-transforms the code while it compiles. A Release build of `librasp.so`
+uses. It is a clang pass plugin: clang loads it with `-fpass-plugin`, and the plugin
+transforms the code while clang compiles it. A Release build of `librasp.so`
 obfuscates itself with this plugin; see `runtime/cmake/omvll.cmake` and the
 scheme in `runtime/cmake/omvll_config.py`.
 

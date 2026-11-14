@@ -46,6 +46,7 @@ add_library(rasp SHARED
   src/checks/root.cpp
   src/loader/loader.cpp
   src/loader/loader_dex.cpp
+  src/panic/end_process.cpp
   src/payload/cipher.cpp
   src/payload/dex_store.cpp
   src/payload/key_schedule.cpp
@@ -53,8 +54,10 @@ add_library(rasp SHARED
   src/selfdecrypt/chacha20.cpp
   src/selfdecrypt/meta.cpp
   ${rasp_kdf_cpp}
+  src/startup.cpp
   src/util/apk_file.cpp
   src/util/app_storage.cpp
+  src/util/jni.cpp
   src/util/system_property.cpp)
 target_include_directories(rasp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${rasp_kdf_dir})
 target_link_libraries(rasp PRIVATE rasp_core rasp_plugins rasp_loader_dex rasp_tfpsacrypto rasp_warnings rasp_language

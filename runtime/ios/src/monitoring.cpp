@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "checks/codesign.h"
 #include "checks/debugger.h"
 #include "checks/emulator.h"
 #include "checks/hooks.h"
@@ -28,20 +29,21 @@
 #include "checks/jailbreak.h"
 #include "checks/mitm.h"
 #include "checks/virtualizer.h"
+#include "panic/end_process.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/embedded_config.h"
+#include "rasp/heartbeat.h"
 #include "rasp/install_id.h"
 #include "rasp/observation.h"
+#include "rasp/panic.h"
 #include "rasp/plugins/registry.h"
+#include "rasp/schedule.h"
 #include "rasp/util/logging.h"
 
 namespace rasp::ios {
 
 namespace {
-
-/// How long the thread waits between two runs of the checks.
-constexpr std::chrono::seconds kCheckInterval{60};
 
 /// The folder of the app's sandbox that keeps the install id, under its home folder: Library/Application Support,
 /// which iOS never deletes to free space, unlike Library/Caches. The id's file is excluded from backups, so an id
@@ -52,7 +54,7 @@ constexpr std::string_view kInstallIdDirectory = "/Library/Application Support";
 /// and enter it.
 constexpr mode_t kPrivateDirectoryMode = 0700;
 
-/// What the thread reads from the app's environment, once, while the runtime loads.
+/// What the runtime read from the app's environment, once, while it loaded, for the thread.
 struct Environment {
   /// The value of `DYLD_INSERT_LIBRARIES`.
   std::string inserted_libraries;
@@ -110,15 +112,18 @@ struct Environment {
   return config;
 }
 
-/// The thread: reads the runtime's config and initialises the plugins with it, then runs the jailbreak, debugger,
-/// hooking, app-identity, emulator, virtualizer and network-interception checks, each only when the config enables its
-/// group, and the plugins, then again every kCheckInterval, until the process exits. The config and the context the
-/// plugins share are locals of this thread, which never returns, so they live as long as the process.
+/// The thread: beats the monitoring heartbeat, reads the runtime's config and initialises the plugins with it, then,
+/// until the process exits, runs the jailbreak, debugger, hooking, app-identity, code-signing, emulator, virtualizer
+/// and network-interception checks, each only when the config enables its group, beats the heartbeat, arms a panic
+/// when the checks detect something, runs the plugins, beats again and waits a random check_interval. The config and
+/// the context the plugins share are locals of this thread, which never returns, so they live as long as the process.
 ///
 /// @param argument What the runtime read from the app's environment when it loaded, an Environment allocated with
 /// `new` that the thread takes and keeps until the process exits.
 /// @return Never returns.
 void* monitor(void* argument) {
+  Heartbeat& heartbeat = monitor_heartbeat();
+  heartbeat.beat(std::chrono::steady_clock::now());
   const std::unique_ptr<const Environment> environment(static_cast<Environment*>(argument));
   const Config config = read_config(environment->install_id_directory);
   rasp::plugins::Context context;
@@ -145,15 +150,20 @@ void* monitor(void* argument) {
     if (enabled(3, "identity")) {
       std::ranges::move(checks::identity(), std::back_inserter(builtin));
     }
-    if (enabled(4, "emulator")) {
+    if (enabled(4, "codesign")) {
+      std::ranges::move(checks::codesign(), std::back_inserter(builtin));
+    }
+    if (enabled(5, "emulator")) {
       std::ranges::move(checks::emulator(), std::back_inserter(builtin));
     }
-    if (enabled(5, "virtualizer")) {
+    if (enabled(6, "virtualizer")) {
       std::ranges::move(checks::virtualizer(), std::back_inserter(builtin));
     }
-    if (enabled(6, "mitm")) {
+    if (enabled(7, "mitm")) {
       std::ranges::move(checks::mitm(), std::back_inserter(builtin));
     }
+    heartbeat.beat(std::chrono::steady_clock::now());
+    static_cast<void>(panic_on_detection(builtin, end_process));
     const std::vector<Observation> observations =
         rasp::plugins::run_plugins(rasp::plugins::compiled_in(), std::move(builtin), context);
     if constexpr (kLoggingEnabled) {
@@ -161,15 +171,20 @@ void* monitor(void* argument) {
         rasp::log(describe(observation));
       }
     }
-    std::this_thread::sleep_for(kCheckInterval);
+    heartbeat.beat(std::chrono::steady_clock::now());
+    const std::chrono::milliseconds interval = check_interval();
+    if constexpr (rasp::kLoggingEnabled) {
+      rasp::log("next run in " + std::to_string(interval.count()) + " ms");
+    }
+    std::this_thread::sleep_for(interval);
   }
 }
 
 }  // namespace
 
-void start_monitoring() noexcept {
+void start_monitoring(std::string inserted_libraries) noexcept {
   auto environment = std::make_unique<Environment>(Environment{
-      .inserted_libraries = checks::read_inserted_libraries(),
+      .inserted_libraries = std::move(inserted_libraries),
       .install_id_directory = read_install_id_directory(),
   });
   pthread_attr_t attributes{};

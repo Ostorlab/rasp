@@ -48,9 +48,9 @@ namespace {
 /// Reads a JSON number as the check mask.
 ///
 /// @param value The value, or null.
-/// @return The mask. Nothing when `value` is null or is not a number.
+/// @return The mask. Nothing when `value` is null or is not an unsigned integer.
 [[nodiscard]] std::optional<std::uint64_t> read_mask(const yyjson_val* value) {
-  if (!yyjson_is_int(value)) {
+  if (!yyjson_is_uint(value)) {
     return std::nullopt;
   }
   return yyjson_get_uint(value);

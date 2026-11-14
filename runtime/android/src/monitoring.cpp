@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "checks/debugger.h"
@@ -20,21 +21,22 @@
 #include "checks/integrity.h"
 #include "checks/mitm.h"
 #include "checks/root.h"
+#include "panic/end_process.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/embedded_config.h"
+#include "rasp/heartbeat.h"
 #include "rasp/install_id.h"
 #include "rasp/observation.h"
+#include "rasp/panic.h"
 #include "rasp/plugins/registry.h"
+#include "rasp/schedule.h"
 #include "rasp/util/logging.h"
 #include "util/app_storage.h"
 
 namespace rasp::android {
 
 namespace {
-
-/// How long the thread waits between two runs of the checks.
-constexpr std::chrono::seconds kCheckInterval{60};
 
 /// Runs the built-in check groups that the runtime's config enables.
 ///
@@ -87,24 +89,35 @@ constexpr std::chrono::seconds kCheckInterval{60};
   return config;
 }
 
-/// The thread: reads the runtime's config and initialises the plugins with it, then runs the built-in checks the config
-/// enables and the plugins, then again every kCheckInterval, until the process exits. The config and the context the
+/// The thread: beats the monitoring heartbeat, reads the runtime's config and initialises the plugins with it, then,
+/// until the process exits, beats the heartbeat, runs the built-in checks the config enables, arms a panic when they
+/// detect something, runs the plugins, beats again and waits a random check_interval. The config and the context the
 /// plugins share are locals of this thread, which never returns, so they live as long as the process.
 ///
 /// @return Never returns.
 void* monitor(void* /*argument*/) {
+  Heartbeat& heartbeat = monitor_heartbeat();
+  heartbeat.beat(std::chrono::steady_clock::now());
   const Config config = read_config();
   rasp::plugins::Context context;
   rasp::plugins::init_plugins(rasp::plugins::compiled_in(), config, context);
   while (true) {
+    heartbeat.beat(std::chrono::steady_clock::now());
+    std::vector<Observation> builtin = run_checks(config);
+    static_cast<void>(panic_on_detection(builtin, end_process));
     const std::vector<Observation> observations =
-        rasp::plugins::run_plugins(rasp::plugins::compiled_in(), run_checks(config), context);
+        rasp::plugins::run_plugins(rasp::plugins::compiled_in(), std::move(builtin), context);
     if constexpr (kLoggingEnabled) {
       for (const Observation& observation : observations) {
         rasp::log(describe(observation));
       }
     }
-    std::this_thread::sleep_for(kCheckInterval);
+    heartbeat.beat(std::chrono::steady_clock::now());
+    const std::chrono::milliseconds interval = check_interval();
+    if constexpr (kLoggingEnabled) {
+      rasp::log("next run in " + std::to_string(interval.count()) + " ms");
+    }
+    std::this_thread::sleep_for(interval);
   }
 }
 
