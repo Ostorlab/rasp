@@ -264,11 +264,11 @@ inline constexpr std::uint32_t kCounterFrequencyPoison = 0x27d4c2baU;
 /// A poison value for the hardware-identity canary: the CPU identity register.
 inline constexpr std::uint32_t kCpuIdentityPoison = 0x165667b1U;
 
-/// Reads the system counter frequency (CNTFRQ_EL0). A real mobile SoC reports 13–26 MHz
-/// (Qualcomm 19.2 MHz, ARM reference 24 MHz, Samsung 26 MHz). QEMU and unicorn default to
-/// 1 GHz (0x3B9ACA00) or 0 — values a real device never produces. The check is deliberately
-/// loose so no real device trips it: it accepts 1–100 MHz, which covers every shipped ARM64
-/// SoC, and rejects everything outside.
+/// Reads the system counter frequency (CNTFRQ_EL0) and rejects values outside 1–100 MHz.
+/// This heuristic rejects zero and 1 GHz, including the default of newer QEMU CPU models,
+/// but accepts the 62.5 MHz retained by older QEMU models and machine versions. An emulator
+/// can report an accepted frequency, so passing this gate does not establish a physical device.
+/// The broad band is a compatibility policy, not a guarantee covering every mobile SoC.
 [[nodiscard]] bool counter_frequency_implausible() noexcept {
   std::uint64_t frequency = 0;
   // NOLINTNEXTLINE(portability-no-assembler): the canary is the mrs read itself.
