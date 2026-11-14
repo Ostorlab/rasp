@@ -3,7 +3,6 @@ configure_file(include/rasp/version.h.in ${CMAKE_CURRENT_BINARY_DIR}/include/ras
 add_library(rasp_core STATIC
   src/config.cpp
   src/embedded_config.cpp
-  src/heartbeat.cpp
   src/install_id.cpp
   src/observation.cpp
   src/panic.cpp
@@ -12,7 +11,6 @@ add_library(rasp_core STATIC
   src/schedule.cpp
   src/plugins/init_plugins.cpp
   src/plugins/run_plugins.cpp
-  src/schedule.cpp
   src/util/read_file.cpp)
 target_include_directories(rasp_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
