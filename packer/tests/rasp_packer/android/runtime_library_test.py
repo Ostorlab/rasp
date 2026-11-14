@@ -11,7 +11,9 @@ from rasp_packer.android import key_schedule
 from rasp_packer.android import runtime_library
 from tests.rasp_packer import conftest
 
-_CONFIG = runtime_config.RuntimeConfig(build_id="build-1", checks=("identity",))
+_CONFIG = runtime_config.RuntimeConfig(
+    build_id="build-1", checks=("identity",), checks_mask=32
+)
 _LIBRARY = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _SHARE = bytes(range(32, 64))
 _DIGEST = bytes(range(64, 96))
@@ -56,7 +58,9 @@ def testWriteConfig_whenGivenALibrary_changesOnlyTheConfigSection() -> None:
 def testWriteConfig_whenTheConfigLeavesNoProgramRoom_raisesConfigTooLargeError() -> (
     None
 ):
-    config = runtime_config.RuntimeConfig(build_id="x" * 3550, checks=("identity",))
+    config = runtime_config.RuntimeConfig(
+        build_id="x" * 3550, checks=("identity",), checks_mask=32
+    )
 
     with pytest.raises(errors.ConfigTooLargeError):
         runtime_library.write_config(_LIBRARY, config)

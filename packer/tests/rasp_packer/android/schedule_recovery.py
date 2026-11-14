@@ -14,7 +14,15 @@ from rasp_packer.android import runtime_library
 
 
 def recover_root(
-    library: bytes, entries: collections.abc.Mapping[str, bytes], gates: bytes
+    library: bytes,
+    entries: collections.abc.Mapping[str, bytes],
+    gates: bytes,
+    package: bytes,
+    stub_dex: bytes,
+    apk_entries: dict[str, tuple[bytes, int, int]] | None = None,
+    module_dexes: dict[str, bytes] | None = None,
+    manifest_semantics: bytes | None = None,
+    pinned_signer: bytes | None = None,
 ) -> bytes | None:
     """Recovers the root key of a packed library from the library and its APK's stored entries.
 
@@ -25,23 +33,55 @@ def recover_root(
             the fold program names.
         gates: The gate block of the environment the recovery folds in, the clean device's
             key_schedule.CLEAN_GATES to mirror a clean run.
+        package: The app's package name, which the fold program folds in as the package record's
+            input, the way the runtime reads it from its APK's install path.
+        stub_dex: The stub dex's bytes, which the fold program folds in as the stub record's input,
+            the way the runtime reads the highest-numbered `classesN.dex` entry.
+        module_dexes: The base module's class dexes by entry name, for an AAB pack's dex record.
 
     Returns:
         The root key. Nothing when the library's fold program or any input it names cannot be read,
         which the runtime serves as no business class, exactly as for a corrupt APK.
     """
     try:
-        return _recover(library, entries, gates)
+        return _recover(
+            library,
+            entries,
+            gates,
+            package,
+            stub_dex,
+            apk_entries,
+            module_dexes,
+            manifest_semantics,
+            pinned_signer,
+        )
     except KeyError, IndexError, ValueError:
         return None
 
 
 def _recover(
-    library: bytes, entries: collections.abc.Mapping[str, bytes], gates: bytes
+    library: bytes,
+    entries: collections.abc.Mapping[str, bytes],
+    gates: bytes,
+    package: bytes,
+    stub_dex: bytes,
+    apk_entries: dict[str, tuple[bytes, int, int]] | None = None,
+    module_dexes: dict[str, bytes] | None = None,
+    manifest_semantics: bytes | None = None,
+    pinned_signer: bytes | None = None,
 ) -> bytes:
     """Recovers the root key, raising on any input that cannot be gathered."""
     program = key_schedule.decode_program(runtime_library.program(library))
     keystore = runtime_library.keystore(library)
+    # The APK digest skips the runtime's own libraries, the way the runtime skips them: it derives
+    # their filename from its own load path. The library this recovery reads is one of them, so the
+    # entries that hold its content give the filename, which covers every ABI the pack shipped under
+    # the same per-app name.
+    library_filenames = frozenset(
+        name.rpartition("/")[2]
+        for name, (data, _method, _size) in (apk_entries or {}).items()
+        if data == library
+    )
 
     def resolve(record: key_schedule.FoldRecord) -> bytes:
         if record.kind == key_schedule.KIND_TEXT:
@@ -68,6 +108,35 @@ def _recover(
             return gates
         if record.kind == key_schedule.KIND_CONSTANT:
             return program.constants[record.param]
+        if record.kind == key_schedule.KIND_PACKAGE:
+            return hashlib.sha256(package).digest()
+        if record.kind == key_schedule.KIND_STUB:
+            return hashlib.sha256(stub_dex).digest()
+        if record.kind == key_schedule.KIND_APK:
+            return key_schedule.apk_digest(apk_entries or {}, library_filenames)
+        if record.kind == key_schedule.KIND_SPLITS:
+            # The pack ships alone; the fixtures model a clean install, whose set beside the base is empty.
+            return key_schedule.splits_digest()
+        if record.kind == key_schedule.KIND_DEXES:
+            # The fixtures model the store's install: the base module's dexes as the packer wrote them.
+            return key_schedule.dex_digest(module_dexes or {})
+        if record.kind == key_schedule.KIND_DEXLESS_SPLITS:
+            # The fixtures model a clean store install: no APK beside the base holds a class dex.
+            return key_schedule.dexless_splits()
+        if record.kind == key_schedule.KIND_MANIFEST:
+            # The fixtures model the packer's own manifest semantics.
+            if manifest_semantics is None:
+                raise ValueError(
+                    "the manifest record is drawn without the packer's semantics"
+                )
+            return manifest_semantics
+        if record.kind == key_schedule.KIND_SIGNER:
+            # The fixtures model the pinned certificate's digest.
+            if pinned_signer is None:
+                raise ValueError(
+                    "the signer record is drawn without a pinned certificate"
+                )
+            return pinned_signer
         return hashlib.sha256(
             entries[key_schedule.decoy_entry_name(record.param)]
         ).digest()

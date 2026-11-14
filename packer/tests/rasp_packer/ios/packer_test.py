@@ -16,7 +16,9 @@ from rasp_packer.ios import packer
 from rasp_packer.ios import runtime_binary
 from tests.rasp_packer import conftest
 
-_CONFIG = runtime_config.RuntimeConfig(build_id="build-1", checks=("identity",))
+_CONFIG = runtime_config.RuntimeConfig(
+    build_id="build-1", checks=("identity",), checks_mask=8
+)
 _APP = "Payload/Demo.app"
 _FRAMEWORK = f"{_APP}/Frameworks/RaspRuntime.framework"
 

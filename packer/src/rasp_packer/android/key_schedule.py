@@ -17,6 +17,7 @@ import hashlib
 import os
 import random
 import struct
+import zlib
 from dataclasses import dataclass
 from dataclasses import field
 
@@ -68,14 +69,30 @@ KIND_REGION = 4
 KIND_GATES = 5
 KIND_CONSTANT = 6
 KIND_ENTRY = 7
+KIND_PACKAGE = 8
+KIND_STUB = 9
+KIND_APK = 10
+KIND_SPLITS = 11
+KIND_DEXES = 12
+KIND_DEXLESS_SPLITS = 13
+KIND_MANIFEST = 14
+KIND_SIGNER = 15
+
+# The prefixes of APK entries the fold's APK digest excludes: the signing step's own entries and the fold's own
+# outputs.
+_APK_DIGEST_EXCLUDED_PREFIXES = ("META-INF/", "assets/rasp/", "assets/business/")
+# The filename of the runtime library of older packs; newer packs name theirs per app and pass the name.
+_APK_DIGEST_EXCLUDED_SUFFIX = "librasp.so"
 
 # The gate block of a clean device at recovery: a JNI environment, no tracer, the library under
-# /data. The packer folds this in; the runtime folds in what it observes.
-CLEAN_GATES = bytes((1, 1, 1)) + bytes(KEY_SIZE - 3)
+# /data, the process owning its package's data directory, a release build, an app the platform does
+# not see as debuggable, plausible hardware registers. The packer folds this in; the runtime folds in
+# what it observes.
+CLEAN_GATES = bytes((1, 1, 1, 1, 1, 1, 1, 1)) + bytes(KEY_SIZE - 8)
 
 # The sensor block of a clean process at decryption: no tracer, and the library's code in memory
 # matching its file. The packer folds this in; the runtime re-observes it on every decryption.
-CLEAN_SENSORS = bytes((1, 1)) + bytes(KEY_SIZE - 2)
+CLEAN_SENSORS = bytes((1, 1, 1, 1, 1, 1)) + bytes(KEY_SIZE - 6)
 
 
 def new_root() -> bytes:
@@ -110,6 +127,127 @@ def _digest(data: bytes) -> bytes:
     return hashlib.sha256(data).digest()
 
 
+def apk_digest(
+    entries: dict[str, tuple[bytes, int, int]],
+    library_filenames: frozenset[str] = frozenset(),
+) -> bytes:
+    """Computes the digest over the APK's entries, the way the runtime does at recovery.
+
+    The runtime walks the APK's central directory and feeds each qualifying entry's name, compression
+    method, CRC-32, uncompressed size, and — for a stored entry — its content into one SHA-256, sorted by
+    name. Deflated entries contribute their metadata: an entry added, removed, switched between stored and
+    deflated, or whose content changed changes the digest. The compressed size is not bound, because it
+    varies by zlib version and build tool.
+    Both sides skip `META-INF/` (the signing step adds those), `assets/rasp/` and `assets/business/`
+    (the fold's own outputs), and the runtime's own libraries (chain A already covers their bytes, and
+    the packer gathers its digest before it writes the fold's outputs into them). The libraries are
+    named by filename: one per-app name covers every ABI, the way the runtime derives its own name from
+    its load path, and the legacy `librasp.so` name of older packs stays excluded.
+
+    Args:
+        entries: The APK's entries by name, each a (data, method, compressed_size) triple: the
+            uncompressed bytes, the ZIP compression method (0 for stored, 8 for deflated), and the
+            size of the compressed bytes in the APK, which the digest does not bind.
+        library_filenames: The runtime library's filename under `lib/<abi>/`, which the digest skips.
+
+    Returns:
+        The 32-byte digest.
+    """
+    digest = hashlib.sha256()
+    for name in sorted(entries):
+        if (
+            name.startswith(_APK_DIGEST_EXCLUDED_PREFIXES)
+            or name.endswith(_APK_DIGEST_EXCLUDED_SUFFIX)
+            or name.rpartition("/")[2] in library_filenames
+        ):
+            continue
+        data, method, _compressed_size = entries[name]
+        crc32 = zlib.crc32(data)
+        # The compressed size varies by zlib version and build tool, so the digest does not
+        # bind it. The CRC-32 catches content changes and the uncompressed size catches
+        # truncation; the compression detail adds no security.
+        blob = name.encode("utf-8") + struct.pack("<III", method, crc32, len(data))
+        if method == 0:
+            blob += data
+        digest.update(blob)
+    return digest.digest()
+
+
+def splits_digest(names: collections.abc.Iterable[str] = ()) -> bytes:
+    """Computes the digest over the APKs installed beside the base APK, the way the runtime does at recovery.
+
+    The runtime lists the directory that holds its base APK and feeds every other APK's filename, sorted, into
+    one SHA-256. A split APK installed beside the base shares the app's process and class loader, so its code
+    runs in-process while every base-derived input still matches; binding the installed set closes that: the
+    packer folds the clean install's set — the base alone — so any split beside the base changes the digest,
+    the fold, and every key under it.
+
+    Args:
+        names: The filenames of the APKs installed beside the base, in any order.
+
+    Returns:
+        The 32-byte digest.
+    """
+    digest = hashlib.sha256()
+    for name in sorted(names):
+        digest.update(name.encode("utf-8") + b"\x00")
+    return digest.digest()
+
+
+def dex_digest(entries: collections.abc.Mapping[str, bytes]) -> bytes:
+    """Computes the digest over the base module's class dexes, the way the runtime does at recovery.
+
+    The runtime walks the installed base APK's central directory and feeds every `classes.dex` /
+    `classesN.dex` entry's name and uncompressed content into one SHA-256, sorted by name. The store's
+    split generation preserves the base module's dex content and names, whichever way it splits the rest,
+    so the packer can predict this digest for an AAB when it cannot predict the installed entry set: an
+    edit, addition or removal of any class dex changes the digest, the fold, and every key under it.
+
+    Args:
+        entries: The base module's class dexes by entry name, in any order.
+
+    Returns:
+        The 32-byte digest.
+    """
+    digest = hashlib.sha256()
+    for name in sorted(entries):
+        digest.update(name.encode("utf-8") + b"\x00")
+        digest.update(hashlib.sha256(entries[name]).digest())
+    return digest.digest()
+
+
+def signer_digest(certificate: bytes) -> bytes:
+    """Computes the digest over the pinned signing certificate, the way the runtime reads the installed one.
+
+    The runtime reads the installed base APK's signing block, concatenates the first v3 or v2 scheme signer's DER
+    certificates, and hashes them once. The packer folds the same hash over the certificate the developer pinned:
+    the platform admits companion packages — an instrumentation runner, a shared-uid helper — only under the same
+    certificate, and re-signing is free to every other binding, so the pinned certificate is the one anchor a
+    repack cannot forge.
+
+    Args:
+        certificate: The pinned certificate's DER encoding.
+
+    Returns:
+        The 32-byte digest.
+    """
+    return hashlib.sha256(certificate).digest()
+
+
+def dexless_splits() -> bytes:
+    """Returns the clean observation of the APKs an AAB pack installs beside the base.
+
+    The store's config splits — ABI, density, language — never hold a class dex, so an AAB pack folds
+    this constant instead of the installed set it cannot predict: the runtime walks every APK installed
+    beside the base and reads one fact, whether any of them holds a class dex. A split that carries code
+    flips the fact, the fold comes out wrong, and nothing decrypts.
+
+    Returns:
+        The block, 32 bytes: the fact in the first byte, then zeros.
+    """
+    return bytes((1,)) + bytes(KEY_SIZE - 1)
+
+
 def _hkdf(secret: bytes, salt: bytes, info: bytes) -> bytes:
     """Returns 32 bytes of HKDF-SHA256, as RFC 5869 defines it."""
     return HKDF(
@@ -139,7 +277,15 @@ def fold(*parts: bytes) -> bytes:
 
 
 def gate_block(
-    *, java_environment: bool, no_tracer: bool, installed_under_data: bool
+    *,
+    java_environment: bool,
+    no_tracer: bool,
+    installed_under_data: bool,
+    counter_frequency_plausible: bool,
+    cpu_identity_plausible: bool,
+    owns_package_data: bool,
+    release_build: bool,
+    not_debuggable: bool,
 ) -> bytes:
     """Returns the gate block of an environment, one input of chain S.
 
@@ -147,6 +293,17 @@ def gate_block(
         java_environment: A JNI environment exists and reports a JNI 1.x version.
         no_tracer: ``TracerPid`` in ``/proc/self/status`` is 0.
         installed_under_data: The library is loaded from a path under ``/data``.
+        counter_frequency_plausible: The system counter frequency is in the range a real mobile SoC
+            reports, 1-100 MHz. QEMU and unicorn default to 1 GHz or 0.
+        cpu_identity_plausible: The CPU identity register is non-zero, as a real CPU always reports.
+        owns_package_data: The process's uid owns the package's data directory, as an installed
+            app's process always does: a host running a genuine install inside another app's
+            process carries the host's uid, which does not own the package's directory.
+        release_build: The build is a release build: ``ro.debuggable`` is absent or 0, so the
+            platform opens no debugging channel to any app.
+        not_debuggable: The platform does not see the app as debuggable, as the app's own
+            ApplicationInfo reports. The platform opens its in-process channels — JDWP, heap
+            dumps, the native launch wrapper — for exactly that flag.
 
     Returns:
         The block, 32 bytes: one fact per byte at the start, then zeros.
@@ -155,15 +312,32 @@ def gate_block(
     block[0] = 1 if java_environment else 0
     block[1] = 1 if no_tracer else 0
     block[2] = 1 if installed_under_data else 0
+    block[3] = 1 if counter_frequency_plausible else 0
+    block[4] = 1 if cpu_identity_plausible else 0
+    block[5] = 1 if owns_package_data else 0
+    block[6] = 1 if release_build else 0
+    block[7] = 1 if not_debuggable else 0
     return bytes(block)
 
 
-def sensor_block(*, no_tracer: bool, text_intact: bool) -> bytes:
+def sensor_block(
+    *,
+    no_tracer: bool,
+    text_intact: bool,
+    no_framework_maps: bool,
+    no_rwx_regions: bool,
+    no_framework_threads: bool,
+    no_foreign_libraries: bool,
+) -> bytes:
     """Returns the sensor block of a process, folded into every decryption's key.
 
     Args:
         no_tracer: ``TracerPid`` in ``/proc/self/status`` is 0.
         text_intact: The library's ``.text`` in memory matches its file.
+        no_framework_maps: No mapping in the process's memory map names a known instrumentation framework.
+        no_rwx_regions: No mapping is both writable and executable.
+        no_framework_threads: No thread carries the name a hooking framework gives its own threads.
+        no_foreign_libraries: No shared library is loaded from outside the expected directories.
 
     Returns:
         The block, 32 bytes: one fact per byte at the start, then zeros.
@@ -171,6 +345,10 @@ def sensor_block(*, no_tracer: bool, text_intact: bool) -> bytes:
     block = bytearray(KEY_SIZE)
     block[0] = 1 if no_tracer else 0
     block[1] = 1 if text_intact else 0
+    block[2] = 1 if no_framework_maps else 0
+    block[3] = 1 if no_rwx_regions else 0
+    block[4] = 1 if no_framework_threads else 0
+    block[5] = 1 if no_foreign_libraries else 0
     return bytes(block)
 
 
@@ -301,10 +479,12 @@ def build_program(
     sections: tuple[str, ...] = (),
     library_size: int = 0,
     keystore_spans: tuple[tuple[int, int], ...] = (),
+    include_apk_digest: bool = False,
+    pinned_signer: bytes | None = None,
 ) -> FoldProgram:
     """Builds a random fold program: the real inputs, in a random order, among random decoys.
 
-    The program always folds in the real inputs — chain A holds the ``.text`` digest, chain S holds the asset share, the config region digest and the environment gates — and hides them among decoys the recipe invents: random constants, digests of the library's sections, digests of library byte ranges, and digests of decoy APK entries, which the packer then writes as ``assets/rasp/r<i>.bin``. Which decoys, of which kinds, how many, and where in each chain's order, is the generator's choice, so no two apps fold the same way.
+    The program always folds in the real inputs — chain A holds the ``.text`` digest, chain S holds the asset share, the config region digest, the environment gates and the app's package name — and hides them among decoys the recipe invents: random constants, digests of the library's sections, digests of library byte ranges, and digests of decoy APK entries, which the packer then writes as ``assets/rasp/r<i>.bin``. Which decoys, of which kinds, how many, and where in each chain's order, is the generator's choice, so no two apps fold the same way.
 
     Args:
         generator: The source of randomness, seeded by the caller.
@@ -334,7 +514,25 @@ def build_program(
         FoldRecord(kind=KIND_SHARE),
         FoldRecord(kind=KIND_REGION),
         FoldRecord(kind=KIND_GATES),
+        FoldRecord(kind=KIND_PACKAGE),
+        FoldRecord(kind=KIND_STUB),
     ]
+    if include_apk_digest:
+        # The APK digest binds the whole APK's stored content: only an APK pack knows the installed entry set.
+        chain_s.append(FoldRecord(kind=KIND_APK))
+        # The split set binds the APKs installed beside the base: an APK pack ships alone, so any APK the
+        # runtime finds beside its base changes the fold.
+        chain_s.append(FoldRecord(kind=KIND_SPLITS))
+    else:
+        # An AAB the store splits: the entry digest and the installed set are unknowable at pack time, so
+        # the module's dex content, the splits' emptiness and the manifest's semantics stand in for them.
+        chain_s.append(FoldRecord(kind=KIND_DEXES))
+        chain_s.append(FoldRecord(kind=KIND_DEXLESS_SPLITS))
+        chain_s.append(FoldRecord(kind=KIND_MANIFEST))
+    if pinned_signer is not None:
+        # The pinned certificate is the one anchor a repack cannot forge: the platform admits companion
+        # packages only under the same certificate.
+        chain_s.append(FoldRecord(kind=KIND_SIGNER))
     constants: list[bytes] = []
     entry_indices: list[int] = []
     for _ in range(generator.randint(3, 6)):
@@ -486,13 +684,36 @@ def seed_from(root: bytes, map_frame: bytes) -> bytes:
     return _hkdf(root, salt=_digest(map_frame), info=b"rasp.v2.seed")
 
 
+def armed_master(seed: bytes, j_share: bytes) -> bytes:
+    """Returns the armed master: the seed under the Java share the stub's program produced.
+
+    The share comes from a per-app program of resolution steps the stub executes through the real Android runtime
+    (android/java_program.py), so the dex master needs the native fold *and* a runtime that resolves the program's
+    classes the way the packer predicted. An emulated runtime that answers one step differently derives a different
+    master, and every frame's tag fails, with no branch anywhere that says why.
+
+    Args:
+        seed: The dex seed.
+        j_share: The Java share, 32 bytes.
+
+    Returns:
+        The armed master, 32 bytes.
+
+    Raises:
+        ValueError: An argument is not 32 bytes.
+    """
+    if len(seed) != KEY_SIZE or len(j_share) != KEY_SIZE:
+        raise ValueError(f"the seed and share must be {KEY_SIZE} bytes")
+    return _hkdf(seed, salt=j_share, info=b"rasp.v2.armed")
+
+
 def guarded_master(seed: bytes, sensors: bytes) -> bytes:
     """Returns the master of the next decryption: the seed under the observed sensor guard.
 
     The runtime re-observes the process on every decryption and derives through what it sees, so a debugger attached between loads, or a hook patched into the library's code, changes the master and the frame's tag fails, with no branch anywhere that says why.
 
     Args:
-        seed: The dex seed.
+        seed: The armed master the Java share produced, or the dex seed for the vectors before the Java arm.
         sensors: The sensor block observed now, 32 bytes.
 
     Returns:

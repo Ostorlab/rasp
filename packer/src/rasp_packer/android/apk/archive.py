@@ -59,11 +59,13 @@ class Entry:
         name: The entry path inside the APK.
         data: The entry bytes.
         compressed: Whether the entry was stored compressed.
+        compressed_size: The size of the compressed bytes in the APK, equal to the data size when stored.
     """
 
     name: str
     data: bytes
     compressed: bool
+    compressed_size: int
 
 
 class Apk:
@@ -104,6 +106,7 @@ class Apk:
                         name=info.filename,
                         data=archive.read(info),
                         compressed=info.compress_type != zipfile.ZIP_STORED,
+                        compressed_size=info.compress_size,
                     )
                     for info in infos
                 ]
@@ -114,6 +117,12 @@ class Apk:
     def names(self) -> list[str]:
         """Returns the names of all entries, in their original order."""
         return [entry.name for entry in self._entries]
+
+    def stored_entries(self) -> dict[str, bytes]:
+        """Returns the stored (uncompressed) entries by name."""
+        return {
+            entry.name: entry.data for entry in self._entries if not entry.compressed
+        }
 
     def get(self, name: str) -> bytes | None:
         """Returns the bytes of an entry, or None if it is absent."""
@@ -173,7 +182,9 @@ class Apk:
         for name, data in add.items():
             if name in position:
                 index = position[name]
-                final[index] = (name, data, final[index][2])
+                # An added entry always ships stored: the key schedule binds its content, and a
+                # stored entry is readable without an inflate step.
+                final[index] = (name, data, zipfile.ZIP_STORED)
             else:
                 position[name] = len(final)
                 final.append((name, data, zipfile.ZIP_STORED))
