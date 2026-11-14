@@ -29,6 +29,10 @@ using rasp::util::read_file;
 
 /// The signal of the root-file probe.
 constexpr std::string_view kPathsSignal = "root.fs_paths";
+/// The source of the root-file probe that asks through access().
+constexpr std::string_view kAccessSource = "access";
+/// The source of the root-file probe that asks through stat().
+constexpr std::string_view kStatSource = "stat";
 /// The signal of the mount-table probe that reports the mounts a root tool made.
 constexpr std::string_view kMountsSignal = "root.mounts";
 /// The signal of the mount-table probe that reports the system folders mounted writable.
@@ -168,8 +172,8 @@ struct PathSource {
 
 /// The sources root.fs_paths reads each path through, in the order their observations are reported.
 constexpr std::array kPathSources = {
-    PathSource{.name = "access", .exists = found_by_access},
-    PathSource{.name = "stat", .exists = found_by_stat},
+    PathSource{.name = kAccessSource, .exists = found_by_access},
+    PathSource{.name = kStatSource, .exists = found_by_stat},
 };
 
 /// The fields of a mount table line that the probes read.
@@ -273,12 +277,12 @@ Observation observe_selinux(std::string_view enforce_path) {
 
 Observation observe_build_props(util::PropertyReader read_property) {
   std::vector<std::string> properties;
-  for (const std::string_view name : kBuildProperties) {
+  std::ranges::for_each(kBuildProperties, [&](const std::string_view name) {
     const std::optional<std::string> value = read_property(name);
     if (value) {
       properties.push_back(std::string(name) + "=" + *value);
     }
-  }
+  });
   return observed(kPropsSignal, kPropsSource, std::move(properties));
 }
 

@@ -121,15 +121,15 @@ constexpr auto kQemuProperties = std::to_array<std::string_view>({
 
 Observation observe_emulator_props(util::PropertyReader read_property) {
   std::vector<std::string> properties;
-  for (const std::string_view name : kEmulatorProperties) {
+  std::ranges::for_each(kEmulatorProperties, [&](const std::string_view name) {
     const std::optional<std::string> value = read_property(name);
     if (!value) {
-      continue;
+      return;
     }
     if (is_qemu_flag(name) || holds_marker(*value)) {
       properties.push_back(std::string(name) + "=" + *value);
     }
-  }
+  });
   return observed(kPropsSignal, kPropsSource, std::move(properties));
 }
 

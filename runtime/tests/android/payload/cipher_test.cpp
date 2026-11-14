@@ -131,5 +131,21 @@ TEST(AndroidCipher, decrypt_whenTheFrameIsShorterThanANonceAndATag_returnsNothin
   EXPECT_FALSE(decrypt(from_hex(kKey), frame).has_value());
 }
 
+TEST(AndroidCipher, wipe_whenGivenBytes_zerosThem) {
+  std::vector<std::uint8_t> decrypted = from_hex(kFrame);
+
+  wipe(decrypted);
+
+  EXPECT_EQ(decrypted, std::vector<std::uint8_t>(decrypted.size(), 0));
+}
+
+TEST(AndroidCipher, wipe_whenGivenNothing_doesNothing) {
+  std::vector<std::uint8_t> empty;
+
+  wipe(empty);
+
+  EXPECT_TRUE(empty.empty());
+}
+
 }  // namespace
 }  // namespace rasp::android::payload
