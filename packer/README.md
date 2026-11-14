@@ -34,9 +34,9 @@ The packer adds a prebuilt runtime, which comes from the runtime build and is no
 For Android the packer protects the app's code:
 
 - it sorts the app's classes with the bundled `split-dex` tool. The classes under the app's package are the app's own code. The other classes, such as libraries, stay in the clear, as `classes.dex`, `classes2.dex`, ...;
-- it encrypts the app's own classes, in dex files of their own, and stores each of these files as the asset `assets/business/<i>.dex`. It also stores the class map as `assets/rasp/map.bin`, encrypted too: the map names the dex file that defines each of these classes. It stores the key as `assets/rasp/key.bin`;
+- it encrypts the app's own classes, in dex files of their own, and stores each of these files as the asset `assets/business/<i>.dex`. It also stores the class map as `assets/rasp/map.bin`, encrypted too: the map names the dex file that defines each of these classes. The keys are not stored anywhere: each app's key schedule is a per-app fold of digests of the shipped library and APK entries, and only that library's own keystore share, written into its `.rasp_config` section, lets it recover the root key (`android/key_schedule.py`);
 - it adds a small stub as the last dex file (`classesN.dex`), and sets `<application android:appComponentFactory>` to the stub's class, `co.ostorlab.rasp.RaspStub`, while leaving the app's own `<application android:name>` alone;
-- it adds the native runtime as `lib/<abi>/librasp.so`, for each ABI the app has native libraries for, or for every ABI the runtime is built for when the app has none. Android installs the native libraries of one ABI only, so each of the app's ABIs needs the runtime. An app with native libraries for an ABI the runtime isn't built for is refused with `UnsupportedAbiError`. The packer writes the runtime config, which holds the build id and the checks, into the `.rasp_config` section of each `librasp.so`;
+- it adds the native runtime as `lib/<abi>/librasp.so`, for each ABI the app has native libraries for, or for every ABI the runtime is built for when the app has none. Android installs the native libraries of one ABI only, so each of the app's ABIs needs the runtime. An app with native libraries for an ABI the runtime isn't built for is refused with `UnsupportedAbiError`. The packer writes the runtime config, which holds the build id and the checks, into the `.rasp_config` section of each `librasp.so`, encrypts the library's own code and read-only data around a load-time self-decrypt bootstrap (`android/self_encrypt.py`), and ships the expected plaintext code digest for the integrity check;
 - it raises the app's `android:minSdkVersion` to 31 when it is lower, because the runtime supports Android 12 (API 31) and later. The protected app then doesn't install on older devices;
 - it removes the app's v1 signature files from `META-INF/`, since the protected APK must be signed again.
 
@@ -50,7 +50,7 @@ The stub and the native runtime come from the runtime build. The packer looks fo
 
 The binary `AndroidManifest.xml` is edited in place by `android/apk/axml.py`, so the packer needs no Android build tool. The protected APK is returned aligned, with native libraries on 16 KB page boundaries and other stored entries on 4-byte boundaries, so it can be signed directly, with no separate `zipalign` step.
 
-The key is stored in the clear, in `assets/rasp/key.bin`. The encryption raises the effort needed to read the app's code, but on its own does not defeat a determined analyst who reads the key from the app. `TODO.md` at the repository root tracks this limit.
+No key is stored in the app: the keys come from a per-app fold the packer invents over the library's own encrypted bytes, the APK's stored entries and the running process's sensors, so a copied library or a patched APK derives a different key and every frame's tag fails. `TODO.md` at the repository root tracks the remaining limits.
 
 ## Layout
 
@@ -66,7 +66,7 @@ The key is stored in the clear, in `assets/rasp/key.bin`. The encryption raises 
   - `runtime_binary.py`: writes the runtime config into the `__DATA,__rasp_config` section of the framework's `RaspRuntime` binary.
   - `resources.py`: locates the prebuilt `RaspRuntime.framework`, under `resources/` (see the README there). The framework is prebuilt by the runtime build; without it the packer raises `InvalidRuntimeError`.
 - `src/rasp_packer/android/`: packing of APKs and AABs.
-  - `packer.py`: the Android `pack`. It sorts the app's classes, encrypts the app's own dex files and the class map, adds the stub as the last dex file, adds `librasp.so` for the app's ABIs with the runtime config written into it, sets the manifest's `appComponentFactory` to the stub, raises its `minSdkVersion`, and removes the v1 signature files of an APK.
+  - `packer.py`: the Android `pack`. It sorts the app's classes, encrypts the app's own dex files and the class map, adds the stub as the last dex file, adds `librasp.so` for the app's ABIs with its config written, its code self-encrypted and its per-app fold schedule written into it, sets the manifest's `appComponentFactory` to the stub, raises its `minSdkVersion`, and removes the v1 signature files of an APK.
   - `apk/`: reading and editing the APK.
     - `archive.py`: reading and repacking the APK (a ZIP).
     - `axml.py`: reading and editing the binary `AndroidManifest.xml`.
@@ -75,7 +75,9 @@ The key is stored in the clear, in `assets/rasp/key.bin`. The encryption raises 
   - `cipher.py`: the authenticated cipher for the class map and the app's own dex files.
   - `split.py`: runs the bundled `split-dex` tool, which sorts the app's classes into the app's own and the others.
   - `loader_map.py`: the class map, which names the dex file that defines each of the app's own classes.
-  - `runtime_library.py`: writes the runtime config into the `.rasp_config` section of `librasp.so`.
+  - `key_schedule.py`: the per-app fold, the random recipe of real inputs and decoys that recovers the root key, and the reference interpreter the packer side of the tests shares.
+  - `self_encrypt.py`: the library's own encryption at rest, with the load-time self-decrypt bootstrap's metadata, and the expected plaintext code digest the bootstrap verifies after decrypting.
+  - `runtime_library.py`: writes the runtime config, the fold program, the keystore share and the expected text digest into the `.rasp_config` section of `librasp.so`.
   - `resources.py`: locating the prebuilt stub and native libraries, and the bundled `split-dex` tool.
 - `tests/`: one test file per source file, at the same path, named `<module>_test.py`.
 

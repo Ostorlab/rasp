@@ -14,6 +14,7 @@ from rasp_packer.android import cipher
 from rasp_packer.android import key_schedule
 from rasp_packer.android import packer
 from rasp_packer.android import resources
+from rasp_packer.android import runtime_library
 from rasp_packer.android import split
 from rasp_packer.android.apk import axml
 from tests.rasp_packer import conftest
@@ -434,9 +435,12 @@ def testPack_whenValidApk_addsTheRuntimeLibraryWithTheConfigProgramAndKeystore(
         library = archive.read("lib/arm64-v8a/librasp.so")
         names = archive.namelist()
 
-    assert runtime_library_read_config(library) == _CONFIG.to_json()
-    assert len(runtime_library_keystore(library)) == key_schedule.KEY_SIZE
-    assert key_schedule.decode_program(runtime_library_program(library)) is not None
+    # The placed library is self-encrypted — not the plain config-written library — but the fold's
+    # config, program and keystore still read back from its untouched `.rasp_config` section.
+    assert library != runtime_library.write_config(_ARM64_SO, _CONFIG)
+    assert runtime_library.read_config(library) == _CONFIG.to_json()
+    assert len(runtime_library.keystore(library)) == key_schedule.KEY_SIZE
+    assert key_schedule.decode_program(runtime_library.program(library)) is not None
     assert "assets/rasp/config.json" not in names
 
 
@@ -524,24 +528,3 @@ def testPack_whenValidApk_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     )
     assert app_identity.package_name == _PACKAGE
     assert app_identity.version == "2.4.1"
-
-
-def runtime_library_read_config(library: bytes) -> bytes:
-    """Reads the packed library's config, for the assertions that the packer wrote it."""
-    from rasp_packer.android import runtime_library
-
-    return runtime_library.read_config(library)
-
-
-def runtime_library_keystore(library: bytes) -> bytes:
-    """Reads the packed library's keystore share."""
-    from rasp_packer.android import runtime_library
-
-    return runtime_library.keystore(library)
-
-
-def runtime_library_program(library: bytes) -> bytes:
-    """Reads the packed library's fold program."""
-    from rasp_packer.android import runtime_library
-
-    return runtime_library.program(library)

@@ -57,10 +57,10 @@ _PROGRAM_HEX = (
     "08090a0b0c0d0e0f"
 )
 _A_STATE = bytes.fromhex(
-    "dff2d0608ec81e2760fbf70e0f2775be69288d2235696c766d3fcd39441c45d1"
+    "80f696036977bec443168ac195612f3bbef55acceddbccc100170f56d18053b4"
 )
 _S_STATE = bytes.fromhex(
-    "4943a7688e172a1808edad2bf0340d08e20a7a9759490392691127677fefb046"
+    "4bea01eb78580ceadcbdde36797bd2d272db507b6fa58067776094534d498a9f"
 )
 _MAP_KEY = bytes.fromhex(
     "5148f4c03d5c379482f5e656dfe3ede4a139f570175a397308ae1213c43b014e"
@@ -107,6 +107,9 @@ _LIBRARY = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _CONFIG = runtime_config.RuntimeConfig(
     build_id="rasp-build/v1:" + "ab" * 32, checks=("identity",)
 )
+# The SHA-256 of the fixture's plaintext `.text`, which the packer writes before the fold's inputs are gathered so
+# the region digest binds the sensor guard's expectation into the root.
+_TEXT_DIGEST = hashlib.sha256(runtime_library.text_region(_LIBRARY)).digest()
 
 _FIXED_PROGRAM = key_schedule.FoldProgram(
     mask=_MASK,
@@ -133,14 +136,17 @@ _FIXED_ENTRIES = {
 
 
 def _configured_library() -> bytes:
-    """Builds the vectors' library with its config and fold program, before the keystore."""
-    return runtime_library.write_program(
-        runtime_library.write_config(_LIBRARY, _CONFIG), bytes.fromhex(_PROGRAM_HEX)
+    """Builds the vectors' library with its config, fold program and text digest, before the keystore."""
+    return runtime_library.write_text_digest(
+        runtime_library.write_program(
+            runtime_library.write_config(_LIBRARY, _CONFIG), bytes.fromhex(_PROGRAM_HEX)
+        ),
+        _TEXT_DIGEST,
     )
 
 
 def _fixed_library() -> bytes:
-    """Builds the vectors' final library: the fixture with the fixed program and keystore."""
+    """Builds the vectors' final library: the fixture with the fixed program, digest and keystore."""
     return runtime_library.write_keystore(
         _configured_library(), key_schedule.fold(_A_STATE, _S_STATE, _ROOT)
     )
@@ -308,6 +314,22 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
         != _ROOT
     )
 
+    # The expected text digest: a patched expectation in the shipped file breaks the fold, so the sensor
+    # guard can never be aimed at patched code by editing the file it reads its expectation from.
+    patched_expectation = runtime_library.write_text_digest(
+        _configured_library(), bytes(key_schedule.KEY_SIZE)
+    )
+    assert (
+        schedule_recovery.recover_root(
+            runtime_library.write_keystore(
+                patched_expectation, key_schedule.fold(_A_STATE, _S_STATE, _ROOT)
+            ),
+            _FIXED_ENTRIES,
+            key_schedule.CLEAN_GATES,
+        )
+        != _ROOT
+    )
+
     # The gates: a traced or emulated environment.
     traced = key_schedule.gate_block(
         java_environment=True, no_tracer=False, installed_under_data=True
@@ -320,7 +342,10 @@ def testRecovery_whenBuiltWithRandomPrograms_recoversOnEveryLibrary() -> None:
     for seed in range(10):
         generator = random.Random(seed)
         program = key_schedule.build_program(
-            generator, sections=sections, library_size=len(_LIBRARY)
+            generator,
+            sections=sections,
+            library_size=len(_LIBRARY),
+            keystore_spans=(runtime_library.keystore_span(_LIBRARY),),
         )
         entries = {
             key_schedule.SHARE_ENTRY: _SHARE,
