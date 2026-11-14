@@ -540,8 +540,8 @@ CodeOut CodeEncoder::encode(const MethodDef &method, const Code &code, bool debu
 
     // Try ranges.  Ranges may overlap; split the code at every range
     // boundary, give each piece the handlers of the ranges covering it in
-    // order (the range listed first wins, as the runtime takes the first
-    // matching catch), then join neighbours with equal handlers.  A range's
+    // order until a catch-all (the runtime takes the first matching catch),
+    // then join neighbours with equal handlers.  A range's
     // own catch list is kept as it is, duplicates included.
     struct Handler
     {
