@@ -79,5 +79,21 @@ TEST(ParseConfig, parseConfig_whenTheJsonIsMalformed_leavesTheChecksEmpty) {
   EXPECT_FALSE(parse_config(R"({"checks":["debugger"])").checks.has_value());
 }
 
+TEST(ParseConfig, parseConfig_whenGivenThePackersJsonWithTheStubClass_readsIt) {
+  const std::optional<std::string> stub_class =
+      parse_config(R"({"build_id":"build-7","m":127,"s":"bv.Yeebcwrvmwqiqzhgvsnsio"})").stub_class;
+
+  ASSERT_TRUE(stub_class.has_value());
+  EXPECT_EQ(*stub_class, "bv.Yeebcwrvmwqiqzhgvsnsio");
+}
+
+TEST(ParseConfig, parseConfig_whenTheStubClassIsMissing_leavesItUnset) {
+  EXPECT_FALSE(parse_config(R"({"build_id":"build-7","m":127})").stub_class.has_value());
+}
+
+TEST(ParseConfig, parseConfig_whenTheStubClassIsNotAString_leavesItUnset) {
+  EXPECT_FALSE(parse_config(R"({"s":127})").stub_class.has_value());
+}
+
 }  // namespace
 }  // namespace rasp
