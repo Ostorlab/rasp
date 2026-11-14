@@ -12,9 +12,9 @@ The packer looks for these files in this folder, `packer/src/rasp_packer/android
 
 The packer writes these into the APK, made for each app when it is packed, so they are not files of this folder:
 
-- `assets/rasp/s.bin`: one input of the key schedule's fold, stored uncompressed. It is one input of the chains that rebuild the payload's root key, not a key by itself (`key_schedule`).
+- `assets/rasp/s.bin`: one input of the key schedule's fold, stored uncompressed. It feeds the chains that rebuild the payload's root key but is not a key by itself (`key_schedule`).
 - `assets/rasp/r<i>.bin`: the decoy entries the fold program names, stored. Their digests are inputs of the chains, indistinguishable from the real inputs to anything short of a full reversal of the runtime.
 - `assets/rasp/map.bin`: the class map, encrypted and stored. It names, per class, the business dex that defines it. `loader_map` builds it and `cipher` describes the frame format; its key is derived from the schedule's root.
-- `assets/business/<i>.dex`: one encrypted business dex per file, stored. Each is one `cipher` frame under its own key, derived from the schedule's seed, the sensor guard of a clean process, and the frame's own nonce, so no two frames share a key.
+- `assets/business/<i>.dex`: one encrypted business dex per file, stored. Each is one `cipher` frame under its own key, derived from the schedule's seed, the sensor guard (the runtime's no-tracer and intact-code observations for a clean process), and the frame's own nonce, so no two frames share a key.
 - the framework dexes and the stub, in the clear, as `classes.dex` … `classesN.dex`.
-- the runtime config, which holds the build id; the fold program, the per-app recipe of the schedule's chains; and a per-ABI keystore share — all three in the `.rasp_config` section of each `lib/<abi>/librasp.so`. The share is what the packer writes to cancel its ABI's chains, so every ABI recovers the same root key, and the program and the section's digest bind the whole fold to the library as shipped.
+- the runtime config, written into the `.rasp_config` section of each `lib/<abi>/librasp.so`. It carries the build id, the fold program (the per-app recipe of the schedule's chains), and a per-ABI keystore share. Each share cancels its ABI's chain inputs, so every ABI derives the same root key. The program and the section's digest bind the fold to the library as shipped: altering these bytes rebuilds a different root key and the sealed payloads no longer decrypt.

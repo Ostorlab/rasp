@@ -39,8 +39,13 @@ def write_config(library: bytes, config: runtime_config.RuntimeConfig) -> bytes:
     Raises:
         InvalidRuntimeError: The library is not an ELF file, or has no `.rasp_config` section.
         ConfigTooLargeError: The config does not fit in the section with the program and the share.
+        ValueError: The section cannot hold a config, a fold program and a share.
     """
     space = _space(library)
+    if space.size < key_schedule.PROGRAM_SIZE + key_schedule.KEY_SIZE + 1:
+        raise ValueError(
+            f"the {ELF_SECTION} section is too small for a config, a fold program and a share"
+        )
     region = runtime_config.ConfigSpace(
         offset=space.offset,
         size=space.size - key_schedule.PROGRAM_SIZE - key_schedule.KEY_SIZE,
