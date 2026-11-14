@@ -496,6 +496,25 @@ class KeyScheduleTest : public testing::Test {
   TemporaryDirectory directory_;
 };
 
+/// Encodes one constant record with an all-zero mask.
+[[nodiscard]] std::array<std::uint8_t, kProgramSize> program_naming_constant(std::uint16_t index) {
+  std::array<std::uint8_t, kProgramSize> program{};
+  program[16] = 1;
+  program[20] = static_cast<std::uint8_t>(RecordKind::kConstant);
+  program[22] = static_cast<std::uint8_t>(index & 0xFFU);
+  program[23] = static_cast<std::uint8_t>(index >> 8U);
+  return program;
+}
+
+TEST(KeySchedule, decodeProgram_whenTheLastConstantIsNamed_decodesAllElevenConstants) {
+  const auto program = decode_program(program_naming_constant(10));
+  EXPECT_TRUE(program.has_value() && program->constants.size() == std::size_t{11});
+}
+
+TEST(KeySchedule, decodeProgram_whenConstantExceedsTheBlob_returnsNothing) {
+  EXPECT_FALSE(decode_program(program_naming_constant(11)).has_value());
+}
+
 TEST(Hkdf, hkdf_whenGivenRfc5869TestCase1_matchesTheFirst32BytesOfItsOkm) {
   const std::vector<std::uint8_t> ikm(22, 0x0b);
   const std::string info = bytes_of("f0f1f2f3f4f5f6f7f8f9");
