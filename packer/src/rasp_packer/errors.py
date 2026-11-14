@@ -63,3 +63,7 @@ class InvalidRuntimeError(Error):
 
 class ConfigTooLargeError(Error):
     """The runtime's config does not fit in the space the runtime's binary keeps for it."""
+
+
+class VerificationError(Error):
+    """Packed output does not satisfy its required protection artifact contract."""
