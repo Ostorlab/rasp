@@ -42,9 +42,6 @@ constexpr std::string_view kMemorySource = "memory";
 /// forged file.
 constexpr std::size_t kMaxLibrarySize = std::size_t{64} << 20U;
 
-/// The length of a SHA-256 digest, in bytes.
-constexpr std::size_t kDigestSize = 32;
-
 /// The ELF identification bytes every image this reader accepts starts with: the magic.
 constexpr std::array<std::uint8_t, 4> kElfMagic = {0x7F, 'E', 'L', 'F'};
 /// The offset of the class byte in the ELF identification bytes.
@@ -353,9 +350,9 @@ struct LoadSegment {
 
 /// The `.text` section header of `image`, found through the section header `table` of the `layout` class and the
 /// string table at `strtab_index`, or nothing when the image has no section with that name.
-[[nodiscard]] std::optional<SectionHeader> find_text_section(std::span<const std::uint8_t> image,
-                                                             const HeaderTable& table, const ElfLayout& layout,
-                                                             std::uint16_t strtab_index) {
+[[nodiscard]] std::optional<SectionHeader> find_named_section(std::span<const std::uint8_t> image,
+                                                              const HeaderTable& table, const ElfLayout& layout,
+                                                              std::uint16_t strtab_index, std::string_view name) {
   if (strtab_index >= table.count) {
     return std::nullopt;
   }
@@ -370,7 +367,7 @@ struct LoadSegment {
     if (!header) {
       return std::nullopt;
     }
-    if (section_named(strtab, *header, kTextSectionName)) {
+    if (section_named(strtab, *header, name)) {
       return header;
     }
   }
@@ -433,7 +430,8 @@ std::optional<TextRegion> find_text_region(std::span<const std::uint8_t> image, 
       .count = *program_count,
   };
 
-  const std::optional<SectionHeader> text = find_text_section(image, section_table, *layout, *strtab_index);
+  const std::optional<SectionHeader> text =
+      find_named_section(image, section_table, *layout, *strtab_index, kTextSectionName);
   if (!text || text->size == 0 || (text->flags & kShfAlloc) == 0U || (text->flags & kShfWrite) != 0U ||
       !range_fits(text->file_offset, text->size, image.size()) || !std::in_range<std::uintptr_t>(text->address)) {
     return std::nullopt;
@@ -449,7 +447,34 @@ std::optional<TextRegion> find_text_region(std::span<const std::uint8_t> image, 
   };
 }
 
-std::optional<std::string> sha256_hex(std::span<const std::uint8_t> bytes) {
+std::optional<SectionRegion> find_section_region(std::span<const std::uint8_t> image, std::string_view name) {
+  const std::optional<ElfLayout> layout = layout_of(image);
+  if (!layout || image.size() < layout->header_size) {
+    return std::nullopt;
+  }
+  const std::optional<std::uint64_t> section_offset = read_word(image, layout->shoff, *layout);
+  const std::optional<std::uint16_t> section_entry_size = read_u16(image, layout->shentsize);
+  const std::optional<std::uint16_t> section_count = read_u16(image, layout->shnum);
+  const std::optional<std::uint16_t> strtab_index = read_u16(image, layout->shstrndx);
+  if (!section_offset || !section_entry_size || !section_count || !strtab_index || *section_count == 0) {
+    return std::nullopt;
+  }
+  const HeaderTable table{
+      .offset = *section_offset,
+      .entry_size = *section_entry_size,
+      .count = *section_count,
+  };
+  const std::optional<SectionHeader> section = find_named_section(image, table, *layout, *strtab_index, name);
+  if (!section || !range_fits(section->file_offset, section->size, image.size())) {
+    return std::nullopt;
+  }
+  return SectionRegion{
+      .file_offset = section->file_offset,
+      .size = section->size,
+  };
+}
+
+std::optional<std::array<std::uint8_t, kDigestSize>> sha256(std::span<const std::uint8_t> bytes) {
   if (psa_crypto_init() != PSA_SUCCESS) {
     return std::nullopt;
   }
@@ -460,10 +485,18 @@ std::optional<std::string> sha256_hex(std::span<const std::uint8_t> bytes) {
   if (status != PSA_SUCCESS || length != digest.size()) {
     return std::nullopt;
   }
+  return digest;
+}
+
+std::optional<std::string> sha256_hex(std::span<const std::uint8_t> bytes) {
+  const std::optional<std::array<std::uint8_t, kDigestSize>> digest = sha256(bytes);
+  if (!digest.has_value()) {
+    return std::nullopt;
+  }
   constexpr std::string_view kDigits = "0123456789abcdef";
   std::string hex;
-  hex.reserve(digest.size() * 2);
-  for (const std::uint8_t byte : digest) {
+  hex.reserve(digest->size() * 2);
+  for (const std::uint8_t byte : *digest) {
     hex.push_back(kDigits[byte >> 4U]);
     hex.push_back(kDigits[byte & 0x0FU]);
   }

@@ -1,4 +1,5 @@
-/// decrypt, which hands the payload frame to TF-PSA-Crypto's ChaCha20-Poly1305, through the PSA API.
+/// decrypt, which hands the payload frame to TF-PSA-Crypto's ChaCha20-Poly1305, through the PSA API, and wipe, which
+/// zeroes a decrypted buffer.
 
 #include "payload/cipher.h"
 
@@ -12,12 +13,6 @@
 namespace rasp::android::payload {
 
 namespace {
-
-/// The size of the nonce at the start of a frame, in bytes, as RFC 8439 fixes it.
-constexpr std::size_t kNonceSize = 12;
-
-/// The size of the Poly1305 tag at the end of a frame, in bytes.
-constexpr std::size_t kTagSize = 16;
 
 /// Imports `key` into PSA as a ChaCha20-Poly1305 decryption key, or gives nothing when PSA refuses it.
 [[nodiscard]] std::optional<psa_key_id_t> import_key(std::span<const std::uint8_t> key) {
@@ -60,6 +55,13 @@ std::optional<std::vector<std::uint8_t>> decrypt(std::span<const std::uint8_t> k
     return std::nullopt;
   }
   return plaintext;
+}
+
+void wipe(std::span<std::uint8_t> bytes) {
+  for (std::uint8_t& byte : bytes) {
+    volatile std::uint8_t& erased = byte;
+    erased = 0;
+  }
 }
 
 }  // namespace rasp::android::payload
