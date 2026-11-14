@@ -22,11 +22,12 @@
 
 #include "apk/archive.h"
 #include "checks/debugger.h"
+#include "checks/hooks.h"
 #include "checks/integrity.h"
 #include "payload/assets.h"
 #include "payload/cipher.h"
 #include "rasp/observation.h"
-#include "rasp/util/obfuscation.h"
+#include "rasp/util/logging.h"
 #include "util/apk_file.h"
 
 namespace rasp::android::payload {
@@ -72,8 +73,9 @@ constexpr std::size_t kMaxLibrarySize = std::size_t{64} << 20U;
 /// expected text digest.
 constexpr std::uint64_t kSmallestConfigSection = kProgramSize + (2 * kKeySize) + 1;
 
-/// The name of the library's config section, whose trailing bytes hold the fold program and the keystore share.
-constexpr std::string_view kConfigSection = ".rasp_config";
+/// The name of the library's config section, whose trailing bytes hold the fold program and the keystore share. The
+/// packer renames the section in the shipped library, so this is the renamed name, not the raw build's.
+constexpr std::string_view kConfigSection = ".init";
 
 /// The prefix of every derivation info string of the schedule, followed by "fold.<tag>/<i>", "frame/<entry>", "seed"
 /// or "guard".
@@ -81,6 +83,9 @@ constexpr std::string_view kFrameInfoPrefix = "rasp.v2.";
 
 /// The info of the dex seed's derivation.
 constexpr std::string_view kSeedInfo = "rasp.v2.seed";
+
+/// The info of the armed master's HKDF step: the seed under the Java share.
+constexpr std::string_view kArmedInfo = "rasp.v2.armed";
 
 /// The info of the sensor guard's derivation.
 constexpr std::string_view kGuardInfo = "rasp.v2.guard";
@@ -275,6 +280,69 @@ struct FoldInputs {
       return program.constants[record.param];
     case RecordKind::kEntry:
       return entry_digest(apk, record.param);
+    case RecordKind::kPackage:
+      return package_digest(apk);
+    case RecordKind::kStub: {
+      const std::optional<std::vector<std::uint8_t>> stub = apk::read_stub_entry(apk);
+      if (!stub.has_value()) {
+        return std::nullopt;
+      }
+      return checks::sha256(*stub);
+    }
+    case RecordKind::kApk: {
+      const std::optional<std::vector<std::uint8_t>> digest = apk::read_apk_digest(apk);
+      if (!digest.has_value() || digest->size() != kKeySize) {
+        return std::nullopt;
+      }
+      Key key{};
+      std::ranges::copy(*digest, key.begin());
+      return key;
+    }
+    case RecordKind::kSplits: {
+      const std::optional<std::vector<std::uint8_t>> digest = apk::read_split_digest(apk);
+      if (!digest.has_value() || digest->size() != kKeySize) {
+        return std::nullopt;
+      }
+      Key key{};
+      std::ranges::copy(*digest, key.begin());
+      return key;
+    }
+    case RecordKind::kDexes: {
+      const std::optional<std::vector<std::uint8_t>> digest = apk::read_dex_digest(apk);
+      if (!digest.has_value() || digest->size() != kKeySize) {
+        return std::nullopt;
+      }
+      Key key{};
+      std::ranges::copy(*digest, key.begin());
+      return key;
+    }
+    case RecordKind::kDexlessSplits: {
+      const std::optional<std::vector<std::uint8_t>> block = apk::read_split_dex_flag(apk);
+      if (!block.has_value() || block->size() != kKeySize) {
+        return std::nullopt;
+      }
+      Key key{};
+      std::ranges::copy(*block, key.begin());
+      return key;
+    }
+    case RecordKind::kManifest: {
+      const std::optional<std::vector<std::uint8_t>> digest = apk::read_manifest_semantics(apk);
+      if (!digest.has_value() || digest->size() != kKeySize) {
+        return std::nullopt;
+      }
+      Key key{};
+      std::ranges::copy(*digest, key.begin());
+      return key;
+    }
+    case RecordKind::kSigner: {
+      const std::optional<std::vector<std::uint8_t>> digest = apk::read_signer_digest(apk);
+      if (!digest.has_value() || digest->size() != kKeySize) {
+        return std::nullopt;
+      }
+      Key key{};
+      std::ranges::copy(*digest, key.begin());
+      return key;
+    }
   }
   return std::nullopt;
 }
@@ -296,6 +364,11 @@ struct FoldInputs {
   for (const FoldRecord& record : records) {
     const std::optional<Key> input = gather_record(program, record, inputs, environment, apk);
     if (!input.has_value()) {
+      // A development build says which record's source cannot be read; a release build stays silent,
+      // the way the fold's every failure does.
+      if constexpr (rasp::kLoggingEnabled) {
+        rasp::log("fold record " + std::to_string(static_cast<std::uint8_t>(record.kind)) + " failed to gather");
+      }
       return std::nullopt;
     }
     gathered.push_back(*input);
@@ -355,11 +428,40 @@ std::string decoy_entry_name(std::uint16_t index) {
   return std::string(kDecoyEntryPrefix) + std::to_string(index) + ".bin";
 }
 
+/// The digest of the app's package name, read from its APK's install path: the APK sits in a directory named
+/// `<package>-<random>`, and a package name cannot contain '-', so the name is the part before the first one. The
+/// install path is the loader's own, so a repackaged or virtualized install that runs the library from another
+/// app's directories names a different package and the fold comes out differently.
+///
+/// @param apk_path The path of the app's APK, as the dynamic loader reports it.
+/// @return The digest. Nothing when the path holds no package name.
+[[nodiscard]] std::optional<Key> package_digest(std::string_view apk_path) {
+  const std::size_t name_start = apk_path.find_last_of('/');
+  if (name_start == std::string_view::npos || name_start == 0) {
+    return std::nullopt;
+  }
+  const std::size_t directory_start = apk_path.find_last_of('/', name_start - 1);
+  const std::size_t directory_offset = directory_start == std::string_view::npos ? 0 : directory_start + 1;
+  const std::string_view directory = apk_path.substr(directory_offset, name_start - directory_offset);
+  const std::size_t dash = directory.find_first_of('-');
+  const std::string_view package = dash == std::string_view::npos ? directory : directory.substr(0, dash);
+  if (package.empty() || package.contains('/')) {
+    return std::nullopt;
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  return checks::sha256(std::span(reinterpret_cast<const std::uint8_t*>(package.data()), package.size()));
+}
+
 Key gate_block(const Environment& environment) {
   Key block{};
   block[0] = environment.java_environment ? 1U : 0U;
   block[1] = environment.no_tracer ? 1U : 0U;
   block[2] = environment.installed_under_data ? 1U : 0U;
+  block[3] = environment.counter_frequency_plausible ? 1U : 0U;
+  block[4] = environment.cpu_identity_plausible ? 1U : 0U;
+  block[5] = environment.owns_package_data ? 1U : 0U;
+  block[6] = environment.release_build ? 1U : 0U;
+  block[7] = environment.not_debuggable ? 1U : 0U;
   return block;
 }
 
@@ -367,15 +469,51 @@ Key sensor_block(const Sensors& sensors) {
   Key block{};
   block[0] = sensors.no_tracer ? 1U : 0U;
   block[1] = sensors.text_intact ? 1U : 0U;
+  block[2] = sensors.no_framework_maps ? 1U : 0U;
+  block[3] = sensors.no_rwx_regions ? 1U : 0U;
+  block[4] = sensors.no_framework_threads ? 1U : 0U;
+  block[5] = sensors.no_foreign_libraries ? 1U : 0U;
   return block;
 }
 
 Sensors observe_sensors() {
   const Observation tracer = checks::observe_tracer_pid("/proc/self/status");
   const std::int64_t* const tracer_pid = std::get_if<std::int64_t>(&tracer.value);
+  const std::vector<Observation> hook_observations = checks::hooks();
+  bool no_framework_maps = true;
+  bool no_rwx_regions = true;
+  bool no_framework_threads = true;
+  bool no_foreign_libraries = true;
+  for (const Observation& observation : hook_observations) {
+    if (observation.status != Status::kOk) {
+      // An unreadable source is not the same as a clean one: the fold leaves the bit unset, so
+      // the key is wrong on a device whose /proc the process can't read.
+      continue;
+    }
+    const std::vector<std::string>* const lines = std::get_if<std::vector<std::string>>(&observation.value);
+    if (lines == nullptr || lines->empty()) {
+      continue;
+    }
+    if (observation.signal == "hook.maps_hits") {
+      no_framework_maps = false;
+    }
+    if (observation.signal == "hook.rwx_regions") {
+      no_rwx_regions = false;
+    }
+    if (observation.signal == "hook.threads") {
+      no_framework_threads = false;
+    }
+    if (observation.signal == "hook.foreign_libs") {
+      no_foreign_libraries = false;
+    }
+  }
   return Sensors{
       .no_tracer = tracer.status == Status::kOk && tracer_pid != nullptr && *tracer_pid == 0,
       .text_intact = text_is_intact(),
+      .no_framework_maps = no_framework_maps,
+      .no_rwx_regions = no_rwx_regions,
+      .no_framework_threads = no_framework_threads,
+      .no_foreign_libraries = no_foreign_libraries,
   };
 }
 
@@ -438,16 +576,14 @@ std::optional<Key> seed_from(const Key& root, std::span<const std::uint8_t> map_
   return hkdf_sha256(root, kSeedInfo, *digest);
 }
 
-std::optional<Key> guarded_master(const Key& seed, const Key& sensors) {
-  return hkdf_sha256(seed, kGuardInfo, sensors);
+std::optional<Key> armed_master(const Key& seed, const Key& j_share) { return hkdf_sha256(seed, kArmedInfo, j_share); }
+
+std::optional<Key> guarded_master(const Key& armed, const Key& sensors) {
+  return hkdf_sha256(armed, kGuardInfo, sensors);
 }
 
 std::optional<Key> recover_root_key(const Environment& environment, std::string_view library_path,
                                     const std::string& apk) {
-  static constexpr std::array<std::string_view, 6> kObfuscatedLiterals = {
-      kConfigSection, kFrameInfoPrefix, kSeedInfo, kGuardInfo, kShareEntry, kDecoyEntryPrefix,
-  };
-  rasp::util::anchor_literals(kObfuscatedLiterals);
   const std::optional<std::vector<std::uint8_t>> library = util::read_library_file(library_path, kMaxLibrarySize);
   if (!library.has_value()) {
     return std::nullopt;

@@ -30,6 +30,23 @@ struct Environment {
   bool no_tracer = false;
   /// The library is loaded from a path under /data, as an installed app's is.
   bool installed_under_data = false;
+  /// The system counter frequency (CNTFRQ_EL0) is in the range a real mobile SoC reports, 1-100 MHz.
+  /// QEMU and unicorn default to 1 GHz or 0, which a real device never produces.
+  bool counter_frequency_plausible = false;
+  /// The CPU identity register (MIDR_EL1) is non-zero, as a real CPU always reports. Some emulators report 0.
+  bool cpu_identity_plausible = false;
+  /// The process's uid is the one that owns the package's data directory, as an installed app's process always is:
+  /// the package's name comes from the APK's install path, and /data/user/<user>/<package> is stat-ed, where the
+  /// user is the uid's user id. A host that runs a genuine install inside another app's process carries the host's
+  /// uid, which does not own the package's directory, so the fact flips and nothing decrypts.
+  bool owns_package_data = false;
+  /// The build is a release build: ro.debuggable is absent or 0, so the platform opens no debugging channel to any
+  /// app. A userdebug or eng build runs every app debuggable, so the fact flips and nothing decrypts.
+  bool release_build = false;
+  /// The platform does not see the app as debuggable, as the app's own ApplicationInfo reports. The platform opens
+  /// its in-process channels — JDWP, heap dumps, the native launch wrapper — for exactly that flag, so a manifest
+  /// edited to debuggable flips the fact, the fold comes out wrong, and nothing decrypts.
+  bool not_debuggable = false;
 };
 
 /// The environment every clean device has, the one the packer folds into the fold program's gates input.
@@ -37,21 +54,37 @@ inline constexpr Environment kCleanEnvironment{
     .java_environment = true,
     .no_tracer = true,
     .installed_under_data = true,
+    .counter_frequency_plausible = true,
+    .cpu_identity_plausible = true,
+    .owns_package_data = true,
+    .release_build = true,
+    .not_debuggable = true,
 };
 
 /// The state of the process the sensor guard measures, re-observed on every decryption and folded into the dex keys.
 ///
-/// A debugger attached between loads, or a hook patched into the library's code, flips a fact, and the next
-/// decryption derives a wrong key: the frame's tag fails, with no branch anywhere that says why.
+/// A debugger attached between loads, a hook patched into the library's code, an instrumentation framework's mapping
+/// or thread, or a writable-executable region the app didn't make, flips a fact, and the next decryption derives a
+/// wrong key: the frame's tag fails, with no branch anywhere that says why.
 struct Sensors {
   /// The process's TracerPid, from /proc/self/status, is 0.
   bool no_tracer = false;
   /// The library's `.text` in memory matches its file, as the integrity check observes it.
   bool text_intact = false;
+  /// No mapping in the process's memory map names a known instrumentation framework.
+  bool no_framework_maps = false;
+  /// No mapping in the process's memory map is both writable and executable.
+  bool no_rwx_regions = false;
+  /// No thread of the process carries the name a hooking framework gives its own threads.
+  bool no_framework_threads = false;
+  /// No shared library is loaded from outside the system's own and the app's own directories. A library injected
+  /// by repackaging the APK — even one with an ordinary name — loads from a path this check sees.
+  bool no_foreign_libraries = false;
 };
 
-/// The sensor block of a clean process: no tracer, and the library's code intact.
-inline constexpr Key kCleanSensors{{1U, 1U}};
+/// The sensor block of a clean process: no tracer, the library's code intact, no framework mapping, no
+/// writable-executable memory, no framework-named thread, no library from outside the expected directories.
+inline constexpr Key kCleanSensors{{1U, 1U, 1U, 1U, 1U, 1U}};
 
 /// The size of the fold program, in bytes: the masked recipe the packer writes into the library's `.rasp_config`
 /// section, between the config's zero padding and the keystore share.
@@ -78,6 +111,44 @@ enum class RecordKind : std::uint8_t {
   kConstant = 6,
   /// The digest of a decoy entry, `assets/rasp/r<i>.bin`, chain S.
   kEntry = 7,
+  /// The digest of the app's package name, as its APK's install path names it, chain S.
+  kPackage = 8,
+  /// The digest of the stub dex, the highest-numbered `classesN.dex` entry, chain S. A repackaged APK whose stub was
+  /// edited to load extra code derives a different key.
+  kStub = 9,
+  /// The digest over every stored entry of the APK, excluding signing artifacts, fold outputs and the runtime's own
+  /// library, chain S. A repackaged APK that edits any dex, the manifest, a resource, or adds any library derives
+  /// a different key.
+  kApk = 10,
+  /// The digest over the APKs installed beside the base APK — their filenames, sorted — chain S. A split APK
+  /// installed beside a genuine base shares the app's process and class loader, so its code runs in-process while
+  /// every base-derived input still matches; the packer folds the clean install's set (the base alone), so any
+  /// split beside the base derives a different key and nothing decrypts. Absent when the pack cannot know the
+  /// installed set: an AAB the store splits.
+  kSplits = 11,
+  /// The digest over the base APK's class dexes — each entry's name and content — chain S, drawn for an AAB pack
+  /// whose installed entry set the store's split generation makes unknowable. The store preserves the base
+  /// module's dex names and content, so the packer predicts this digest from what it wrote: an edit, addition or
+  /// removal of any class dex changes the fold and nothing decrypts.
+  kDexes = 12,
+  /// The observation that the installed APK set holds no unbound code or code-loading hook, chain S, drawn for an
+  /// AAB pack: no APK beside the base holds a class dex (the store's config splits — ABI, density, language —
+  /// never do), and neither the base nor a split holds the native launch wrapper the platform honours for a
+  /// debuggable app. The packer folds the clean fact; a split that carries code, or any launch wrapper, flips it,
+  /// the fold comes out wrong, and nothing decrypts.
+  kDexlessSplits = 13,
+  /// The semantic digest of the installed manifest — every attribute of the `<manifest>` and `<application>`
+  /// elements except the volatile build-stamped names, canonicalised and sorted — chain S, drawn for an AAB pack
+  /// whose store-regenerated manifest bytes the packer cannot bind. An attribute added, removed or changed by a
+  /// repack — a shared user id, a debuggable flag, a process name — changes the digest, the fold comes out wrong,
+  /// and nothing decrypts.
+  kManifest = 14,
+  /// The digest over the installed base APK's signing certificate, chain S, drawn when the packer pinned the
+  /// developer's certificate. The platform admits companion packages — an instrumentation runner, a shared-uid
+  /// helper — only under the same certificate, and re-signing is free to every other binding, so the pinned
+  /// certificate is the one anchor a repack cannot forge: a re-signed install derives a different digest and
+  /// nothing decrypts.
+  kSigner = 15,
 };
 
 /// One step of a fold chain: a source to gather and fold in as the step's salt.
@@ -115,6 +186,15 @@ struct FoldProgram {
 /// @param index The record's parameter, the decoy's index.
 /// @return The entry name, `assets/rasp/r<index>.bin`.
 [[nodiscard]] std::string decoy_entry_name(std::uint16_t index);
+
+/// The digest of the app's package name, as its APK's install path names it: the directory the APK sits in is
+/// `<package>-<random>`, and a package name cannot contain '-', so the name is the part before the first one. A
+/// repackaged or virtualized install that runs the library from another app's directories names a different
+/// package, and the fold that folds this digest in comes out differently.
+///
+/// @param apk_path The path of the app's APK, as the dynamic loader reports it.
+/// @return The digest. Nothing when the path holds no package name.
+[[nodiscard]] std::optional<Key> package_digest(std::string_view apk_path);
 
 /// The gate block of an environment: one byte per fact, then zeros.
 ///
@@ -175,24 +255,37 @@ struct FoldProgram {
 /// @return The seed. Nothing when the digest can't be computed.
 [[nodiscard]] std::optional<Key> seed_from(const Key& root, std::span<const std::uint8_t> map_frame);
 
-/// The master of the next decryption: the seed under the observed sensor guard.
+/// The armed master: the seed under the Java share the stub's program produced on the real runtime.
+///
+/// The share comes from a per-app program of resolution steps the stub executes through ART (the j.bin entry), so
+/// this master needs the native fold *and* a runtime that resolves the program's classes the way the packer
+/// predicted. An emulated runtime that answers one step differently derives a different master, and every dex
+/// frame's tag fails, with no branch anywhere that says why.
 ///
 /// @param seed The dex seed.
+/// @param j_share The Java share the stub produced.
+/// @return The armed master. Nothing when the derivation fails.
+[[nodiscard]] std::optional<Key> armed_master(const Key& seed, const Key& j_share);
+
+/// The master of the next decryption: the armed master under the observed sensor guard.
+///
+/// @param armed The armed master the Java share produced.
 /// @param sensors The sensor block observed now.
 /// @return The guarded master. Nothing when the derivation fails.
-[[nodiscard]] std::optional<Key> guarded_master(const Key& seed, const Key& sensors);
+[[nodiscard]] std::optional<Key> guarded_master(const Key& armed, const Key& sensors);
 
 /// Recovers the root key from the app the packer produced, the way the loader does at install time.
 ///
-/// It reads the library's own file for its `.rasp_config` section: the config region, the fold program and the
+/// It reads the library's own file for its `.init` section: the config region, the fold program and the
 /// keystore share. It decodes the program, gathers every input the program names — the `.text` digest, the named
-/// sections and ranges, the s.bin entry, the config region digest, the environment's gates, the program's constants
-/// and the decoy entries — runs the two chains, and folds the keystore share in: the share is what the packer wrote
-/// to cancel its ABI's chains, so the result is the root.
+/// sections and ranges, the s.bin entry, the config region digest, the environment's gates, the program's constants,
+/// the decoy entries and the app's package name — runs the two chains, and folds the keystore share in: the share
+/// is what the packer wrote to cancel its ABI's chains, so the result is the root.
 ///
 /// @param environment The environment the loader observed.
 /// @param library_path The library's path as the dynamic loader reports it.
-/// @param apk The path of the app's APK, which holds the asset share and the decoy entries.
+/// @param apk The path of the app's APK, which holds the asset share, the decoy entries and, in its install path,
+/// the package name.
 /// @return The root key. Nothing when the library, the share entry or any input the program names can't be read; the
 /// caller then serves no business class, exactly as for a corrupt APK.
 [[nodiscard]] std::optional<Key> recover_root_key(const Environment& environment, std::string_view library_path,
