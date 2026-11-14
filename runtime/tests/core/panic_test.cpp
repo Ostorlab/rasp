@@ -281,11 +281,26 @@ TEST(Panic, armPanic_whenArmed_endsTheProcessOnAnotherThreadAfterTheDelay) {
   EXPECT_GE(steady_clock::now() - start, milliseconds{50});
 }
 
-TEST(Panic, panicOnDetection_whenSomethingIsDetected_armsAPanicThatEndsTheProcessLater) {
+TEST(Panic, panicOnDetection_whenASevereSignalIsDetected_endsTheProcessWithinTheShortWindow) {
   const int before = end_calls().load();
   const std::vector<Observation> observations = {
       observed("id.package", "proc_cmdline", std::string("com.example")),
       observed("dbg.tracer_pid", "proc_status", std::int64_t{4242}),
+  };
+  const steady_clock::time_point start = steady_clock::now();
+
+  ASSERT_TRUE(panic_on_detection(observations, record_end));
+
+  EXPECT_EQ(end_calls().load(), before);
+  ASSERT_TRUE(wait_for_end_calls(before + 1, kMaxSeverePanicDelay + kWaitMargin));
+  EXPECT_GE(steady_clock::now() - start, kMinSeverePanicDelay);
+}
+
+TEST(Panic, panicOnDetection_whenAnotherSignalIsDetected_armsAPanicThatEndsTheProcessLater) {
+  const int before = end_calls().load();
+  const std::vector<Observation> observations = {
+      observed("id.package", "proc_cmdline", std::string("com.example")),
+      observed("emu.props", "properties", Strings{"ro.hardware=ranchu"}),
   };
   const steady_clock::time_point start = steady_clock::now();
 

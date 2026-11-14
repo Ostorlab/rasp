@@ -31,9 +31,15 @@ struct Detection {
 /// The function that ends the process. In the runtime it is the platform's direct system call, which never returns.
 using EndProcess = void (*)() noexcept;
 
-/// The shortest time between arming a panic and the end of the process.
+/// The shortest time between arming a panic and the end of the process for a severe detection: one that shows an
+/// active attack on the running process, such as a debugger or a hooking framework. The window is short because the
+/// one who triggered it already knows what they did; the delay only keeps the end from saying which check fired.
+inline constexpr std::chrono::milliseconds kMinSeverePanicDelay{100};
+/// The longest time between arming a panic and the end of the process for a severe detection.
+inline constexpr std::chrono::milliseconds kMaxSeverePanicDelay{500};
+/// The shortest time between arming a panic and the end of the process for every other detection.
 inline constexpr std::chrono::milliseconds kMinPanicDelay{1000};
-/// The longest time between arming a panic and the end of the process.
+/// The longest time between arming a panic and the end of the process for every other detection.
 inline constexpr std::chrono::milliseconds kMaxPanicDelay{3000};
 
 /// Judges the observations of the built-in checks, and returns what they detected.
@@ -53,6 +59,12 @@ inline constexpr std::chrono::milliseconds kMaxPanicDelay{3000};
 ///
 /// @return A random delay, from kMinPanicDelay to kMaxPanicDelay.
 [[nodiscard]] std::chrono::milliseconds panic_delay() noexcept;
+
+/// Picks how long an armed panic waits before it ends the process after a severe detection: one that shows an active
+/// attack on the running process, such as a debugger or a hooking framework.
+///
+/// @return A random delay, from kMinSeverePanicDelay to kMaxSeverePanicDelay.
+[[nodiscard]] std::chrono::milliseconds severe_panic_delay() noexcept;
 
 /// Arms a panic: starts a detached thread that waits `delay`, then calls `end_process`.
 ///
