@@ -30,7 +30,8 @@ public final class RaspStub extends AppComponentFactory {
      * a real runtime. This method runs that program — resolving its classes through ART — before Android loads any
      * class, and arms the store with what it yields. A runtime that resolves the steps the way the packer predicted
      * arms correctly and the classes decrypt; anything else arms with a wrong share, every frame's tag fails, and
-     * nothing reports why. When the program cannot run, the store is left unarmed and no business class decrypts.
+     * nothing reports why. When the app shipped no program, or the program cannot run, the store is left unarmed
+     * and no business class decrypts.
      *
      * @param base the app's base class loader, which Android created for the app's own dex files.
      * @param info the app's application info, whose {@code nativeLibraryDir} is where the app's native libraries are.
@@ -43,7 +44,7 @@ public final class RaspStub extends AppComponentFactory {
         if (steps != null) {
             try {
                 arm(JArm.run(base, steps));
-            } catch (RuntimeException | ReflectiveOperationException ignored) {
+            } catch (RuntimeException | ReflectiveOperationException | LinkageError ignored) {
                 // An unrunnable program leaves the store unarmed: no business class decrypts, and nothing says why.
             }
         }

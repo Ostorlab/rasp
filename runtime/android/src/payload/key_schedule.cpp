@@ -519,6 +519,30 @@ Sensors fold_hook_observations(Sensors sensors, std::span<const Observation> obs
   return sensors;
 }
 
+HardwareFacts observe_hardware() {
+  HardwareFacts facts;
+#ifdef __aarch64__
+  std::uint64_t frequency = 0;
+  // NOLINTNEXTLINE(portability-no-assembler): the observation is the mrs read itself.
+  asm volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
+  facts.counter_frequency_plausible = frequency >= 1000000U && frequency <= 100000000U;
+  std::uint64_t midr = 0;
+  // NOLINTNEXTLINE(portability-no-assembler): the observation is the mrs read itself.
+  asm volatile("mrs %0, midr_el1" : "=r"(midr));
+  facts.cpu_identity_plausible = midr != 0;
+#elifdef __x86_64__
+  std::uint32_t eax = 0;
+  std::uint32_t ebx = 0;
+  std::uint32_t ecx = 0;
+  std::uint32_t edx = 0;
+  // NOLINTNEXTLINE(portability-no-assembler): the observation is the cpuid read itself.
+  asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
+  facts.counter_frequency_plausible = true;
+  facts.cpu_identity_plausible = ebx != 0 || edx != 0 || ecx != 0;
+#endif
+  return facts;
+}
+
 Sensors observe_sensors() {
   const Observation tracer = checks::observe_tracer_pid("/proc/self/status");
   const std::int64_t* const tracer_pid = std::get_if<std::int64_t>(&tracer.value);

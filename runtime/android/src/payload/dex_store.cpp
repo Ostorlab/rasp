@@ -103,8 +103,8 @@ std::optional<DexStore> open_dex_store(std::string apk, const Key& root) {
   DexStore store;
   store.apk = std::move(apk);
   store.seed = *seed;
-  // The Java program is sealed under the root like the map: the loader needs it before the stub can arm. An app the
-  // packer built without one ships no entry, and its store then arms from a zero share.
+  // The Java program is sealed under the root like the map: the loader needs it before the stub can arm. Without it,
+  // absent or not decrypting, the stub has nothing to run, and the store stays unarmed.
   const std::optional<std::vector<std::uint8_t>> program_frame =
       rasp::android::apk::read_stored_entry(store.apk, kJProgramEntry);
   if (program_frame.has_value()) {
