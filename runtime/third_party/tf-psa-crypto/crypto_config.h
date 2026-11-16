@@ -1,12 +1,15 @@
-/// The TF-PSA-Crypto configuration of the runtime: ChaCha20-Poly1305 for the Android payload, SHA-256 for the iOS
-/// cdhash and code hash, what PSA crypto needs to start, and the library's own locking, so several threads can decrypt
-/// at once. The build passes it to TF-PSA-Crypto as TF_PSA_CRYPTO_CONFIG_FILE, in place of its default configuration.
-/// See README.md next to it.
+/// The TF-PSA-Crypto configuration of the runtime: ChaCha20-Poly1305 for the Android payload, HKDF-SHA-256 for the
+/// payload's key schedule, SHA-256 for the iOS cdhash and code hash, what PSA crypto needs to start, and the library's
+/// own locking, so several threads can decrypt at once. The build passes it to TF-PSA-Crypto as
+/// TF_PSA_CRYPTO_CONFIG_FILE, in place of its default configuration. See README.md next to it.
 
 #pragma once
 
 #define PSA_WANT_ALG_CHACHA20_POLY1305 1
 #define PSA_WANT_KEY_TYPE_CHACHA20 1
+
+// HKDF pulls in HMAC and its key type through the configuration's own dependency rules.
+#define PSA_WANT_ALG_HKDF 1
 
 #define MBEDTLS_PSA_CRYPTO_C
 
