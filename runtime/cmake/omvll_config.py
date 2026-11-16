@@ -34,12 +34,16 @@ BOOTSTRAP_MODULES = [
 # Our functions that always get the heavy passes, by demangled-name substring.
 SENSITIVE_FUNCTIONS = [
     "rasp::android::checks::",
-    "rasp::ios::checks::",
     "rasp::checks::",
     "rasp::android::loader::",
     "rasp::android::payload::",
     "rasp::util::macho::",
-    "rasp::ios::util::",
+    # Ghidra decompiles rasp_start and the iOS orchestration (thread spawn + monitor ref) in cleartext because they
+    # only get the cheap passes (which it folds), while the heavy passes defeat it on the checks. Cover the whole
+    # rasp::ios:: namespace plus the file-scope anonymous-namespace constructor rasp_start (which rasp::ios:: misses),
+    # so the entry points get the heavy passes too. iOS-only; Android stays rasp::android::.
+    "rasp::ios::",
+    "rasp_start",
     "observe_",
     "find_text",
     "code_signature",
