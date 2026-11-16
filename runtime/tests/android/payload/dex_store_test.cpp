@@ -424,17 +424,6 @@ TEST_F(DexStoreTest, openDexStore_whenTheRootIsWrong_returnsNothing) {
                    .has_value());
 }
 
-TEST_F(DexStoreTest, decryptDex_whenTheRootWasWrongAtOpenTime_cannotDecryptAnyDex) {
-  const std::optional<DexStore> store = open_dex_store(write_full_apk({
-                                                           .map = bytes_of(kMapFrameHex),
-                                                           .program = bytes_of(kJFrameHex),
-                                                           .dex0 = bytes_of(kDex0FrameHex),
-                                                           .dex1 = bytes_of(kDex1FrameHex),
-                                                       }),
-                                                       wrong_root());
-  EXPECT_FALSE(store.has_value());
-}
-
 TEST_F(DexStoreTest, decryptDex_beforeTheStoreIsArmed_returnsNothing) {
   const std::optional<DexStore> store = open_clean_store();
   ASSERT_TRUE(store.has_value());

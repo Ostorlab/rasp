@@ -211,9 +211,9 @@ struct FoldProgram {
 /// Observes the process's sensors, the way every decryption does.
 ///
 /// Reads the tracer from /proc/self/status and compares the library's `.text` in memory against its file, through
-/// the integrity check. On a host build the text sensor cannot run — the check's self-observation needs the dynamic
-/// loader's module tables — and reads as intact: the guard is a device fact, and the host tests cover its arithmetic
-/// with fixed sensor blocks.
+/// the integrity check. On a host build the text
+/// sensor cannot run — the check's self-observation needs the dynamic loader's module tables — and reads as intact: the
+/// guard is a device fact, and the host tests cover its arithmetic with fixed sensor blocks.
 ///
 /// @return What the process looks like right now.
 [[nodiscard]] Sensors observe_sensors();

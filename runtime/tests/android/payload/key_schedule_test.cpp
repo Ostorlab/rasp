@@ -470,6 +470,9 @@ class KeyScheduleTest : public testing::Test {
       return false;
     }
     const std::string share = bytes_of(kShareHex);
+    const std::string map = bytes_of(kMapFrameHex);
+    const std::string dex0 = bytes_of(kDex0FrameHex);
+    const std::string dex1 = bytes_of(kDex1FrameHex);
     const std::string decoy0 = bytes_of(kDecoy0Hex);
     const std::string decoy1 = bytes_of(kDecoy1Hex);
     // The decoys' names are held in locals: a StoredEntry's name is a view, and a view of the
@@ -477,12 +480,9 @@ class KeyScheduleTest : public testing::Test {
     const std::string decoy0_name = decoy_entry_name(0);
     const std::string decoy1_name = decoy_entry_name(1);
     const std::vector<StoredEntry> entries = {
-        {.name = kShareEntry, .content = share},
-        {.name = decoy0_name, .content = decoy0},
-        {.name = decoy1_name, .content = decoy1},
-        {.name = kMapEntryName, .content = std::string(kMapFrameHex)},
-        {.name = kDex0Entry, .content = std::string(kDex0FrameHex)},
-        {.name = kDex1Entry, .content = std::string(kDex1FrameHex)},
+        {.name = kShareEntry, .content = share},  {.name = decoy0_name, .content = decoy0},
+        {.name = decoy1_name, .content = decoy1}, {.name = kMapEntryName, .content = map},
+        {.name = kDex0Entry, .content = dex0},    {.name = kDex1Entry, .content = dex1},
     };
     return write_file(directory_.path() + "/base.apk", zip_with_stored_entries(entries));
   }
@@ -924,10 +924,10 @@ TEST(Apk, manifestSemantics_whenASharedUserIdChanges_changes) {
   EXPECT_EQ(*volatile_digest, *clean_digest);
 }
 
-TEST(Apk, signerDigest_whenTheApkHoldsASigningBlock_hashesTheCertificates) {
+TEST(Apk, signerDigest_whenTheSignerCarriesTwoCertificates_hashesItsOwnCertificate) {
   // A hand-built APK signing block: one v2 signer whose signed data carries two certificates, and the
-  // end record names the central directory at the block's end. The digest is the SHA-256 of the
-  // certificates, concatenated in order.
+  // end record names the central directory at the block's end. The signer's own certificate is the first one, the
+  // one the packer pins, so the digest is the SHA-256 of that certificate alone.
   const std::string hex =
       "580000000000000038000000000000001a870971300000002c00000028000000"
       "10000000040000003002aabb040000003002ccdd10000000040000003002aabb"
@@ -937,10 +937,10 @@ TEST(Apk, signerDigest_whenTheApkHoldsASigningBlock_hashesTheCertificates) {
   const std::vector<std::uint8_t> file_bytes = from_hex(hex);
   ASSERT_TRUE(write_file(directory.path() + "/signed.apk", std::string(file_bytes.begin(), file_bytes.end())));
 
-  const std::optional<std::vector<std::uint8_t>> digest = apk::read_signer_digest(directory.path() + "/signed.apk");
+  const std::optional<std::vector<std::uint8_t>> digest = apk::read_signer_digest(directory.path() + "/signed.apk", 36);
 
   ASSERT_TRUE(digest.has_value());
-  EXPECT_EQ(*digest, from_hex("45f89b4af9e83b8215b18768abe16a6269a04775a1c31604e8674b3b9d499e2a"));
+  EXPECT_EQ(*digest, from_hex("37f9a46fc18eb332605cb3ce9ae969a0ed9a9057fada07f15d999de7cdb195fb"));
 }
 
 TEST(KeySchedule, gateBlock_whenTheDeviceIsClean_isOneBytePerFactThenZeros) {
@@ -1067,6 +1067,25 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenTheLibraryCodeIsPatched_givesADiffere
   EXPECT_NE(*recovered, from_key(kRootHex));
 }
 
+TEST_F(KeyScheduleTest, recoverRootKey_whenOnlyTheExpectedTextDigestIsPatched_givesADifferentRoot) {
+  ASSERT_TRUE(write_vectors());
+  const std::optional<Key> original = recover_root_key(kCleanEnvironment, library_path(), apk_path());
+  ASSERT_TRUE(original.has_value() && *original == from_key(kRootHex));
+  std::vector<std::uint8_t> library = from_hex(kLibraryHex);
+  const std::optional<checks::SectionRegion> section = checks::find_section_region(library, ".init");
+  if (!section.has_value()) {
+    FAIL() << "the vector library has no config section";
+    return;
+  }
+  const auto digest_offset = static_cast<std::size_t>(section->file_offset + section->size - (2 * kKeySize));
+  library[digest_offset] = static_cast<std::uint8_t>(library[digest_offset] ^ 0x01U);
+  ASSERT_TRUE(write_file(library_path(), std::string(library.begin(), library.end())));
+
+  const std::optional<Key> recovered = recover_root_key(kCleanEnvironment, library_path(), apk_path());
+
+  EXPECT_TRUE(recovered.has_value() && *recovered != from_key(kRootHex));
+}
+
 TEST_F(KeyScheduleTest, recoverRootKey_whenTheFoldProgramIsPatched_givesADifferentRoot) {
   ASSERT_TRUE(write_vectors());
   std::vector<std::uint8_t> library = from_hex(kLibraryHex);
@@ -1087,9 +1106,10 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenTheFoldProgramIsPatched_givesADiffere
 TEST_F(KeyScheduleTest, recoverRootKey_whenADecoyEntryIsAbsent_returnsNothing) {
   ASSERT_TRUE(write_file(library_path(), bytes_of(kLibraryHex)));
   const std::string share = bytes_of(kShareHex);
+  const std::string map = bytes_of(kMapFrameHex);
   const std::vector<StoredEntry> entries = {
       {.name = kShareEntry, .content = share},
-      {.name = kMapEntryName, .content = std::string(kMapFrameHex)},
+      {.name = kMapEntryName, .content = map},
   };
   ASSERT_TRUE(write_file(apk_path(), zip_with_stored_entries(entries)));
 
@@ -1098,8 +1118,9 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenADecoyEntryIsAbsent_returnsNothing) {
 
 TEST_F(KeyScheduleTest, recoverRootKey_whenTheApkHasNoShareEntry_returnsNothing) {
   ASSERT_TRUE(write_file(library_path(), bytes_of(kLibraryHex)));
+  const std::string map = bytes_of(kMapFrameHex);
   const std::vector<StoredEntry> entries = {
-      {.name = kMapEntryName, .content = std::string(kMapFrameHex)},
+      {.name = kMapEntryName, .content = map},
   };
   ASSERT_TRUE(write_file(apk_path(), zip_with_stored_entries(entries)));
 

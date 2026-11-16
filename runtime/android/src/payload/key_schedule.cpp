@@ -20,6 +20,10 @@
 #include <variant>
 #include <vector>
 
+#ifdef __ANDROID__
+#include <android/api-level.h>
+#endif
+
 #include "apk/archive.h"
 #include "checks/debugger.h"
 #include "checks/hooks.h"
@@ -137,6 +141,18 @@ void xor_into(std::span<std::uint8_t> out, std::span<const std::uint8_t> input) 
   const std::uint32_t b2 = bytes[offset + 2];
   const std::uint32_t b3 = bytes[offset + 3];
   return b0 | (b1 << 8U) | (b2 << 16U) | (b3 << 24U);
+}
+
+/// The API level of the device, which picks the signer Android trusts from the APK's signing block.
+///
+/// @return The level, or 0 when it can't be read and on a host build, where no v3 or v3.1 signer applies.
+[[nodiscard]] std::uint32_t device_api_level() {
+#ifdef __ANDROID__
+  const int level = android_get_device_api_level();
+  return level > 0 ? static_cast<std::uint32_t>(level) : 0U;
+#else
+  return 0U;
+#endif
 }
 
 /// Whether the library's `.text` in memory matches its file, as the integrity check observes it.
@@ -335,7 +351,7 @@ struct FoldInputs {
       return key;
     }
     case RecordKind::kSigner: {
-      const std::optional<std::vector<std::uint8_t>> digest = apk::read_signer_digest(apk);
+      const std::optional<std::vector<std::uint8_t>> digest = apk::read_signer_digest(apk, device_api_level());
       if (!digest.has_value() || digest->size() != kKeySize) {
         return std::nullopt;
       }
@@ -414,6 +430,9 @@ std::optional<FoldProgram> decode_program(std::span<const std::uint8_t> blob) {
     if (record.kind == RecordKind::kConstant) {
       named = std::max<std::size_t>(named, record.param + 1U);
     }
+  }
+  if (named > (kProgramSize - kConstantsOffset) / kKeySize) {
+    return std::nullopt;
   }
   for (std::size_t index = 0; index < named; ++index) {
     const std::size_t offset = kConstantsOffset + (index * kKeySize);
