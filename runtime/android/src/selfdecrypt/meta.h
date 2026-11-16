@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace rasp::android::selfdecrypt {
@@ -63,11 +64,16 @@ struct Meta {
   /// Byte length of the encrypted `.text` section (for the post-decrypt verification).
   std::uint32_t text_size;
   /// The SHA-256 of the plaintext `.text` section: the decryption carries no MAC of its own, so the bootstrap
-  /// verifies the decrypted `.text` against this digest and aborts the process on a mismatch.
+  /// verifies the decrypted `.text` against this digest and, on a mismatch, leaves the library's code with no access.
   std::uint8_t text_digest[32];
   /// The encrypted regions.
   Region regions[kMaxRegions];
 };
+
+static_assert(sizeof(Region) == 32, "the packer's android/self_encrypt.py writes 32-byte regions");
+static_assert(offsetof(Meta, text_digest) == 60, "the packer writes the text digest after a 15-word header");
+static_assert(offsetof(Meta, regions) == 92, "the packer writes the region table after the text digest");
+static_assert(sizeof(Meta) == 2140, "the packer checks .packmeta's size against this layout");
 
 /// The metadata, in its own plaintext .packmeta section; the packer fills it in post-build.
 extern volatile Meta g_meta;

@@ -21,6 +21,7 @@ import dataclasses
 import hashlib
 import os
 import struct
+from typing import Any
 
 import cryptography.hazmat.primitives.ciphers as ciphers
 from cryptography.hazmat.primitives import hashes
@@ -63,6 +64,7 @@ _PACKED_FLAG = struct.Struct("<I")
 _ELF_HEADER_OFFSET = 16
 
 _SHT_RELA = 4
+_SHT_NOBITS = 8
 _SHT_REL = 9
 _SHT_RELR = 19
 _PT_GNU_RELRO = 0x6474E552
@@ -105,6 +107,28 @@ class _Region:
     nonce: bytes
 
 
+def _malformed() -> errors.InvalidRuntimeError:
+    """The error for a library whose tables reach outside the file."""
+    return errors.InvalidRuntimeError("the runtime library is truncated or malformed")
+
+
+def _unpack(
+    entry: struct.Struct, data: bytes | bytearray, offset: int
+) -> tuple[Any, ...]:
+    """Unpacks ``entry`` at ``offset``, or raises when it reaches outside ``data``."""
+    if offset < 0 or offset + entry.size > len(data):
+        raise _malformed()
+    return entry.unpack_from(data, offset)
+
+
+def _string_end(data: bytes | bytearray, start: int) -> int:
+    """The offset of the NUL that ends the string at ``start``, or raises when there is none."""
+    end = data.find(b"\x00", start) if 0 <= start < len(data) else -1
+    if end == -1:
+        raise _malformed()
+    return end
+
+
 def _read_header(data: bytes | bytearray) -> _ElfHeader:
     """Parses the ELF64 header, or raises when the file is not a little-endian ELF64 object."""
     if len(data) < 64 or data[0:4] != b"\x7fELF":
@@ -137,15 +161,19 @@ def _read_sections(data: bytes | bytearray, header: _ElfHeader) -> list[_Section
     raw: list[tuple[int, int, int, int, int, int]] = []
     for index in range(header.shnum):
         name, stype, _flags, addr, offset, size, _link, _info, _align, entsize = (
-            _SECTION_HEADER.unpack_from(data, header.shoff + index * header.shentsize)
+            _unpack(_SECTION_HEADER, data, header.shoff + index * header.shentsize)
         )
+        if stype != _SHT_NOBITS and offset + size > len(data):
+            raise _malformed()
         raw.append((name, stype, addr, offset, size, entsize))
 
+    if header.shstrndx >= header.shnum:
+        raise _malformed()
     strtab_offset = raw[header.shstrndx][3]
     sections: list[_Section] = []
     for name, stype, addr, offset, size, entsize in raw:
         start = strtab_offset + name
-        end = data.index(b"\x00", start)
+        end = _string_end(data, start)
         sections.append(
             _Section(
                 name=data[start:end].decode("ascii", errors="replace"),
@@ -172,8 +200,8 @@ def _relro_range(data: bytes | bytearray, header: _ElfHeader) -> tuple[int, int]
     if header.phentsize != _PROGRAM_HEADER.size:
         return None
     for index in range(header.phnum):
-        ptype, _flags, _off, vaddr, _paddr, _filesz, memsz, _align = (
-            _PROGRAM_HEADER.unpack_from(data, header.phoff + index * header.phentsize)
+        ptype, _flags, _off, vaddr, _paddr, _filesz, memsz, _align = _unpack(
+            _PROGRAM_HEADER, data, header.phoff + index * header.phentsize
         )
         if ptype == _PT_GNU_RELRO:
             return (vaddr, vaddr + memsz)
@@ -199,7 +227,7 @@ def _table_offsets(
     """The ``r_offset`` of each Elf64_Rel/Rela entry in ``section``."""
     entsize = section.entsize if section.entsize > 0 else entry.size
     return {
-        entry.unpack_from(data, pos)[0]
+        _unpack(entry, data, pos)[0]
         for pos in range(section.offset, section.offset + section.size, entsize)
     }
 
@@ -209,7 +237,7 @@ def _relr_offsets(data: bytes | bytearray, section: _Section) -> set[int]:
     offsets: set[int] = set()
     base = 0
     for pos in range(section.offset, section.offset + section.size, _RELR.size):
-        entry = _RELR.unpack_from(data, pos)[0]
+        entry = _unpack(_RELR, data, pos)[0]
         if entry & 1 == 0:
             offsets.add(entry)
             base = entry + WORD
@@ -356,16 +384,14 @@ def _write_meta(
 
 def _scrub_section_names(data: bytearray, header: _ElfHeader) -> None:
     """Renames the telltale bootstrap sections in place, by editing the section-header string table."""
-    shstr = _SECTION_HEADER.unpack_from(
-        data, header.shoff + header.shstrndx * header.shentsize
+    shstr = _unpack(
+        _SECTION_HEADER, data, header.shoff + header.shstrndx * header.shentsize
     )
     shstr_offset = shstr[4]
     for index in range(header.shnum):
-        fields = _SECTION_HEADER.unpack_from(
-            data, header.shoff + index * header.shentsize
-        )
+        fields = _unpack(_SECTION_HEADER, data, header.shoff + index * header.shentsize)
         start = shstr_offset + fields[0]
-        end = data.index(b"\x00", start)
+        end = _string_end(data, start)
         name = data[start:end].decode("ascii", errors="replace")
         replacement = SECTION_RENAMES.get(name)
         if replacement is None:
@@ -393,7 +419,7 @@ def _neutralise_soname(
     for pos in range(
         dynamic.offset, dynamic.offset + dynamic.size, _DYNAMIC_ENTRY.size
     ):
-        tag, value = _DYNAMIC_ENTRY.unpack_from(data, pos)
+        tag, value = _unpack(_DYNAMIC_ENTRY, data, pos)
         if tag == _DT_SONAME:
             soname_str = value
         elif tag == _DT_NULL:
@@ -402,7 +428,7 @@ def _neutralise_soname(
         return
     # DT_SONAME is an offset into the dynamic string table, which is .dynstr.
     start = dynstr.offset + soname_str
-    end = data.index(b"\x00", start)
+    end = _string_end(data, start)
     if len(NEUTRAL_SONAME) > end - start:
         return
     data[start : start + len(NEUTRAL_SONAME)] = NEUTRAL_SONAME
@@ -430,7 +456,7 @@ def encrypt_library(library: bytes) -> bytes:
     meta = _find_section(sections, META_SECTION)
     stub = _find_section(sections, STUBCODE_SECTION)
 
-    if _PACKED_FLAG.unpack_from(data, meta.offset)[0] != 0:
+    if _unpack(_PACKED_FLAG, data, meta.offset)[0] != 0:
         raise errors.InvalidRuntimeError("the runtime library is already packed")
 
     relocs = _reloc_offsets(data, sections)

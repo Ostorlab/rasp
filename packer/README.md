@@ -33,7 +33,7 @@ The packer adds a prebuilt runtime, which comes from the runtime build and is no
 
 For Android the packer protects the app's code:
 
-- it sorts the app's classes with the bundled `split-dex` tool. The classes under the app's package are the app's own code. The other classes, such as libraries, stay in the clear, as `classes.dex`, `classes2.dex`, ...;
+- it sorts the app's classes in process with the `dexsplit` package. The classes under the app's package are the app's own code. The other classes, such as libraries, stay in the clear, as `classes.dex`, `classes2.dex`, ...;
 - it encrypts the app's own classes, in dex files of their own, and stores each of these files as the asset `assets/business/<i>.dex`. It also stores the class map as `assets/rasp/map.bin`, encrypted too: the map names the dex file that defines each of these classes. The root key is not stored directly: each app's fold program combines digests of the shipped library and APK entries with a per-ABI keystore share in `.rasp_config` to recover it (`android/key_schedule.py`);
 - it adds a small stub as the last dex file (`classesN.dex`), and sets `<application android:appComponentFactory>` to the stub's class, `co.ostorlab.rasp.RaspStub`, while leaving the app's own `<application android:name>` alone;
 - it adds the native runtime as `lib/<abi>/librasp.so`, for each ABI the app has native libraries for, or for every ABI the runtime is built for when the app has none. Android installs the native libraries of one ABI only, so each of the app's ABIs needs the runtime. An app with native libraries for an ABI the runtime isn't built for is refused with `UnsupportedAbiError`. The packer writes the runtime config, which holds the build id and the checks, into the `.rasp_config` section of each `librasp.so`. It also encrypts the library's own code and read-only data around a load-time self-decrypt bootstrap (`android/self_encrypt.py`) and ships the expected plaintext code digest for the integrity check. The section's full layout is described below;
@@ -73,12 +73,12 @@ The app ships a keystore share and the inputs of a per-app fold program, which d
     - `manifest.py`: the layer over `axml.py` for the component factory, the app's package and version, and its minimum API level.
   - `aab/`: reading and editing the AAB, and its manifest, which is in protobuf format.
   - `cipher.py`: the authenticated cipher for the class map and the app's own dex files.
-  - `split.py`: runs the bundled `split-dex` tool, which sorts the app's classes into the app's own and the others.
+  - `split.py`: calls the in-process `dexsplit` package, which sorts the app's classes into the app's own and the others.
   - `loader_map.py`: the class map, which names the dex file that defines each of the app's own classes.
   - `key_schedule.py`: the per-app fold, the random recipe of real inputs and decoys that recovers the root key, and the reference interpreter shared by the packer-side tests.
   - `self_encrypt.py`: the library's own encryption at rest, with the load-time self-decrypt bootstrap's metadata, and the expected plaintext code digest the bootstrap verifies after decrypting.
   - `runtime_library.py`: writes the runtime config, the fold program, the keystore share and the expected plaintext code digest into the `.rasp_config` section of `librasp.so`.
-  - `resources.py`: locating the prebuilt stub and native libraries, and the bundled `split-dex` tool.
+  - `resources.py`: locating the prebuilt stub and native libraries.
 - `tests/`: one test file per source file, at the same path, named `<module>_test.py`.
 
 ## Development

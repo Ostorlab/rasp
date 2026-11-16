@@ -345,12 +345,6 @@ TEST_F(DexStoreTest, openDexStore_whenTheRootIsWrong_returnsNothing) {
                    .has_value());
 }
 
-TEST_F(DexStoreTest, decryptDex_whenTheRootWasWrongAtOpenTime_cannotDecryptAnyDex) {
-  const std::optional<DexStore> store = open_dex_store(
-      write_full_apk(bytes_of(kMapFrameHex), bytes_of(kDex0FrameHex), bytes_of(kDex1FrameHex)), wrong_root());
-  EXPECT_FALSE(store.has_value());
-}
-
 TEST_F(DexStoreTest, openDexStore_whenTheMapEntryIsAbsent_returnsNothing) {
   const std::string dex0 = bytes_of(kDex0FrameHex);
   const std::vector<StoredEntry> entries = {
