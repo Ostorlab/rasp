@@ -14,7 +14,7 @@ Most of the rules below follow from these two facts. CI enforces the ones a tool
 | Clang, clang-format, clang-tidy | LLVM 23 |
 | CMake | 4.4.4 |
 | Xcode, for iOS builds | 27.0 |
-| Android NDK, for Android builds | the newest release; CI uses the one preinstalled on its Linux runner (`ANDROID_NDK_LATEST_HOME`) |
+| Android NDK, for Android builds | r29 (29.0.14206865): the vendored O-MVLL plugin works only with it, and a Release build refuses any other |
 | JDK, for the Android stub and the class loader's dex | 17 or newer |
 | Android SDK, for the Android stub and the class loader's dex | build-tools (for `d8`) and a platform at API 27 or newer (for `android.jar`) |
 

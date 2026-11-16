@@ -1,3 +1,6 @@
+# O-MVLL obfuscation of the first-party runtime, including the self-decrypt bootstrap (see cmake/omvll.cmake). The plugin
+# is vendored under third_party/omvll; obfuscation is on by default for Release builds.
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/omvll.cmake)
 
 # The self-decrypt bootstrap. kdf_blob.c is NOT a library source: it is compiled separately by gen_kdf_shovel.py and only
 # its machine code ships, shovelled as immediates by the generated kdf_shovel.cpp. The bootstrap decrypts the library's
@@ -81,3 +84,13 @@ if(RASP_LOGGING)
   target_sources(rasp PRIVATE src/util/logging.cpp)
   target_link_libraries(rasp PRIVATE log)
 endif()
+
+# Obfuscate the first-party runtime: rasp (which carries the clear self-decrypt bootstrap, forced to every pass at 100 by
+# cmake/omvll_config.py), rasp_core, the plugins compiled in from RASP_PLUGINS and their registry. Third-party code
+# (tf-psa-crypto, yyjson) is left out by the scheme.
+foreach(rasp_plugin_name IN LISTS rasp_compiled_plugins)
+  list(APPEND rasp_plugin_targets rasp_plugin_${rasp_plugin_name})
+endforeach()
+foreach(rasp_first_party_target rasp rasp_core rasp_plugins ${rasp_plugin_targets})
+  rasp_obfuscate(${rasp_first_party_target})
+endforeach()
