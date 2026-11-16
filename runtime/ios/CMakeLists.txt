@@ -41,12 +41,8 @@ set_target_properties(RaspRuntime PROPERTIES
   MACOSX_FRAMEWORK_BUNDLE_VERSION ${PROJECT_VERSION}
   MACOSX_FRAMEWORK_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in)
 
-# Strip the symbol table for Release: without it `nm` lists every internal name (rasp_start, the observe_* checks),
-# letting an attacker locate and patch the protection out without defeating the O-MVLL obfuscation. Safe to drop --
-# the framework exports no symbols and the app references none by name. Release only; Debug/host keep symbols.
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
-  add_custom_command(TARGET RaspRuntime POST_BUILD
-    COMMAND ${CMAKE_STRIP} "$<TARGET_FILE:RaspRuntime>"
-    COMMENT "Stripping RaspRuntime symbol table (release hardening)"
-    VERBATIM)
-endif()
+# Strip local symbols in Release so `nm` can't map the internal functions (rasp_start, the observe_* checks) an
+# attacker would patch out without defeating the obfuscation. The framework exports nothing, so every internal
+# symbol is local; -Wl,-x drops them and keeps the undefined imports. Link-time generator expression: works under
+# multi-config generators (Xcode) too, and doesn't mutate the ad-hoc-signed Mach-O. Mirrors the Android rasp strip.
+target_link_options(RaspRuntime PRIVATE $<$<CONFIG:Release>:-Wl,-x>)
