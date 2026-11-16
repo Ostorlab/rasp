@@ -10,6 +10,7 @@ from rasp_packer import identity
 from rasp_packer import packer
 from rasp_packer import platforms
 from rasp_packer import runtime_config
+from rasp_packer.android import mapping
 from rasp_packer.android import packer as android_packer
 from rasp_packer.ios import packer as ios_packer
 
@@ -220,6 +221,46 @@ def testPack_whenAndroidApp_packsWithAConfigHoldingTheGivenBuildId(
             build_id=_BUILD_ID, checks=("identity",)
         ),
     }
+
+
+def testPack_whenAndroidAppWithMapping_passesTheMappingToTheAndroidPacker(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app.apk"
+    app.write_bytes(b"an apk")
+    mapping_file = tmp_path / "mapping.txt"
+    mapping_file.write_text("app.Main -> a.b:\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_pack(*, mapping: object = None, **_: object) -> identity.AppIdentity:
+        captured["mapping"] = mapping
+        return _IDENTITY
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+    packer.pack(
+        app=app,
+        platform=platforms.Platform.ANDROID,
+        output=tmp_path / "out.apk",
+        build_id=_BUILD_ID,
+        checks=[],
+        mapping=mapping_file,
+    )
+
+    assert captured["mapping"] == mapping_file
+
+
+def testPack_whenIosAppWithMapping_raisesMappingError(
+    ipa_file: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    with pytest.raises(mapping.MappingError, match="only to Android"):
+        packer.pack(
+            app=ipa_file,
+            platform=platforms.Platform.IOS,
+            output=tmp_path / "out.ipa",
+            build_id=_BUILD_ID,
+            checks=[],
+            mapping=tmp_path / "mapping.txt",
+        )
 
 
 def testPack_whenAndroidApp_returnsTheProtectedAppItsIdentityAndTheBuildId(

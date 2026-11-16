@@ -424,17 +424,6 @@ TEST_F(DexStoreTest, openDexStore_whenTheRootIsWrong_returnsNothing) {
                    .has_value());
 }
 
-TEST_F(DexStoreTest, decryptDex_whenTheRootWasWrongAtOpenTime_cannotDecryptAnyDex) {
-  const std::optional<DexStore> store = open_dex_store(write_full_apk({
-                                                           .map = bytes_of(kMapFrameHex),
-                                                           .program = bytes_of(kJFrameHex),
-                                                           .dex0 = bytes_of(kDex0FrameHex),
-                                                           .dex1 = bytes_of(kDex1FrameHex),
-                                                       }),
-                                                       wrong_root());
-  EXPECT_FALSE(store.has_value());
-}
-
 TEST_F(DexStoreTest, decryptDex_beforeTheStoreIsArmed_returnsNothing) {
   const std::optional<DexStore> store = open_clean_store();
   ASSERT_TRUE(store.has_value());
@@ -462,6 +451,22 @@ TEST_F(DexStoreTest, openDexStore_whenTheProgramEntryIsPresent_keepsItForTheStub
 
   const std::string program = bytes_of(kJProgramHex);
   EXPECT_EQ(store->j_program, std::vector<std::uint8_t>(program.begin(), program.end()));
+}
+
+TEST_F(DexStoreTest, openDexStore_whenTheProgramEntryDoesNotDecrypt_keepsNoProgram) {
+  std::string program = bytes_of(kJFrameHex);
+  program.back() = static_cast<char>(static_cast<unsigned char>(program.back()) ^ 0x01U);
+  const std::optional<DexStore> store = open_dex_store(write_full_apk({
+                                                           .map = bytes_of(kMapFrameHex),
+                                                           .program = program,
+                                                           .dex0 = bytes_of(kDex0FrameHex),
+                                                           .dex1 = bytes_of(kDex1FrameHex),
+                                                       }),
+                                                       root());
+  ASSERT_TRUE(store.has_value());
+
+  EXPECT_TRUE(store->j_program.empty());
+  EXPECT_FALSE(store->armed.has_value());
 }
 
 TEST_F(DexStoreTest, openDexStore_whenTheAppShippedNoProgram_keepsNoProgram) {

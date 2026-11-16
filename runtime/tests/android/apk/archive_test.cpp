@@ -660,12 +660,42 @@ TEST(Archive, readApkDigest_whenTheFileIsNotAZip_returnsNothing) {
   EXPECT_EQ(read_apk_digest(apk_file(directory, "not a zip")), std::nullopt);
 }
 
-TEST(Archive, readSignerDigest_whenSignedWithV3_hashesTheSignersCertificate) {
+TEST(Archive, findSignerDigest_whenSignedWithV3_hashesTheSignersCertificate) {
+  const std::string apk = signed_apk(signing_block(pair(kV3, v3_scheme({{.certificate = "v3 certificate"}}))));
+
+  EXPECT_EQ(find_signer_digest(bytes_of(apk), kAndroid16), sha256_of("v3 certificate"));
+}
+
+TEST(Archive, findSignerDigest_whenTheKeyWasRotated_hashesTheNewKeyWhereV31Applies) {
+  const std::string apk =
+      signed_apk(signing_block(pair(kV2, v2_scheme("old key")) +
+                               pair(kV3, v3_scheme({{.certificate = "old key", .min_level = 24, .max_level = 32}})) +
+                               pair(kV31, v3_scheme({{.certificate = "new key", .min_level = 33}}))));
+
+  EXPECT_EQ(find_signer_digest(bytes_of(apk), kAndroid16), sha256_of("new key"));
+  EXPECT_EQ(find_signer_digest(bytes_of(apk), kAndroid12), sha256_of("old key"));
+}
+
+TEST(Archive, findSignerDigest_whenV3HasSignersForSeveralRanges_hashesTheOneForTheDevice) {
+  const std::string apk =
+      signed_apk(signing_block(pair(kV3, v3_scheme({
+                                             {.certificate = "older", .min_level = 24, .max_level = 30},
+                                             {.certificate = "current", .min_level = 31},
+                                         }))));
+
+  EXPECT_EQ(find_signer_digest(bytes_of(apk), kAndroid12), sha256_of("current"));
+}
+
+TEST(Archive, findSignerDigest_whenTheApkHasNoSigningBlock_returnsNothing) {
+  EXPECT_EQ(find_signer_digest(bytes_of(signed_apk("")), kAndroid16), std::nullopt);
+}
+
+TEST(Archive, readSignerDigest_whenGivenASignedApkFile_hashesTheSignersCertificate) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string apk = signed_apk(signing_block(pair(kV3, v3_scheme({{.certificate = "v3 certificate"}}))));
 
-  EXPECT_EQ(read_signer_digest(apk_file(directory, apk)), sha256_of("v3 certificate"));
+  EXPECT_EQ(read_signer_digest(apk_file(directory, apk), kAndroid16), sha256_of("v3 certificate"));
 }
 
 TEST(Archive, readSignerDigest_whenAPairLengthWouldWrapPastTheBlock_returnsNothing) {
@@ -678,7 +708,14 @@ TEST(Archive, readSignerDigest_whenAPairLengthWouldWrapPastTheBlock_returnsNothi
   append_le(pairs, Field{.value = kPadding, .width = 4});
   pairs.append("padding");
 
-  EXPECT_EQ(read_signer_digest(apk_file(directory, signed_apk(signing_block(pairs)))), std::nullopt);
+  EXPECT_EQ(read_signer_digest(apk_file(directory, signed_apk(signing_block(pairs))), kAndroid16), std::nullopt);
+}
+
+TEST(Archive, readSignerDigest_whenTheFileIsMissing_returnsNothing) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+
+  EXPECT_EQ(read_signer_digest(directory.path() + "/missing.apk", kAndroid16), std::nullopt);
 }
 
 TEST(Archive, readManifestSemantics_whenTheStringsAreUtf16_hashesTheirUtf8Bytes) {

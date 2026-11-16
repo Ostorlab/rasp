@@ -200,7 +200,10 @@ def testEncodeDecode_whenGivenRandomPrograms_roundTrip() -> None:
     for seed in range(20):
         generator = random.Random(seed)
         program = key_schedule.build_program(
-            generator, sections=sections, library_size=len(_LIBRARY)
+            generator,
+            sections=sections,
+            library_size=len(_LIBRARY),
+            keystore_spans=(runtime_library.keystore_span(_LIBRARY),),
         )
         assert (
             key_schedule.decode_program(key_schedule.encode_program(program)) == program
@@ -462,7 +465,7 @@ def testDexFrames_whenSealedUnderTheVectorGuard_matchTheVectorFrames() -> None:
     )
 
 
-def testDexFrame_whenTheGuardIsDirty_doesNotDecryptUnderTheCleanKey() -> None:
+def testDexFrame_whenTheGuardIsDirty_cannotBeOpenedByTheDirtyKey() -> None:
     dirty = key_schedule.sensor_block(no_tracer=False, text_intact=True)
     guard = key_schedule.guarded_master(_SEED, dirty)
 
