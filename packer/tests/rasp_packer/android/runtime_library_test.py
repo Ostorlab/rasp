@@ -1,6 +1,7 @@
 """Tests of writing the runtime's config, fold program and keystore into, and reading them from, the Android runtime library."""
 
 import io
+import struct
 
 import lief
 import pytest
@@ -187,3 +188,24 @@ def testFoldSections_whenGivenALibrary_returnsTheTableSectionsItHas() -> None:
 def testTextRegion_whenNotAnElfFile_raisesInvalidRuntimeError() -> None:
     with pytest.raises(errors.InvalidRuntimeError, match="not an ELF file"):
         runtime_library.text_region(b"not a library")
+
+
+def testWriteConfig_whenSectionCannotHoldTheSchedule_raisesValueError() -> None:
+    elf = lief.ELF.parse(io.BytesIO(_LIBRARY))
+    assert isinstance(elf, lief.ELF.Binary)
+    index = next(
+        index
+        for index, section in enumerate(elf.sections)
+        if section.name == runtime_library.ELF_SECTION
+    )
+    library = bytearray(_LIBRARY)
+    section_headers = struct.unpack_from("<Q", library, 40)[0]
+    header_size = struct.unpack_from("<H", library, 58)[0]
+    struct.pack_into(
+        "<Q",
+        library,
+        section_headers + index * header_size + 32,
+        key_schedule.PROGRAM_SIZE + key_schedule.KEY_SIZE,
+    )
+    with pytest.raises(ValueError, match="section is too small"):
+        runtime_library.write_config(bytes(library), _CONFIG)

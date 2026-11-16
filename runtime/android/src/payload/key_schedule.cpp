@@ -340,6 +340,9 @@ std::optional<FoldProgram> decode_program(std::span<const std::uint8_t> blob) {
       named = std::max<std::size_t>(named, record.param + 1U);
     }
   }
+  if (named > (kProgramSize - kConstantsOffset) / kKeySize) {
+    return std::nullopt;
+  }
   for (std::size_t index = 0; index < named; ++index) {
     const std::size_t offset = kConstantsOffset + (index * kKeySize);
     Key constant{};

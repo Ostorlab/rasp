@@ -3,6 +3,7 @@
 import collections.abc
 import io
 import pathlib
+import random
 import zipfile
 
 import lief
@@ -12,8 +13,10 @@ from rasp_packer import errors
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
 from rasp_packer.android import key_schedule
+from rasp_packer.android import mapping
 from rasp_packer.android import packer
 from rasp_packer.android import resources
+from rasp_packer.android import runtime_library
 from rasp_packer.android import split
 from rasp_packer.android.apk import axml
 from tests.rasp_packer import conftest
@@ -79,11 +82,15 @@ def _make_apk(
 
 
 def _recorded_split(
-    captured: list[tuple[pathlib.Path, str]] | None = None,
+    captured: list[tuple[pathlib.Path, str, mapping.ClassMapping | None]] | None = None,
 ) -> packer.Splitter:
-    def splitter(app: pathlib.Path, package: str) -> split.Split:
+    def splitter(
+        app: pathlib.Path,
+        package: str,
+        class_mapping: mapping.ClassMapping | None = None,
+    ) -> split.Split:
         if captured is not None:
-            captured.append((app, package))
+            captured.append((app, package, class_mapping))
         return split.Split(framework=_FRAMEWORK, business=_BUSINESS)
 
     return splitter
@@ -152,7 +159,7 @@ def _pack_with_decoy(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str]:
 def testPack_whenValidApk_splitsOnTheManifestPackage(tmp_path: pathlib.Path) -> None:
     app = tmp_path / "app.apk"
     _make_apk(app)
-    captured: list[tuple[pathlib.Path, str]] = []
+    captured: list[tuple[pathlib.Path, str, mapping.ClassMapping | None]] = []
     packer.pack(
         app=app,
         output=tmp_path / "out.apk",
@@ -160,7 +167,66 @@ def testPack_whenValidApk_splitsOnTheManifestPackage(tmp_path: pathlib.Path) -> 
         artifacts=_artifacts(),
         splitter=_recorded_split(captured),
     )
-    assert captured == [(app, _PACKAGE)]
+    assert captured == [(app, _PACKAGE, None)]
+
+
+def testPack_whenMappingGiven_parsesItAndPassesItToTheSplitter(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "app.apk"
+    _make_apk(app)
+    mapping_file = tmp_path / "mapping.txt"
+    mapping_file.write_text(f"myapp.Entry -> {_PACKAGE}.a:\n", encoding="utf-8")
+    captured: list[tuple[pathlib.Path, str, mapping.ClassMapping | None]] = []
+
+    packer.pack(
+        app=app,
+        output=tmp_path / "out.apk",
+        config=_CONFIG,
+        mapping=mapping_file,
+        artifacts=_artifacts(),
+        splitter=_recorded_split(captured),
+    )
+
+    _, _, class_mapping = captured[0]
+    assert class_mapping is not None
+    assert class_mapping.business_packages("myapp") == frozenset({_PACKAGE})
+
+
+def testPack_whenMappingCannotBeRead_raisesMappingError(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "app.apk"
+    _make_apk(app)
+
+    with pytest.raises(mapping.MappingError, match="cannot read mapping"):
+        packer.pack(
+            app=app,
+            output=tmp_path / "out.apk",
+            config=_CONFIG,
+            mapping=tmp_path / "does-not-exist.txt",
+            artifacts=_artifacts(),
+            splitter=_recorded_split(),
+        )
+
+
+def testPack_whenMappingIsNotUtf8_raisesMappingError(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "app.apk"
+    _make_apk(app)
+    mapping_file = tmp_path / "mapping.txt"
+    mapping_file.write_bytes(b"app.Main -> a.b:\n\xff\xfe\n")
+
+    with pytest.raises(mapping.MappingError, match="cannot read mapping"):
+        packer.pack(
+            app=app,
+            output=tmp_path / "out.apk",
+            config=_CONFIG,
+            mapping=mapping_file,
+            artifacts=_artifacts(),
+            splitter=_recorded_split(),
+        )
 
 
 def testPack_whenValidApk_writesNoKeyEntry(tmp_path: pathlib.Path) -> None:
@@ -394,12 +460,20 @@ def testPack_whenASensorWouldFail_theDexesNoLongerDecrypt(
                 cipher.decrypt(key, encrypted)
 
 
+@pytest.mark.parametrize("seed", range(10))
 def testPack_whenTheAppShipsTwoAbis_bothRecoverTheSameRoot(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, seed: int
 ) -> None:
+    monkeypatch.setattr(random, "SystemRandom", lambda: random.Random(seed))
+    other_library = bytearray(_ARM64_SO.replace(b".rela.dyn\0", b".rela.dyz\0"))
+    elf = lief.ELF.parse(io.BytesIO(other_library))
+    assert isinstance(elf, lief.ELF.Binary)
+    text = elf.get_section(".text")
+    assert text is not None
+    other_library[text.offset] ^= 1
     artifacts = resources.Artifacts(
         stub_dex=_STUB_DEX,
-        libraries={"arm64-v8a": _ARM64_SO, "x86_64": _ARM64_SO},
+        libraries={"arm64-v8a": _ARM64_SO, "x86_64": bytes(other_library)},
     )
     output = _pack(
         tmp_path,
@@ -528,20 +602,14 @@ def testPack_whenValidApk_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
 
 def runtime_library_read_config(library: bytes) -> bytes:
     """Reads the packed library's config, for the assertions that the packer wrote it."""
-    from rasp_packer.android import runtime_library
-
     return runtime_library.read_config(library)
 
 
 def runtime_library_keystore(library: bytes) -> bytes:
     """Reads the packed library's keystore share."""
-    from rasp_packer.android import runtime_library
-
     return runtime_library.keystore(library)
 
 
 def runtime_library_program(library: bytes) -> bytes:
     """Reads the packed library's fold program."""
-    from rasp_packer.android import runtime_library
-
     return runtime_library.program(library)

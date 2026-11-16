@@ -57,6 +57,15 @@ def _parser() -> argparse.ArgumentParser:
         help="the check groups the app runs, comma-separated, such as debugger,hooks; "
         f"{_required_checks()} always runs (default: only {_required_checks()})",
     )
+    pack.add_argument(
+        "--mapping",
+        type=pathlib.Path,
+        default=None,
+        help=(
+            "the app's R8/ProGuard mapping file (Android only); with it the packer protects the "
+            "app's own classes even after R8 has repackaged them out of the app's package"
+        ),
+    )
     return parser
 
 
@@ -104,6 +113,7 @@ def _pack(arguments: argparse.Namespace) -> int:
             output=arguments.output,
             build_id=arguments.build_id,
             checks=checks,
+            mapping=arguments.mapping,
         )
     except errors.Error as error:
         print(f"rasp pack: {error}", file=sys.stderr)

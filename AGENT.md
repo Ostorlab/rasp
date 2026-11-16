@@ -23,9 +23,13 @@ uv run ruff format --check .
 uv run ruff check .
 uv run mypy
 uv run pytest
+cmake -S tests/dexsplit -B build/dexsplit-tests
+cmake --build build/dexsplit-tests --parallel
+ctest --test-dir build/dexsplit-tests --output-on-failure
 ```
 
 - mypy runs in strict mode over `src` and `tests`.
+- The last three commands build and run the C++ tests of `dexsplit`, the dex splitter's native core (`dexsplit/src`). They are under `tests/dexsplit`, one file per source file, at the same path, named `<source>_test.cpp`, with tests named `TEST(Suite, action_whenCondition_result)`.
 - Tests: one file per source file, at the same path under `tests/`, named `<module>_test.py`. Test functions are named `test<Action>_when<Condition>_<result>`, for example `testPack_whenOutputExists_raisesOutputExistsError`.
 - The packer looks for the prebuilt runtime in its package resources: `rasp_packer/ios/resources/RaspRuntime.framework`, and `rasp_packer/android/resources/stub.dex` with `rasp_packer/android/resources/lib/<abi>/librasp.so`. They come from the runtime build and are not in the repository. Without them, packing an IPA raises `InvalidRuntimeError`, and packing an APK or an AAB raises `MissingRuntimeArtifactError`. Tests use fixtures instead.
 

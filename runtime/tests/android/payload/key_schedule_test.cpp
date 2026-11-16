@@ -337,6 +337,9 @@ class KeyScheduleTest : public testing::Test {
       return false;
     }
     const std::string share = bytes_of(kShareHex);
+    const std::string map = bytes_of(kMapFrameHex);
+    const std::string dex0 = bytes_of(kDex0FrameHex);
+    const std::string dex1 = bytes_of(kDex1FrameHex);
     const std::string decoy0 = bytes_of(kDecoy0Hex);
     const std::string decoy1 = bytes_of(kDecoy1Hex);
     // The decoys' names are held in locals: a StoredEntry's name is a view, and a view of the
@@ -344,12 +347,9 @@ class KeyScheduleTest : public testing::Test {
     const std::string decoy0_name = decoy_entry_name(0);
     const std::string decoy1_name = decoy_entry_name(1);
     const std::vector<StoredEntry> entries = {
-        {.name = kShareEntry, .content = share},
-        {.name = decoy0_name, .content = decoy0},
-        {.name = decoy1_name, .content = decoy1},
-        {.name = kMapEntryName, .content = std::string_view(kMapFrameHex)},
-        {.name = kDex0Entry, .content = std::string_view(kDex0FrameHex)},
-        {.name = kDex1Entry, .content = std::string_view(kDex1FrameHex)},
+        {.name = kShareEntry, .content = share},  {.name = decoy0_name, .content = decoy0},
+        {.name = decoy1_name, .content = decoy1}, {.name = kMapEntryName, .content = map},
+        {.name = kDex0Entry, .content = dex0},    {.name = kDex1Entry, .content = dex1},
     };
     return write_file(directory_.path() + "/base.apk", zip_with_stored_entries(entries));
   }
@@ -564,9 +564,10 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenTheFoldProgramIsPatched_givesADiffere
 TEST_F(KeyScheduleTest, recoverRootKey_whenADecoyEntryIsAbsent_returnsNothing) {
   ASSERT_TRUE(write_file(library_path(), bytes_of(kLibraryHex)));
   const std::string share = bytes_of(kShareHex);
+  const std::string map = bytes_of(kMapFrameHex);
   const std::vector<StoredEntry> entries = {
       {.name = kShareEntry, .content = share},
-      {.name = kMapEntryName, .content = std::string_view(kMapFrameHex)},
+      {.name = kMapEntryName, .content = map},
   };
   ASSERT_TRUE(write_file(apk_path(), zip_with_stored_entries(entries)));
 
@@ -575,8 +576,9 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenADecoyEntryIsAbsent_returnsNothing) {
 
 TEST_F(KeyScheduleTest, recoverRootKey_whenTheApkHasNoShareEntry_returnsNothing) {
   ASSERT_TRUE(write_file(library_path(), bytes_of(kLibraryHex)));
+  const std::string map = bytes_of(kMapFrameHex);
   const std::vector<StoredEntry> entries = {
-      {.name = kMapEntryName, .content = std::string_view(kMapFrameHex)},
+      {.name = kMapEntryName, .content = map},
   };
   ASSERT_TRUE(write_file(apk_path(), zip_with_stored_entries(entries)));
 
