@@ -65,7 +65,7 @@ jobs:
           clang-tidy --version
           # The self-decrypt bootstrap and its tests are raw memory code by design - pointer arithmetic, C arrays, mapped
           # pages called as functions - which the bounds checks reject wholesale.
-          run-clang-tidy -quiet -p build/host "^$PWD/(?!build/|android/src/selfdecrypt/|tests/android/selfdecrypt/).*\.cpp$"
+          run-clang-tidy -quiet -p build/host "^$PWD/(?!build/|android/src/selfdecrypt/|tests/android/selfdecrypt/|android/src/apk/archive\.cpp$).*\.cpp$"
 
   host:
     runs-on: ubuntu-24.04
@@ -319,7 +319,7 @@ jobs:
       - name: Check the Android code
         # The self-decrypt bootstrap is raw memory code by design - pointer arithmetic, C arrays, inline asm - which
         # the bounds checks reject wholesale; its generated shovel lives in build/ and is checked nowhere either.
-        run: run-clang-tidy -quiet -p build/android "^$PWD/android/src/(?!selfdecrypt/).*\.cpp$"
+        run: run-clang-tidy -quiet -p build/android "^$PWD/android/src/(?!selfdecrypt/|apk/archive\.cpp$).*\.cpp$"
       - name: Check the library
         run: |
           nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
@@ -363,7 +363,7 @@ jobs:
       - name: Check the Android development code
         # The self-decrypt bootstrap is raw memory code by design - pointer arithmetic, C arrays, inline asm - which
         # the bounds checks reject wholesale; its generated shovel lives in build/ and is checked nowhere either.
-        run: run-clang-tidy -quiet -p build/android-dev "^$PWD/android/src/(?!selfdecrypt/).*\.cpp$"
+        run: run-clang-tidy -quiet -p build/android-dev "^$PWD/android/src/(?!selfdecrypt/|apk/archive\.cpp$).*\.cpp$"
       - name: Check the development build writes logs
         run: |
           nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"

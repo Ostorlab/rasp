@@ -6,10 +6,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <fcntl.h>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <utility>
 #include <vector>
 
 #include "rasp/util/read_file.h"
@@ -170,26 +175,52 @@ struct ApkEntryPath {
   return apk.subspan(static_cast<std::size_t>(data_offset), entry.uncompressed_size);
 }
 
-/// Reads the entry named by `target` from its APK file, or nothing when it can't be read or found.
-[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_apk_entry(const ApkEntryPath& target, std::size_t limit) {
-  const std::optional<std::string> file = rasp::util::read_file(target.apk_path, limit);
-  if (!file) {
-    return std::nullopt;
-  }
-  const std::vector<std::uint8_t> apk(file->begin(), file->end());
+/// Copies the entry named `entry` out of the APK bytes `apk`, or nothing when it can't be found, is compressed, or is
+/// larger than `limit` bytes. The size is checked before anything is copied.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> copy_apk_entry(std::span<const std::uint8_t> apk,
+                                                                      std::string_view entry, std::size_t limit) {
   const std::optional<std::uint32_t> directory_offset = central_directory_offset(apk);
   if (!directory_offset) {
     return std::nullopt;
   }
-  const std::optional<CentralEntry> central = find_central_entry(apk, *directory_offset, target.entry);
+  const std::optional<CentralEntry> central = find_central_entry(apk, *directory_offset, entry);
   if (!central) {
     return std::nullopt;
   }
   const std::optional<std::span<const std::uint8_t>> bytes = stored_entry_bytes(apk, *central);
-  if (!bytes) {
+  if (!bytes || bytes->size() > limit) {
     return std::nullopt;
   }
   return std::vector<std::uint8_t>(bytes->begin(), bytes->end());
+}
+
+/// Reads the entry named by `target` from its APK file, or nothing when it can't be read or found. The APK is
+/// memory-mapped, not read into memory, so a large app's APK costs no copy of its own: only the entry is copied out,
+/// and only when it fits `limit`.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_apk_entry(const ApkEntryPath& target, std::size_t limit) {
+  const std::string apk_path(target.apk_path);
+  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
+  const int descriptor = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (descriptor < 0) {
+    return std::nullopt;
+  }
+  struct stat status = {};
+  if (fstat(descriptor, &status) != 0 || status.st_size <= 0 || !std::in_range<std::size_t>(status.st_size)) {
+    close(descriptor);
+    return std::nullopt;
+  }
+  const auto size = static_cast<std::size_t>(status.st_size);
+  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
+  void* const mapping = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
+  close(descriptor);
+  if (mapping == MAP_FAILED) {
+    return std::nullopt;
+  }
+  const std::span<const std::uint8_t> apk(static_cast<const std::uint8_t*>(mapping), size);
+  std::optional<std::vector<std::uint8_t>> entry = copy_apk_entry(apk, target.entry, limit);
+  munmap(mapping, size);
+  return entry;
 }
 
 }  // namespace
