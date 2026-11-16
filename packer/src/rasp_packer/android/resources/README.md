@@ -13,8 +13,9 @@ The packer splits DEX files in process with the `dexsplit` Python package and it
 
 The packer writes these into the APK, made for each app when it is packed, so they are not files of this folder:
 
-- `assets/rasp/key.bin`: the raw 32-byte key, stored uncompressed. It decrypts the class map and every business dex.
-- `assets/rasp/map.bin`: the class map, encrypted under the key and stored. It names, per class, the business dex that defines it. `loader_map` builds it and `cipher` describes the frame format.
-- `assets/business/<i>.dex`: one encrypted business dex per file, stored. Each is one `cipher` frame under the key.
+- `assets/rasp/s.bin`: one input of the key schedule's fold, stored uncompressed. It feeds the chains that rebuild the payload's root key but is not a key by itself (`key_schedule`).
+- `assets/rasp/r<i>.bin`: the decoy entries the fold program names, stored. Their digests are inputs of the chains, indistinguishable from the real inputs to anything short of a full reversal of the runtime.
+- `assets/rasp/map.bin`: the class map, encrypted and stored. It names, per class, the business dex that defines it. `loader_map` builds it and `cipher` describes the frame format; its key is derived from the schedule's root.
+- `assets/business/<i>.dex`: one encrypted business dex per file, stored. Each is one `cipher` frame under its own key, derived from the schedule's seed, the sensor guard (the runtime's no-tracer and intact-code observations for a clean process), and the frame's own nonce, so no two frames share a key.
 - the framework dexes and the stub, in the clear, as `classes.dex` … `classesN.dex`.
-- the runtime config, which holds the build id, in the `.rasp_config` section of each `lib/<abi>/librasp.so`.
+- the runtime config, written into the `.rasp_config` section of each `lib/<abi>/librasp.so`. It carries the build id, the fold program (the per-app recipe of the schedule's chains), and a per-ABI keystore share. Each share cancels its ABI's chain inputs, so every ABI derives the same root key. The program and the section's digest bind the fold to the library as shipped: altering these bytes rebuilds a different root key and the sealed payloads no longer decrypt.
