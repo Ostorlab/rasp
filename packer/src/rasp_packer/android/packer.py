@@ -42,6 +42,9 @@ import pathlib
 import random
 import zipfile
 
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+
 from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import runtime_config
@@ -176,28 +179,22 @@ def _read_pinned_certificate(pin_certificate: pathlib.Path | None) -> bytes | No
     """
     if pin_certificate is None:
         return None
-    content = pin_certificate.read_bytes()
-    marker = b"-----BEGIN CERTIFICATE-----"
-    if marker in content:
-        end = content.find(b"-----END CERTIFICATE-----")
-        if end < 0:
-            raise errors.InvalidCertificateError(
-                "the pinned certificate's PEM has no end marker"
-            )
-        body = content[content.find(marker) + len(marker) : end]
-        try:
-            import base64
-
-            return base64.b64decode(b"".join(body.split()))
-        except (ValueError, TypeError) as error:
-            raise errors.InvalidCertificateError(
-                f"the pinned certificate's PEM does not decode: {error}"
-            ) from error
-    if not content.startswith(b"\x30"):
+    try:
+        content = pin_certificate.read_bytes()
+    except OSError as error:
         raise errors.InvalidCertificateError(
-            "the pinned certificate is neither PEM nor DER"
-        )
-    return content
+            f"cannot read the pinned certificate {pin_certificate}: {error}"
+        ) from error
+    try:
+        if b"-----BEGIN CERTIFICATE-----" in content:
+            certificate = x509.load_pem_x509_certificate(content)
+        else:
+            certificate = x509.load_der_x509_certificate(content)
+    except ValueError as error:
+        raise errors.InvalidCertificateError(
+            f"the pinned certificate is neither a PEM nor a DER certificate: {error}"
+        ) from error
+    return certificate.public_bytes(serialization.Encoding.DER)
 
 
 def _load_mapping(mapping: pathlib.Path) -> mapping_module.ClassMapping:
@@ -420,7 +417,7 @@ def _stored_apk_entries(
     base_dexes: dict[str, bytes],
     libraries: dict[str, bytes],
     remove: set[str],
-) -> dict[str, tuple[bytes, int, int]]:
+) -> dict[str, tuple[bytes, int]]:
     """Returns the entries the APK digest will cover: every entry that survives the pack, stored or
     deflated, with the replaced manifest, plus the dexes and libraries the packer adds.
 
@@ -432,21 +429,21 @@ def _stored_apk_entries(
         remove: The names of the entries the pack removes from the original APK.
 
     Returns:
-        The entries by name, each a (data, method, compressed_size) triple.
+        The entries by name, each a (data, method) pair.
     """
-    entries: dict[str, tuple[bytes, int, int]] = {}
+    entries: dict[str, tuple[bytes, int]] = {}
     for entry in apk._entries:
         if entry.name in remove:
             continue
         method = 8 if entry.compressed else 0
-        entries[entry.name] = (entry.data, method, entry.compressed_size)
+        entries[entry.name] = (entry.data, method)
     # The manifest: the packer writes it as a stored entry, so its content is directly bound.
-    entries[apk_archive.MANIFEST_ENTRY] = (manifest, 0, len(manifest))
+    entries[apk_archive.MANIFEST_ENTRY] = (manifest, 0)
     # The packer adds these as stored entries.
     for name, data in base_dexes.items():
-        entries[name] = (data, 0, len(data))
+        entries[name] = (data, 0)
     for name, data in libraries.items():
-        entries[name] = (data, 0, len(data))
+        entries[name] = (data, 0)
     return entries
 
 
@@ -455,7 +452,7 @@ def _schedule_libraries(
     digests: dict[str, bytes],
     package: bytes,
     stub_dex: bytes,
-    apk_entries: dict[str, tuple[bytes, int, int]] | None,
+    apk_entries: dict[str, tuple[bytes, int]] | None,
     module_dexes: dict[str, bytes] | None,
     manifest_semantics: bytes | None,
     pinned_signer: bytes | None,
@@ -550,7 +547,7 @@ def _resolver(
     decoys: dict[str, bytes],
     package: bytes,
     stub_dex: bytes,
-    apk_entries: dict[str, tuple[bytes, int, int]] | None,
+    apk_entries: dict[str, tuple[bytes, int]] | None,
     library_filenames: frozenset[str],
     module_dexes: dict[str, bytes] | None,
     manifest_semantics: bytes | None,

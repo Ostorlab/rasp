@@ -73,6 +73,17 @@ def testGenerateNames_whenAFilenameIsTaken_drawsAnother() -> None:
     assert len(taken) == 16
 
 
+def testGenerateSourceFileName_whenADrawHoldsABannedString_drawsAgain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draws = iter(["xxraspxxxxxxx", "ostorlabxxxxx", "abcdefghijklm"])
+    monkeypatch.setattr(
+        defingerprint, "_sample_between", lambda *arguments: next(draws)
+    )
+
+    assert defingerprint.generate_source_file_name(random.Random(0)) == "abcdefghijklm"
+
+
 def testPatchStubDex_replacesEveryFingerprintWithTheNames() -> None:
     names = defingerprint.generate_names(random.Random(11), frozenset(), _STUB_DEX)
     patched = defingerprint.patch_stub_dex(

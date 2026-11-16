@@ -25,6 +25,7 @@ Wire-format field map (only the fields the packer touches)::
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 
 ANDROID_NS = "http://schemas.android.com/apk/res/android"
 
@@ -815,7 +816,6 @@ def semantics(manifest: bytes) -> bytes | None:
                 + b"\x00"
                 + value
             )
-    import hashlib
 
     entries.sort()
     digest = hashlib.sha256()

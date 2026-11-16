@@ -19,7 +19,7 @@ def recover_root(
     gates: bytes,
     package: bytes,
     stub_dex: bytes,
-    apk_entries: dict[str, tuple[bytes, int, int]] | None = None,
+    apk_entries: dict[str, tuple[bytes, int]] | None = None,
     module_dexes: dict[str, bytes] | None = None,
     manifest_semantics: bytes | None = None,
     pinned_signer: bytes | None = None,
@@ -65,7 +65,7 @@ def _recover(
     gates: bytes,
     package: bytes,
     stub_dex: bytes,
-    apk_entries: dict[str, tuple[bytes, int, int]] | None = None,
+    apk_entries: dict[str, tuple[bytes, int]] | None = None,
     module_dexes: dict[str, bytes] | None = None,
     manifest_semantics: bytes | None = None,
     pinned_signer: bytes | None = None,
@@ -79,7 +79,7 @@ def _recover(
     # the same per-app name.
     library_filenames = frozenset(
         name.rpartition("/")[2]
-        for name, (data, _method, _size) in (apk_entries or {}).items()
+        for name, (data, _method) in (apk_entries or {}).items()
         if data == library
     )
 

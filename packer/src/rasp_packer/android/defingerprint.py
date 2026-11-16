@@ -262,11 +262,15 @@ def generate_source_file_name(
         upper: The string the name must sort before, or None.
 
     Returns:
-        The name, as many bytes as ``RaspStub.java``, keeping its position in the table.
+        The name, as many bytes as ``RaspStub.java``, keeping its position in the table, and holding
+        none of the strings the patched dex must not carry.
     """
-    return _sample_between(
-        generator, len(_SOURCE_FILE), "abcdefghijklmnopqrstuvwxyz", lower, upper
-    )
+    while True:
+        name = _sample_between(
+            generator, len(_SOURCE_FILE), "abcdefghijklmnopqrstuvwxyz", lower, upper
+        )
+        if not any(banned in name.encode() for banned in _BANNED_STRINGS):
+            return name
 
 
 def generate_names(

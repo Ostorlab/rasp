@@ -2,6 +2,7 @@
 
 import collections.abc
 import dataclasses
+import datetime
 import hashlib
 import io
 import pathlib
@@ -10,6 +11,10 @@ import zipfile
 
 import lief
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from rasp_packer import errors
 from rasp_packer import runtime_config
@@ -118,6 +123,7 @@ def _pack(
     *,
     native_libraries: collections.abc.Sequence[str] = (),
     artifacts: resources.Artifacts | None = None,
+    pin_certificate: pathlib.Path | None = None,
 ) -> pathlib.Path:
     app = tmp_path / "app.apk"
     output = tmp_path / "protected.apk"
@@ -130,6 +136,7 @@ def _pack(
         splitter=_recorded_split(),
         # The seeded generator makes the pack's per-app names the predicted _NAMES.
         generator=random.Random(0),
+        pin_certificate=pin_certificate,
     )
     return output
 
@@ -138,6 +145,7 @@ def _recover_root(
     archive: zipfile.ZipFile,
     library_entry: str = _LIBRARY_ENTRY,
     gates: bytes = key_schedule.CLEAN_GATES,
+    pinned_signer: bytes | None = None,
 ) -> bytes | None:
     """Recovers the root key from a packed APK the way the runtime does on the device."""
     library = archive.read(library_entry)
@@ -146,18 +154,20 @@ def _recover_root(
         for name in archive.namelist()
         if name.startswith("assets/")
     }
-    # The APK digest covers every entry the runtime sees in the central directory,
-    # with its compression method and compressed size.
+    # The APK digest covers every entry the runtime sees in the central directory, with its
+    # compression method.
     apk_entries = {
-        name: (
-            archive.read(name),
-            archive.getinfo(name).compress_type,
-            archive.getinfo(name).compress_size,
-        )
+        name: (archive.read(name), archive.getinfo(name).compress_type)
         for name in archive.namelist()
     }
     return schedule_recovery.recover_root(
-        library, entries, gates, _PACKAGE.encode(), _PATCHED_STUB_DEX, apk_entries
+        library,
+        entries,
+        gates,
+        _PACKAGE.encode(),
+        _PATCHED_STUB_DEX,
+        apk_entries,
+        pinned_signer=pinned_signer,
     )
 
 
@@ -722,3 +732,112 @@ def testPack_whenValidApk_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     )
     assert app_identity.package_name == _PACKAGE
     assert app_identity.version == "2.4.1"
+
+
+def _certificate(name: str) -> x509.Certificate:
+    """A self-signed certificate with the common name `name`, standing in for a signing certificate."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    subject = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, name)])
+    now = datetime.datetime.now(datetime.UTC)
+    return (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+
+
+def _write_certificate(
+    tmp_path: pathlib.Path,
+    certificate: x509.Certificate,
+    encoding: serialization.Encoding,
+) -> pathlib.Path:
+    """Writes `certificate` in `encoding` to a file under `tmp_path` and returns its path."""
+    path = tmp_path / "certificate"
+    path.write_bytes(certificate.public_bytes(encoding))
+    return path
+
+
+@pytest.mark.parametrize(
+    "encoding", [serialization.Encoding.PEM, serialization.Encoding.DER]
+)
+def testPack_whenACertificateIsPinned_recoversTheRootOnlyUnderThatCertificate(
+    tmp_path: pathlib.Path, encoding: serialization.Encoding
+) -> None:
+    certificate = _certificate("developer")
+    output = _pack(
+        tmp_path, pin_certificate=_write_certificate(tmp_path, certificate, encoding)
+    )
+
+    pinned = key_schedule.signer_digest(
+        certificate.public_bytes(serialization.Encoding.DER)
+    )
+    other = key_schedule.signer_digest(
+        _certificate("re-signer").public_bytes(serialization.Encoding.DER)
+    )
+    with zipfile.ZipFile(output) as archive:
+        program = key_schedule.decode_program(
+            runtime_library.program(archive.read(_LIBRARY_ENTRY))
+        )
+        assert program is not None
+        assert key_schedule.KIND_SIGNER in [record.kind for record in program.chain_s]
+        root = _recover_root(archive, pinned_signer=pinned)
+        assert root is not None
+        assert _decrypt_map(archive, root)
+        re_signed = _recover_root(archive, pinned_signer=other)
+        assert re_signed is not None
+        with pytest.raises(cipher.CipherError):
+            _decrypt_map(archive, re_signed)
+
+
+def testPack_whenNoCertificateIsPinned_foldsNoSignerRecord(
+    tmp_path: pathlib.Path,
+) -> None:
+    output = _pack(tmp_path)
+
+    with zipfile.ZipFile(output) as archive:
+        program = key_schedule.decode_program(
+            runtime_library.program(archive.read(_LIBRARY_ENTRY))
+        )
+    assert program is not None
+    assert key_schedule.KIND_SIGNER not in [record.kind for record in program.chain_s]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"-----BEGIN CERTIFICATE-----\nMIIB\n",
+        b"-----BEGIN CERTIFICATE-----\n@@@@\n-----END CERTIFICATE-----\n",
+        b"\x30\x03\x02\x01\x01",
+        b"not a certificate",
+    ],
+    ids=[
+        "no end marker",
+        "not base64",
+        "DER but not a certificate",
+        "neither PEM nor DER",
+    ],
+)
+def testPack_whenThePinnedCertificateCannotBeRead_raisesInvalidCertificateError(
+    tmp_path: pathlib.Path, content: bytes
+) -> None:
+    path = tmp_path / "certificate"
+    path.write_bytes(content)
+
+    with pytest.raises(
+        errors.InvalidCertificateError, match="neither a PEM nor a DER certificate"
+    ):
+        _pack(tmp_path, pin_certificate=path)
+
+
+def testPack_whenThePinnedCertificateFileIsMissing_raisesInvalidCertificateError(
+    tmp_path: pathlib.Path,
+) -> None:
+    with pytest.raises(
+        errors.InvalidCertificateError, match="cannot read the pinned certificate"
+    ):
+        _pack(tmp_path, pin_certificate=tmp_path / "missing.pem")

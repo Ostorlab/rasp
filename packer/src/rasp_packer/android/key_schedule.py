@@ -128,7 +128,7 @@ def _digest(data: bytes) -> bytes:
 
 
 def apk_digest(
-    entries: dict[str, tuple[bytes, int, int]],
+    entries: dict[str, tuple[bytes, int]],
     library_filenames: frozenset[str] = frozenset(),
 ) -> bytes:
     """Computes the digest over the APK's entries, the way the runtime does at recovery.
@@ -145,9 +145,8 @@ def apk_digest(
     its load path, and the legacy `librasp.so` name of older packs stays excluded.
 
     Args:
-        entries: The APK's entries by name, each a (data, method, compressed_size) triple: the
-            uncompressed bytes, the ZIP compression method (0 for stored, 8 for deflated), and the
-            size of the compressed bytes in the APK, which the digest does not bind.
+        entries: The APK's entries by name, each a (data, method) pair: the uncompressed bytes and
+            the ZIP compression method (0 for stored, 8 for deflated).
         library_filenames: The runtime library's filename under `lib/<abi>/`, which the digest skips.
 
     Returns:
@@ -161,7 +160,7 @@ def apk_digest(
             or name.rpartition("/")[2] in library_filenames
         ):
             continue
-        data, method, _compressed_size = entries[name]
+        data, method = entries[name]
         crc32 = zlib.crc32(data)
         # The compressed size varies by zlib version and build tool, so the digest does not
         # bind it. The CRC-32 catches content changes and the uncompressed size catches
