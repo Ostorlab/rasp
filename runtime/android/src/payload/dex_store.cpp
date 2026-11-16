@@ -78,12 +78,12 @@ std::optional<DexStore> open_dex_store(std::string apk, const Key& root) {
   if (!map_key.has_value()) {
     return std::nullopt;
   }
-  std::optional<std::vector<std::uint8_t>> map = decrypt(*map_key, *frame);
-  if (!map.has_value()) {
-    return std::nullopt;
-  }
   const std::optional<Key> seed = seed_from(root, *frame);
   if (!seed.has_value()) {
+    return std::nullopt;
+  }
+  std::optional<std::vector<std::uint8_t>> map = decrypt(*map_key, *frame);
+  if (!map.has_value()) {
     return std::nullopt;
   }
 

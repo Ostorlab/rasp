@@ -63,7 +63,7 @@ struct Meta {
   /// Byte length of the encrypted `.text` section (for the post-decrypt verification).
   std::uint32_t text_size;
   /// The SHA-256 of the plaintext `.text` section: the decryption carries no MAC of its own, so the bootstrap
-  /// verifies the decrypted `.text` against this digest and aborts the process on a mismatch.
+  /// verifies the decrypted `.text` against this digest and, on a mismatch, leaves the library's code with no access.
   std::uint8_t text_digest[32];
   /// The encrypted regions.
   Region regions[kMaxRegions];

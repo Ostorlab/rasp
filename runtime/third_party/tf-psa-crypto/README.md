@@ -31,10 +31,10 @@ The archive is committed, rather than downloaded at build time, so the build wor
 
 ## The configuration
 
-`crypto_config.h` turns on only what the runtime needs: the payload decryption and SHA-256. Everything else is off, so it isn't in the binary.
+`crypto_config.h` turns on only what the runtime needs: payload decryption, its key schedule, and SHA-256. Everything else is off, so it isn't in the binary.
 
 - **ChaCha20-Poly1305:** the payload's algorithm, and its key type. No other cipher, no public-key cryptography and no key storage is on.
-- **SHA-256:** the hash of the integrity check on Android and of the app-identity check on iOS, computed with `psa_hash_compute`.
+- **SHA-256:** the hash of the integrity check on Android and of the app-identity check on iOS, computed with `psa_hash_compute`, and the hash used by the payload key schedule through HKDF-SHA-256.
 - **PSA crypto:** the runtime decrypts with `psa_aead_decrypt`, from the PSA Crypto API. Before any PSA call, `psa_crypto_init` starts PSA's random generator, even though decrypting needs no randomness. So the configuration has a random generator: HMAC_DRBG over SHA-256 (`MBEDTLS_HMAC_DRBG_C`, `MBEDTLS_MD_C` and SHA-256). CTR_DRBG, the other choice, would add AES.
 - **Randomness:** TF-PSA-Crypto's own entropy source (`MBEDTLS_PSA_BUILTIN_GET_ENTROPY`). It calls the `getrandom` system call only on glibc. On Android it reads a device file instead, and `MBEDTLS_PLATFORM_DEV_RANDOM` sets it to `/dev/urandom`. TF-PSA-Crypto's default is `/dev/random`, which can block for a long time on Linux kernels older than 5.6, and many Android 8 to 10 devices run such kernels. `/dev/urandom` never blocks. It is only weak right after the kernel boots, and an app always starts long after Android has seeded it.
 - **No text that names the library.** The version functions (`TF_PSA_CRYPTO_VERSION`) stay off, so the version string isn't in the binary to tell an attacker which library to hook.

@@ -63,7 +63,9 @@ jobs:
       - name: Check the code
         run: |
           clang-tidy --version
-          run-clang-tidy -quiet -p build/host "^$PWD/(?!build/).*\.cpp$"
+          # The self-decrypt bootstrap and its tests are raw memory code by design - pointer arithmetic, C arrays, mapped
+          # pages called as functions - which the bounds checks reject wholesale.
+          run-clang-tidy -quiet -p build/host "^$PWD/(?!build/|android/src/selfdecrypt/|tests/android/selfdecrypt/).*\.cpp$"
 
   host:
     runs-on: ubuntu-24.04
@@ -80,7 +82,7 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
           echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}"
+          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "llvm-${LLVM_VERSION}"
           echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
       - name: Install CMake
         run: |
@@ -228,6 +230,19 @@ jobs:
         run: cmake --preset ios-dev
       - name: Build the development build
         run: cmake --build --preset ios-dev --parallel
+      - name: Check the release framework is stripped
+        run: |
+          rel=build/ios/ios/RaspRuntime.framework/RaspRuntime
+          dev=build/ios-dev/ios/RaspRuntime.framework/RaspRuntime
+          # Release strips local symbols (-Wl,-x), so the internal names an attacker uses to locate and patch the
+          # protection out -- rasp_start (the constructor) and the observe_* checks -- must be gone, leaving only
+          # undefined imports. The exported-symbol check above ('nm -gU' empty) passes with or without the strip,
+          # so this is what actually guards the regression.
+          if nm "$rel" | grep -E 'rasp_start|observe_'; then
+            echo "FAIL: release framework still carries internal symbols; the link-time strip regressed"; exit 1
+          fi
+          # Positive control: the un-stripped dev build must still list them, or the check above proves nothing.
+          nm "$dev" | grep -q rasp_start
       - name: Install clang-tidy
         env:
           LLVM_RELEASE: "23.1.3"

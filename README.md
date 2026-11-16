@@ -18,7 +18,8 @@ https://github.com/user-attachments/assets/a43d48ed-75ec-43b1-ad76-77fc08826493
 - **Choose the checks:** turn on only the check groups that fit your users.
 - **Detects:** root and jailbreak, debuggers, Frida and other hooking, emulators, app virtualizers, network
   interception (VPN tunnels and proxies), tampering with the runtime's code, and repackaged copies.
-- **Runs all the time:** the checks run when the app starts, then every 60 seconds.
+- **Runs all the time:** the checks run when the app starts, then every 30 to 90 seconds, with the wait between runs
+  randomized, until the app exits.
 - **Events on the Ostorlab platform:** protect apps and see their events in
   [Mobile ADR](#use-adr-on-the-ostorlab-platform) (Mobile Application Detection & Response).
 
