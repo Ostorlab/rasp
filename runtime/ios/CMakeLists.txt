@@ -40,3 +40,9 @@ set_target_properties(RaspRuntime PROPERTIES
   MACOSX_FRAMEWORK_SHORT_VERSION_STRING ${PROJECT_VERSION}
   MACOSX_FRAMEWORK_BUNDLE_VERSION ${PROJECT_VERSION}
   MACOSX_FRAMEWORK_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in)
+
+# Strip local symbols in Release so `nm` can't map the internal functions (rasp_start, the observe_* checks) an
+# attacker would patch out without defeating the obfuscation. The framework exports nothing, so every internal
+# symbol is local; -Wl,-x drops them and keeps the undefined imports. Link-time generator expression: works under
+# multi-config generators (Xcode) too, and doesn't mutate the ad-hoc-signed Mach-O. Mirrors the Android rasp strip.
+target_link_options(RaspRuntime PRIVATE $<$<CONFIG:Release>:-Wl,-x>)

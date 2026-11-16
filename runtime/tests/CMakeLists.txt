@@ -189,3 +189,54 @@ target_link_libraries(rasp_android_key_schedule_test PRIVATE rasp_core rasp_tfps
   GTest::gtest_main)
 gtest_discover_tests(rasp_android_key_schedule_test)
 
+add_executable(rasp_android_key_schedule_bounds_test android/payload/key_schedule_bounds_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/apk/location.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
+target_include_directories(rasp_android_key_schedule_bounds_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_key_schedule_bounds_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings
+  rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_key_schedule_bounds_test DISCOVERY_MODE PRE_TEST)
+
+add_executable(rasp_android_selfdecrypt_chacha20_test android/selfdecrypt/chacha20_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/selfdecrypt/chacha20.cpp)
+target_include_directories(rasp_android_selfdecrypt_chacha20_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_selfdecrypt_chacha20_test PRIVATE rasp_core rasp_warnings rasp_language
+  GTest::gtest_main)
+gtest_discover_tests(rasp_android_selfdecrypt_chacha20_test)
+
+# The self-decrypt bootstrap runs end to end on a Linux machine of one of the two architectures it supports, with the
+# key-derivation blob gen_kdf_shovel.py makes for that machine, the way the Android build makes it for the device.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|aarch64)$")
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  get_filename_component(rasp_host_compiler_dir ${CMAKE_CXX_COMPILER} DIRECTORY)
+  set(rasp_host_kdf_dir ${CMAKE_CURRENT_BINARY_DIR}/selfdecrypt)
+  add_custom_command(
+    OUTPUT ${rasp_host_kdf_dir}/kdf_shovel.cpp ${rasp_host_kdf_dir}/kdf_shovel.h
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/android/gen_kdf_shovel.py
+            --cc ${rasp_host_compiler_dir}/clang
+            --target ${CMAKE_SYSTEM_PROCESSOR}-linux-gnu
+            --arch ${CMAKE_SYSTEM_PROCESSOR}
+            --src ${PROJECT_SOURCE_DIR}/android/src/selfdecrypt/kdf_blob.c
+            --out-dir ${rasp_host_kdf_dir}
+    DEPENDS ${PROJECT_SOURCE_DIR}/android/src/selfdecrypt/kdf_blob.c ${PROJECT_SOURCE_DIR}/android/gen_kdf_shovel.py
+    VERBATIM)
+  add_executable(rasp_android_selfdecrypt_test android/selfdecrypt/selfdecrypt_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/selfdecrypt/selfdecrypt.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/selfdecrypt/chacha20.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/selfdecrypt/meta.cpp
+    ${rasp_host_kdf_dir}/kdf_shovel.cpp)
+  # The bootstrap calls into the key-derivation blob it writes to a fresh page, and UBSan's function-type check would
+  # read the 8 bytes before that page, which are not mapped.
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/android/src/selfdecrypt/selfdecrypt.cpp
+    TARGET_DIRECTORY rasp_android_selfdecrypt_test
+    PROPERTIES COMPILE_OPTIONS "-Wno-global-constructors;-fno-jump-tables;-fno-sanitize=function")
+  target_include_directories(rasp_android_selfdecrypt_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+    ${rasp_host_kdf_dir})
+  target_link_libraries(rasp_android_selfdecrypt_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
+    GTest::gtest_main ${CMAKE_DL_LIBS})
+  gtest_discover_tests(rasp_android_selfdecrypt_test)
+endif()

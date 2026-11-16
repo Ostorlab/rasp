@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability or a way around a check
+    url: https://github.com/Ostorlab/rasp/blob/main/SECURITY.md
+    about: Please don't report it in a public issue. SECURITY.md says how to reach us privately.

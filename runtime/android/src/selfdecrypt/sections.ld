@@ -16,6 +16,7 @@ SECTIONS
   .stubcode : ALIGN(CONSTANT(MAXPAGESIZE))
   {
     *(.stubcode .stubcode.*)
+    *(.stubrodata .stubrodata.*)
     *selfdecrypt.cpp.o(.rodata .rodata.* .rodata..*)
     *chacha20.cpp.o(.rodata .rodata.* .rodata..*)
     *kdf_shovel.cpp.o(.rodata .rodata.* .rodata..*)

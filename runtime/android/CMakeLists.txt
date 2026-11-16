@@ -86,7 +86,11 @@ if(RASP_LOGGING)
 endif()
 
 # Obfuscate the first-party runtime: rasp (which carries the clear self-decrypt bootstrap, forced to every pass at 100 by
-# cmake/omvll_config.py) and rasp_core. Third-party code (tf-psa-crypto, yyjson) is left out by the scheme.
-foreach(rasp_first_party_target rasp rasp_core)
+# cmake/omvll_config.py), rasp_core, the plugins compiled in from RASP_PLUGINS and their registry. Third-party code
+# (tf-psa-crypto, yyjson) is left out by the scheme.
+foreach(rasp_plugin_name IN LISTS rasp_compiled_plugins)
+  list(APPEND rasp_plugin_targets rasp_plugin_${rasp_plugin_name})
+endforeach()
+foreach(rasp_first_party_target rasp rasp_core rasp_plugins ${rasp_plugin_targets})
   rasp_obfuscate(${rasp_first_party_target})
 endforeach()
