@@ -305,7 +305,15 @@ jobs:
           echo "::add-mask::$seed"
           echo "RASP_OMVLL_SEED=$seed" >> "$GITHUB_ENV"
       - name: Configure
-        run: cmake --preset android -DANDROID_ABI=${{ matrix.abi }}
+        run: |
+          set -o pipefail
+          cmake --preset android -DANDROID_ABI=${{ matrix.abi }} | tee "$RUNNER_TEMP/android-configure.log"
+      - name: Check the release build is obfuscated
+        run: |
+          for target in rasp rasp_core rasp_plugins; do
+            grep -qF "O-MVLL on; ${target} is obfuscated" "$RUNNER_TEMP/android-configure.log" ||
+              { echo "the release build does not obfuscate ${target}"; exit 1; }
+          done
       - name: Build
         run: cmake --build --preset android --parallel
       - name: Check the Android code
@@ -338,9 +346,9 @@ jobs:
         run: |
           lib=build/android/android/librasp.so
           test -s "$lib"
-          literals="$(grep -rhoE '"((root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+|rasp\.v2\.[a-z_.]*|assets/rasp/([a-z]+\.bin|r)|/(proc|sys)/[^"]+|TracerPid:|\.init|\.text)"' android/src | tr -d '"' | sort -u)"
+          literals="$(grep -rhoE '"((root|dbg|hook|mitm|integ|id|emu)\.[a-z_]+|rasp\.v2\.[a-z_.]*|assets/rasp/([a-z]+\.bin|r)|/(proc|sys)/[^"]+|TracerPid:|\.init|\.text|access|stat|getifaddrs|tun|tap)"' android/src | tr -d '"' | sort -u)"
           test -n "$literals"
-          missing="$(comm -23 <(printf '%s\n' "$literals") <(strings -a "$lib" | sort -u) || true)"
+          missing="$(comm -23 <(printf '%s\n' "$literals") <(strings -a -n 3 "$lib" | sort -u) || true)"
           if [ -n "$missing" ]; then
             echo "the string obfuscation encrypted literals the runtime reads through data pointers:"
             echo "$missing"
