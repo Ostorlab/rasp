@@ -61,7 +61,7 @@ struct DexStore {
 /// @param apk The path of the APK to read the map and, later, the dexes from. It is kept in the returned store.
 /// @param root The root key recovered from the schedule (key_schedule.h).
 /// @return The store. Nothing when the map entry is absent or does not decrypt, in which case no class can be served.
-/// The Java program may be absent — an app the packer built without one — and the store then arms from a zero share.
+/// The Java program may be absent or fail to decrypt; the store then keeps no program, and stays unarmed.
 [[nodiscard]] std::optional<DexStore> open_dex_store(std::string apk, const Key& root);
 
 /// Arms the store with the share the stub's Java program produced, and lets the dexes decrypt.
@@ -72,7 +72,7 @@ struct DexStore {
 /// fails. The stub arms once, before any business class loads; nothing decrypts before it does.
 ///
 /// @param store The store to arm.
-/// @param j_share The share the stub produced, or an all-zero key when the app shipped no program.
+/// @param j_share The share the stub produced.
 void arm_j_store(DexStore& store, const Key& j_share);
 
 /// The dex that defines `class_name`, or null when no dex in the store defines it.

@@ -161,28 +161,9 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
   // launch wrapper) for exactly this flag, so the schedule refuses to decrypt when it is set,
   // whatever the manifest bytes say.
   environment.not_debuggable = !debuggable;
-#ifdef __aarch64__
-  {
-    std::uint64_t frequency = 0;
-    // NOLINTNEXTLINE(portability-no-assembler): the observation is the mrs read itself.
-    asm volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
-    environment.counter_frequency_plausible = frequency >= 1000000U && frequency <= 100000000U;
-    std::uint64_t midr = 0;
-    // NOLINTNEXTLINE(portability-no-assembler): the observation is the mrs read itself.
-    asm volatile("mrs %0, midr_el1" : "=r"(midr));
-    environment.cpu_identity_plausible = midr != 0;
-  }
-#elifdef __x86_64__
-  {
-    std::uint32_t eax = 0;
-    std::uint32_t ebx = 0;
-    std::uint32_t ecx = 0;
-    std::uint32_t edx = 0;
-    // NOLINTNEXTLINE(portability-no-assembler): the observation is the cpuid read itself.
-    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
-    environment.cpu_identity_plausible = ebx != 0 || edx != 0 || ecx != 0;
-  }
-#endif
+  const payload::HardwareFacts hardware = payload::observe_hardware();
+  environment.counter_frequency_plausible = hardware.counter_frequency_plausible;
+  environment.cpu_identity_plausible = hardware.cpu_identity_plausible;
   if constexpr (kLoggingEnabled) {
     // A development build says what the environment was observed to be, so a gate that flips on some
     // install shape names itself instead of failing silently.
@@ -325,8 +306,9 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
   if (!bytes.has_value()) {
     return nullptr;
   }
-  // Keep the decrypted dex off any swap device: the kernel cannot write it out while it is
-  // locked. The pages are unlocked again right after the wipe.
+  // Try to keep the decrypted dex off any swap device: the kernel cannot write it out while it is locked. This is
+  // best effort, since Android's memory-lock limit is often smaller than a dex; the pages are unlocked again right
+  // after the wipe either way.
   static_cast<void>(::mlock(bytes->data(), bytes->size()));
   checkpoint(2, name);
   jobject child = make_child_loader(env, generating, *bytes);
