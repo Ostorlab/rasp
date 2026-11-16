@@ -765,3 +765,29 @@ def testNewRootAndShare_whenCalled_returnFreshValues() -> None:
 
 def testDecoyEntryName_whenGivenAnIndex_namesThePrefix() -> None:
     assert key_schedule.decoy_entry_name(3) == "assets/rasp/r3.bin"
+
+
+def testApkDigest_whenTheAppShipsItsOwnLibraspSo_bindsIt() -> None:
+    entries = {
+        "classes.dex": (b"dex", 0),
+        "lib/arm64-v8a/librasp.so": (b"the app's own library", 0),
+        "lib/arm64-v8a/libqyf3.so": (b"the runtime", 0),
+    }
+    changed = dict(entries)
+    changed["lib/arm64-v8a/librasp.so"] = (b"another library", 0)
+
+    assert key_schedule.apk_digest(entries, frozenset({"libqyf3.so"})) != (
+        key_schedule.apk_digest(changed, frozenset({"libqyf3.so"}))
+    )
+
+
+def testApkDigest_whenOnlyTheRuntimeLibraryChanges_staysTheSame() -> None:
+    entries = {"classes.dex": (b"dex", 0), "lib/x86_64/libqyf3.so": (b"the runtime", 0)}
+    changed = {
+        "classes.dex": (b"dex", 0),
+        "lib/x86_64/libqyf3.so": (b"sealed runtime", 0),
+    }
+
+    assert key_schedule.apk_digest(entries, frozenset({"libqyf3.so"})) == (
+        key_schedule.apk_digest(changed, frozenset({"libqyf3.so"}))
+    )

@@ -136,3 +136,15 @@ def testRaiseMinSdkVersion_whenNoMinSdk_shouldRaiseInvalidAabError(
         pytest.raises(errors.InvalidAabError, match="minSdkVersion"),
     ):
         manifest.raise_min_sdk_version(manifest_bytes, 31)
+
+
+def testClearDebuggable_whenTheAppIsDebuggable_removesTheAttribute() -> None:
+    fixtures = pathlib.Path(__file__).parent / "fixtures"
+    data = (fixtures / "manifest_debuggable_true.pb").read_bytes()
+
+    assert b"debuggable" not in manifest.clear_debuggable(data)
+
+
+def testClearDebuggable_whenTheManifestCannotBeParsed_raisesManifestError() -> None:
+    with pytest.raises(errors.ManifestError):
+        manifest.clear_debuggable(b"")

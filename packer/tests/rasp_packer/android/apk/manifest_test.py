@@ -69,3 +69,19 @@ def testSetAppComponentFactory_whenAbsent_addsIt() -> None:
     edited = manifest.set_app_component_factory(data, "co.ostorlab.rasp.RaspStub")
 
     assert manifest.app_component_factory(edited) == "co.ostorlab.rasp.RaspStub"
+
+
+def testClearDebuggable_whenTheAppIsDebuggable_returnsAManifestThatIsNoLongerDebuggable() -> (
+    None
+):
+    data = (_FIXTURES / "manifest_debuggable_true.bin").read_bytes()
+
+    cleared = manifest.clear_debuggable(data)
+
+    assert cleared != data
+    assert manifest.clear_debuggable(cleared) == cleared
+
+
+def testClearDebuggable_whenTheManifestIsNotAxml_raisesManifestError() -> None:
+    with pytest.raises(errors.ManifestError):
+        manifest.clear_debuggable(b"not a manifest")

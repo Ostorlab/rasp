@@ -81,8 +81,6 @@ KIND_SIGNER = 15
 # The prefixes of APK entries the fold's APK digest excludes: the signing step's own entries and the fold's own
 # outputs.
 _APK_DIGEST_EXCLUDED_PREFIXES = ("META-INF/", "assets/rasp/", "assets/business/")
-# The filename of the runtime library of older packs; newer packs name theirs per app and pass the name.
-_APK_DIGEST_EXCLUDED_SUFFIX = "librasp.so"
 
 # The gate block of a clean device at recovery: a JNI environment, no tracer, the library under
 # /data, the process owning its package's data directory, a release build, an app the platform does
@@ -142,7 +140,8 @@ def apk_digest(
     (the fold's own outputs), and the runtime's own libraries (chain A already covers their bytes, and
     the packer gathers its digest before it writes the fold's outputs into them). The libraries are
     named by filename: one per-app name covers every ABI, the way the runtime derives its own name from
-    its load path, and the legacy `librasp.so` name of older packs stays excluded.
+    its load path. An app's own file that happens to be named `librasp.so` is bound like any other entry,
+    as the runtime binds it.
 
     Args:
         entries: The APK's entries by name, each a (data, method) pair: the uncompressed bytes and
@@ -156,7 +155,6 @@ def apk_digest(
     for name in sorted(entries):
         if (
             name.startswith(_APK_DIGEST_EXCLUDED_PREFIXES)
-            or name.endswith(_APK_DIGEST_EXCLUDED_SUFFIX)
             or name.rpartition("/")[2] in library_filenames
         ):
             continue

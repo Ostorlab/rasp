@@ -194,3 +194,27 @@ def testSetMinSdkVersion_whenUsesSdkHasNoMinSdk_shouldRaise() -> None:
         proto_manifest.ProtoManifestError, match="no android:minSdkVersion"
     ):
         proto_manifest.set_min_sdk_version(element, 21)
+
+
+_DEBUGGABLE_FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+
+
+@pytest.mark.parametrize("declared", ["true", "false"])
+def testRemoveDebuggable_whenTheAppDeclaresIt_removesTheAttribute(
+    declared: str,
+) -> None:
+    data = (_DEBUGGABLE_FIXTURES / f"manifest_debuggable_{declared}.pb").read_bytes()
+
+    removed = proto_manifest.remove_debuggable(data)
+
+    assert b"debuggable" in data
+    assert b"debuggable" not in removed
+    assert proto_manifest.read_package(removed) == "com.example.withapp"
+
+
+def testRemoveDebuggable_whenTheAppDoesNotDeclareIt_returnsTheManifestUnchanged() -> (
+    None
+):
+    data = (_DEBUGGABLE_FIXTURES / "manifest_not_debuggable.pb").read_bytes()
+
+    assert proto_manifest.remove_debuggable(data) == data

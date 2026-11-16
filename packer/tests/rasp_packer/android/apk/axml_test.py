@@ -5,6 +5,7 @@ next to them.
 """
 
 import pathlib
+import struct
 
 import pytest
 
@@ -143,3 +144,45 @@ def testSetAppComponentFactory_whenReapplied_repointsToTheSameValue() -> None:
 
     assert axml.read_app_component_factory(twice) == _STUB
     assert axml.read_application_class(twice) == "com.example.withapp.MyApp"
+
+
+def _debuggable_attribute(data: bytes) -> tuple[int, int] | None:
+    """The type and data of the application's android:debuggable value, or None when it declares none."""
+    pool, region = axml._split(data)
+    element = axml._find_element(region, pool, axml.APPLICATION_ELEMENT)
+    assert element is not None
+    attribute = axml._find_attribute(
+        region, element, axml._resource_map(region), axml.ATTR_DEBUGGABLE_RESOURCE_ID
+    )
+    if attribute is None:
+        return None
+    _raw, _size, _res0, data_type, value = struct.unpack_from(
+        "<IHBBI", region, attribute + 8
+    )
+    return data_type, value
+
+
+def testClearDebuggable_whenTheAppIsDebuggable_shipsTheAttributeAsBooleanFalse() -> (
+    None
+):
+    data = (_FIXTURES / "manifest_debuggable_true.bin").read_bytes()
+
+    cleared = axml.clear_debuggable(data)
+
+    assert _debuggable_attribute(data) == (0x12, 0xFFFFFFFF)
+    assert _debuggable_attribute(cleared) == (0x12, 0)
+    assert axml.read_application_class(cleared) == "com.example.withapp.MyApp"
+
+
+def testClearDebuggable_whenTheAppDeclaresItFalse_returnsTheManifestUnchanged() -> None:
+    data = (_FIXTURES / "manifest_debuggable_false.bin").read_bytes()
+
+    assert axml.clear_debuggable(data) == data
+
+
+def testClearDebuggable_whenTheAppDoesNotDeclareIt_returnsTheManifestUnchanged() -> (
+    None
+):
+    data = _with_application()
+
+    assert axml.clear_debuggable(data) == data
