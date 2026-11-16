@@ -390,6 +390,9 @@ def _range_offset(
 
     Returns:
         The range's offset.
+
+    Raises:
+        ValueError: No sampled range avoids the keystore spans.
     """
     bound = max(0, library_size - length)
     for _attempt in range(64):
@@ -399,7 +402,7 @@ def _range_offset(
             for start, span_length in keystore_spans
         ):
             return offset
-    return 0
+    raise ValueError("no range offset avoids the keystore spans")
 
 
 def run_chain(
@@ -413,7 +416,7 @@ def run_chain(
     Each step derives the next state from the current one, with the gathered input as the step's salt and the record's position in the info, so the chain is order-sensitive: reordering, dropping or adding a step changes the result.
 
     Args:
-        state: The state to start from, 32 bytes.
+        state: The state to start from, 32 bytes. Both root-recovery chains start from the all-zero key.
         records: The chain's records, in order.
         resolve: Returns the 32 bytes each record's source holds.
         tag: The chain's tag, "a" or "s", which goes into each step's info.

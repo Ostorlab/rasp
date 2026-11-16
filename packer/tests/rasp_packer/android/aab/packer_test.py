@@ -9,6 +9,7 @@ from rasp_packer import errors
 from rasp_packer import runtime_config
 from rasp_packer.android import cipher
 from rasp_packer.android import key_schedule
+from rasp_packer.android import mapping
 from rasp_packer.android import packer
 from rasp_packer.android import resources
 from rasp_packer.android import runtime_library
@@ -74,11 +75,16 @@ def _make_aab(
 
 
 def _recorded_aab_split(
-    captured: list[tuple[dict[str, bytes], str]] | None = None,
+    captured: list[tuple[dict[str, bytes], str, mapping.ClassMapping | None]]
+    | None = None,
 ) -> packer.AabSplitter:
-    def splitter(dex_entries: dict[str, bytes], package: str) -> split.Split:
+    def splitter(
+        dex_entries: dict[str, bytes],
+        package: str,
+        class_mapping: mapping.ClassMapping | None = None,
+    ) -> split.Split:
         if captured is not None:
-            captured.append((dex_entries, package))
+            captured.append((dex_entries, package, class_mapping))
         return split.Split(framework=_FRAMEWORK, business=_BUSINESS)
 
     return splitter
@@ -117,7 +123,7 @@ def _recover_root(archive: zipfile.ZipFile) -> bytes | None:
 def testPack_whenAab_detectsFormatAndUsesAabPath(tmp_path: pathlib.Path) -> None:
     app = tmp_path / "app.aab"
     _make_aab(app)
-    captured: list[tuple[dict[str, bytes], str]] = []
+    captured: list[tuple[dict[str, bytes], str, mapping.ClassMapping | None]] = []
     packer.pack(
         app=app,
         output=tmp_path / "out.aab",
@@ -126,7 +132,7 @@ def testPack_whenAab_detectsFormatAndUsesAabPath(tmp_path: pathlib.Path) -> None
         aab_splitter=_recorded_aab_split(captured),
     )
     assert len(captured) == 1
-    dex_entries, package = captured[0]
+    dex_entries, package, _ = captured[0]
     assert package == _PACKAGE
     assert "classes.dex" in dex_entries
     assert "classes2.dex" in dex_entries
@@ -326,3 +332,28 @@ def keystore_of(library: bytes) -> bytes:
 def program_of(library: bytes) -> bytes:
     """Reads the packed library's fold program."""
     return runtime_library.program(library)
+
+
+def testPack_whenAabAndMappingGiven_parsesItAndPassesItToTheSplitter(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "app.aab"
+    _make_aab(app)
+    mapping_file = tmp_path / "mapping.txt"
+    mapping_file.write_text(f"myapp.Entry -> {_PACKAGE}.a:\n", encoding="utf-8")
+    captured: list[tuple[dict[str, bytes], str, mapping.ClassMapping | None]] = []
+
+    packer.pack(
+        app=app,
+        output=tmp_path / "out.aab",
+        config=_CONFIG,
+        mapping=mapping_file,
+        artifacts=_artifacts(),
+        aab_splitter=_recorded_aab_split(captured),
+    )
+
+    assert len(captured) == 1
+    _, package, class_mapping = captured[0]
+    assert package == _PACKAGE
+    assert class_mapping is not None
+    assert class_mapping.business_packages("myapp") == frozenset({_PACKAGE})
