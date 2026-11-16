@@ -17,9 +17,13 @@ def testChecks_whenComparedWithTheRuntime_listsTheGroupsItRunsInItsOrder(
 ) -> None:
     monitoring = (_RUNTIME / platform / "src" / "monitoring.cpp").read_text()
 
-    runtime_groups = re.findall(r'is_check_enabled\(config, "(\w+)"\)', monitoring)
+    # The dispatch names each group with the bit its mask carries, so the order it runs them in and the
+    # bit each one sits at are both the packer's CHECKS order.
+    runtime_groups = re.findall(r'enabled\((\d+), "(\w+)"\)', monitoring)
 
-    assert checks.CHECKS[platform] == tuple(runtime_groups)
+    assert [(int(bit), group) for bit, group in runtime_groups] == list(
+        enumerate(checks.CHECKS[platform])
+    )
 
 
 @pytest.mark.parametrize("platform", list(platforms.Platform))
