@@ -1,5 +1,6 @@
 """End-to-end tests of the AAB packer, with a recorded split."""
 
+import hashlib
 import pathlib
 import zipfile
 
@@ -168,9 +169,16 @@ def testPackAab_writesTheConfigProgramAndKeystoreIntoLibrasp(
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
         library = zf.read("base/lib/arm64-v8a/librasp.so")
-    assert runtime_config_read_config(library) == _CONFIG.to_json()
-    assert len(keystore_of(library)) == key_schedule.KEY_SIZE
-    assert program_of(library) != bytes(key_schedule.PROGRAM_SIZE)
+    # The placed library is self-encrypted — not the plain config-written library — but the fold's
+    # config, program and keystore still read back from its untouched `.rasp_config` section.
+    assert library != runtime_library.write_config(_ARM64_SO, _CONFIG)
+    assert runtime_library.read_config(library) == _CONFIG.to_json()
+    assert len(runtime_library.keystore(library)) == key_schedule.KEY_SIZE
+    assert (
+        runtime_library.text_digest(library)
+        == hashlib.sha256(runtime_library.text_region(_ARM64_SO)).digest()
+    )
+    assert runtime_library.program(library) != bytes(key_schedule.PROGRAM_SIZE)
 
 
 def testPackAab_writesEncryptedMapThatNamesEveryBusinessClass(
@@ -253,9 +261,10 @@ def testPackAab_addsRuntimeLibraryUnderBaseLib(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
         library = zf.read("base/lib/arm64-v8a/librasp.so")
-
-    assert runtime_config_read_config(library) == _CONFIG.to_json()
-    assert keystore_of(library) != bytes(key_schedule.KEY_SIZE)
+    # The placed library is the self-encrypted runtime, not the plain config-written library.
+    assert library != runtime_library.write_config(_ARM64_SO, _CONFIG)
+    assert runtime_library.read_config(library) == _CONFIG.to_json()
+    assert runtime_library.keystore(library) != bytes(key_schedule.KEY_SIZE)
 
 
 def testPackAab_setsComponentFactoryAndRaisesMinSdk(tmp_path: pathlib.Path) -> None:
@@ -317,21 +326,6 @@ def testPackAab_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     )
     assert app_identity.package_name == _PACKAGE
     assert app_identity.version == "1.0"
-
-
-def runtime_config_read_config(library: bytes) -> bytes:
-    """Reads the packed library's config."""
-    return runtime_library.read_config(library)
-
-
-def keystore_of(library: bytes) -> bytes:
-    """Reads the packed library's keystore share."""
-    return runtime_library.keystore(library)
-
-
-def program_of(library: bytes) -> bytes:
-    """Reads the packed library's fold program."""
-    return runtime_library.program(library)
 
 
 def testPack_whenAabAndMappingGiven_parsesItAndPassesItToTheSplitter(

@@ -1,6 +1,7 @@
 """End-to-end tests of the Android packer, with a recorded split."""
 
 import collections.abc
+import hashlib
 import io
 import pathlib
 import random
@@ -508,9 +509,16 @@ def testPack_whenValidApk_addsTheRuntimeLibraryWithTheConfigProgramAndKeystore(
         library = archive.read("lib/arm64-v8a/librasp.so")
         names = archive.namelist()
 
-    assert runtime_library_read_config(library) == _CONFIG.to_json()
-    assert len(runtime_library_keystore(library)) == key_schedule.KEY_SIZE
-    assert key_schedule.decode_program(runtime_library_program(library)) is not None
+    # The placed library is self-encrypted — not the plain config-written library — but the fold's
+    # config, program and keystore still read back from its untouched `.rasp_config` section.
+    assert library != runtime_library.write_config(_ARM64_SO, _CONFIG)
+    assert runtime_library.read_config(library) == _CONFIG.to_json()
+    assert len(runtime_library.keystore(library)) == key_schedule.KEY_SIZE
+    assert (
+        runtime_library.text_digest(library)
+        == hashlib.sha256(runtime_library.text_region(_ARM64_SO)).digest()
+    )
+    assert key_schedule.decode_program(runtime_library.program(library)) is not None
     assert "assets/rasp/config.json" not in names
 
 
@@ -598,18 +606,3 @@ def testPack_whenValidApk_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     )
     assert app_identity.package_name == _PACKAGE
     assert app_identity.version == "2.4.1"
-
-
-def runtime_library_read_config(library: bytes) -> bytes:
-    """Reads the packed library's config, for the assertions that the packer wrote it."""
-    return runtime_library.read_config(library)
-
-
-def runtime_library_keystore(library: bytes) -> bytes:
-    """Reads the packed library's keystore share."""
-    return runtime_library.keystore(library)
-
-
-def runtime_library_program(library: bytes) -> bytes:
-    """Reads the packed library's fold program."""
-    return runtime_library.program(library)
