@@ -11,6 +11,7 @@ from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import platforms
 from rasp_packer import runtime_config
+from rasp_packer.android import mapping as mapping_module
 from rasp_packer.android import packer as android_packer
 from rasp_packer.ios import packer as ios_packer
 
@@ -47,6 +48,7 @@ def pack(
     output: pathlib.Path,
     build_id: str,
     checks: collections.abc.Sequence[str],
+    mapping: pathlib.Path | None = None,
     pin_certificate: pathlib.Path | None = None,
 ) -> PackResult:
     """Protects a built app: adds the runtime and writes the protected app to `output`.
@@ -71,6 +73,9 @@ def pack(
         build_id: The id of the protected build, written into the runtime's config.
         checks: The ids of the check groups the protected app runs. An empty sequence runs only
             the required groups. An id that is not one of the platform's groups is skipped.
+        mapping: The app's R8/ProGuard mapping file, for an Android release build R8 repackaged. It
+            lets the packer find the app's own classes by their obfuscated names. Only Android apps
+            have one: it is refused for iOS.
         pin_certificate: The certificate the developer will sign the protected app with, in PEM or
             DER form; the pack folds the certificate's digest into the key schedule, so a re-signed
             install derives a different key and nothing decrypts. None leaves the pack unpinned.
@@ -85,6 +90,7 @@ def pack(
         DangerousAppError: The app archive holds an unsafe entry (encrypted, a symlink, or escaping
             its root), or cannot be read.
         InvalidAppError: The app file cannot be read.
+        MappingError: A mapping file is given for an iOS app, or it cannot be read.
         Error: The app cannot be packed; see the platform's packer.
     """
     _check_build_id(build_id)
@@ -105,9 +111,17 @@ def pack(
     match platform:
         case platforms.Platform.ANDROID:
             app_identity = android_packer.pack(
-                app=app, output=output, config=config, pin_certificate=pin_certificate
+                app=app,
+                output=output,
+                config=config,
+                mapping=mapping,
+                pin_certificate=pin_certificate,
             )
         case platforms.Platform.IOS:
+            if mapping is not None:
+                raise mapping_module.MappingError(
+                    "the R8 mapping applies only to Android apps; iOS apps have no dex"
+                )
             app_identity = ios_packer.pack(app=app, output=output, config=config)
     return PackResult(
         output=output,

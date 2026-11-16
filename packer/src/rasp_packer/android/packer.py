@@ -51,6 +51,7 @@ from rasp_packer.android import injection
 from rasp_packer.android import java_program
 from rasp_packer.android import key_schedule
 from rasp_packer.android import loader_map
+from rasp_packer.android import mapping as mapping_module
 from rasp_packer.android import resources as resources_module
 from rasp_packer.android import runtime_library
 from rasp_packer.android import self_encrypt
@@ -78,8 +79,12 @@ AAB_MAP_ENTRY = f"{_AAB_BASE}{MAP_ENTRY}"
 AAB_JAVA_PROGRAM_ENTRY = f"{_AAB_BASE}{JAVA_PROGRAM_ENTRY}"
 AAB_ASSET_PREFIX = f"{_AAB_BASE}{ASSET_PREFIX}"
 
-type Splitter = collections.abc.Callable[[pathlib.Path, str], split_module.Split]
-type AabSplitter = collections.abc.Callable[[dict[str, bytes], str], split_module.Split]
+type Splitter = collections.abc.Callable[
+    [pathlib.Path, str, mapping_module.ClassMapping | None], split_module.Split
+]
+type AabSplitter = collections.abc.Callable[
+    [dict[str, bytes], str, mapping_module.ClassMapping | None], split_module.Split
+]
 
 
 def pack(
@@ -87,6 +92,7 @@ def pack(
     app: pathlib.Path,
     output: pathlib.Path,
     config: runtime_config.RuntimeConfig,
+    mapping: pathlib.Path | None = None,
     artifacts: resources_module.Artifacts | None = None,
     splitter: Splitter = split_module.split,
     aab_splitter: AabSplitter = split_module.split_from_dex_entries,
@@ -99,8 +105,11 @@ def pack(
         app: The built APK or AAB to protect.
         output: Where to write the protected app. It is unsigned.
         config: The runtime's config, written into the app.
+        mapping: The app's R8/ProGuard mapping file, for a release build R8 repackaged. With it, the
+            packer finds the app's own classes by their obfuscated names and protects them whole.
+            Without it, the packer picks the app's classes by the app's package.
         artifacts: The prebuilt stub and libraries. Loaded from the package resources when not given.
-        splitter: Splits an APK's classes. The default runs the bundled splitter.
+        splitter: Splits an APK's classes. The default splits them in process.
         aab_splitter: Splits an AAB's classes from pre-extracted DEX entries.
         generator: The source of the pack's per-app random names. None draws fresh entropy; a seeded
             generator makes a pack's names reproducible.
@@ -118,16 +127,19 @@ def pack(
         UnsupportedAbiError: The app ships native libraries for an ABI the runtime is not built for.
         AlreadyProtectedError: The app was already protected: it holds the pack's map entry, or its
             manifest still names the older vendor-named stub.
+        MappingError: The mapping file cannot be read.
         SplitError: The app's classes cannot be read or split.
     """
     if artifacts is None:
         artifacts = resources_module.load()
     pinned_signer = _read_pinned_certificate(pin_certificate)
+    class_mapping = _load_mapping(mapping) if mapping is not None else None
     if _is_aab(app):
         return _pack_aab(
             app=app,
             output=output,
             config=config,
+            mapping=class_mapping,
             artifacts=artifacts,
             splitter=aab_splitter,
             generator=generator,
@@ -137,6 +149,7 @@ def pack(
         app=app,
         output=output,
         config=config,
+        mapping=class_mapping,
         artifacts=artifacts,
         splitter=splitter,
         generator=generator,
@@ -187,6 +200,17 @@ def _read_pinned_certificate(pin_certificate: pathlib.Path | None) -> bytes | No
     return content
 
 
+def _load_mapping(mapping: pathlib.Path) -> mapping_module.ClassMapping:
+    """Read and parse an R8/ProGuard mapping file."""
+    try:
+        text = mapping.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise mapping_module.MappingError(
+            f"cannot read mapping {mapping}: {error}"
+        ) from error
+    return mapping_module.parse(text)
+
+
 def _is_aab(app: pathlib.Path) -> bool:
     """An AAB contains ``BundleConfig.pb``; an APK does not."""
     try:
@@ -201,6 +225,7 @@ def _pack_apk(
     app: pathlib.Path,
     output: pathlib.Path,
     config: runtime_config.RuntimeConfig,
+    mapping: mapping_module.ClassMapping | None,
     artifacts: resources_module.Artifacts,
     splitter: Splitter,
     generator: random.Random | None,
@@ -229,7 +254,7 @@ def _pack_apk(
     )
     config = dataclasses.replace(config, stub_class=names.stub_class_dotted)
 
-    result = splitter(app, app_identity.package_name)
+    result = splitter(app, app_identity.package_name, mapping)
 
     patched_manifest = apk_manifest_module.set_app_component_factory(
         apk_manifest_module.clear_debuggable(
@@ -253,7 +278,6 @@ def _pack_apk(
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
         libraries,
         digests,
-        config,
         app_identity.package_name.encode(),
         artifacts.stub_dex,
         apk_stored_entries,
@@ -289,6 +313,7 @@ def _pack_aab(
     app: pathlib.Path,
     output: pathlib.Path,
     config: runtime_config.RuntimeConfig,
+    mapping: mapping_module.ClassMapping | None,
     artifacts: resources_module.Artifacts,
     splitter: AabSplitter,
     generator: random.Random | None,
@@ -323,7 +348,7 @@ def _pack_aab(
         data = aab.get(name)
         if data is not None:
             dex_entries[name.removeprefix(_AAB_DEX_PREFIX)] = data
-    result = splitter(dex_entries, app_identity.package_name)
+    result = splitter(dex_entries, app_identity.package_name, mapping)
 
     patched_manifest = aab_manifest_module.set_app_component_factory(
         aab_manifest_module.clear_debuggable(
@@ -354,7 +379,6 @@ def _pack_aab(
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
         libraries,
         digests,
-        config,
         app_identity.package_name.encode(),
         artifacts.stub_dex,
         None,
@@ -429,7 +453,6 @@ def _stored_apk_entries(
 def _schedule_libraries(
     libraries: dict[str, bytes],
     digests: dict[str, bytes],
-    config: runtime_config.RuntimeConfig,
     package: bytes,
     stub_dex: bytes,
     apk_entries: dict[str, tuple[bytes, int, int]] | None,
@@ -444,7 +467,6 @@ def _schedule_libraries(
     Args:
         libraries: The runtime libraries with their config written and their code and read-only data self-encrypted, by APK entry name. Each already carries the same config.
         digests: The SHA-256 of each library's plaintext `.text` section, by APK entry name.
-        config: The runtime's config.
         package: The app's package name, which the fold program folds in, the way the runtime reads
             it from its APK's install path.
         stub_dex: The stub dex's bytes, which the fold program folds in, the way the runtime reads
@@ -465,10 +487,9 @@ def _schedule_libraries(
 
     Raises:
         InvalidRuntimeError: A library is not an ELF file or has no required section.
-        ConfigTooLargeError: The config does not fit in a library's section.
     """
     generator = random.SystemRandom()
-    sections = frozenset().union(
+    sections = frozenset(key_schedule.SECTION_NAMES).intersection(
         *(runtime_library.fold_sections(library) for library in libraries.values())
     )
     smallest = min((len(library) for library in libraries.values()), default=0)
@@ -494,9 +515,7 @@ def _schedule_libraries(
     lib_entries: dict[str, bytes] = {}
     for name, library in libraries.items():
         with_digest = runtime_library.write_text_digest(
-            runtime_library.write_program(
-                runtime_library.write_config(library, config), encoded
-            ),
+            runtime_library.write_program(library, encoded),
             digests[name],
         )
         gather = _resolver(

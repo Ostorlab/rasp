@@ -58,6 +58,15 @@ def _parser() -> argparse.ArgumentParser:
         f"{_required_checks()} always runs (default: only {_required_checks()})",
     )
     pack.add_argument(
+        "--mapping",
+        type=pathlib.Path,
+        default=None,
+        help=(
+            "the app's R8/ProGuard mapping file (Android only); with it the packer protects the "
+            "app's own classes even after R8 has repackaged them out of the app's package"
+        ),
+    )
+    pack.add_argument(
         "--pin-certificate",
         type=pathlib.Path,
         help="the certificate the app will be signed with, PEM or DER; the pack refuses to decrypt "
@@ -110,6 +119,7 @@ def _pack(arguments: argparse.Namespace) -> int:
             output=arguments.output,
             build_id=arguments.build_id,
             checks=checks,
+            mapping=arguments.mapping,
             pin_certificate=getattr(arguments, "pin_certificate", None),
         )
     except errors.Error as error:

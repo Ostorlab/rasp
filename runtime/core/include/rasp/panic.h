@@ -1,5 +1,5 @@
-/// panic_on_detection: ends the app a few seconds after a built-in check detects something, and the verdicts it
-/// decides with.
+/// panic_on_detection: ends the app after a bounded delay when a built-in check detects something, and the verdicts
+/// it decides with.
 
 #pragma once
 
@@ -75,13 +75,12 @@ inline constexpr std::chrono::milliseconds kMaxPanicDelay{3000};
 /// @return Whether the thread started. When it can't start, nothing is armed.
 [[nodiscard]] bool arm_panic(EndProcess end_process, std::chrono::milliseconds delay) noexcept;
 
-/// The runtime's one response to a detection: when the built-in checks detected something, the process ends a few
-/// seconds later.
+/// The runtime's one response to a detection: when the built-in checks detected something, the process ends later.
 ///
 /// It judges `observations` as detect does. In a release build, when anything was detected, it arms a panic with
-/// arm_panic and a delay from panic_delay, and returns: the process ends on the panic's own thread, from kMinPanicDelay
-/// to kMaxPanicDelay later. A development build never ends the process: it logs `would panic: <signal>/<source>` once
-/// for each detection instead, and arms nothing.
+/// arm_panic and returns. A dbg., hook. or virt. detection uses severe_panic_delay (100–500 ms); other detections use
+/// panic_delay (1–3 s). The process ends on the panic's own thread. A development build never ends the process: it
+/// logs `would panic: <signal>/<source>` once for each detection instead, and arms nothing.
 ///
 /// @param observations The observations of the built-in checks. A plugin's observations must not be passed.
 /// @param end_process The function that ends the process.

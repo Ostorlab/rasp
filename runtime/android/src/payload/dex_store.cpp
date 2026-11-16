@@ -85,13 +85,6 @@ std::optional<DexStore> open_dex_store(std::string apk, const Key& root) {
     }
     return std::nullopt;
   }
-  std::optional<std::vector<std::uint8_t>> map = decrypt(*map_key, *frame);
-  if (!map.has_value()) {
-    if constexpr (rasp::kLoggingEnabled) {
-      rasp::log("the store did not open: the map frame did not decrypt");
-    }
-    return std::nullopt;
-  }
   const std::optional<Key> seed = seed_from(root, *frame);
   if (!seed.has_value()) {
     if constexpr (rasp::kLoggingEnabled) {
@@ -99,12 +92,19 @@ std::optional<DexStore> open_dex_store(std::string apk, const Key& root) {
     }
     return std::nullopt;
   }
+  std::optional<std::vector<std::uint8_t>> map = decrypt(*map_key, *frame);
+  if (!map.has_value()) {
+    if constexpr (rasp::kLoggingEnabled) {
+      rasp::log("the store did not open: the map frame did not decrypt");
+    }
+    return std::nullopt;
+  }
 
   DexStore store;
   store.apk = std::move(apk);
   store.seed = *seed;
-  // The Java program is sealed under the root like the map: the loader needs it before the stub can arm. An app the
-  // packer built without one ships no entry, and its store then arms from a zero share.
+  // The Java program is sealed under the root like the map: the loader needs it before the stub can arm. Without it,
+  // absent or not decrypting, the stub has nothing to run, and the store stays unarmed.
   const std::optional<std::vector<std::uint8_t>> program_frame =
       rasp::android::apk::read_stored_entry(store.apk, kJProgramEntry);
   if (program_frame.has_value()) {
@@ -113,6 +113,8 @@ std::optional<DexStore> open_dex_store(std::string apk, const Key& root) {
         program_key.has_value() ? decrypt(*program_key, *program_frame) : std::nullopt;
     if (program.has_value()) {
       store.j_program = std::move(*program);
+    } else if constexpr (rasp::kLoggingEnabled) {
+      rasp::log("the program entry did not decrypt: the store keeps no program");
     }
   }
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)

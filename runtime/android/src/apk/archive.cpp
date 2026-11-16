@@ -229,9 +229,7 @@ constexpr std::uint16_t kAxmlStartElementType = 0x0102;
 constexpr std::size_t kAxmlPoolHeaderSize = 28;
 /// The UTF-8 string-pool flag; without it the strings are UTF-16.
 constexpr std::uint32_t kAxmlPoolUtf8 = 0x100;
-/// The end of a ZIP file's last entry, where an appended signing block or central directory begins.
-constexpr std::uint32_t kZipEndRecordSignature = 0x06054b50;
-/// The APK signing block's trailing magic, 16 bytes before the central directory.
+/// The offset, in the end-of-central-directory record, of the central directory's offset in the file.
 constexpr std::size_t kDirectoryOffsetField = 16;
 
 /// The magic that ends the APK Signing Block.
@@ -257,10 +255,6 @@ constexpr std::size_t kSdkRangeSize = 8;
 /// The largest certificate copied. A real one is about 1.5 KiB.
 constexpr std::size_t kMaxCertificateSize = std::size_t{64} << 10U;
 
-constexpr std::string_view kApkSigningBlockMagic = "APK Sig Block 42";
-/// The APK signature scheme v3 and v2 pair ids, in the order the runtime prefers them.
-constexpr std::uint32_t kApkSignatureSchemeV3 = 0xF05368C0;
-constexpr std::uint32_t kApkSignatureSchemeV2 = 0x7109871A;
 /// The attribute value types the manifest reader canonicalises: a string, a reference, and a boolean.
 constexpr std::uint8_t kAxmlTypeString = 0x03;
 constexpr std::uint8_t kAxmlTypeBoolean = 0x12;
@@ -697,45 +691,6 @@ template <typename Read>
   return data;
 }
 
-/// @param scheme_value The signing block pair's value for the scheme.
-/// @return The concatenated certificates. Nothing when the scheme's structure does not parse.
-[[nodiscard]] std::optional<std::vector<std::uint8_t>> signer_certificates(std::span<const std::uint8_t> scheme_value) {
-  std::span<const std::uint8_t> signers = scheme_value;
-  const std::optional<std::span<const std::uint8_t>> signer_sequence = take_length_prefixed(signers);
-  if (!signer_sequence.has_value()) {
-    return std::nullopt;
-  }
-  std::span<const std::uint8_t> sequence = *signer_sequence;
-  const std::optional<std::span<const std::uint8_t>> signer = take_length_prefixed(sequence);
-  if (!signer.has_value()) {
-    return std::nullopt;
-  }
-  std::span<const std::uint8_t> fields = *signer;
-  const std::optional<std::span<const std::uint8_t>> signed_data = take_length_prefixed(fields);
-  if (!signed_data.has_value()) {
-    return std::nullopt;
-  }
-  std::span<const std::uint8_t> data = *signed_data;
-  const std::optional<std::span<const std::uint8_t>> digests = take_length_prefixed(data);
-  if (!digests.has_value()) {
-    return std::nullopt;
-  }
-  const std::optional<std::span<const std::uint8_t>> certificates = take_length_prefixed(data);
-  if (!certificates.has_value()) {
-    return std::nullopt;
-  }
-  std::vector<std::uint8_t> out;
-  std::span<const std::uint8_t> rest = *certificates;
-  while (!rest.empty()) {
-    const std::optional<std::span<const std::uint8_t>> certificate = take_length_prefixed(rest);
-    if (!certificate.has_value()) {
-      return std::nullopt;
-    }
-    out.insert(out.end(), certificate->begin(), certificate->end());
-  }
-  return out;
-}
-
 /// Computes the digest over the APK's class dexes — the core of read_dex_digest. Walks the central
 /// directory and feeds every `classes.dex` / `classesN.dex` entry's name and uncompressed content into one
 /// SHA-256, sorted by name, the way the packer does over the base module's dexes.
@@ -1009,63 +964,6 @@ template <typename Read>
   return read_local_data(file, *best_entry);
 }
 
-/// Finds the digest over an APK's signing certificates in its bytes, the core of read_signer_digest: the concatenated
-/// DER certificates of the first v3 or v2 scheme pair of the APK Signing Block, hashed once.
-///
-/// @param file The APK's whole file bytes, memory-mapped.
-/// @return The 32-byte digest. Nothing when the APK has no signing block, no v3 or v2 pair, or a pair's length runs
-/// past the block.
-[[nodiscard]] std::optional<std::vector<std::uint8_t>> find_signer_digest(std::span<const std::uint8_t> file) {
-  // The end record's central-directory offset: the APK signing block, when present, ends there, with
-  // its trailing size and magic filling the 24 bytes before it.
-  std::optional<std::vector<std::uint8_t>> result;
-  std::size_t end_scan = file.size() >= 0xFFFF + 22 ? file.size() - 22 - 0xFFFF : 0;
-  for (std::size_t position = file.size() >= 22 ? file.size() - 22 : 0; position >= end_scan && position > 0;
-       position--) {
-    if (read_u32(file.subspan(position)) != kZipEndRecordSignature) {
-      continue;
-    }
-    const std::uint32_t directory_offset = read_u32(file.subspan(position + 16));
-    if (directory_offset >= 24 && directory_offset <= file.size() &&
-        std::string_view(reinterpret_cast<const char*>(file.data()) + directory_offset - 16, 16) ==
-            kApkSigningBlockMagic) {
-      // The block's size field counts the pairs and the trailing size and magic, so the pairs start
-      // at the offset the size field names before the central directory's end.
-      const std::uint64_t block_size = read_u64(file.subspan(directory_offset - 24));
-      // The block spans its leading size field, the pairs, and the trailing size and magic, so its
-      // named size can reach the central directory's offset less the leading field.
-      if (block_size > directory_offset - 8 || block_size < 24) {
-        break;
-      }
-      const std::size_t pairs_start = directory_offset - static_cast<std::size_t>(block_size);
-      std::size_t pair = pairs_start;
-      while (pair + 12 <= directory_offset - 24) {
-        const std::uint64_t pair_size = read_u64(file.subspan(pair));
-        // The room left after the pair's own length field, found by subtraction: the loop's condition keeps it
-        // positive, and a size near 2^64 read from the file cannot wrap a sum back to a small, in-bounds value.
-        if (pair_size < 4 || pair_size > (directory_offset - 24) - pair - 8) {
-          break;
-        }
-        const std::uint32_t scheme = read_u32(file.subspan(pair + 8));
-        if (scheme == kApkSignatureSchemeV3 || scheme == kApkSignatureSchemeV2) {
-          const std::span<const std::uint8_t> value = file.subspan(pair + 12, static_cast<std::size_t>(pair_size) - 4);
-          const std::optional<std::vector<std::uint8_t>> certificates = signer_certificates(value);
-          if (certificates.has_value()) {
-            const std::optional<std::array<std::uint8_t, checks::kDigestSize>> digest = checks::sha256(*certificates);
-            if (digest.has_value()) {
-              result = std::vector<std::uint8_t>(digest->begin(), digest->end());
-              break;
-            }
-          }
-        }
-        pair += 8 + static_cast<std::size_t>(pair_size);
-      }
-    }
-    break;
-  }
-  return result;
-}
-
 }  // namespace
 
 std::optional<std::vector<std::uint8_t>> find_signing_certificate(std::span<const std::uint8_t> apk,
@@ -1210,8 +1108,22 @@ std::optional<std::vector<std::uint8_t>> read_manifest_semantics(const std::stri
   return find_manifest_semantics(std::span<const std::uint8_t>(*manifest));
 }
 
-std::optional<std::vector<std::uint8_t>> read_signer_digest(const std::string& apk_path) {
-  return read_mapped(apk_path, find_signer_digest);
+std::optional<std::vector<std::uint8_t>> find_signer_digest(std::span<const std::uint8_t> apk,
+                                                            std::uint32_t api_level) {
+  const std::optional<std::vector<std::uint8_t>> certificate = find_signing_certificate(apk, api_level);
+  if (!certificate) {
+    return std::nullopt;
+  }
+  const std::optional<std::array<std::uint8_t, checks::kDigestSize>> digest = checks::sha256(*certificate);
+  if (!digest) {
+    return std::nullopt;
+  }
+  return std::vector<std::uint8_t>(digest->begin(), digest->end());
+}
+
+std::optional<std::vector<std::uint8_t>> read_signer_digest(const std::string& apk_path, std::uint32_t api_level) {
+  return read_mapped(apk_path,
+                     [api_level](std::span<const std::uint8_t> file) { return find_signer_digest(file, api_level); });
 }
 
 }  // namespace rasp::android::apk

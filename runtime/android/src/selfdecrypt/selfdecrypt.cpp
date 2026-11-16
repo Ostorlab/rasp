@@ -5,18 +5,20 @@
 ///
 /// It runs anti-emulation gates (debugger, implausible load base, timing anomaly) first, then derives the ChaCha20
 /// content key through a run-time-built "code-as-data" blob (the HKDF/SHA-256 logic is not present as .text; see
-/// kdf_blob.c and gen_kdf_shovel.py), stages memory with raw svc/syscall mmap/mprotect, and decrypts each region. It is
-/// reached only through a computed-branch trampoline, so a static disassembler cannot trace .init_array to the
-/// decryptor.
+/// kdf_blob.c and gen_kdf_shovel.py), stages memory with raw svc/syscall mmap/mprotect, decrypts each region, and
+/// verifies the decrypted `.text` against the digest the packer shipped. It is reached only through a computed-branch
+/// trampoline, so a static disassembler cannot trace .init_array to the decryptor.
 ///
 /// No gate aborts. A gate that does not like what it observes folds a poison value into the key material, so a
-/// debugger, an emulated load or a tampered file decrypts to garbage and the process dies on its own code with
-/// nothing that says why: an emulation script gets no abort to hook and no exit code to read, and finding which
-/// gate corrupted the key means reversing the obfuscated bootstrap that folds it in.
+/// debugger, an emulated load or a tampered file decrypts to garbage: an emulation script gets no abort to hook and no
+/// exit code to read, and finding which gate corrupted the key means reversing the obfuscated bootstrap that folds it
+/// in. Whatever does not decrypt to the shipped `.text` — a tripped gate, tampered metadata or ciphertext, a failed
+/// step — leaves the library's code with no access at all, so none of it runs: the first call into it faults.
 
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -45,13 +47,6 @@ long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) 
   __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5) : "memory", "cc");
   return x0;
 }
-
-/// Reads the aarch64 virtual counter for the timing anomaly check.
-[[nodiscard]] std::uint64_t read_counter() {
-  std::uint64_t v = 0;
-  __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v));
-  return v;
-}
 #elif defined(__x86_64__)
 /// An x86_64 syscall: number in rax, arguments in rdi/rsi/rdx/r10/r8/r9, result in rax.
 long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) {
@@ -64,14 +59,6 @@ long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) 
                    : "a"(nr), "D"(a0), "S"(a1), "d"(a2), "r"(r10), "r"(r8), "r"(r9)
                    : "rcx", "r11", "memory");
   return ret;
-}
-
-/// Reads the x86_64 timestamp counter for the timing anomaly check.
-[[nodiscard]] std::uint64_t read_counter() {
-  std::uint32_t lo = 0;
-  std::uint32_t hi = 0;
-  __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
-  return (static_cast<std::uint64_t>(hi) << 32) | lo;
 }
 #else
 #error "the self-decrypt bootstrap supports only aarch64 and x86_64"
@@ -235,25 +222,53 @@ inline constexpr std::uintptr_t kMinimumLibraryBase = 1ULL << 32;
   return !(m[0] == 0x7f && m[1] == 'E' && m[2] == 'L' && m[3] == 'F');
 }
 
-/// Whether a gross timing anomaly shows up in a short fixed loop. The loop takes a handful of counter ticks
-/// natively; under single-stepping or a slow emulator it takes orders of magnitude longer. The threshold is
-/// deliberately loose so ordinary scheduling jitter does not trip it.
+/// How many times the timing gate runs its loop. The gate trips only when every run is slow.
+inline constexpr int kTimingRuns = 5;
+
+/// How long one run of the loop may take before it counts as slow: 10 ms. A run takes microseconds natively, even on a
+/// slow core at a low clock, and tens of milliseconds or more when every instruction is single-stepped.
+inline constexpr std::int64_t kSlowRunNanoseconds = 10'000'000;
+
+/// The monotonic clock, in nanoseconds, read with a raw clock_gettime system call, so no libc function is hooked.
 ///
-/// @return Whether the loop took implausibly long.
-[[nodiscard]] bool timing_anomalous() {
+/// @return The time now, or 0 when the system call fails.
+[[nodiscard]] std::int64_t monotonic_nanoseconds() {
+  timespec now{};
+  if (raw_syscall(__NR_clock_gettime, CLOCK_MONOTONIC, reinterpret_cast<long>(&now), 0, 0, 0, 0) != 0) {
+    return 0;
+  }
+  return (static_cast<std::int64_t>(now.tv_sec) * 1'000'000'000) + static_cast<std::int64_t>(now.tv_nsec);
+}
+
+/// How long one run of a short fixed loop takes.
+///
+/// @return The run's duration in nanoseconds.
+[[nodiscard]] std::int64_t loop_nanoseconds() {
   volatile std::uint32_t acc = 0;
-  std::uint64_t t0 = read_counter();
+  const std::int64_t start = monotonic_nanoseconds();
   for (int i = 0; i < 1024; i++) {
     acc = acc + static_cast<std::uint32_t>(i * 3 + 1);
   }
-  std::uint64_t t1 = read_counter();
-  return t1 - t0 > 0x02000000ULL;
+  return monotonic_nanoseconds() - start;
+}
+
+/// Whether the process runs far slower than any real device: every one of kTimingRuns runs of a short loop takes
+/// longer than kSlowRunNanoseconds. One run can be slow on a healthy device, when the thread is descheduled in the
+/// middle of it; single-stepping slows every run. It stops at the first fast run, so a healthy process times one run.
+///
+/// @return Whether every run was slow.
+[[nodiscard]] bool timing_anomalous() {
+  for (int run = 0; run < kTimingRuns; run++) {
+    if (loop_nanoseconds() <= kSlowRunNanoseconds) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /// One poison value per gate, so a tripped gate folds a known corruption into the key material. No gate aborts: a
 /// hooked exit is the first thing an emulator script patches, and an abort reports which gate tripped. A poisoned
-/// key decrypts to garbage, and the process dies on its own code with nothing that says why — the same silent
-/// failure the fold's sensor guard gives on a hooked library.
+/// key decrypts to garbage, which fails the verification, and the library's code is left with no access.
 inline constexpr std::uint32_t kDebuggerPoison = 0x9e3779b9U;
 inline constexpr std::uint32_t kBasePoison = 0x85ebca6bU;
 inline constexpr std::uint32_t kTimingPoison = 0xc2b2ae35U;
@@ -264,11 +279,11 @@ inline constexpr std::uint32_t kCounterFrequencyPoison = 0x27d4c2baU;
 /// A poison value for the hardware-identity canary: the CPU identity register.
 inline constexpr std::uint32_t kCpuIdentityPoison = 0x165667b1U;
 
-/// Reads the system counter frequency (CNTFRQ_EL0). A real mobile SoC reports 13–26 MHz
-/// (Qualcomm 19.2 MHz, ARM reference 24 MHz, Samsung 26 MHz). QEMU and unicorn default to
-/// 1 GHz (0x3B9ACA00) or 0 — values a real device never produces. The check is deliberately
-/// loose so no real device trips it: it accepts 1–100 MHz, which covers every shipped ARM64
-/// SoC, and rejects everything outside.
+/// Reads the system counter frequency (CNTFRQ_EL0) and rejects values outside 1–100 MHz.
+/// This heuristic rejects zero and 1 GHz, including the default of newer QEMU CPU models,
+/// but accepts the 62.5 MHz retained by older QEMU models and machine versions. An emulator
+/// can report an accepted frequency, so passing this gate does not establish a physical device.
+/// The broad band is a compatibility policy, not a guarantee covering every mobile SoC.
 [[nodiscard]] bool counter_frequency_implausible() noexcept {
   std::uint64_t frequency = 0;
   // NOLINTNEXTLINE(portability-no-assembler): the canary is the mrs read itself.
@@ -371,6 +386,12 @@ void run_kdf(void* blob, const std::uint8_t ikm[32], const std::uint8_t* stub, s
 }
 
 /// Runs the verification entry of the materialised blob: whether SHA-256 of `text[0..len)` equals `expected`.
+///
+/// @param blob The materialised derivation blob's page.
+/// @param text The decrypted `.text`.
+/// @param len The length of `.text`.
+/// @param expected The digest the packer shipped.
+/// @return Whether the digests match.
 [[nodiscard]] bool run_verify(void* blob, const std::uint8_t* text, std::size_t len, const std::uint8_t expected[32]) {
   using verify_fn = int (*)(const std::uint8_t*, unsigned long, const std::uint8_t*);
   verify_fn verify = reinterpret_cast<verify_fn>(reinterpret_cast<unsigned char*>(blob) + kVerifyBlobEntry);
@@ -439,6 +460,42 @@ void decrypt_code(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
   flush_icache(reinterpret_cast<void*>(start), span);
 }
 
+/// The pages a region of the metadata covers.
+struct PageSpan {
+  /// The first byte of the region.
+  void* addr;
+  /// The page the region starts in.
+  std::uintptr_t start;
+  /// The length of the whole pages the region covers.
+  std::size_t span;
+};
+
+/// The pages region `r` of the metadata covers once the library is loaded.
+///
+/// @param bias The library's load bias.
+/// @param r The region's index in the metadata.
+/// @return Where the region is, and the pages it covers.
+[[nodiscard]] PageSpan region_pages(std::uintptr_t bias, std::uint32_t r) {
+  void* addr = reinterpret_cast<void*>(bias + static_cast<std::uintptr_t>(g_meta.regions[r].vaddr));
+  std::uintptr_t start = align_down(reinterpret_cast<std::uintptr_t>(addr), page_size());
+  std::uintptr_t end = align_up(reinterpret_cast<std::uintptr_t>(addr) + g_meta.regions[r].size, page_size());
+  return PageSpan{.addr = addr, .start = start, .span = static_cast<std::size_t>(end - start)};
+}
+
+/// Takes all access away from every code region, so code that did not decrypt to the shipped `.text` never runs: the
+/// first call into it faults. The bootstrap's own code is in the separate `.stubcode` pages, which keep theirs.
+///
+/// @param bias The library's load bias.
+/// @param count The number of regions in the metadata.
+void deny_code(std::uintptr_t bias, std::uint32_t count) {
+  for (std::uint32_t r = 0; r < count; r++) {
+    if (g_meta.regions[r].is_code == 1) {
+      const PageSpan pages = region_pages(bias, r);
+      raw_mprotect(reinterpret_cast<void*>(pages.start), pages.span, PROT_NONE);
+    }
+  }
+}
+
 /// Decrypts one read-only data region in place. Data restores to PROT_READ, which needs no execute permission, so the
 /// file-backed mapping can be written via copy-on-write and restored read-only without tripping SELinux.
 void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::size_t span, const std::uint8_t* key,
@@ -450,16 +507,17 @@ void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
   raw_mprotect(reinterpret_cast<void*>(start), span, PROT_READ);
 }
 
-/// Runs the gates, derives the key, and decrypts every region the packer recorded: code via the anonymous-remap path,
-/// read-only data in place. It touches only the clear bootstrap (g_meta, the crypto in .stubcode, the run-time-built
-/// derivation page) and libc; it never calls the library's own encrypted code. Reached only through the computed-branch
-/// trampoline rasp_self_decrypt_init (the DT_INIT entry), never called directly.
+/// Runs the gates, derives the key, decrypts every region the packer recorded — code via the anonymous-remap path,
+/// read-only data in place — and verifies the decrypted `.text` against the digest the packer shipped. It touches only
+/// the clear bootstrap (g_meta, the crypto in .stubcode, the run-time-built derivation page) and libc; it never calls
+/// the library's own encrypted code. Reached only through the computed-branch trampoline rasp_self_decrypt_init (the
+/// DT_INIT entry), never called directly.
 ///
-/// Nothing here aborts. On a clean process the gates fold zero into the key and the library decrypts; on anything
-/// else — a debugger, an emulated load, tampered metadata, patched ciphertext — the key is wrong, the regions decrypt
-/// to garbage, and the process dies on its own code with nothing that says why. That silence is the point: an emulator
-/// that hooks the abort cannot make a hooked exit reveal or bypass anything, because there is no abort to hook, and
-/// finding which of the gates corrupted the key means reversing the obfuscated bootstrap that folds it.
+/// Nothing here aborts. On a clean process the gates fold zero into the key, the library decrypts and the verification
+/// passes. On anything else — a debugger, an emulated load, tampered metadata, patched ciphertext, a step that failed —
+/// the verification fails, or cannot run, and every code region is left with no access: the decryption carries no MAC,
+/// so a patched ciphertext can decrypt to valid but different instructions, and those must never run. Which check
+/// failed is not reported anywhere.
 [[gnu::noinline, gnu::used]] void self_decrypt() {
   if (g_meta.packed != 1) {
     return;
@@ -468,47 +526,36 @@ void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
   const std::uint32_t poison = gate_poison();
 
   std::uintptr_t bias = reinterpret_cast<std::uintptr_t>(&g_meta) - static_cast<std::uintptr_t>(g_meta.meta_vaddr);
-  std::size_t blob_span = 0;
-  void* blob = build_blob(&blob_span);
-  if (blob == nullptr) {
-    return;
-  }
   std::uint32_t count = g_meta.region_count;
   if (count > kMaxRegions) {
     count = kMaxRegions;
+  }
+  std::size_t blob_span = 0;
+  void* blob = build_blob(&blob_span);
+  if (blob == nullptr) {
+    deny_code(bias, count);
+    return;
   }
 
   std::uint8_t key[32];
   derive_key(bias, blob, poison, key);
 
   for (std::uint32_t r = 0; r < count; r++) {
-    std::uint32_t size = g_meta.regions[r].size;
-    std::uint32_t is_code = g_meta.regions[r].is_code;
-    void* addr = reinterpret_cast<void*>(bias + static_cast<std::uintptr_t>(g_meta.regions[r].vaddr));
-
+    const PageSpan pages = region_pages(bias, r);
     std::uint8_t nonce[16];
     for (int i = 0; i < 16; i++) {
       nonce[i] = g_meta.regions[r].nonce[i];
     }
-
-    std::uintptr_t start = align_down(reinterpret_cast<std::uintptr_t>(addr), page_size());
-    std::uintptr_t end = align_up(reinterpret_cast<std::uintptr_t>(addr) + size, page_size());
-    std::size_t span = static_cast<std::size_t>(end - start);
-
-    if (is_code == 1) {
-      decrypt_code(addr, size, start, span, key, nonce);
+    if (g_meta.regions[r].is_code == 1) {
+      decrypt_code(pages.addr, g_meta.regions[r].size, pages.start, pages.span, key, nonce);
     } else {
-      decrypt_data(addr, size, start, span, key, nonce);
+      decrypt_data(pages.addr, g_meta.regions[r].size, pages.start, pages.span, key, nonce);
     }
   }
 
   std::memset(key, 0, sizeof(key));
 
-  // The encryption carries no MAC of its own, so on a clean-looking process verify the decrypted `.text` against the
-  // plaintext digest the packer shipped: a wrong key (tampered metadata, patched ciphertext) leaves garbage that fails
-  // here — silently, like the gates, so nothing reports which check caught what. With the gates' poison folded in
-  // already, a tripped gate needs no second look; this catches the tamper the gates do not see.
-  if (poison == 0 && g_meta.text_size != 0) {
+  if (g_meta.text_size != 0) {
     std::uint8_t expected[32];
     for (int i = 0; i < 32; i++) {
       expected[i] = g_meta.text_digest[i];
@@ -516,8 +563,7 @@ void decrypt_data(void* addr, std::uint32_t size, std::uintptr_t start, std::siz
     const std::uint8_t* text =
         reinterpret_cast<const std::uint8_t*>(bias + static_cast<std::uintptr_t>(g_meta.text_vaddr));
     if (!run_verify(blob, text, static_cast<std::size_t>(g_meta.text_size), expected)) {
-      raw_munmap(blob, blob_span);
-      return;
+      deny_code(bias, count);
     }
   }
   raw_munmap(blob, blob_span);

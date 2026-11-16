@@ -246,7 +246,10 @@ def testEncodeDecode_whenGivenRandomPrograms_roundTrip() -> None:
     for seed in range(20):
         generator = random.Random(seed)
         program = key_schedule.build_program(
-            generator, sections=sections, library_size=len(_LIBRARY)
+            generator,
+            sections=sections,
+            library_size=len(_LIBRARY),
+            keystore_spans=(runtime_library.keystore_span(_LIBRARY),),
         )
         assert (
             key_schedule.decode_program(key_schedule.encode_program(program)) == program

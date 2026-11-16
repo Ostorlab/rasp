@@ -20,6 +20,10 @@
 #include <variant>
 #include <vector>
 
+#ifdef __ANDROID__
+#include <android/api-level.h>
+#endif
+
 #include "apk/archive.h"
 #include "checks/debugger.h"
 #include "checks/hooks.h"
@@ -28,6 +32,7 @@
 #include "payload/cipher.h"
 #include "rasp/observation.h"
 #include "rasp/util/logging.h"
+#include "rasp/util/obfuscation.h"
 #include "util/apk_file.h"
 
 namespace rasp::android::payload {
@@ -137,6 +142,18 @@ void xor_into(std::span<std::uint8_t> out, std::span<const std::uint8_t> input) 
   const std::uint32_t b2 = bytes[offset + 2];
   const std::uint32_t b3 = bytes[offset + 3];
   return b0 | (b1 << 8U) | (b2 << 16U) | (b3 << 24U);
+}
+
+/// The API level of the device, which picks the signer Android trusts from the APK's signing block.
+///
+/// @return The level, or 0 when it can't be read and on a host build, where no v3 or v3.1 signer applies.
+[[nodiscard]] std::uint32_t device_api_level() {
+#ifdef __ANDROID__
+  const int level = android_get_device_api_level();
+  return level > 0 ? static_cast<std::uint32_t>(level) : 0U;
+#else
+  return 0U;
+#endif
 }
 
 /// Whether the library's `.text` in memory matches its file, as the integrity check observes it.
@@ -335,7 +352,7 @@ struct FoldInputs {
       return key;
     }
     case RecordKind::kSigner: {
-      const std::optional<std::vector<std::uint8_t>> digest = apk::read_signer_digest(apk);
+      const std::optional<std::vector<std::uint8_t>> digest = apk::read_signer_digest(apk, device_api_level());
       if (!digest.has_value() || digest->size() != kKeySize) {
         return std::nullopt;
       }
@@ -415,6 +432,9 @@ std::optional<FoldProgram> decode_program(std::span<const std::uint8_t> blob) {
       named = std::max<std::size_t>(named, record.param + 1U);
     }
   }
+  if (named > (kProgramSize - kConstantsOffset) / kKeySize) {
+    return std::nullopt;
+  }
   for (std::size_t index = 0; index < named; ++index) {
     const std::size_t offset = kConstantsOffset + (index * kKeySize);
     Key constant{};
@@ -476,45 +496,65 @@ Key sensor_block(const Sensors& sensors) {
   return block;
 }
 
-Sensors observe_sensors() {
-  const Observation tracer = checks::observe_tracer_pid("/proc/self/status");
-  const std::int64_t* const tracer_pid = std::get_if<std::int64_t>(&tracer.value);
-  const std::vector<Observation> hook_observations = checks::hooks();
-  bool no_framework_maps = true;
-  bool no_rwx_regions = true;
-  bool no_framework_threads = true;
-  bool no_foreign_libraries = true;
-  for (const Observation& observation : hook_observations) {
-    if (observation.status != Status::kOk) {
-      // An unreadable source is not the same as a clean one: the fold leaves the bit unset, so
-      // the key is wrong on a device whose /proc the process can't read.
+Sensors fold_hook_observations(Sensors sensors, std::span<const Observation> observations) {
+  for (const Observation& observation : observations) {
+    bool* fact = nullptr;
+    if (observation.signal == "hook.maps_hits") {
+      fact = &sensors.no_framework_maps;
+    } else if (observation.signal == "hook.rwx_regions") {
+      fact = &sensors.no_rwx_regions;
+    } else if (observation.signal == "hook.threads") {
+      fact = &sensors.no_framework_threads;
+    } else if (observation.signal == "hook.foreign_libs") {
+      fact = &sensors.no_foreign_libraries;
+    }
+    if (fact == nullptr || observation.status == Status::kUnsupported) {
       continue;
     }
     const std::vector<std::string>* const lines = std::get_if<std::vector<std::string>>(&observation.value);
-    if (lines == nullptr || lines->empty()) {
-      continue;
-    }
-    if (observation.signal == "hook.maps_hits") {
-      no_framework_maps = false;
-    }
-    if (observation.signal == "hook.rwx_regions") {
-      no_rwx_regions = false;
-    }
-    if (observation.signal == "hook.threads") {
-      no_framework_threads = false;
-    }
-    if (observation.signal == "hook.foreign_libs") {
-      no_foreign_libraries = false;
+    if (observation.status != Status::kOk || lines == nullptr || !lines->empty()) {
+      *fact = false;
     }
   }
-  return Sensors{
+  return sensors;
+}
+
+HardwareFacts observe_hardware() {
+  HardwareFacts facts;
+#ifdef __aarch64__
+  std::uint64_t frequency = 0;
+  // NOLINTNEXTLINE(portability-no-assembler): the observation is the mrs read itself.
+  asm volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
+  facts.counter_frequency_plausible = frequency >= 1000000U && frequency <= 100000000U;
+  std::uint64_t midr = 0;
+  // NOLINTNEXTLINE(portability-no-assembler): the observation is the mrs read itself.
+  asm volatile("mrs %0, midr_el1" : "=r"(midr));
+  facts.cpu_identity_plausible = midr != 0;
+#elifdef __x86_64__
+  std::uint32_t eax = 0;
+  std::uint32_t ebx = 0;
+  std::uint32_t ecx = 0;
+  std::uint32_t edx = 0;
+  // NOLINTNEXTLINE(portability-no-assembler): the observation is the cpuid read itself.
+  asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
+  facts.counter_frequency_plausible = true;
+  facts.cpu_identity_plausible = ebx != 0 || edx != 0 || ecx != 0;
+#endif
+  return facts;
+}
+
+Sensors observe_sensors() {
+  const Observation tracer = checks::observe_tracer_pid("/proc/self/status");
+  const std::int64_t* const tracer_pid = std::get_if<std::int64_t>(&tracer.value);
+  const Sensors observed{
       .no_tracer = tracer.status == Status::kOk && tracer_pid != nullptr && *tracer_pid == 0,
       .text_intact = text_is_intact(),
-      .no_framework_maps = no_framework_maps,
-      .no_rwx_regions = no_rwx_regions,
-      .no_framework_threads = no_framework_threads,
-      .no_foreign_libraries = no_foreign_libraries,
+      .no_framework_maps = true,
+      .no_rwx_regions = true,
+      .no_framework_threads = true,
+      .no_foreign_libraries = true,
   };
+  return fold_hook_observations(observed, checks::hooks());
 }
 
 std::optional<Key> hkdf_sha256(std::span<const std::uint8_t> secret, std::string_view info,
@@ -584,6 +624,10 @@ std::optional<Key> guarded_master(const Key& armed, const Key& sensors) {
 
 std::optional<Key> recover_root_key(const Environment& environment, std::string_view library_path,
                                     const std::string& apk) {
+  static constexpr std::array<std::string_view, 7> kObfuscatedLiterals = {
+      kConfigSection, kFrameInfoPrefix, kSeedInfo, kArmedInfo, kGuardInfo, kShareEntry, kDecoyEntryPrefix,
+  };
+  rasp::util::anchor_literals(kObfuscatedLiterals);
   const std::optional<std::vector<std::uint8_t>> library = util::read_library_file(library_path, kMaxLibrarySize);
   if (!library.has_value()) {
     return std::nullopt;
