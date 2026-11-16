@@ -95,15 +95,6 @@ namespace rasp::android::apk {
 /// that does not canonicalise, which fails the recovery the way every unread input does.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_manifest_semantics(const std::string& apk_path);
 
-/// Reads the digest over the installed base APK's signing certificate: the concatenated DER certificates of the
-/// first v3 or v2 scheme signer, hashed once. The packer folds the digest of the developer's pinned certificate;
-/// a re-signed install — or one whose companion packages are admitted under a different certificate — derives a
-/// different digest and nothing decrypts.
-///
-/// @param apk_path The base APK's path, as the runtime resolved it.
-/// @return The 32-byte digest. Nothing when the APK holds no APK signing block with a v3 or v2 scheme pair, which
-/// fails the recovery the way every unread input does.
-[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_signer_digest(const std::string& apk_path);
 /// Finds the certificate of the key that Android uses as the signer of the APK whose bytes are `apk`, on a device at
 /// `api_level`.
 ///
@@ -131,5 +122,25 @@ namespace rasp::android::apk {
 /// @return The certificate's DER bytes. Nothing when the file can't be mapped, or find_signing_certificate finds none.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> read_signing_certificate(const std::string& apk_path,
                                                                                 std::uint32_t api_level);
+
+/// The SHA-256 of the certificate of the key that Android uses as the signer of `apk` on a device at `api_level`, as
+/// find_signing_certificate finds it. The packer folds the digest of the certificate the developer pinned, so a
+/// re-signed install derives a different digest and nothing decrypts, while an app whose key was rotated still matches
+/// on the devices where Android trusts the new key.
+///
+/// @param apk The bytes of the APK file.
+/// @param api_level The API level of the device.
+/// @return The 32-byte digest. Nothing when find_signing_certificate finds no certificate, or the digest can't be
+/// computed.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> find_signer_digest(std::span<const std::uint8_t> apk,
+                                                                          std::uint32_t api_level);
+
+/// Reads the digest of the signer's certificate of the APK at `apk_path`, as find_signer_digest computes it.
+///
+/// @param apk_path The base APK's path, as the runtime resolved it.
+/// @param api_level The API level of the device.
+/// @return The 32-byte digest. Nothing when the file can't be mapped, or find_signer_digest finds none.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_signer_digest(const std::string& apk_path,
+                                                                          std::uint32_t api_level);
 
 }  // namespace rasp::android::apk

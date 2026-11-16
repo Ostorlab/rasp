@@ -1,8 +1,8 @@
 # Obfuscates the Android runtime with the O-MVLL clang plugin (https://obfuscator.re/o-mvll/) vendored in
-# third_party/omvll/, by the scheme in omvll_config.py. This covers the first-party runtime code (rasp, rasp_core) and,
-# within it, the self-decrypt bootstrap (selfdecrypt.cpp/chacha20.cpp/kdf_shovel.cpp) that the packer leaves in the clear
-# while it encrypts the rest of the library at rest: the bootstrap is the only code a static reverse-engineer can read, so
-# it gets every heavy pass. On by default for Release builds.
+# third_party/omvll/, by the scheme in omvll_config.py. This covers the first-party runtime code (rasp, rasp_core, the
+# compiled-in plugins and their registry) and, within it, the self-decrypt bootstrap (selfdecrypt.cpp/chacha20.cpp/
+# kdf_shovel.cpp) that the packer leaves in the clear while it encrypts the rest of the library at rest: the bootstrap is
+# the only code a static reverse-engineer can read, so it gets every heavy pass. On by default for Release builds.
 
 set(RASP_OMVLL_ARCHIVE
   ${CMAKE_CURRENT_LIST_DIR}/../third_party/omvll/omvll-1.11.0-ndk-r29-clang21-linux-x86_64.tar.xz)
