@@ -495,45 +495,41 @@ Key sensor_block(const Sensors& sensors) {
   return block;
 }
 
-Sensors observe_sensors() {
-  const Observation tracer = checks::observe_tracer_pid("/proc/self/status");
-  const std::int64_t* const tracer_pid = std::get_if<std::int64_t>(&tracer.value);
-  const std::vector<Observation> hook_observations = checks::hooks();
-  bool no_framework_maps = true;
-  bool no_rwx_regions = true;
-  bool no_framework_threads = true;
-  bool no_foreign_libraries = true;
-  for (const Observation& observation : hook_observations) {
-    if (observation.status != Status::kOk) {
-      // An unreadable source is not the same as a clean one: the fold leaves the bit unset, so
-      // the key is wrong on a device whose /proc the process can't read.
+Sensors fold_hook_observations(Sensors sensors, std::span<const Observation> observations) {
+  for (const Observation& observation : observations) {
+    bool* fact = nullptr;
+    if (observation.signal == "hook.maps_hits") {
+      fact = &sensors.no_framework_maps;
+    } else if (observation.signal == "hook.rwx_regions") {
+      fact = &sensors.no_rwx_regions;
+    } else if (observation.signal == "hook.threads") {
+      fact = &sensors.no_framework_threads;
+    } else if (observation.signal == "hook.foreign_libs") {
+      fact = &sensors.no_foreign_libraries;
+    }
+    if (fact == nullptr || observation.status == Status::kUnsupported) {
       continue;
     }
     const std::vector<std::string>* const lines = std::get_if<std::vector<std::string>>(&observation.value);
-    if (lines == nullptr || lines->empty()) {
-      continue;
-    }
-    if (observation.signal == "hook.maps_hits") {
-      no_framework_maps = false;
-    }
-    if (observation.signal == "hook.rwx_regions") {
-      no_rwx_regions = false;
-    }
-    if (observation.signal == "hook.threads") {
-      no_framework_threads = false;
-    }
-    if (observation.signal == "hook.foreign_libs") {
-      no_foreign_libraries = false;
+    if (observation.status != Status::kOk || lines == nullptr || !lines->empty()) {
+      *fact = false;
     }
   }
-  return Sensors{
+  return sensors;
+}
+
+Sensors observe_sensors() {
+  const Observation tracer = checks::observe_tracer_pid("/proc/self/status");
+  const std::int64_t* const tracer_pid = std::get_if<std::int64_t>(&tracer.value);
+  const Sensors observed{
       .no_tracer = tracer.status == Status::kOk && tracer_pid != nullptr && *tracer_pid == 0,
       .text_intact = text_is_intact(),
-      .no_framework_maps = no_framework_maps,
-      .no_rwx_regions = no_rwx_regions,
-      .no_framework_threads = no_framework_threads,
-      .no_foreign_libraries = no_foreign_libraries,
+      .no_framework_maps = true,
+      .no_rwx_regions = true,
+      .no_framework_threads = true,
+      .no_foreign_libraries = true,
   };
+  return fold_hook_observations(observed, checks::hooks());
 }
 
 std::optional<Key> hkdf_sha256(std::span<const std::uint8_t> secret, std::string_view info,

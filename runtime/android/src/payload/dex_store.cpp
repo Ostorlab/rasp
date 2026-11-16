@@ -113,6 +113,8 @@ std::optional<DexStore> open_dex_store(std::string apk, const Key& root) {
         program_key.has_value() ? decrypt(*program_key, *program_frame) : std::nullopt;
     if (program.has_value()) {
       store.j_program = std::move(*program);
+    } else if constexpr (rasp::kLoggingEnabled) {
+      rasp::log("the program entry did not decrypt: the store keeps no program");
     }
   }
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)

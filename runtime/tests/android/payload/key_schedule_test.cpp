@@ -24,6 +24,7 @@
 #include "checks/integrity.h"
 #include "payload/assets.h"
 #include "payload/cipher.h"
+#include "rasp/observation.h"
 #include "support/files.h"
 #include "support/zip.h"
 
@@ -1030,6 +1031,72 @@ TEST(KeySchedule, observeSensors_whenCalledOnAHostProcess_reportsNoTracer) {
 
   // A test process is not traced; on a host build the text sensor cannot run, and reads as intact.
   EXPECT_TRUE(sensors.no_tracer);
+}
+
+/// The sensors of a clean process, before the hooking observations are folded in.
+[[nodiscard]] Sensors clean_sensors() {
+  return Sensors{
+      .no_tracer = true,
+      .text_intact = true,
+      .no_framework_maps = true,
+      .no_rwx_regions = true,
+      .no_framework_threads = true,
+      .no_foreign_libraries = true,
+  };
+}
+
+/// A hooking observation of `signal` with `status` and the lines `lines`.
+[[nodiscard]] Observation hook_observation(std::string_view signal, Status status, std::vector<std::string> lines) {
+  return {.signal = std::string(signal), .source = "proc", .status = status, .value = std::move(lines)};
+}
+
+TEST(KeySchedule, foldHookObservations_whenEverySourceIsReadAndClean_keepsTheCleanBlock) {
+  const std::vector<Observation> observations = {
+      hook_observation("hook.maps_hits", Status::kOk, {}),
+      hook_observation("hook.rwx_regions", Status::kOk, {}),
+      hook_observation("hook.foreign_libs", Status::kOk, {}),
+      hook_observation("hook.threads", Status::kOk, {}),
+  };
+
+  EXPECT_EQ(sensor_block(fold_hook_observations(clean_sensors(), observations)), kCleanSensors);
+}
+
+TEST(KeySchedule, foldHookObservations_whenAThreadHasAFrameworkName_clearsOnlyThatFact) {
+  const std::vector<Observation> observations = {
+      hook_observation("hook.maps_hits", Status::kOk, {}),
+      hook_observation("hook.threads", Status::kOk, {"gum-js-loop"}),
+  };
+
+  const Sensors sensors = fold_hook_observations(clean_sensors(), observations);
+
+  EXPECT_FALSE(sensors.no_framework_threads);
+  EXPECT_TRUE(sensors.no_framework_maps);
+}
+
+TEST(KeySchedule, foldHookObservations_whenASourceCouldNotBeRead_clearsItsFact) {
+  const std::vector<Observation> observations = {
+      hook_observation("hook.maps_hits", Status::kError, {}),
+      hook_observation("hook.rwx_regions", Status::kError, {}),
+      hook_observation("hook.foreign_libs", Status::kError, {}),
+      hook_observation("hook.threads", Status::kTimeout, {}),
+  };
+
+  const Sensors sensors = fold_hook_observations(clean_sensors(), observations);
+
+  EXPECT_FALSE(sensors.no_framework_maps);
+  EXPECT_FALSE(sensors.no_rwx_regions);
+  EXPECT_FALSE(sensors.no_foreign_libraries);
+  EXPECT_FALSE(sensors.no_framework_threads);
+  EXPECT_NE(sensor_block(sensors), kCleanSensors);
+}
+
+TEST(KeySchedule, foldHookObservations_whenTheChecksAreUnsupported_keepsTheCleanBlock) {
+  const std::vector<Observation> observations = {
+      hook_observation("hook.maps_hits", Status::kUnsupported, {}),
+      hook_observation("hook.threads", Status::kUnsupported, {}),
+  };
+
+  EXPECT_EQ(sensor_block(fold_hook_observations(clean_sensors(), observations)), kCleanSensors);
 }
 
 TEST_F(KeyScheduleTest, recoverRootKey_whenGivenTheVectorLibraryAndApk_givesTheVectorRoot) {
