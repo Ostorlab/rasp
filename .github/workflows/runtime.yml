@@ -62,7 +62,9 @@ jobs:
       - name: Check the code
         run: |
           clang-tidy --version
-          run-clang-tidy -quiet -p build/host "^$PWD/(?!build/).*\.cpp$"
+          # The self-decrypt bootstrap and its tests are raw memory code by design - pointer arithmetic, C arrays, mapped
+          # pages called as functions - which the bounds checks reject wholesale.
+          run-clang-tidy -quiet -p build/host "^$PWD/(?!build/|android/src/selfdecrypt/|tests/android/selfdecrypt/).*\.cpp$"
 
   host:
     runs-on: ubuntu-24.04
@@ -79,7 +81,7 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
           echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}"
+          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "llvm-${LLVM_VERSION}"
           echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
       - name: Install CMake
         run: |
