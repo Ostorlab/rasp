@@ -1,5 +1,5 @@
-/// panic_on_detection: ends the app a few seconds after a built-in check detects something, and the verdicts it
-/// decides with.
+/// panic_on_detection: ends the app after a bounded delay when a built-in check detects something, and the verdicts
+/// it decides with.
 
 #pragma once
 
@@ -31,9 +31,15 @@ struct Detection {
 /// The function that ends the process. In the runtime it is the platform's direct system call, which never returns.
 using EndProcess = void (*)() noexcept;
 
-/// The shortest time between arming a panic and the end of the process.
+/// The shortest time between arming a panic and the end of the process for a severe detection: one that shows an
+/// active attack on the running process, such as a debugger or a hooking framework. The window is short because the
+/// one who triggered it already knows what they did; the delay only keeps the end from saying which check fired.
+inline constexpr std::chrono::milliseconds kMinSeverePanicDelay{100};
+/// The longest time between arming a panic and the end of the process for a severe detection.
+inline constexpr std::chrono::milliseconds kMaxSeverePanicDelay{500};
+/// The shortest time between arming a panic and the end of the process for every other detection.
 inline constexpr std::chrono::milliseconds kMinPanicDelay{1000};
-/// The longest time between arming a panic and the end of the process.
+/// The longest time between arming a panic and the end of the process for every other detection.
 inline constexpr std::chrono::milliseconds kMaxPanicDelay{3000};
 
 /// Judges the observations of the built-in checks, and returns what they detected.
@@ -54,6 +60,12 @@ inline constexpr std::chrono::milliseconds kMaxPanicDelay{3000};
 /// @return A random delay, from kMinPanicDelay to kMaxPanicDelay.
 [[nodiscard]] std::chrono::milliseconds panic_delay() noexcept;
 
+/// Picks how long an armed panic waits before it ends the process after a severe detection: one that shows an active
+/// attack on the running process, such as a debugger or a hooking framework.
+///
+/// @return A random delay, from kMinSeverePanicDelay to kMaxSeverePanicDelay.
+[[nodiscard]] std::chrono::milliseconds severe_panic_delay() noexcept;
+
 /// Arms a panic: starts a detached thread that waits `delay`, then calls `end_process`.
 ///
 /// It returns at once: the process ends later, on that thread, not in the caller.
@@ -63,13 +75,12 @@ inline constexpr std::chrono::milliseconds kMaxPanicDelay{3000};
 /// @return Whether the thread started. When it can't start, nothing is armed.
 [[nodiscard]] bool arm_panic(EndProcess end_process, std::chrono::milliseconds delay) noexcept;
 
-/// The runtime's one response to a detection: when the built-in checks detected something, the process ends a few
-/// seconds later.
+/// The runtime's one response to a detection: when the built-in checks detected something, the process ends later.
 ///
 /// It judges `observations` as detect does. In a release build, when anything was detected, it arms a panic with
-/// arm_panic and a delay from panic_delay, and returns: the process ends on the panic's own thread, from kMinPanicDelay
-/// to kMaxPanicDelay later. A development build never ends the process: it logs `would panic: <signal>/<source>` once
-/// for each detection instead, and arms nothing.
+/// arm_panic and returns. A dbg., hook. or virt. detection uses severe_panic_delay (100–500 ms); other detections use
+/// panic_delay (1–3 s). The process ends on the panic's own thread. A development build never ends the process: it
+/// logs `would panic: <signal>/<source>` once for each detection instead, and arms nothing.
 ///
 /// @param observations The observations of the built-in checks. A plugin's observations must not be passed.
 /// @param end_process The function that ends the process.
