@@ -11,7 +11,6 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <utility>
 #include <vector>
 
 #include "rasp/observation.h"
@@ -205,9 +204,9 @@ struct Thread {
   return true;
 }
 
-/// The dbg.java_debugger observation that reports `names`.
-[[nodiscard]] Observation jdwp_threads(std::vector<std::string> names) {
-  return {.signal = "dbg.java_debugger", .source = "jdwp_threads", .status = Status::kOk, .value = std::move(names)};
+/// The dbg.java_debugger observation that reports whether a JDWP thread was `found`.
+[[nodiscard]] Observation jdwp_threads(bool found) {
+  return {.signal = "dbg.java_debugger", .source = "jdwp_threads", .status = Status::kOk, .value = found};
 }
 
 /// The dbg.java_debugger observation of a thread folder that couldn't be read.
@@ -215,41 +214,31 @@ struct Thread {
   return {.signal = "dbg.java_debugger", .source = "jdwp_threads", .status = Status::kError, .value = {}};
 }
 
-TEST(Debugger, observeJdwpThreads_whenTheAppCantBeDebugged_reportsNoThread) {
+TEST(Debugger, observeJdwpThreads_whenTheAppCantBeDebugged_reportsFalse) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   ASSERT_TRUE(write_threads(directory.path(), {{"4321", "co.ostorlab.app\n"}, {"4330", "RenderThread\n"}}));
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads({}));
+  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(false));
 }
 
-TEST(Debugger, observeJdwpThreads_whenTheAppCanBeDebugged_reportsTheConnectionThread) {
+TEST(Debugger, observeJdwpThreads_whenTheAppCanBeDebugged_reportsTrue) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   ASSERT_TRUE(write_threads(directory.path(), {{"4321", "co.ostorlab.app\n"}, {"4334", "ADB-JDWP Connec\n"}}));
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads({"ADB-JDWP Connec"}));
+  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(true));
 }
 
-TEST(Debugger, observeJdwpThreads_whenADebuggerIsAttached_reportsEveryJdwpThreadSorted) {
+TEST(Debugger, observeJdwpThreads_whenADebuggerIsAttached_reportsTrue) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   ASSERT_TRUE(write_threads(directory.path(), {{"4321", "co.ostorlab.app\n"},
-                                               {"4334", "ADB-JDWP Connec\n"},
                                                {"4401", "JDWP Transport \n"},
                                                {"4402", "JDWP Event Help\n"},
                                                {"4403", "JDWP Command Re\n"}}));
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()),
-            jdwp_threads({"ADB-JDWP Connec", "JDWP Command Re", "JDWP Event Help", "JDWP Transport "}));
-}
-
-TEST(Debugger, observeJdwpThreads_whenTwoThreadsHaveTheSameName_reportsItOnce) {
-  const TemporaryDirectory directory;
-  ASSERT_FALSE(directory.path().empty());
-  ASSERT_TRUE(write_threads(directory.path(), {{"4401", "JDWP Transport \n"}, {"4402", "JDWP Transport \n"}}));
-
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads({"JDWP Transport "}));
+  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(true));
 }
 
 TEST(Debugger, observeJdwpThreads_whenAnEntryIsNotAThreadId_ignoresIt) {
@@ -257,41 +246,25 @@ TEST(Debugger, observeJdwpThreads_whenAnEntryIsNotAThreadId_ignoresIt) {
   ASSERT_FALSE(directory.path().empty());
   ASSERT_TRUE(write_threads(directory.path(), {{"self", "JDWP Transport \n"}, {"44a1", "JDWP Event Help\n"}}));
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads({}));
+  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(false));
 }
 
 TEST(Debugger, observeJdwpThreads_whenAThreadEndedBeforeItsNameIsRead_skipsIt) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
-  ASSERT_TRUE(write_threads(directory.path(), {{"4401", "JDWP Transport \n"}}));
   std::error_code error;
   ASSERT_TRUE(std::filesystem::create_directory(directory.path() + "/4402", error));
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads({"JDWP Transport "}));
+  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(false));
 }
 
 TEST(Debugger, observeJdwpThreads_whenANameIsLongerThan64Bytes_skipsIt) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string long_name = "JDWP" + std::string(61, 'a');
-  ASSERT_TRUE(write_threads(directory.path(), {{"4401", long_name}, {"4402", "JDWP Event Help\n"}}));
+  ASSERT_TRUE(write_threads(directory.path(), {{"4401", long_name}}));
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads({"JDWP Event Help"}));
-}
-
-TEST(Debugger, observeJdwpThreads_whenThereAreMoreThan16Names_reportsThe16Smallest) {
-  const TemporaryDirectory directory;
-  ASSERT_FALSE(directory.path().empty());
-  std::vector<std::string> expected;
-  for (int index = 0; index < 20; ++index) {
-    const std::string name = "JDWP " + std::to_string(10 + index);
-    ASSERT_TRUE(write_threads(directory.path(), {{std::to_string(4400 + index), name + "\n"}}));
-    if (index < 16) {
-      expected.push_back(name);
-    }
-  }
-
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(expected));
+  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(false));
 }
 
 TEST(Debugger, observeJdwpThreads_whenThereAre4096Threads_readsThemAll) {
@@ -301,7 +274,7 @@ TEST(Debugger, observeJdwpThreads_whenThereAre4096Threads_readsThemAll) {
     ASSERT_TRUE(write_threads(directory.path(), {{std::to_string(10000 + index), "Thread\n"}}));
   }
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads({}));
+  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(false));
 }
 
 TEST(Debugger, observeJdwpThreads_whenThereAreMoreThan4096Threads_reportsAnError) {
