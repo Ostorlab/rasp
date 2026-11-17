@@ -173,7 +173,9 @@ class Apk:
         for name, data in add.items():
             if name in position:
                 index = position[name]
-                final[index] = (name, data, final[index][2])
+                # An added entry always ships stored: the key schedule binds its content, and a
+                # stored entry is readable without an inflate step.
+                final[index] = (name, data, zipfile.ZIP_STORED)
             else:
                 position[name] = len(final)
                 final.append((name, data, zipfile.ZIP_STORED))

@@ -66,6 +66,12 @@ def _parser() -> argparse.ArgumentParser:
             "app's own classes even after R8 has repackaged them out of the app's package"
         ),
     )
+    pack.add_argument(
+        "--pin-certificate",
+        type=pathlib.Path,
+        help="the certificate the app will be signed with, PEM or DER; the pack refuses to decrypt "
+        "under any other signer (Android only)",
+    )
     return parser
 
 
@@ -114,6 +120,7 @@ def _pack(arguments: argparse.Namespace) -> int:
             build_id=arguments.build_id,
             checks=checks,
             mapping=arguments.mapping,
+            pin_certificate=getattr(arguments, "pin_certificate", None),
         )
     except errors.Error as error:
         print(f"rasp pack: {error}", file=sys.stderr)

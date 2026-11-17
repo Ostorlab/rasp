@@ -13,6 +13,10 @@ class InvalidAabError(Error):
     """The app is not a valid AAB, or is missing something the packer needs."""
 
 
+class InvalidCertificateError(Error):
+    """The certificate the developer pinned cannot be read."""
+
+
 class ManifestError(Error):
     """The app's AndroidManifest.xml cannot be read or edited."""
 

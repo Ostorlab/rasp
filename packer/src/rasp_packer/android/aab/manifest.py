@@ -108,3 +108,25 @@ def raise_min_sdk_version(manifest: bytes, minimum: int) -> bytes:
         return proto_manifest.set_min_sdk_version(manifest, minimum)
     except proto_manifest.ProtoManifestError as error:
         raise errors.ManifestError(str(error)) from error
+
+
+def clear_debuggable(manifest: bytes) -> bytes:
+    """Return the manifest with ``android:debuggable`` removed from ``<application>``.
+
+    A debug build's app accepts a Java debugger over JDWP, which no native check
+    sees, so the protected app ships not debuggable. A manifest without the
+    attribute is returned unchanged.
+
+    Args:
+        manifest: The proto-encoded AndroidManifest.xml.
+
+    Returns:
+        The proto-encoded AndroidManifest.xml, edited when it declared a debuggable application.
+
+    Raises:
+        ManifestError: The manifest cannot be read.
+    """
+    try:
+        return proto_manifest.remove_debuggable(manifest)
+    except proto_manifest.ProtoManifestError as error:
+        raise errors.ManifestError(str(error)) from error
