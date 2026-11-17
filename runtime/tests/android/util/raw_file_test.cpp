@@ -28,8 +28,8 @@ TEST(RawFile, readProcFile_whenTheKernelGeneratesTheFile_readsItWhole) {
 
 TEST(RawFile, readProcFile_whenTheFileHoldsStoredBytes_refusesIt) {
   const TemporaryDirectory dir{};
-  const std::filesystem::path path = dir.path / "copy_of_status";
-  write_file(path, "Name:\tapp\nTracerPid:\t0\n");
+  const std::filesystem::path path = std::filesystem::path(dir.path()) / "copy_of_status";
+  ASSERT_TRUE(write_file(path.string(), "Name:\tapp\nTracerPid:\t0\n"));
 
   EXPECT_FALSE(read_proc_file(path.string(), kLimit).has_value());
 }

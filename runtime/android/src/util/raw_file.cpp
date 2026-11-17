@@ -22,24 +22,28 @@ namespace {
 
 #if defined(__aarch64__)
 /// An aarch64 syscall: number in x8, arguments in x0..x5, result in x0.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) {
-  register long x8 __asm__("x8") = nr;
+  register const long x8 __asm__("x8") = nr;
   register long x0 __asm__("x0") = a0;
-  register long x1 __asm__("x1") = a1;
-  register long x2 __asm__("x2") = a2;
-  register long x3 __asm__("x3") = a3;
-  register long x4 __asm__("x4") = a4;
-  register long x5 __asm__("x5") = a5;
+  register const long x1 __asm__("x1") = a1;
+  register const long x2 __asm__("x2") = a2;
+  register const long x3 __asm__("x3") = a3;
+  register const long x4 __asm__("x4") = a4;
+  register const long x5 __asm__("x5") = a5;
+  // NOLINTNEXTLINE(portability-no-assembler)
   __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5) : "memory", "cc");
   return x0;
 }
 #elif defined(__x86_64__)
 /// An x86_64 syscall: number in rax, arguments in rdi/rsi/rdx/r10/r8/r9, result in rax.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) {
   long ret = 0;
-  register long r10 __asm__("r10") = a3;
-  register long r8 __asm__("r8") = a4;
-  register long r9 __asm__("r9") = a5;
+  register const long r10 __asm__("r10") = a3;
+  register const long r8 __asm__("r8") = a4;
+  register const long r9 __asm__("r9") = a5;
+  // NOLINTNEXTLINE(portability-no-assembler)
   __asm__ volatile("syscall"
                    : "=a"(ret)
                    : "a"(nr), "D"(a0), "S"(a1), "d"(a2), "r"(r10), "r"(r8), "r"(r9)
@@ -57,6 +61,7 @@ constexpr long kErrnoRange = 4095;
 /// Opens `path` read-only with close-on-exec, as read_file's "re" mode does, but through a direct system call.
 [[nodiscard]] long raw_open(std::string_view path) {
   const std::string name(path);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
   return raw_syscall(__NR_openat, static_cast<long>(AT_FDCWD), reinterpret_cast<long>(name.c_str()),
                      O_RDONLY | O_CLOEXEC, 0, 0, 0);
 }
@@ -90,6 +95,7 @@ std::optional<std::string> read_proc_file(std::string_view path, std::size_t lim
   bool ok = !is_redirected(fd);
   while (ok) {
     const long count =
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
         raw_syscall(__NR_read, fd, reinterpret_cast<long>(chunk.data()), static_cast<long>(chunk.size()), 0, 0, 0);
     if (failed(count) || static_cast<std::size_t>(count) > limit - content.size()) {
       ok = false;
