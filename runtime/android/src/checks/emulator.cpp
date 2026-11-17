@@ -14,7 +14,6 @@
 #include <vector>
 
 #include "rasp/observation.h"
-#include "rasp/util/obfuscation.h"
 #include "util/system_property.h"
 
 namespace rasp::android::checks {
@@ -135,8 +134,6 @@ Observation observe_emulator_props(util::PropertyReader read_property) {
 }
 
 std::vector<Observation> emulator() {
-  static constexpr std::array kObfuscatedLiterals = {kPropsSignal, kPropsSource};
-  rasp::util::anchor_literals(kObfuscatedLiterals);
   if (!kOnAndroid) {
     return {unsupported(kPropsSignal, kPropsSource)};
   }

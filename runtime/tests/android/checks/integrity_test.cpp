@@ -360,7 +360,7 @@ struct TextLayout {
       .size = text_bytes.size(),
   };
   const SectionSpec config_section{
-      .name = ".rasp_config",
+      .name = ".init",
       .type = kShtProgbits,
       .flags = kShfAlloc,
       .address = 0,

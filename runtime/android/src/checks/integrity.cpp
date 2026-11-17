@@ -24,7 +24,6 @@
 #include <dlfcn.h>
 #include <link.h>
 
-#include "rasp/util/obfuscation.h"
 #endif
 
 namespace rasp::android::checks {
@@ -170,8 +169,9 @@ constexpr std::uint64_t kShfAlloc = 0x2;
 constexpr std::string_view kTextSectionName = ".text";
 
 /// The name of the runtime's config section, whose trailing 32 bytes carry the expected plaintext `.text` digest
-/// on packed builds.
-constexpr std::string_view kConfigSectionName = ".rasp_config";
+/// on packed builds. The packer renames the section in the shipped library, so this is the renamed name, not the raw
+/// build's.
+constexpr std::string_view kConfigSectionName = ".init";
 
 /// Whether the range `[offset, offset + length)` lies within a container of `size` bytes, checked without any addition
 /// that could overflow. Every bounds check on an attacker-controlled ELF offset and size goes through this, so a
@@ -645,10 +645,6 @@ constexpr char kAnchor = 0;
 }  // namespace
 
 std::vector<Observation> integrity() {
-  static constexpr std::array kObfuscatedLiterals = {
-      kTextHashSignal, kFileSource, kMemorySource, kTextSectionName, kConfigSectionName,
-  };
-  rasp::util::anchor_literals(kObfuscatedLiterals);
   const std::optional<LoadedLibrary> library = find_own_library();
   if (!library || library->path.empty()) {
     return {failed(kTextHashSignal, kFileSource), failed(kTextHashSignal, kMemorySource)};
