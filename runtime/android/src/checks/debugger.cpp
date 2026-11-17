@@ -9,11 +9,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <ranges>
-#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -63,8 +61,6 @@ constexpr std::string_view kTaskPath = "/proc/self/task";
 constexpr std::size_t kMaxThreadNameSize = 64;
 /// The most threads read. An app has a few dozen.
 constexpr std::size_t kMaxThreads = 4096;
-/// The most thread names the observation reports.
-constexpr std::size_t kMaxJdwpThreadNames = 16;
 /// The starts of the names ART gives the threads of a JDWP connection.
 constexpr std::array<std::string_view, 2> kJdwpThreadPrefixes = {"JDWP", "ADB-JDWP"};
 
@@ -120,12 +116,11 @@ constexpr std::string_view kDebugApiSource = "debug_api";
   return name;
 }
 
-/// The names of the JDWP threads in the thread folder at `task_path`, the kMaxJdwpThreadNames smallest of them, or
-/// nothing when the folder can't be read or holds more than kMaxThreads threads.
-[[nodiscard]] std::optional<std::set<std::string>> jdwp_thread_names(std::string_view task_path) {
+/// Whether the thread folder at `task_path` holds a thread of a JDWP connection, or nothing when the folder can't be
+/// read or holds more than kMaxThreads threads.
+[[nodiscard]] std::optional<bool> has_jdwp_thread(std::string_view task_path) {
   std::error_code error;
   std::filesystem::directory_iterator entries(task_path, error);
-  std::set<std::string> names;
   std::size_t threads = 0;
   for (; !error && entries != std::filesystem::directory_iterator(); entries.increment(error)) {
     if (!is_thread_id(entries->path().filename().string())) {
@@ -136,18 +131,14 @@ constexpr std::string_view kDebugApiSource = "debug_api";
       return std::nullopt;
     }
     const std::optional<std::string> name = thread_name(entries->path().string());
-    if (!name || !is_jdwp_thread(*name)) {
-      continue;
-    }
-    names.insert(*name);
-    if (names.size() > kMaxJdwpThreadNames) {
-      names.erase(std::prev(names.end()));
+    if (name && is_jdwp_thread(*name)) {
+      return true;
     }
   }
   if (error) {
     return std::nullopt;
   }
-  return names;
+  return false;
 }
 
 #ifdef __ANDROID__
@@ -208,11 +199,11 @@ Observation observe_tracer_pid(std::string_view status_path) {
 }
 
 Observation observe_jdwp_threads(std::string_view task_path) {
-  const std::optional<std::set<std::string>> names = jdwp_thread_names(task_path);
-  if (!names) {
+  const std::optional<bool> found = has_jdwp_thread(task_path);
+  if (!found) {
     return failed(kJavaDebuggerSignal, kJdwpThreadsSource);
   }
-  return observed(kJavaDebuggerSignal, kJdwpThreadsSource, std::vector<std::string>{names->begin(), names->end()});
+  return observed(kJavaDebuggerSignal, kJdwpThreadsSource, *found);
 }
 
 Observation observe_debug_api(std::optional<bool> connected) {

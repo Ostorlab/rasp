@@ -215,6 +215,28 @@ TEST(Panic, detect_whenTwoSourcesOfOneSignalAgree_detectsNothing) {
   EXPECT_TRUE(detect(observations).empty());
 }
 
+TEST(Panic, detect_whenBothJavaDebuggerSourcesSeeNoDebugger_detectsNothing) {
+  // The two sources of dbg.java_debugger report the same type, so a clean app is not taken for a disagreement.
+  const std::vector<Observation> observations = {
+      observed("dbg.java_debugger", "jdwp_threads", false),
+      observed("dbg.java_debugger", "debug_api", false),
+  };
+
+  EXPECT_TRUE(detect(observations).empty());
+}
+
+TEST(Panic, detect_whenTwoSourcesReportValuesOfDifferentTypes_detectsTheDisagreement) {
+  // The comparison is by value, type included: sources of one signal must report the same type, or a clean app
+  // reads as a disagreement.
+  const std::vector<Observation> observations = {
+      observed("dbg.java_debugger", "jdwp_threads", Strings{}),
+      observed("dbg.java_debugger", "debug_api", false),
+  };
+  const std::vector<Detection> expected = {{.signal = "dbg.java_debugger", .source = "jdwp_threads!=debug_api"}};
+
+  EXPECT_EQ(detect(observations), expected);
+}
+
 TEST(Panic, detect_whenAHookHidesAFileFromOneSource_detectsTheFileAndTheDisagreement) {
   const std::vector<Observation> observations = {
       observed("root.fs_paths", "access", Strings{}),
