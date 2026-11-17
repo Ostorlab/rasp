@@ -39,4 +39,16 @@ struct Config {
 /// @return `true` when the config's list has this group. Without a list, no group runs.
 [[nodiscard]] bool is_check_enabled(const Config& config, std::string_view group);
 
+/// Whether the protected app runs a check group, by the group's position in the mask.
+///
+/// The config's mask takes precedence: one bit per group, in the order the platforms' monitoring runs them. Without a
+/// mask, the answer comes from the config's list, through is_check_enabled above.
+///
+/// @param config The runtime's config.
+/// @param bit The group's position in the config's mask, which the platforms' dispatch keeps in step with the packer's
+/// check order.
+/// @param group The group's id, the name of its function in `checks::`, for example `debugger`.
+/// @return `true` when the mask's bit is set or, without a mask, the list names the group.
+[[nodiscard]] bool is_check_enabled(const Config& config, unsigned bit, std::string_view group);
+
 }  // namespace rasp

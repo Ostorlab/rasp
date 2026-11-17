@@ -8,10 +8,12 @@ namespace rasp::android {
 ///
 /// It must be called while librasp.so loads, on the app's main thread, before the monitoring thread starts and before
 /// the on-demand loader is installed, so it finishes before the first business class can be served. It runs, on the
-/// calling thread, the debugger, hooking, self-integrity, root and emulator checks, which together take a few
-/// milliseconds, use no network and never call fork. When they detect something, a release build ends the process a few
-/// seconds later, through panic_on_detection. A development build logs each observation and how long the checks took,
-/// and logs what would have ended the process instead.
+/// calling thread, the check groups the runtime's config enables among the debugger, hooking, self-integrity, root and
+/// emulator checks — the same groups the monitoring thread's dispatch would run — so a group the operator did not
+/// choose never runs here either. The enabled groups together take a few milliseconds, use no network and never call
+/// fork. When they detect something, a release build ends the process a few seconds later, through
+/// panic_on_detection. A development build logs each observation and how long the checks took, and logs what would
+/// have ended the process instead.
 void run_startup_checks() noexcept;
 
 }  // namespace rasp::android

@@ -56,6 +56,9 @@ struct State {
   /// The class map and the dex master, opened in `install` from the root key the schedule recovered; empty when the
   /// recovery or the map failed, and every findClass then falls back to the base loader.
   std::optional<payload::DexStore> store;
+  /// The runtime's config, read once when the loader is installed, which gates the checkpoints' check groups the same
+  /// way the monitoring thread's dispatch gates its own.
+  rasp::Config config;
   /// A global reference to the app's base class loader, which holds the framework classes.
   jobject base = nullptr;
   /// A global reference to `dalvik.system.InMemoryDexClassLoader`.
@@ -83,13 +86,18 @@ struct State {
 /// The shortest time between two checkpoints, whichever call site runs them.
 constexpr std::chrono::milliseconds kCheckpointInterval{1000};
 
+/// The loader state, shared by every function in this file, built on first use (defined below).
+[[nodiscard]] State& state();
+
 /// A checkpoint: runs one quick check when the loader serves a class, and arms a panic when it detects something.
 ///
 /// At most one checkpoint runs per kCheckpointInterval, across every call site and thread; every other call returns
-/// after reading the clock and one atomic. The one that runs picks one check at random, the debugger, hooking or root
-/// check, observes the monitoring thread's heartbeat, and passes both to panic_on_detection. It is always inlined, so
-/// each call site holds its own copy, and patching one call site leaves the others. A development build logs the call
-/// site, how many classes were served since the last checkpoint, how long the check took and what it observed.
+/// after reading the clock and one atomic. The one that runs picks one check at random among the groups the runtime's
+/// config enables of the debugger, hooking and root check, observes the monitoring thread's heartbeat when the config
+/// enables the integrity group, and passes both to panic_on_detection — so a group the operator did not choose never
+/// runs here either. When the config enables none of the four, the checkpoint observes nothing. It is always inlined,
+/// so each call site holds its own copy, and patching one call site leaves the others. A development build logs the
+/// call site, how many classes were served since the last checkpoint, how long the check took and what it observed.
 ///
 /// @param site The call site, for development logs.
 /// @param name The binary name of the class being served, for development logs.
@@ -100,22 +108,30 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
     served.fetch_add(1, std::memory_order_relaxed);
   }
   const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+  const rasp::Config& config = state().config;
+  const bool run_debugger = is_check_enabled(config, 1, "debugger");
+  const bool run_hooks = is_check_enabled(config, 2, "hooks");
+  const bool run_root = is_check_enabled(config, 0, "root");
+  if (!run_debugger && !run_hooks && !run_root && !is_check_enabled(config, 3, "integrity")) {
+    return;
+  }
   if (!limit.try_acquire(now)) {
     return;
   }
   std::vector<Observation> observations;
-  switch (arc4random_uniform(3)) {
-    case 0:
+  unsigned pick = arc4random_uniform(3);
+  for (unsigned attempt = 0; attempt < 3 && observations.empty(); ++attempt, pick = (pick + 1U) % 3U) {
+    if (pick == 0U && run_debugger) {
       observations = checks::debugger();
-      break;
-    case 1:
+    } else if (pick == 1U && run_hooks) {
       observations = checks::hooks();
-      break;
-    default:
+    } else if (pick == 2U && run_root) {
       observations = checks::root();
-      break;
+    }
   }
-  observations.push_back(monitor_heartbeat().observe(now));
+  if (is_check_enabled(config, 3, "integrity")) {
+    observations.push_back(monitor_heartbeat().observe(now));
+  }
   if constexpr (kLoggingEnabled) {
     const auto took =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - now).count();
@@ -506,6 +522,7 @@ void open_the_store(JNIEnv* env, bool debuggable) {
 
 [[nodiscard]] jobject make_loader(JNIEnv* env, jobject base, jstring library_search_path, bool debuggable) {
   State& current = state();
+  current.config = rasp::read_embedded_config();
   current.library_search_path = to_string(env, library_search_path);
   open_the_store(env, debuggable);
 

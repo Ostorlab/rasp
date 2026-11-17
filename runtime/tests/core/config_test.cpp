@@ -37,5 +37,34 @@ TEST(Config, isCheckEnabled_whenTheChecksAreEmpty_returnsFalse) {
   EXPECT_FALSE(is_check_enabled(config, "debugger"));
 }
 
+TEST(Config, isCheckEnabledByBit_whenTheMaskSetsTheBit_returnsTrue) {
+  const Config config{.checks_mask = std::uint64_t{1} << 1};
+
+  EXPECT_TRUE(is_check_enabled(config, 1, "debugger"));
+}
+
+TEST(Config, isCheckEnabledByBit_whenTheMaskClearsTheBit_returnsFalse) {
+  const Config config{.checks_mask = std::uint64_t{1} << 1};
+
+  EXPECT_FALSE(is_check_enabled(config, 0, "root"));
+}
+
+TEST(Config, isCheckEnabledByBit_whenBothMaskAndListAreSet_theMaskWins) {
+  const Config config{.checks = std::vector<std::string>{"root"}, .checks_mask = std::uint64_t{0}};
+
+  EXPECT_FALSE(is_check_enabled(config, 0, "root"));
+}
+
+TEST(Config, isCheckEnabledByBit_whenOnlyTheListIsSet_readsTheList) {
+  const Config config{.checks = std::vector<std::string>{"root", "debugger"}};
+
+  EXPECT_TRUE(is_check_enabled(config, 0, "root"));
+  EXPECT_FALSE(is_check_enabled(config, 2, "hooks"));
+}
+
+TEST(Config, isCheckEnabledByBit_whenNeitherMaskNorListIsSet_returnsFalse) {
+  EXPECT_FALSE(is_check_enabled(Config{}, 1, "debugger"));
+}
+
 }  // namespace
 }  // namespace rasp
