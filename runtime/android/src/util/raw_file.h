@@ -25,4 +25,10 @@ namespace rasp::util {
 /// isn't a kernel-generated file), or when it is longer than `limit` bytes.
 [[nodiscard]] std::optional<std::string> read_proc_file(std::string_view path, std::size_t limit);
 
+/// The function a sensor reads a kernel-generated file with. The shipped runtime uses read_proc_file, so an interposed
+/// libc function can't answer for the kernel; a test passes read_file instead, to feed a regular file of controlled
+/// content (read_proc_file refuses regular files, so it can't read a test's temp file). Both readers share this
+/// signature.
+using ProcReader = std::optional<std::string> (*)(std::string_view, std::size_t);
+
 }  // namespace rasp::util

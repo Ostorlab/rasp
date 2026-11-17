@@ -25,8 +25,6 @@ namespace rasp::android::checks {
 
 namespace {
 
-using rasp::util::read_proc_file;
-
 /// The signal of the root-file probe.
 constexpr std::string_view kPathsSignal = "root.fs_paths";
 /// The source of the root-file probe that asks through access().
@@ -253,8 +251,8 @@ std::vector<Observation> observe_paths(std::span<const std::string_view> paths) 
   return observations;
 }
 
-std::vector<Observation> observe_mounts(std::string_view mounts_path) {
-  const std::optional<std::string> table = read_proc_file(mounts_path, kMaxMountsSize);
+std::vector<Observation> observe_mounts(std::string_view mounts_path, rasp::util::ProcReader read) {
+  const std::optional<std::string> table = read(mounts_path, kMaxMountsSize);
   if (!table) {
     return {failed(kMountsSignal, kMountsSource), failed(kRwMountsSignal, kMountsSource)};
   }
@@ -264,8 +262,8 @@ std::vector<Observation> observe_mounts(std::string_view mounts_path) {
   };
 }
 
-Observation observe_selinux(std::string_view enforce_path) {
-  const std::optional<std::string> content = read_proc_file(enforce_path, kMaxEnforceSize);
+Observation observe_selinux(std::string_view enforce_path, rasp::util::ProcReader read) {
+  const std::optional<std::string> content = read(enforce_path, kMaxEnforceSize);
   if (content == "1" || content == "1\n") {
     return observed(kSelinuxSignal, kSelinuxSource, true);
   }

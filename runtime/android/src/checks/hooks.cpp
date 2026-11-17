@@ -26,8 +26,6 @@ namespace rasp::android::checks {
 
 namespace {
 
-using rasp::util::read_proc_file;
-
 #ifdef __ANDROID__
 /// Whether this build runs on Android, the only place the probe means anything.
 constexpr bool kOnAndroid = true;
@@ -172,8 +170,8 @@ constexpr auto kFrameworkMarkers = std::to_array<std::string_view>({
 
 }  // namespace
 
-std::vector<Observation> observe_maps(std::string_view maps_path) {
-  const std::optional<std::string> maps = read_proc_file(maps_path, kMaxMapsSize);
+std::vector<Observation> observe_maps(std::string_view maps_path, rasp::util::ProcReader read) {
+  const std::optional<std::string> maps = read(maps_path, kMaxMapsSize);
   if (!maps) {
     return {
         failed(kMapsHitsSignal, kMapsSource),
@@ -188,7 +186,7 @@ std::vector<Observation> observe_maps(std::string_view maps_path) {
   };
 }
 
-std::vector<Observation> observe_threads(std::string_view task_path) {
+std::vector<Observation> observe_threads(std::string_view task_path, rasp::util::ProcReader read) {
   // NOLINTNEXTLINE(concurrency-mt-unsafe): the thread list is read once, on the monitoring thread.
   ::DIR* const directory = opendir(std::string(task_path).c_str());
   if (directory == nullptr) {
@@ -215,7 +213,7 @@ std::vector<Observation> observe_threads(std::string_view task_path) {
       break;
     }
     const std::string folder = std::string(task_path) + "/" + std::string(thread);
-    const std::optional<std::string> name = read_proc_file(folder + "/comm", kMaxCommSize);
+    const std::optional<std::string> name = read(folder + "/comm", kMaxCommSize);
     if (!name) {
       if (access(folder.c_str(), F_OK) == 0) {
         complete = false;

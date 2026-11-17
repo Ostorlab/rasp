@@ -199,8 +199,8 @@ constexpr std::size_t kMaxCmdlineSize = std::size_t{64} << 10U;
 
 }  // namespace
 
-Observation observe_package(std::string_view cmdline_path) {
-  const std::optional<std::string> cmdline = rasp::util::read_proc_file(cmdline_path, kMaxCmdlineSize);
+Observation observe_package(std::string_view cmdline_path, rasp::util::ProcReader read) {
+  const std::optional<std::string> cmdline = read(cmdline_path, kMaxCmdlineSize);
   if (!cmdline) {
     return failed(kPackageSignal, kPackageSource);
   }

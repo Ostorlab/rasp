@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "rasp/util/read_file.h"
 #include "support/files.h"
 
 namespace rasp::android::checks {
@@ -69,7 +70,7 @@ TEST(Debugger, observeTracerPid_whenNothingIsAttached_reportsZero) {
   const std::string status = directory.path() + "/status";
   ASSERT_TRUE(write_file(status, status_with("TracerPid:\t0")));
 
-  EXPECT_EQ(observe_tracer_pid(status), tracer_pid(0));
+  EXPECT_EQ(observe_tracer_pid(status, rasp::util::read_file), tracer_pid(0));
 }
 
 TEST(Debugger, observeTracerPidLibc_whenNothingIsAttached_reportsZeroThroughADifferentSource) {
@@ -78,7 +79,7 @@ TEST(Debugger, observeTracerPidLibc_whenNothingIsAttached_reportsZeroThroughADif
   const std::string status = directory.path() + "/status";
   ASSERT_TRUE(write_file(status, status_with("TracerPid:\t0")));
 
-  const Observation direct = observe_tracer_pid(status);
+  const Observation direct = observe_tracer_pid(status, rasp::util::read_file);
   const Observation libc = observe_tracer_pid_libc(status);
 
   EXPECT_EQ(libc, tracer_pid_libc(0));
@@ -101,7 +102,7 @@ TEST(Debugger, observeTracerPid_whenADebuggerIsAttached_reportsItsProcessId) {
   const std::string status = directory.path() + "/status";
   ASSERT_TRUE(write_file(status, status_with("TracerPid:\t8812")));
 
-  EXPECT_EQ(observe_tracer_pid(status), tracer_pid(8812));
+  EXPECT_EQ(observe_tracer_pid(status, rasp::util::read_file), tracer_pid(8812));
 }
 
 TEST(Debugger, observeTracerPid_whenTheValueIsAfterSpaces_reportsIt) {
@@ -110,7 +111,7 @@ TEST(Debugger, observeTracerPid_whenTheValueIsAfterSpaces_reportsIt) {
   const std::string status = directory.path() + "/status";
   ASSERT_TRUE(write_file(status, status_with("TracerPid: \t 8812")));
 
-  EXPECT_EQ(observe_tracer_pid(status), tracer_pid(8812));
+  EXPECT_EQ(observe_tracer_pid(status, rasp::util::read_file), tracer_pid(8812));
 }
 
 TEST(Debugger, observeTracerPid_whenTheLineIsLastWithoutALineBreak_reportsIt) {
@@ -119,7 +120,7 @@ TEST(Debugger, observeTracerPid_whenTheLineIsLastWithoutALineBreak_reportsIt) {
   const std::string status = directory.path() + "/status";
   ASSERT_TRUE(write_file(status, std::string(kStatusHead) + "TracerPid:\t8812"));
 
-  EXPECT_EQ(observe_tracer_pid(status), tracer_pid(8812));
+  EXPECT_EQ(observe_tracer_pid(status, rasp::util::read_file), tracer_pid(8812));
 }
 
 TEST(Debugger, observeTracerPid_whenTheFileHasTwoTracerPidLines_reportsTheFirst) {
@@ -128,7 +129,7 @@ TEST(Debugger, observeTracerPid_whenTheFileHasTwoTracerPidLines_reportsTheFirst)
   const std::string status = directory.path() + "/status";
   ASSERT_TRUE(write_file(status, status_with("TracerPid:\t8812\nTracerPid:\t0")));
 
-  EXPECT_EQ(observe_tracer_pid(status), tracer_pid(8812));
+  EXPECT_EQ(observe_tracer_pid(status, rasp::util::read_file), tracer_pid(8812));
 }
 
 TEST(Debugger, observeTracerPid_whenTheProcessIdIsTheLargest32BitValue_reportsIt) {
@@ -137,7 +138,7 @@ TEST(Debugger, observeTracerPid_whenTheProcessIdIsTheLargest32BitValue_reportsIt
   const std::string status = directory.path() + "/status";
   ASSERT_TRUE(write_file(status, status_with("TracerPid:\t4294967295")));
 
-  EXPECT_EQ(observe_tracer_pid(status), tracer_pid(4294967295));
+  EXPECT_EQ(observe_tracer_pid(status, rasp::util::read_file), tracer_pid(4294967295));
 }
 
 /// A TracerPid line that doesn't hold a process id.
@@ -149,7 +150,7 @@ TEST_P(DebuggerMalformedTracerPidLine, observeTracerPid_whenTheLineHoldsNoProces
   const std::string status = directory.path() + "/status";
   ASSERT_TRUE(write_file(status, status_with(GetParam())));
 
-  EXPECT_EQ(observe_tracer_pid(status), unreadable_tracer_pid());
+  EXPECT_EQ(observe_tracer_pid(status, rasp::util::read_file), unreadable_tracer_pid());
 }
 
 INSTANTIATE_TEST_SUITE_P(Debugger, DebuggerMalformedTracerPidLine,
@@ -164,7 +165,7 @@ TEST(Debugger, observeTracerPid_whenTheFileHasNoTracerPidLine_reportsAnError) {
   ASSERT_TRUE(
       write_file(status, std::string(kStatusHead) + "tracerpid:\t0\n Tracerpid:\t0\n" + std::string(kStatusTail)));
 
-  EXPECT_EQ(observe_tracer_pid(status), unreadable_tracer_pid());
+  EXPECT_EQ(observe_tracer_pid(status, rasp::util::read_file), unreadable_tracer_pid());
 }
 
 TEST(Debugger, observeTracerPid_whenTheFileIsEmpty_reportsAnError) {
@@ -173,7 +174,7 @@ TEST(Debugger, observeTracerPid_whenTheFileIsEmpty_reportsAnError) {
   const std::string status = directory.path() + "/status";
   ASSERT_TRUE(write_file(status, ""));
 
-  EXPECT_EQ(observe_tracer_pid(status), unreadable_tracer_pid());
+  EXPECT_EQ(observe_tracer_pid(status, rasp::util::read_file), unreadable_tracer_pid());
 }
 
 TEST(Debugger, observeTracerPid_whenTheFileIsExactly64KiB_readsItWhole) {
@@ -185,7 +186,7 @@ TEST(Debugger, observeTracerPid_whenTheFileIsExactly64KiB_readsItWhole) {
   ASSERT_EQ(content.size(), kStatusLimit);
   ASSERT_TRUE(write_file(status, content));
 
-  EXPECT_EQ(observe_tracer_pid(status), tracer_pid(8812));
+  EXPECT_EQ(observe_tracer_pid(status, rasp::util::read_file), tracer_pid(8812));
 }
 
 TEST(Debugger, observeTracerPid_whenTheFileIsLargerThan64KiB_reportsAnError) {
@@ -195,7 +196,7 @@ TEST(Debugger, observeTracerPid_whenTheFileIsLargerThan64KiB_reportsAnError) {
   const std::string last = "TracerPid:\t8812";
   ASSERT_TRUE(write_file(status, std::string(kStatusLimit - last.size(), 'a') + "\n" + last));
 
-  EXPECT_EQ(observe_tracer_pid(status), unreadable_tracer_pid());
+  EXPECT_EQ(observe_tracer_pid(status, rasp::util::read_file), unreadable_tracer_pid());
 }
 
 TEST(Debugger, observeTracerPid_whenTheFileIsMissing_reportsAnError) {
@@ -247,7 +248,7 @@ TEST(Debugger, observeJdwpThreads_whenTheAppCantBeDebugged_reportsFalse) {
   ASSERT_FALSE(directory.path().empty());
   ASSERT_TRUE(write_threads(directory.path(), {{"4321", "co.ostorlab.app\n"}, {"4330", "RenderThread\n"}}));
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(false));
+  EXPECT_EQ(observe_jdwp_threads(directory.path(), rasp::util::read_file), jdwp_threads(false));
 }
 
 TEST(Debugger, observeJdwpThreads_whenTheAppCanBeDebugged_reportsTrue) {
@@ -255,7 +256,7 @@ TEST(Debugger, observeJdwpThreads_whenTheAppCanBeDebugged_reportsTrue) {
   ASSERT_FALSE(directory.path().empty());
   ASSERT_TRUE(write_threads(directory.path(), {{"4321", "co.ostorlab.app\n"}, {"4334", "ADB-JDWP Connec\n"}}));
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(true));
+  EXPECT_EQ(observe_jdwp_threads(directory.path(), rasp::util::read_file), jdwp_threads(true));
 }
 
 TEST(Debugger, observeJdwpThreads_whenADebuggerIsAttached_reportsTrue) {
@@ -266,7 +267,7 @@ TEST(Debugger, observeJdwpThreads_whenADebuggerIsAttached_reportsTrue) {
                                                {"4402", "JDWP Event Help\n"},
                                                {"4403", "JDWP Command Re\n"}}));
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(true));
+  EXPECT_EQ(observe_jdwp_threads(directory.path(), rasp::util::read_file), jdwp_threads(true));
 }
 
 TEST(Debugger, observeJdwpThreads_whenAnEntryIsNotAThreadId_ignoresIt) {
@@ -274,7 +275,7 @@ TEST(Debugger, observeJdwpThreads_whenAnEntryIsNotAThreadId_ignoresIt) {
   ASSERT_FALSE(directory.path().empty());
   ASSERT_TRUE(write_threads(directory.path(), {{"self", "JDWP Transport \n"}, {"44a1", "JDWP Event Help\n"}}));
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(false));
+  EXPECT_EQ(observe_jdwp_threads(directory.path(), rasp::util::read_file), jdwp_threads(false));
 }
 
 TEST(Debugger, observeJdwpThreads_whenAThreadEndedBeforeItsNameIsRead_skipsIt) {
@@ -292,7 +293,7 @@ TEST(Debugger, observeJdwpThreads_whenANameIsLongerThan64Bytes_skipsIt) {
   const std::string long_name = "JDWP" + std::string(61, 'a');
   ASSERT_TRUE(write_threads(directory.path(), {{"4401", long_name}}));
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(false));
+  EXPECT_EQ(observe_jdwp_threads(directory.path(), rasp::util::read_file), jdwp_threads(false));
 }
 
 TEST(Debugger, observeJdwpThreads_whenThereAre4096Threads_readsThemAll) {
@@ -302,7 +303,7 @@ TEST(Debugger, observeJdwpThreads_whenThereAre4096Threads_readsThemAll) {
     ASSERT_TRUE(write_threads(directory.path(), {{std::to_string(10000 + index), "Thread\n"}}));
   }
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), jdwp_threads(false));
+  EXPECT_EQ(observe_jdwp_threads(directory.path(), rasp::util::read_file), jdwp_threads(false));
 }
 
 TEST(Debugger, observeJdwpThreads_whenThereAreMoreThan4096Threads_reportsAnError) {
@@ -312,7 +313,7 @@ TEST(Debugger, observeJdwpThreads_whenThereAreMoreThan4096Threads_reportsAnError
     ASSERT_TRUE(write_threads(directory.path(), {{std::to_string(10000 + index), "Thread\n"}}));
   }
 
-  EXPECT_EQ(observe_jdwp_threads(directory.path()), unreadable_jdwp_threads());
+  EXPECT_EQ(observe_jdwp_threads(directory.path(), rasp::util::read_file), unreadable_jdwp_threads());
 }
 
 TEST(Debugger, observeJdwpThreads_whenTheFolderIsMissing_reportsAnError) {
@@ -341,6 +342,7 @@ TEST(Debugger, debugger_whenOffAndroid_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(debugger(),
             (std::vector<Observation>{
                 {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kUnsupported, .value = {}},
+                {.signal = "dbg.tracer_pid", .source = "proc_status_libc", .status = Status::kUnsupported, .value = {}},
                 {.signal = "dbg.java_debugger", .source = "jdwp_threads", .status = Status::kUnsupported, .value = {}},
                 {.signal = "dbg.java_debugger", .source = "debug_api", .status = Status::kUnsupported, .value = {}},
             }));
