@@ -34,12 +34,12 @@ BOOTSTRAP_MODULES = [
 # Our functions that always get the heavy passes, by demangled-name substring.
 SENSITIVE_FUNCTIONS = [
     "rasp::android::checks::",
-    "rasp::ios::checks::",
     "rasp::checks::",
     "rasp::android::loader::",
     "rasp::android::payload::",
     "rasp::util::macho::",
-    "rasp::ios::util::",
+    "rasp::ios::",
+    "rasp_start",
     "observe_",
     "find_text",
     "code_signature",
