@@ -12,6 +12,8 @@
 #include "checks/debugger.h"
 #include "checks/hooks.h"
 #include "panic/end_process.h"
+#include "rasp/config.h"
+#include "rasp/embedded_config.h"
 #include "rasp/observation.h"
 #include "rasp/panic.h"
 #include "rasp/util/logging.h"
@@ -20,22 +22,35 @@ namespace rasp::ios {
 
 namespace {
 
-/// Runs the debugger checks and the hooking checks of fast_hooks.
+/// Runs the check groups the runtime's config enables among the debugger checks and the hooking checks of fast_hooks,
+/// so a group the operator did not choose never runs here either — the same rule the monitoring thread's dispatch
+/// follows.
 ///
+/// @param config The runtime's config, which the packer wrote.
 /// @param inserted_libraries The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded.
-/// @return What they observed, in that order.
-[[nodiscard]] std::vector<Observation> startup_observations(std::string_view inserted_libraries) {
-  std::vector<Observation> observations = checks::debugger();
-  std::ranges::move(checks::fast_hooks(inserted_libraries), std::back_inserter(observations));
+/// @return What they observed: the enabled groups among the debugger and fast_hooks checks, in that order.
+[[nodiscard]] std::vector<Observation> startup_observations(const rasp::Config& config,
+                                                            std::string_view inserted_libraries) {
+  std::vector<Observation> observations;
+  // The bit numbers are the groups' positions in the packer's iOS CHECKS order (jailbreak, debugger, hooks, identity,
+  // codesign, emulator, virtualizer, mitm) — the same positions monitoring's dispatch spells out — not the order of
+  // this sweep; add new groups to both dispatches in lockstep with the packer's CHECKS order.
+  if (is_check_enabled(config, 1, "debugger")) {
+    std::ranges::move(checks::debugger(), std::back_inserter(observations));
+  }
+  if (is_check_enabled(config, 2, "hooks")) {
+    std::ranges::move(checks::fast_hooks(inserted_libraries), std::back_inserter(observations));
+  }
   return observations;
 }
 
 }  // namespace
 
 void run_startup_checks(std::string_view inserted_libraries) noexcept {
+  const rasp::Config config = read_embedded_config();
   if constexpr (kLoggingEnabled) {
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
-    const std::vector<Observation> observations = startup_observations(inserted_libraries);
+    const std::vector<Observation> observations = startup_observations(config, inserted_libraries);
     const auto took =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
     rasp::log("start-up checks took " + std::to_string(took) + " us");
@@ -44,7 +59,7 @@ void run_startup_checks(std::string_view inserted_libraries) noexcept {
     }
     static_cast<void>(panic_on_detection(observations, end_process));
   } else {
-    static_cast<void>(panic_on_detection(startup_observations(inserted_libraries), end_process));
+    static_cast<void>(panic_on_detection(startup_observations(config, inserted_libraries), end_process));
   }
 }
 

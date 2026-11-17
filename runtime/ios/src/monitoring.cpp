@@ -121,12 +121,7 @@ struct Environment {
   std::vector<Observation> builtin;
   // The mask's bits are the groups' positions in the packer's CHECKS order, which this dispatch's order keeps in
   // step with: new groups append at both ends.
-  const auto enabled = [&config](unsigned bit, std::string_view id) {
-    if (config.checks_mask.has_value()) {
-      return (config.checks_mask.value() & (std::uint64_t{1} << bit)) != 0;
-    }
-    return is_check_enabled(config, id);
-  };
+  const auto enabled = [&config](unsigned bit, std::string_view id) { return is_check_enabled(config, bit, id); };
   if (enabled(0, "jailbreak")) {
     std::ranges::move(checks::jailbreak(), std::back_inserter(builtin));
   }
