@@ -93,12 +93,13 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
 ///
 /// At most one checkpoint runs per kCheckpointInterval, across every call site and thread; every other call returns
 /// after reading the clock and one atomic. The one that runs picks one check at random among the groups the runtime's
-/// config enables of the debugger, hooking and root check, each enabled check equally likely, observes the monitoring
-/// thread's heartbeat when the config enables the integrity group, and passes both to panic_on_detection — so a group
-/// the operator did not choose never runs here either. When the config enables none of the four, the checkpoint
-/// observes nothing. It is always inlined, so each call site holds its own copy, and patching one call site leaves the
-/// others. A development build logs the call site, how many classes were served since the last checkpoint, how long the
-/// check took and what it observed.
+/// config enables of the debugger, hooking and root check, each enabled check equally likely, and passes it to
+/// panic_on_detection — so a group the operator did not choose never runs here either. It also observes the monitoring
+/// thread's heartbeat on every checkpoint that runs, whatever groups are enabled, because a dead monitor is the
+/// runtime's own liveness rather than part of the optional integrity group. When the config enables none of the four,
+/// the checkpoint does not run and observes nothing. It is always inlined, so each call site holds its own copy, and
+/// patching one call site leaves the others. A development build logs the call site, how many classes were served since
+/// the last checkpoint, how long the check took and what it observed.
 ///
 /// @param site The call site, for development logs.
 /// @param name The binary name of the class being served, for development logs.
@@ -113,7 +114,8 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
   const bool run_debugger = is_check_enabled(config, 1, "debugger");
   const bool run_hooks = is_check_enabled(config, 2, "hooks");
   const bool run_root = is_check_enabled(config, 0, "root");
-  if (!run_debugger && !run_hooks && !run_root && !is_check_enabled(config, 3, "integrity")) {
+  const bool run_integrity = is_check_enabled(config, 3, "integrity");
+  if (!run_debugger && !run_hooks && !run_root && !run_integrity) {
     return;
   }
   if (!limit.try_acquire(now)) {
@@ -135,9 +137,9 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
   if (!quick.empty()) {
     observations = quick[arc4random_uniform(static_cast<std::uint32_t>(quick.size()))]();
   }
-  if (is_check_enabled(config, 3, "integrity")) {
-    observations.push_back(monitor_heartbeat().observe(now));
-  }
+  // The heartbeat is the runtime's own liveness, not part of the optional integrity group, so it is observed on every
+  // checkpoint that runs, whatever groups are enabled.
+  observations.push_back(monitor_heartbeat().observe(now));
   if constexpr (kLoggingEnabled) {
     const auto took =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - now).count();
