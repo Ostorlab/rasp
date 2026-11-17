@@ -187,6 +187,10 @@ std::vector<Observation> observe_maps(std::string_view maps_path, rasp::util::Pr
 }
 
 std::vector<Observation> observe_threads(std::string_view task_path, rasp::util::ProcReader read) {
+  // The task folder is listed through libc opendir/readdir. Unlike the per-thread comm reads below, which go through
+  // the direct-syscall reader, this listing stays a libc surface an interposer can answer — for example to hide a
+  // thread from the scan. Reading it through a raw getdents64 would close that; it is a follow-up, like the property
+  // reads and the integrity check's file side.
   // NOLINTNEXTLINE(concurrency-mt-unsafe): the thread list is read once, on the monitoring thread.
   ::DIR* const directory = opendir(std::string(task_path).c_str());
   if (directory == nullptr) {
