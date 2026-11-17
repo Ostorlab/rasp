@@ -13,12 +13,14 @@
 
 namespace rasp::test_support {
 
-/// One stored entry to put in a test zip: its name and its bytes.
+/// One stored entry to put in a test zip: its name and its bytes. The fields own their bytes: a view here would
+/// dangle at the call sites, where the entries are built from temporary strings.
 struct StoredEntry {
-  /// The entry's full name in the archive, such as `assets/rasp/map.bin`.
+  /// The entry's full name in the archive, such as `assets/rasp/map.bin`, always a static literal at the call sites.
   std::string_view name;
-  /// The entry's bytes, stored uncompressed.
-  std::string_view content;
+  /// The entry's bytes, stored uncompressed. The field owns them: a view here would dangle at the call sites,
+  /// where the entries are built from temporary strings.
+  std::string content;
 };
 
 namespace zip_detail {
@@ -118,7 +120,7 @@ inline void append_le(std::string& out, Field field) {
 /// @param content The entry's bytes.
 /// @return The bytes of the archive.
 [[nodiscard]] inline std::string zip_with_stored_entry(std::string_view name, std::string_view content) {
-  const StoredEntry entry{.name = name, .content = content};
+  const StoredEntry entry{.name = name, .content = std::string(content)};
   return zip_with_stored_entries(std::span<const StoredEntry>(&entry, 1));
 }
 

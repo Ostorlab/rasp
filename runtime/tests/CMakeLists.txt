@@ -191,6 +191,7 @@ gtest_discover_tests(rasp_android_key_schedule_test)
 
 add_executable(rasp_android_key_schedule_bounds_test android/payload/key_schedule_bounds_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
   ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
