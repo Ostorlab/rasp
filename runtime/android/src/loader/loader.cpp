@@ -94,12 +94,12 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
 /// At most one checkpoint runs per kCheckpointInterval, across every call site and thread; every other call returns
 /// after reading the clock and one atomic. The one that runs picks one check at random among the groups the runtime's
 /// config enables of the debugger, hooking and root check, each enabled check equally likely, and passes it to
-/// panic_on_detection — so a group the operator did not choose never runs here either. It also observes the monitoring
-/// thread's heartbeat on every checkpoint that runs, whatever groups are enabled, because a dead monitor is the
-/// runtime's own liveness rather than part of the optional integrity group. When the config enables none of the four,
-/// the checkpoint does not run and observes nothing. It is always inlined, so each call site holds its own copy, and
-/// patching one call site leaves the others. A development build logs the call site, how many classes were served since
-/// the last checkpoint, how long the check took and what it observed.
+/// panic_on_detection — so a group the operator did not choose never runs here either. It always observes the
+/// monitoring thread's heartbeat, whatever groups are enabled, because a dead monitor is the runtime's own liveness
+/// rather than part of the optional groups; when the config enables none of the three quick checks, the checkpoint
+/// still runs and observes only the heartbeat. It is always inlined, so each call site holds its own copy, and patching
+/// one call site leaves the others. A development build logs the call site, how many classes were served since the last
+/// checkpoint, how long the check took and what it observed.
 ///
 /// @param site The call site, for development logs.
 /// @param name The binary name of the class being served, for development logs.
@@ -110,35 +110,28 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
     served.fetch_add(1, std::memory_order_relaxed);
   }
   const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
-  const rasp::Config& config = state().config;
-  const bool run_debugger = is_check_enabled(config, 1, "debugger");
-  const bool run_hooks = is_check_enabled(config, 2, "hooks");
-  const bool run_root = is_check_enabled(config, 0, "root");
-  const bool run_integrity = is_check_enabled(config, 3, "integrity");
-  if (!run_debugger && !run_hooks && !run_root && !run_integrity) {
-    return;
-  }
   if (!limit.try_acquire(now)) {
     return;
   }
-  // One quick check, picked uniformly among the groups the config enables: each enabled group is equally likely,
-  // exactly one check runs, and a check that returns no observations counts as having run.
+  const rasp::Config& config = state().config;
+  // One quick check, picked uniformly among the groups the config enables of the debugger, hooking and root check: each
+  // enabled group is equally likely, exactly one runs, and a check that returns no observations counts as having run.
   std::vector<Observation> observations;
   std::vector<std::vector<Observation> (*)()> quick;
-  if (run_debugger) {
+  if (is_check_enabled(config, 1, "debugger")) {
     quick.push_back(&checks::debugger);
   }
-  if (run_hooks) {
+  if (is_check_enabled(config, 2, "hooks")) {
     quick.push_back(&checks::hooks);
   }
-  if (run_root) {
+  if (is_check_enabled(config, 0, "root")) {
     quick.push_back(&checks::root);
   }
   if (!quick.empty()) {
     observations = quick[arc4random_uniform(static_cast<std::uint32_t>(quick.size()))]();
   }
-  // The heartbeat is the runtime's own liveness, not part of the optional integrity group, so it is observed on every
-  // checkpoint that runs, whatever groups are enabled.
+  // The heartbeat is always observed, independent of the optional groups: a dead monitor is the runtime's own liveness,
+  // so even a config that enables none of the three quick checks keeps its monitor watched.
   observations.push_back(monitor_heartbeat().observe(now));
   if constexpr (kLoggingEnabled) {
     const auto took =
