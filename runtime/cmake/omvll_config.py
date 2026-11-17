@@ -173,23 +173,23 @@ class RaspConfig(omvll.ObfuscationConfig):
         return omvll.ArithmeticOpt(2)
 
     def flatten_cfg(self, mod: omvll.Module, func: omvll.Function):
-        return omvll.ControlFlowFlatteningOpt(self._heavy_pass_on(mod, func, 30))
+        return omvll.ControlFlowFlatteningOpt(self._heavy_pass_on(mod, func, 70))
 
     def break_control_flow(self, mod: omvll.Module, func: omvll.Function):
-        return omvll.BreakControlFlowOpt(self._heavy_pass_on(mod, func, 10))
+        return omvll.BreakControlFlowOpt(self._heavy_pass_on(mod, func, 70))
 
     def indirect_branch(self, mod: omvll.Module, func: omvll.Function):
-        return self._heavy_pass_on(mod, func, 20)
+        return self._heavy_pass_on(mod, func, 70)
 
     def indirect_call(self, mod: omvll.Module, func: omvll.Function):
-        return self._heavy_pass_on(mod, func, 20)
+        return self._heavy_pass_on(mod, func, 70)
 
     def obfuscate_struct_access(self, mod: omvll.Module, func: omvll.Function, struct: omvll.Struct):
-        return omvll.StructAccessOpt(self._heavy_pass_on(mod, func, 20))
+        return omvll.StructAccessOpt(self._heavy_pass_on(mod, func, 70))
 
     def obfuscate_variable_access(self, mod: omvll.Module, func: omvll.Function,
                                   var: omvll.GlobalVariable):
-        return omvll.VarAccessOpt(self._heavy_pass_on(mod, func, 20))
+        return omvll.VarAccessOpt(self._heavy_pass_on(mod, func, 70))
 
     def anti_hooking(self, mod: omvll.Module, func: omvll.Function):
         if any(entry in func.demangled_name for entry in SENSITIVE_FUNCTIONS):
