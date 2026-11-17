@@ -13,6 +13,9 @@ bool is_check_enabled(const Config& config, std::string_view group) {
 }
 
 bool is_check_enabled(const Config& config, unsigned bit, std::string_view group) {
+  if (bit >= 64) {
+    return false;
+  }
   if (config.checks_mask.has_value()) {
     return (*config.checks_mask & (std::uint64_t{1} << bit)) != 0;
   }

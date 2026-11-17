@@ -66,5 +66,11 @@ TEST(Config, isCheckEnabledByBit_whenNeitherMaskNorListIsSet_returnsFalse) {
   EXPECT_FALSE(is_check_enabled(Config{}, 1, "debugger"));
 }
 
+TEST(Config, isCheckEnabledByBit_whenTheBitDoesNotFitTheMask_returnsFalse) {
+  const Config config{.checks = std::vector<std::string>{"debugger"}, .checks_mask = std::uint64_t{1} << 1};
+
+  EXPECT_FALSE(is_check_enabled(config, 64, "debugger"));
+}
+
 }  // namespace
 }  // namespace rasp

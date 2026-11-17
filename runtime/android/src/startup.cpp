@@ -33,8 +33,10 @@ namespace {
 /// checks, in that order.
 [[nodiscard]] std::vector<Observation> startup_observations(const rasp::Config& config) {
   std::vector<Observation> observations;
-  // The mask's bits are the groups' positions in the packer's CHECKS order, which this dispatch's order keeps in step
-  // with: new groups append at both ends.
+  // The bit numbers are the groups' positions in the packer's CHECKS order (root, debugger, hooks, integrity,
+  // mitm, identity, emulator) — the same positions monitoring's dispatch spells out — not the order of this sweep,
+  // which keeps its own (debugger, hooks, integrity, root, emulator); add new groups to both dispatches in lockstep
+  // with the packer's CHECKS order.
   if (is_check_enabled(config, 1, "debugger")) {
     std::ranges::move(checks::debugger(), std::back_inserter(observations));
   }
