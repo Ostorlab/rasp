@@ -31,10 +31,11 @@ struct Environment {
   bool no_tracer = false;
   /// The library is loaded from a path under /data, as an installed app's is.
   bool installed_under_data = false;
-  /// The system counter frequency (CNTFRQ_EL0) is in the range a real mobile SoC reports, 1-100 MHz.
-  /// QEMU and unicorn default to 1 GHz or 0, which a real device never produces.
+  /// On arm64, the system counter frequency (CNTFRQ_EL0) is in the range a real mobile SoC reports, 1-100 MHz;
+  /// QEMU and unicorn default to 1 GHz or 0, which a real device never produces. x86_64 has no such register, so
+  /// the fact holds there.
   bool counter_frequency_plausible = false;
-  /// The CPU identity register (MIDR_EL1) is non-zero, as a real CPU always reports. Some emulators report 0.
+  /// The CPU reports an identity: on arm64 a non-zero MIDR_EL1, on x86_64 a CPUID vendor. Some emulators report 0.
   bool cpu_identity_plausible = false;
   /// The process's uid is the one that owns the package's data directory, as an installed app's process always is:
   /// the package's name comes from the APK's install path, and /data/user/<user>/<package> is stat-ed, where the
@@ -219,6 +220,21 @@ struct FoldProgram {
 /// hook.foreign_libs.
 /// @return The facts, with the contradicted ones cleared.
 [[nodiscard]] Sensors fold_hook_observations(Sensors sensors, std::span<const Observation> observations);
+
+/// The hardware facts of the environment, read from the CPU.
+struct HardwareFacts {
+  /// See Environment::counter_frequency_plausible.
+  bool counter_frequency_plausible = false;
+  /// See Environment::cpu_identity_plausible.
+  bool cpu_identity_plausible = false;
+};
+
+/// Reads the hardware facts the gates fold: on arm64 the counter frequency and the CPU identity register, on x86_64
+/// the CPUID vendor, with the counter fact holding because the architecture has no counter-frequency register. On
+/// any other architecture neither fact holds.
+///
+/// @return The facts.
+[[nodiscard]] HardwareFacts observe_hardware();
 
 /// Observes the process's sensors, the way every decryption does.
 ///

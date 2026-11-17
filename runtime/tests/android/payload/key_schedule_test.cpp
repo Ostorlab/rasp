@@ -1026,6 +1026,15 @@ TEST(KeySchedule, armedMaster_whenTheShareDiffers_derivesADifferentMaster) {
   EXPECT_NE(*armed, from_key(kArmedHex));
 }
 
+TEST(KeySchedule, observeHardware_whenRunOnARealCpu_reportsBothFactsAsTheCleanGatesExpect) {
+  // The host tests run on x86_64, which has no counter-frequency register: the fact must still hold there, as the
+  // packer folds it for every ABI, or every x86_64 install derives a wrong root.
+  const HardwareFacts facts = observe_hardware();
+
+  EXPECT_EQ(facts.counter_frequency_plausible, kCleanEnvironment.counter_frequency_plausible);
+  EXPECT_EQ(facts.cpu_identity_plausible, kCleanEnvironment.cpu_identity_plausible);
+}
+
 TEST(KeySchedule, observeSensors_whenCalledOnAHostProcess_reportsNoTracer) {
   const Sensors sensors = observe_sensors();
 
