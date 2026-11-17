@@ -28,8 +28,8 @@
 
 #include "checks/integrity.h"
 #include "rasp/observation.h"
-#include "rasp/util/read_file.h"
 #include "util/app_storage.h"
+#include "util/raw_file.h"
 
 namespace rasp::android::checks {
 
@@ -200,7 +200,7 @@ constexpr std::size_t kMaxCmdlineSize = std::size_t{64} << 10U;
 }  // namespace
 
 Observation observe_package(std::string_view cmdline_path) {
-  const std::optional<std::string> cmdline = rasp::util::read_file(cmdline_path, kMaxCmdlineSize);
+  const std::optional<std::string> cmdline = rasp::util::read_proc_file(cmdline_path, kMaxCmdlineSize);
   if (!cmdline) {
     return failed(kPackageSignal, kPackageSource);
   }

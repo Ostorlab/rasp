@@ -20,13 +20,13 @@
 
 #include "rasp/observation.h"
 #include "rasp/util/obfuscation.h"
-#include "rasp/util/read_file.h"
+#include "util/raw_file.h"
 
 namespace rasp::android::checks {
 
 namespace {
 
-using rasp::util::read_file;
+using rasp::util::read_proc_file;
 
 #ifdef __ANDROID__
 /// Whether this build runs on Android, the only place the probe means anything.
@@ -173,7 +173,7 @@ constexpr auto kFrameworkMarkers = std::to_array<std::string_view>({
 }  // namespace
 
 std::vector<Observation> observe_maps(std::string_view maps_path) {
-  const std::optional<std::string> maps = read_file(maps_path, kMaxMapsSize);
+  const std::optional<std::string> maps = read_proc_file(maps_path, kMaxMapsSize);
   if (!maps) {
     return {
         failed(kMapsHitsSignal, kMapsSource),
@@ -215,7 +215,7 @@ std::vector<Observation> observe_threads(std::string_view task_path) {
       break;
     }
     const std::string folder = std::string(task_path) + "/" + std::string(thread);
-    const std::optional<std::string> name = read_file(folder + "/comm", kMaxCommSize);
+    const std::optional<std::string> name = read_proc_file(folder + "/comm", kMaxCommSize);
     if (!name) {
       if (access(folder.c_str(), F_OK) == 0) {
         complete = false;

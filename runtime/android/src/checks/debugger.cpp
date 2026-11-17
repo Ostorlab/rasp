@@ -25,6 +25,7 @@
 
 #include "rasp/observation.h"
 #include "rasp/util/read_file.h"
+#include "util/raw_file.h"
 
 namespace rasp::android::checks {
 
@@ -42,6 +43,8 @@ constexpr bool kOnAndroid = false;
 constexpr std::string_view kTracerPidSignal = "dbg.tracer_pid";
 /// The source of the tracer probe.
 constexpr std::string_view kTracerPidSource = "proc_status";
+/// The source that reads the status file through libc, whose answer is the kernel's unless someone interposes it.
+constexpr std::string_view kTracerPidLibcSource = "proc_status_libc";
 
 /// The app's status file.
 constexpr std::string_view kStatusPath = "/proc/self/status";
@@ -109,7 +112,7 @@ constexpr std::string_view kDebugApiSource = "debug_api";
 /// The name of the thread whose folder is `thread_path`, without the line break that ends it, or nothing when it can't
 /// be read.
 [[nodiscard]] std::optional<std::string> thread_name(const std::string& thread_path) {
-  std::optional<std::string> name = rasp::util::read_file(thread_path + "/comm", kMaxThreadNameSize);
+  std::optional<std::string> name = rasp::util::read_proc_file(thread_path + "/comm", kMaxThreadNameSize);
   if (name && name->ends_with('\n')) {
     name->pop_back();
   }
@@ -187,7 +190,7 @@ constexpr jint kLocalFrameCapacity = 4;
 }  // namespace
 
 Observation observe_tracer_pid(std::string_view status_path) {
-  const std::optional<std::string> status = rasp::util::read_file(status_path, kMaxStatusSize);
+  const std::optional<std::string> status = rasp::util::read_proc_file(status_path, kMaxStatusSize);
   if (!status) {
     return failed(kTracerPidSignal, kTracerPidSource);
   }
@@ -196,6 +199,18 @@ Observation observe_tracer_pid(std::string_view status_path) {
     return failed(kTracerPidSignal, kTracerPidSource);
   }
   return observed(kTracerPidSignal, kTracerPidSource, *pid);
+}
+
+Observation observe_tracer_pid_libc(std::string_view status_path) {
+  const std::optional<std::string> status = rasp::util::read_file(status_path, kMaxStatusSize);
+  if (!status) {
+    return failed(kTracerPidSignal, kTracerPidLibcSource);
+  }
+  const std::optional<std::int64_t> pid = parse_tracer_pid(*status);
+  if (!pid) {
+    return failed(kTracerPidSignal, kTracerPidLibcSource);
+  }
+  return observed(kTracerPidSignal, kTracerPidLibcSource, *pid);
 }
 
 Observation observe_jdwp_threads(std::string_view task_path) {
@@ -221,7 +236,8 @@ std::vector<Observation> debugger() {
         unsupported(kJavaDebuggerSignal, kDebugApiSource),
     };
   }
-  std::vector<Observation> observations{observe_tracer_pid(kStatusPath), observe_jdwp_threads(kTaskPath)};
+  std::vector<Observation> observations{observe_tracer_pid(kStatusPath), observe_tracer_pid_libc(kStatusPath),
+                                        observe_jdwp_threads(kTaskPath)};
 #ifdef __ANDROID__
   observations.push_back(observe_debug_api(debugger_connected()));
 #endif

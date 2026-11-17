@@ -16,7 +16,8 @@ namespace rasp::android::checks {
 /// is unsupported instead, so the server still sees that the check ran.
 ///
 /// @return One observation per signal and source, in this order: dbg.tracer_pid through proc_status, then
-/// dbg.java_debugger through jdwp_threads, then dbg.java_debugger through debug_api.
+/// dbg.tracer_pid through proc_status_libc, then dbg.java_debugger through jdwp_threads, then dbg.java_debugger
+/// through debug_api.
 [[nodiscard]] std::vector<Observation> debugger();
 
 /// Reports the process id of the debugger attached to the app, from the status file at `status_path`.
@@ -30,6 +31,18 @@ namespace rasp::android::checks {
 /// attached. It has an error status when the file can't be read, is larger than 64 KiB, has no `TracerPid:` line,
 /// or the line doesn't hold a process id.
 [[nodiscard]] Observation observe_tracer_pid(std::string_view status_path);
+
+/// Reports the same tracer process id as observe_tracer_pid, read through libc instead of direct system calls.
+///
+/// It is a second source for dbg.tracer_pid, read the way an in-process interposer can answer for: the two agree
+/// while the kernel's file reaches both unmolested, and disagree the moment something answers one of them with a
+/// copy, which panic reports as a detection. `debugger` observes both; the key schedule's gates read only the direct
+/// one, so a forged libc answer never satisfies them.
+///
+/// @param status_path The status file to read, `/proc/self/status` on a device.
+/// @return One dbg.tracer_pid observation read through proc_status_libc, with the same values and errors as
+/// observe_tracer_pid reports through proc_status.
+[[nodiscard]] Observation observe_tracer_pid_libc(std::string_view status_path);
 
 /// Reports whether the app has a thread that belongs to JDWP, the connection of a Java debugger, from the thread folder
 /// at `task_path`.

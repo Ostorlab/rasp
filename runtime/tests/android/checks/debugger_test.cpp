@@ -53,6 +53,11 @@ constexpr std::string_view kStatusTail =
   return {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kOk, .value = pid};
 }
 
+/// The dbg.tracer_pid observation that reports `pid`, read through libc.
+[[nodiscard]] Observation tracer_pid_libc(std::int64_t pid) {
+  return {.signal = "dbg.tracer_pid", .source = "proc_status_libc", .status = Status::kOk, .value = pid};
+}
+
 /// The dbg.tracer_pid observation of a status file that couldn't be read or understood.
 [[nodiscard]] Observation unreadable_tracer_pid() {
   return {.signal = "dbg.tracer_pid", .source = "proc_status", .status = Status::kError, .value = {}};
@@ -65,6 +70,29 @@ TEST(Debugger, observeTracerPid_whenNothingIsAttached_reportsZero) {
   ASSERT_TRUE(write_file(status, status_with("TracerPid:\t0")));
 
   EXPECT_EQ(observe_tracer_pid(status), tracer_pid(0));
+}
+
+TEST(Debugger, observeTracerPidLibc_whenNothingIsAttached_reportsZeroThroughADifferentSource) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string status = directory.path() + "/status";
+  ASSERT_TRUE(write_file(status, status_with("TracerPid:\t0")));
+
+  const Observation direct = observe_tracer_pid(status);
+  const Observation libc = observe_tracer_pid_libc(status);
+
+  EXPECT_EQ(libc, tracer_pid_libc(0));
+  EXPECT_EQ(libc.signal, direct.signal);
+  EXPECT_NE(libc.source, direct.source);
+}
+
+TEST(Debugger, observeTracerPidLibc_whenADebuggerIsAttached_reportsItsProcessId) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string status = directory.path() + "/status";
+  ASSERT_TRUE(write_file(status, status_with("TracerPid:\t5771")));
+
+  EXPECT_EQ(observe_tracer_pid_libc(status), tracer_pid_libc(5771));
 }
 
 TEST(Debugger, observeTracerPid_whenADebuggerIsAttached_reportsItsProcessId) {
