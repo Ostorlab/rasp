@@ -34,12 +34,12 @@ BOOTSTRAP_MODULES = [
 # Our functions that always get the heavy passes, by demangled-name substring.
 SENSITIVE_FUNCTIONS = [
     "rasp::android::checks::",
-    "rasp::ios::checks::",
     "rasp::checks::",
     "rasp::android::loader::",
     "rasp::android::payload::",
     "rasp::util::macho::",
-    "rasp::ios::util::",
+    "rasp::ios::",
+    "rasp_start",
     "observe_",
     "find_text",
     "code_signature",
@@ -191,7 +191,10 @@ class RaspConfig(omvll.ObfuscationConfig):
                                   var: omvll.GlobalVariable):
         return omvll.VarAccessOpt(self._heavy_pass_on(mod, func, 20))
 
-    # anti_hooking stays off until it is confirmed on a device that it can't crash the app.
+    def anti_hooking(self, mod: omvll.Module, func: omvll.Function):
+        if any(entry in func.demangled_name for entry in SENSITIVE_FUNCTIONS):
+            return omvll.AntiHookOpt(True)
+        return omvll.AntiHookOpt(False)
 
 
 @lru_cache(maxsize=1)
