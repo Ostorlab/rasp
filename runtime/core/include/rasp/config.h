@@ -16,7 +16,8 @@ struct Config {
   /// The id of the protected build.
   std::string build_id;
   /// The ids of the check groups the protected app runs, as the config's list names them. `std::nullopt` when the
-  /// runtime can't read a list: then the groups come from `checks_mask`, and without either no group runs.
+  /// runtime can't read a list: then the groups come from `checks_mask`, and without either the runtime fails closed
+  /// and every group runs.
   std::optional<std::vector<std::string>> checks = std::nullopt;
   /// The ids of the check groups the protected app runs, as the config's mask carries them: one bit per group, in
   /// the order the platform's monitoring runs them. `std::nullopt` when the runtime can't read a mask: then the
@@ -42,13 +43,16 @@ struct Config {
 /// Whether the protected app runs a check group, by the group's position in the mask.
 ///
 /// The config's mask takes precedence: one bit per group, in the order the platforms' monitoring runs them. Without a
-/// mask, the answer comes from the config's list, through is_check_enabled above.
+/// mask, the answer comes from the config's list, through is_check_enabled above. When the config names no selection at
+/// all — neither a mask nor a list, as a missing, blank, or unparsable config parses — every group runs, so the runtime
+/// fails closed rather than silently running no check.
 ///
 /// @param config The runtime's config.
 /// @param bit The group's position in the config's mask, which the platforms' dispatch keeps in step with the packer's
 /// check order.
 /// @param group The group's id, the name of its function in `checks::`, for example `debugger`.
-/// @return `true` when the mask's bit is set or, without a mask, the list names the group.
+/// @return `true` when the mask's bit is set; without a mask, when the list names the group; and, when the config names
+/// neither a mask nor a list, always — the fail-closed default.
 [[nodiscard]] bool is_check_enabled(const Config& config, unsigned bit, std::string_view group);
 
 }  // namespace rasp

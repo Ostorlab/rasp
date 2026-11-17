@@ -62,8 +62,20 @@ TEST(Config, isCheckEnabledByBit_whenOnlyTheListIsSet_readsTheList) {
   EXPECT_FALSE(is_check_enabled(config, 2, "hooks"));
 }
 
-TEST(Config, isCheckEnabledByBit_whenNeitherMaskNorListIsSet_returnsFalse) {
-  EXPECT_FALSE(is_check_enabled(Config{}, 1, "debugger"));
+TEST(Config, isCheckEnabledByBit_whenNeitherMaskNorListIsSet_failsClosedAndReturnsTrue) {
+  EXPECT_TRUE(is_check_enabled(Config{}, 1, "debugger"));
+}
+
+TEST(Config, isCheckEnabledByBit_whenTheListIsEmptyAndNoMask_returnsFalse) {
+  const Config config{.checks = std::vector<std::string>{}};
+
+  EXPECT_FALSE(is_check_enabled(config, 1, "debugger"));
+}
+
+TEST(Config, isCheckEnabledByBit_whenTheMaskIsZero_returnsFalse) {
+  const Config config{.checks_mask = std::uint64_t{0}};
+
+  EXPECT_FALSE(is_check_enabled(config, 1, "debugger"));
 }
 
 TEST(Config, isCheckEnabledByBit_whenTheBitDoesNotFitTheMask_returnsFalse) {
