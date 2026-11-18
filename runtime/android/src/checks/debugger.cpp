@@ -120,7 +120,10 @@ constexpr std::string_view kDebugApiSource = "debug_api";
 }
 
 /// Whether the thread folder at `task_path` holds a thread of a JDWP connection, or nothing when the folder can't be
-/// read or holds more than kMaxThreads threads.
+/// read or holds more than kMaxThreads threads. The folder is listed through std::filesystem's directory_iterator —
+/// libc opendir/readdir under it — so the listing stays a surface an interposer can answer, for example to hide a
+/// JDWP thread's folder, while the per-thread comm reads below go through the direct-system-call reader. Reading the
+/// listing through a raw getdents64 would close that; it is the same follow-up observe_threads names.
 [[nodiscard]] std::optional<bool> has_jdwp_thread(std::string_view task_path, rasp::util::ProcReader read) {
   std::error_code error;
   std::filesystem::directory_iterator entries(task_path, error);

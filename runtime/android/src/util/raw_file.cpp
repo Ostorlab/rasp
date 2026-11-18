@@ -55,6 +55,12 @@ long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) 
 /// The kernel returns errors as the negative errno in [-4095, -1], as libc's wrappers see too.
 constexpr long kErrnoRange = 4095;
 
+/// EINTR, the errno a direct system call reports when a signal whose handler wasn't installed with SA_RESTART
+/// interrupts it — several of the handlers ART and bionic install aren't. stdio's readers retry these silently; a raw
+/// one reports them, so the open and the read loops retry the same way, or a random signal would turn a sensor fact
+/// into an error observation, which the key schedule's gates fold as a cleared gate and a wrong key.
+constexpr long kEintr = 4;
+
 /// Whether `r` is the kernel's encoding of an error, rather than a result or a return address.
 [[nodiscard]] bool failed(long r) { return r < 0 && r >= -kErrnoRange; }
 
@@ -97,6 +103,9 @@ std::optional<std::string> read_proc_file(std::string_view path, std::size_t lim
     const long count =
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
         raw_syscall(__NR_read, fd, reinterpret_cast<long>(chunk.data()), static_cast<long>(chunk.size()), 0, 0, 0);
+    if (count == -kEintr) {
+      continue;
+    }
     if (failed(count) || static_cast<std::size_t>(count) > limit - content.size()) {
       ok = false;
       break;
