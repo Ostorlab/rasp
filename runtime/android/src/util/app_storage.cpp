@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "raw_file.h"
+#include "util/raw_file.h"
 
 namespace rasp::android::util {
 

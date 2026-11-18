@@ -240,8 +240,11 @@ std::vector<Observation> debugger() {
         unsupported(kJavaDebuggerSignal, kDebugApiSource),
     };
   }
-  std::vector<Observation> observations{observe_tracer_pid(kStatusPath), observe_tracer_pid_libc(kStatusPath),
-                                        observe_jdwp_threads(kTaskPath)};
+  std::vector<Observation> observations{
+      observe_tracer_pid(kStatusPath),
+      observe_tracer_pid_libc(kStatusPath),
+      observe_jdwp_threads(kTaskPath),
+  };
 #ifdef __ANDROID__
   observations.push_back(observe_debug_api(debugger_connected()));
 #endif

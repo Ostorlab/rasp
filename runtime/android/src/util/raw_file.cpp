@@ -2,25 +2,24 @@
 
 #include "raw_file.h"
 
-#include <array>
 #include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
 
-#include "rasp/util/read_file.h"
-
 #if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
 
+#include <array>
 #include <fcntl.h>
 #include <sys/syscall.h>
-#include <unistd.h>
 
 namespace rasp::util {
 
 namespace {
 
-#if defined(__aarch64__)
+// NOLINTBEGIN(portability-no-assembler, misc-const-correctness): this reader exists to issue raw system calls through
+// inline assembler, and the result register it writes through an output operand can't be declared const.
+#ifdef __aarch64__
 /// An aarch64 syscall: number in x8, arguments in x0..x5, result in x0.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) {
@@ -31,11 +30,10 @@ long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) 
   register const long x3 __asm__("x3") = a3;
   register const long x4 __asm__("x4") = a4;
   register const long x5 __asm__("x5") = a5;
-  // NOLINTNEXTLINE(portability-no-assembler)
   __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5) : "memory", "cc");
   return x0;
 }
-#elif defined(__x86_64__)
+#elifdef __x86_64__
 /// An x86_64 syscall: number in rax, arguments in rdi/rsi/rdx/r10/r8/r9, result in rax.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) {
@@ -43,7 +41,6 @@ long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) 
   register const long r10 __asm__("r10") = a3;
   register const long r8 __asm__("r8") = a4;
   register const long r9 __asm__("r9") = a5;
-  // NOLINTNEXTLINE(portability-no-assembler)
   __asm__ volatile("syscall"
                    : "=a"(ret)
                    : "a"(nr), "D"(a0), "S"(a1), "d"(a2), "r"(r10), "r"(r8), "r"(r9)
@@ -51,25 +48,37 @@ long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) 
   return ret;
 }
 #endif
+// NOLINTEND(portability-no-assembler, misc-const-correctness)
 
 /// The kernel returns errors as the negative errno in [-4095, -1], as libc's wrappers see too.
 constexpr long kErrnoRange = 4095;
 
 /// EINTR, the errno a direct system call reports when a signal whose handler wasn't installed with SA_RESTART
 /// interrupts it — several of the handlers ART and bionic install aren't. stdio's readers retry these silently; a raw
-/// one reports them, so the open and the read loops retry the same way, or a random signal would turn a sensor fact
-/// into an error observation, which the key schedule's gates fold as a cleared gate and a wrong key.
+/// one reports them, so the open and the read retry it, and the close ignores it (the kernel has already freed the
+/// descriptor), or a random signal would turn a sensor fact into an error observation, which the key schedule's gates
+/// fold as a cleared gate and a wrong key.
 constexpr long kEintr = 4;
+
+/// lseek's whence values, named here so the reader needs no libc header for them: the start of the file, and its end.
+constexpr long kSeekSet = 0;
+constexpr long kSeekEnd = 2;
 
 /// Whether `r` is the kernel's encoding of an error, rather than a result or a return address.
 [[nodiscard]] bool failed(long r) { return r < 0 && r >= -kErrnoRange; }
 
-/// Opens `path` read-only with close-on-exec, as read_file's "re" mode does, but through a direct system call.
+/// Opens `path` read-only with close-on-exec, as read_file's "re" mode does, but through a direct system call. An open
+/// the kernel reports as interrupted is retried, the way the read loop below retries; an interrupted open creates no
+/// descriptor, so the retry leaks none.
 [[nodiscard]] long raw_open(std::string_view path) {
   const std::string name(path);
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-  return raw_syscall(__NR_openat, static_cast<long>(AT_FDCWD), reinterpret_cast<long>(name.c_str()),
+  long fd = 0;
+  do {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+    fd = raw_syscall(__NR_openat, static_cast<long>(AT_FDCWD), reinterpret_cast<long>(name.c_str()),
                      O_RDONLY | O_CLOEXEC, 0, 0, 0);
+  } while (fd == -kEintr);
+  return fd;
 }
 
 /// Whether the open file `fd` names is a copy someone wrote, not a file the kernel generates at read time.
@@ -81,11 +90,11 @@ constexpr long kEintr = 4;
 /// @param fd The open file to test.
 /// @return `true` when the file reports stored bytes, so its content can't be the kernel's answer.
 [[nodiscard]] bool is_redirected(long fd) {
-  const long end = raw_syscall(__NR_lseek, fd, 0, SEEK_END, 0, 0, 0);
+  const long end = raw_syscall(__NR_lseek, fd, 0, kSeekEnd, 0, 0, 0);
   if (!failed(end) && end > 0) {
     return true;
   }
-  raw_syscall(__NR_lseek, fd, 0, SEEK_SET, 0, 0, 0);
+  raw_syscall(__NR_lseek, fd, 0, kSeekSet, 0, 0, 0);
   return false;
 }
 
@@ -115,8 +124,9 @@ std::optional<std::string> read_proc_file(std::string_view path, std::size_t lim
       break;
     }
   }
+  // close can report EINTR, but the kernel has already freed the descriptor, so a read that finished is still kept.
   const long closed = raw_syscall(__NR_close, fd, 0, 0, 0, 0, 0);
-  if (!ok || failed(closed)) {
+  if (!ok || (failed(closed) && closed != -kEintr)) {
     return std::nullopt;
   }
   return content;
@@ -125,6 +135,8 @@ std::optional<std::string> read_proc_file(std::string_view path, std::size_t lim
 }  // namespace rasp::util
 
 #else
+
+#include "rasp/util/read_file.h"
 
 namespace rasp::util {
 
