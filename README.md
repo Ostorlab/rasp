@@ -15,11 +15,10 @@ https://github.com/user-attachments/assets/a43d48ed-75ec-43b1-ad76-77fc08826493
 
 - **Android and iOS:** APK, AAB and IPA.
 - **No source code changes:** protect the build you already ship.
-- **Choose the checks:** turn on only the check groups that fit your users.
+- **Choose the checks:** pick the check groups that fit your users.
 - **Detects:** root and jailbreak, debuggers, Frida and other hooking, emulators, app virtualizers, network
   interception (VPN tunnels and proxies), tampering with the runtime's code, and repackaged copies.
-- **Runs all the time:** the checks run when the app starts, then every 30 to 90 seconds, with the wait between runs
-  randomized, until the app exits.
+- **Runs all the time:** the checks run when the app starts, then again at random intervals until the app exits.
 - **Events on the Ostorlab platform:** protect apps and see their events in
   [Mobile ADR](#use-adr-on-the-ostorlab-platform) (Mobile Application Detection & Response).
 
@@ -46,32 +45,22 @@ A plugin is code compiled into the runtime ([API](runtime/core/include/rasp/plug
 
 ## Quick start
 
-1. **Build the runtime** for your platform ([details](runtime/README.md#build)):
-
-   ```
-   cd runtime
-   cmake --preset android
-   cmake --build --preset android
-   ```
-
-   Put the built files where the packer looks for them: see the READMEs in
-   [`packer/src/rasp_packer/android/resources/`](packer/src/rasp_packer/android/resources/README.md) and
-   [`packer/src/rasp_packer/ios/resources/`](packer/src/rasp_packer/ios/resources/README.md).
-
-2. **Install the packer:**
+1. **Install the packer.** Build the runtime first ([details](runtime/README.md#build)), then put `stub.dex` and
+   `lib/<abi>/librasp.so` in `packer/src/rasp_packer/android/resources/`, and `RaspRuntime.framework` in
+   `packer/src/rasp_packer/ios/resources/`.
 
    ```
    cd packer
    uv sync --locked
    ```
 
-3. **Protect an app:**
+2. **Protect an app:**
 
    ```
    uv run rasp pack app.apk --platform android --build-id my-build-1 --checks root,debugger,hooks --output app-protected.apk
    ```
 
-4. **Sign** `app-protected.apk` with your release key, then ship it.
+3. **Sign** `app-protected.apk` with your release key, then ship it.
 
 The packer is also a Python library:
 
@@ -106,23 +95,22 @@ result = packer.pack(
 
 - Pass the groups with `--checks` (or `checks=` in Python). `identity` is always added.
 - An unknown group is skipped with a warning, so a list written for an older version still packs.
-- Without `--checks`, only `identity` runs.
-
-Each check and the signals it reports are described in [`runtime/README.md`](runtime/README.md).
+- Without `--checks`, only `identity` is chosen.
+- Some checks also run when the app starts, whatever the choice.
 
 ## Requirements
 
 | | |
 |---|---|
-| Protected Android app | Android 12 (API 31) or later. The packer raises a lower minimum SDK to 31. |
+| Protected Android app | Android 12 (API 31) or later |
 | Protected iOS app | iOS 12.0 or later |
 | Packer | Python 3.14, [uv](https://docs.astral.sh/uv/) |
 | Runtime build | CMake 4.4, Clang from LLVM 23; the Android NDK, SDK and a JDK for Android; Xcode on a Mac for iOS |
 
 ## Documentation
 
-- [`packer/README.md`](packer/README.md): the packer, its options, build ids and checks.
-- [`runtime/README.md`](runtime/README.md): the runtime, each check, building and logs.
+- [`packer/README.md`](packer/README.md): the packer and its options.
+- [`runtime/README.md`](runtime/README.md): building and testing the runtime.
 - [`TODO.md`](TODO.md): known work that isn't done yet.
 
 ## Use ADR on the Ostorlab platform
@@ -148,11 +136,7 @@ apps with rasp and shows their events:
 
 ## Contributing
 
-Contributions are welcome: open an issue or a pull request. Every change goes through a pull request.
-
-- Packer: run the checks listed in [`packer/README.md`](packer/README.md#development) (format, lint, types, tests).
-- Runtime: read [`runtime/CONTRIBUTING.md`](runtime/CONTRIBUTING.md) first. It lists the rules the build enforces and
-  the ones reviewers check.
+Contributions are welcome: see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Security
 
