@@ -4,17 +4,20 @@
 
 #include <cstddef>
 #include <dlfcn.h>
-#include <fcntl.h>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <vector>
+
+#include "util/raw_file.h"
 
 namespace rasp::android::apk {
 
 namespace {
+
+/// The largest memory map read. A real /proc/self/maps is a few hundred KiB.
+constexpr std::size_t kMaxMapsSize = std::size_t{4} << 20U;
 
 /// The path with its last component removed, or nothing when it has no directory part.
 [[nodiscard]] std::optional<std::string> parent_dir(std::string_view path) {
@@ -78,29 +81,15 @@ namespace {
   return fallback;
 }
 
-/// The APK path read from the process's memory map.
+/// The APK path read from the process's memory map. The map is read through the direct-system-call reader, not libc,
+/// so an interposed libc read function can't answer for the kernel with a forged mapping and steer the package the
+/// `owns_package_data` gate checks.
 [[nodiscard]] std::optional<std::string> apk_from_maps() {
-  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
-  const int descriptor = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
-  if (descriptor < 0) {
+  const std::optional<std::string> content = rasp::util::read_proc_file("/proc/self/maps", kMaxMapsSize);
+  if (!content.has_value()) {
     return std::nullopt;
   }
-  std::string content;
-  std::vector<char> buffer(8192);
-  for (;;) {
-    const ssize_t count = read(descriptor, buffer.data(), buffer.size());
-    if (count < 0) {
-      close(descriptor);
-      return std::nullopt;
-    }
-    if (count == 0) {
-      break;
-    }
-    content.append(buffer.data(), static_cast<std::size_t>(count));
-  }
-  close(descriptor);
-  return apk_in_maps(content);
+  return apk_in_maps(*content);
 }
 
 }  // namespace
