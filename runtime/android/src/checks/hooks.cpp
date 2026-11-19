@@ -76,15 +76,14 @@ constexpr std::size_t kMaxCommSize = 32;
 constexpr std::size_t kMaxThreads = 4096;
 /// What the memory map adds after the pathname of a file that was deleted after it was mapped.
 constexpr std::string_view kDeletedSuffix = " (deleted)";
+/// The fields of a memory-map line before its pathname: address range, permissions, offset, device and inode.
+constexpr std::size_t kFieldsBeforePathname = 5;
 
-/// The text that marks a mapping made by a known instrumentation or hooking framework, matched anywhere in the line.
-/// Frida maps its agent and gadget, Substrate and Xposed map their own libraries, and a gadget is often injected
-/// through a `re.frida` or `libgadget` name. These catch a framework that keeps its default names; one rebuilt to
-/// rename itself is caught instead by the writable-executable and prologue probes.
+/// The text that marks the file name of a mapping made by a known instrumentation or hooking framework. Frida maps its
+/// agent and gadget, Substrate and Xposed map their own libraries, and a gadget is often injected as `libgadget`.
 constexpr auto kFrameworkMarkers = std::to_array<std::string_view>({
     "frida",
     "gadget",
-    "gum-js-loop",
     "substrate",
     "xposed",
     "lsposed",
@@ -104,14 +103,35 @@ constexpr auto kFrameworkMarkers = std::to_array<std::string_view>({
   return rest.substr(0, std::min(end, rest.size()));
 }
 
-/// Whether `line` is a mapping that names a known instrumentation framework.
+/// The pathname of a memory-map line without a ` (deleted)` suffix, or empty when the mapping has none.
+[[nodiscard]] std::string_view pathname_of(std::string_view line) {
+  std::string_view rest = line;
+  for (std::size_t field = 0; field < kFieldsBeforePathname; ++field) {
+    const std::size_t end = rest.find(' ');
+    if (end == std::string_view::npos) {
+      return {};
+    }
+    rest.remove_prefix(end + 1);
+    rest.remove_prefix(std::min(rest.find_first_not_of(' '), rest.size()));
+  }
+  if (rest.ends_with(kDeletedSuffix)) {
+    rest.remove_suffix(kDeletedSuffix.size());
+  }
+  return rest;
+}
+
+/// Whether `line` maps a file whose name names a known instrumentation framework.
 [[nodiscard]] bool names_framework(std::string_view line) {
-  std::string lowered(line);
-  std::ranges::transform(lowered, lowered.begin(), [](char character) {
+  const std::string_view path = pathname_of(line);
+  if (!path.starts_with('/')) {
+    return false;
+  }
+  // The folders above the file hold the app's package name and random install folders, which can spell a marker.
+  std::string name(path.substr(path.rfind('/') + 1));
+  std::ranges::transform(name, name.begin(), [](char character) {
     return static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
   });
-  return std::ranges::any_of(kFrameworkMarkers,
-                             [&lowered](std::string_view marker) { return lowered.contains(marker); });
+  return std::ranges::any_of(kFrameworkMarkers, [&name](std::string_view marker) { return name.contains(marker); });
 }
 
 /// Whether `line` maps memory that is both writable and executable.
@@ -132,15 +152,8 @@ constexpr auto kFrameworkMarkers = std::to_array<std::string_view>({
 /// Whether the memory-map line maps a shared library from outside the expected directories, the library's file
 /// deleted after it was mapped included.
 [[nodiscard]] bool is_foreign_library(std::string_view line) {
-  const std::size_t path_start = line.find(" /");
-  if (path_start == std::string_view::npos) {
-    return false;
-  }
-  std::string_view path = line.substr(path_start + 1);
-  if (path.ends_with(kDeletedSuffix)) {
-    path.remove_suffix(kDeletedSuffix.size());
-  }
-  return path.ends_with(".so") && !is_expected_library_path(path);
+  const std::string_view path = pathname_of(line);
+  return path.starts_with('/') && path.ends_with(".so") && !is_expected_library_path(path);
 }
 
 /// The first kMaxLines lines of `maps` that `matches`, without their line breaks.
