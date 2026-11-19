@@ -16,6 +16,7 @@ EXIT_FAILED = 1
 
 
 def _parser() -> argparse.ArgumentParser:
+    """Builds the `rasp` argument parser."""
     parser = argparse.ArgumentParser(
         prog="rasp",
         description="Protects built Android (APK, AAB) and iOS (IPA) apps with the RASP runtime.",
@@ -37,8 +38,9 @@ def _parser() -> argparse.ArgumentParser:
         "--platform",
         type=platforms.Platform,
         choices=list(platforms.Platform),
-        required=True,
-        help="the platform of the app",
+        default=None,
+        help="the platform of the app (default: inferred from the app's extension, "
+        f"{', '.join(platforms.accepted_extensions())})",
     )
     pack.add_argument(
         "--build-id",
@@ -146,7 +148,13 @@ def main(argv: collections.abc.Sequence[str] | None = None) -> int:
     Returns:
         The exit code of the process.
     """
-    arguments = _parser().parse_args(argv)
+    parser = _parser()
+    arguments = parser.parse_args(argv)
+    if arguments.command == "pack" and arguments.platform is None:
+        try:
+            arguments.platform = platforms.infer(arguments.app)
+        except ValueError as error:
+            parser.error(str(error))
     match arguments.command:
         case "pack":
             return _pack(arguments)

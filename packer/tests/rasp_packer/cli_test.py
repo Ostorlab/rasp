@@ -8,6 +8,7 @@ import pytest
 from rasp_packer import cli
 from rasp_packer import identity
 from rasp_packer import packer
+from rasp_packer import platforms
 from rasp_packer import runtime_config
 from rasp_packer.android import packer as android_packer
 
@@ -18,15 +19,16 @@ _USAGE_ERROR = 2
 def _pack_arguments(
     tmp_path: pathlib.Path,
     *,
-    platform: str = "ios",
+    platform: str | None = "ios",
     build_id: str = _BUILD_ID,
+    app: str = "app.ipa",
 ) -> list[str]:
     """Returns the `rasp pack` arguments for an app and output in `tmp_path`."""
+    platform_arguments = [] if platform is None else ["--platform", platform]
     return [
         "pack",
-        str(tmp_path / "app.ipa"),
-        "--platform",
-        platform,
+        str(tmp_path / app),
+        *platform_arguments,
         "--build-id",
         build_id,
         "--output",
@@ -274,3 +276,63 @@ def testMain_whenNoMapping_passesNoneAsTheMapping(
     cli.main(_pack_arguments(tmp_path))
 
     assert captured["mapping"] is None
+
+
+def testMain_whenPlatformIsNotGiven_infersItFromTheAppExtension(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Packs for the platform of the extension."""
+    captured: dict[str, object] = {}
+
+    def fake_pack(**kwargs: object) -> packer.PackResult:
+        """Records the arguments and returns a result."""
+        captured.update(kwargs)
+        return packer.PackResult(
+            output=tmp_path / "out.apk",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+            skipped_checks=(),
+        )
+
+    monkeypatch.setattr(packer, "pack", fake_pack)
+
+    exit_code = cli.main(_pack_arguments(tmp_path, platform=None, app="app.APK"))
+
+    assert exit_code == cli.EXIT_OK
+    assert captured["platform"] == platforms.Platform.ANDROID
+
+
+def testMain_whenPlatformIsGiven_itWinsOverTheExtension(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Packs for the given platform, not the extension's."""
+    captured: dict[str, object] = {}
+
+    def fake_pack(**kwargs: object) -> packer.PackResult:
+        """Records the arguments and returns a result."""
+        captured.update(kwargs)
+        return packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+            skipped_checks=(),
+        )
+
+    monkeypatch.setattr(packer, "pack", fake_pack)
+
+    cli.main(_pack_arguments(tmp_path, platform="ios", app="app.apk"))
+
+    assert captured["platform"] == platforms.Platform.IOS
+
+
+def testMain_whenPlatformIsNotGivenAndExtensionIsUnknown_exitsWithUsageError(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The usage error names the accepted extensions."""
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(_pack_arguments(tmp_path, platform=None, app="app.zip"))
+
+    assert exit_info.value.code == _USAGE_ERROR
+    assert ".apk, .aab, .ipa" in capsys.readouterr().err
