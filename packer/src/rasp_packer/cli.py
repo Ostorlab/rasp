@@ -8,7 +8,7 @@ from importlib import metadata
 
 from rasp_packer import checks as check_groups
 from rasp_packer import errors
-from rasp_packer import inspect
+from rasp_packer import inspection
 from rasp_packer import packer
 from rasp_packer import platforms
 
@@ -160,7 +160,7 @@ def _inspect(arguments: argparse.Namespace) -> int:
     The build id, the check groups and the ABIs are printed only for a protected app, and the ABIs only for Android.
     """
     try:
-        result = inspect.inspect(app=arguments.app, platform=arguments.platform)
+        result = inspection.inspect(app=arguments.app, platform=arguments.platform)
     except errors.Error as error:
         print(f"rasp inspect: {error}", file=sys.stderr)
         return EXIT_FAILED

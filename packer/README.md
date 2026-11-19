@@ -49,7 +49,7 @@ checks     debugger,hooks,identity,root
 abis       arm64-v8a,armeabi-v7a
 ```
 
-An app without the runtime prints `protected  no` with its package and version. From Python, `rasp_packer.inspect.inspect(app=..., platform=...)` returns the same fields.
+An app without the runtime prints `protected  no` with its package and version. From Python, `rasp_packer.inspection.inspect(app=..., platform=...)` returns the same fields.
 
 ## What a protected app gets
 

@@ -8,7 +8,7 @@ import pytest
 
 from rasp_packer import checks as check_groups
 from rasp_packer import errors
-from rasp_packer import inspect
+from rasp_packer import inspection
 from rasp_packer import platforms
 from rasp_packer import runtime_config
 from rasp_packer.android import packer as android_packer
@@ -114,9 +114,9 @@ def testInspect_whenApkIsProtected_reportsTheConfigTheIdentityAndTheAbis(
     )
     protected = _pack_android(app, tmp_path / "protected.apk")
 
-    result = inspect.inspect(app=protected, platform=platforms.Platform.ANDROID)
+    result = inspection.inspect(app=protected, platform=platforms.Platform.ANDROID)
 
-    assert result == inspect.InspectResult(
+    assert result == inspection.InspectResult(
         protected=True,
         package_name="com.example.withapp",
         version="2.4.1",
@@ -134,7 +134,7 @@ def testInspect_whenAabIsProtected_reportsTheConfigTheIdentityAndTheAbis(
         _make_aab(tmp_path / "app.aab"), tmp_path / "protected.aab"
     )
 
-    result = inspect.inspect(app=protected, platform=platforms.Platform.ANDROID)
+    result = inspection.inspect(app=protected, platform=platforms.Platform.ANDROID)
 
     assert result.protected is True
     assert result.package_name == "com.android.insecurebankv2"
@@ -157,9 +157,9 @@ def testInspect_whenApkCarriesNoPackedRuntime_reportsItUnprotectedWithItsIdentit
     """An APK without a runtime library holding a packed config is reported unprotected."""
     app = _make_apk(tmp_path / "app.apk", libraries)
 
-    result = inspect.inspect(app=app, platform=platforms.Platform.ANDROID)
+    result = inspection.inspect(app=app, platform=platforms.Platform.ANDROID)
 
-    assert result == inspect.InspectResult(
+    assert result == inspection.InspectResult(
         protected=False,
         package_name="com.example.withapp",
         version="2.4.1",
@@ -181,9 +181,9 @@ def testInspect_whenIpaIsProtected_reportsTheConfigAndTheIdentity(
         config=_config(platforms.Platform.IOS, _IOS_CHECKS),
     )
 
-    result = inspect.inspect(app=protected, platform=platforms.Platform.IOS)
+    result = inspection.inspect(app=protected, platform=platforms.Platform.IOS)
 
-    assert result == inspect.InspectResult(
+    assert result == inspection.InspectResult(
         protected=True,
         package_name=conftest.PACKAGE_NAME,
         version=conftest.VERSION,
@@ -197,9 +197,9 @@ def testInspect_whenIpaIsNotProtected_reportsItUnprotectedWithItsIdentity(
     ipa_file: pathlib.Path,
 ) -> None:
     """An IPA without the runtime framework is reported unprotected."""
-    result = inspect.inspect(app=ipa_file, platform=platforms.Platform.IOS)
+    result = inspection.inspect(app=ipa_file, platform=platforms.Platform.IOS)
 
-    assert result == inspect.InspectResult(
+    assert result == inspection.InspectResult(
         protected=False,
         package_name=conftest.PACKAGE_NAME,
         version=conftest.VERSION,
@@ -222,7 +222,7 @@ def testInspect_whenIpaEmbedsARuntimeWithoutConfig_raisesInvalidAppError(
     )
 
     with pytest.raises(errors.InvalidAppError, match="holds no runtime config"):
-        inspect.inspect(app=app, platform=platforms.Platform.IOS)
+        inspection.inspect(app=app, platform=platforms.Platform.IOS)
 
 
 @pytest.mark.parametrize(
@@ -240,4 +240,4 @@ def testInspect_whenFileIsNotAnApp_raisesThePlatformsError(
     app.write_bytes(b"not a zip")
 
     with pytest.raises(error):
-        inspect.inspect(app=app, platform=platform)
+        inspection.inspect(app=app, platform=platform)

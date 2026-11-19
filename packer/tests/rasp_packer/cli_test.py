@@ -7,7 +7,7 @@ import pytest
 
 from rasp_packer import cli
 from rasp_packer import identity
-from rasp_packer import inspect
+from rasp_packer import inspection
 from rasp_packer import packer
 from rasp_packer import runtime_config
 from rasp_packer.android import packer as android_packer
@@ -284,9 +284,9 @@ def testMain_whenInspectedAppIsProtected_printsAlignedLabelsAndValues(
 ) -> None:
     """A protected app prints every field as an aligned label and value."""
     monkeypatch.setattr(
-        inspect,
+        inspection,
         "inspect",
-        lambda **_: inspect.InspectResult(
+        lambda **_: inspection.InspectResult(
             protected=True,
             package_name="dev.ostorlab.demo",
             version="1.2.3",
