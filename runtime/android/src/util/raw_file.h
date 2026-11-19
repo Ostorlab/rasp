@@ -1,4 +1,4 @@
-/// read_proc_file, which reads a whole kernel-generated file through direct system calls.
+/// read_proc_file and first_proc_line_matching, which read kernel-generated files through direct system calls.
 
 #pragma once
 
@@ -32,5 +32,45 @@ namespace rasp::util {
 /// content (read_proc_file refuses regular files, so it can't read a test's temp file). Both readers share this
 /// signature.
 using ProcReader = std::optional<std::string> (*)(std::string_view, std::size_t);
+
+/// The function a sensor opens a kernel-generated file with: the descriptor, or the negative errno the kernel
+/// reported. The shipped runtime uses open_proc_file, which also refuses a file that doesn't live on one of the
+/// kernel's own filesystems; a test passes a plain open instead, to scan a regular file of controlled content.
+using ProcOpener = long (*)(std::string_view);
+
+/// Opens the kernel-generated file at `path` read-only with close-on-exec, through the same direct system calls
+/// read_proc_file uses, and refuses a file that doesn't live on one of the kernel's own filesystems the same way. An
+/// open the kernel reports as interrupted is retried.
+///
+/// @param path The file to open.
+/// @return The descriptor, or the negative errno-encoded failure: -EXDEV when the file opened but doesn't live on one
+/// of the kernel's own filesystems, so its bytes were stored, not generated.
+[[nodiscard]] long open_proc_file(std::string_view path);
+
+/// Whether a line of a kernel-generated file is the one a scan looks for. The predicate is stateless, so it needs no
+/// context beyond the line.
+using LinePredicate = bool (*)(std::string_view);
+
+/// The first line of the kernel-generated file at `path` that `matches` accepts, read without holding the whole
+/// file.
+///
+/// The file is read in chunks and only one incomplete line is carried between them, so a map larger than any whole
+/// read would allocate still scans with bounded memory — and stops at the first matching line instead of reading to
+/// the end. `cap` bounds the bytes scanned, so a file that never matches can't grow the scan without limit; reaching
+/// it ends the scan the way the file's end would, having found nothing. The file's last line counts even without a
+/// line break after it.
+///
+/// The shipped opener refuses a file that doesn't live on one of the kernel's own filesystems, so a forged copy of the
+/// file can't answer the scan.
+///
+/// @param path The kernel-generated file to scan.
+/// @param matches The predicate that names the line looked for.
+/// @param cap The largest number of bytes to scan.
+/// @param open_file The opener, so a test can scan a regular file; the shipped runtime uses open_proc_file.
+/// @return The first matching line, without its newline, or nothing when the file can't be read or nothing matched
+/// within `cap` bytes.
+[[nodiscard]] std::optional<std::string> first_proc_line_matching(std::string_view path, LinePredicate matches,
+                                                                  std::size_t cap,
+                                                                  ProcOpener open_file = open_proc_file);
 
 }  // namespace rasp::util

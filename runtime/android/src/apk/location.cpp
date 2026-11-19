@@ -52,44 +52,45 @@ constexpr std::size_t kMaxMapsSize = std::size_t{4} << 20U;
   return candidate;
 }
 
-/// The APK path in a /proc/self/maps dump: the file-backed mapping under /data/app whose path ends in .apk.
-[[nodiscard]] std::optional<std::string> apk_in_maps(std::string_view maps) {
-  std::optional<std::string> fallback;
-  std::size_t start = 0;
-  while (start < maps.size()) {
-    std::size_t end = maps.find('\n', start);
-    if (end == std::string_view::npos) {
-      end = maps.size();
-    }
-    const std::string_view line = maps.substr(start, end - start);
-    start = end + 1;
-    const std::size_t slash = line.find('/');
-    if (slash == std::string_view::npos) {
-      continue;
-    }
-    const std::string_view path = line.substr(slash);
-    if (!path.ends_with(".apk") || !path.contains("/data/app/")) {
-      continue;
-    }
-    if (path.contains("base.apk")) {
-      return std::string(path);
-    }
-    if (!fallback.has_value()) {
-      fallback = std::string(path);
-    }
-  }
-  return fallback;
-}
-
-/// The APK path read from the process's memory map. The map is read through the direct-system-call reader, not libc,
-/// so an interposed libc read function can't answer for the kernel with a forged mapping and steer the package the
-/// `owns_package_data` gate checks.
-[[nodiscard]] std::optional<std::string> apk_from_maps() {
-  const std::optional<std::string> content = rasp::util::read_proc_file("/proc/self/maps", kMaxMapsSize);
-  if (!content.has_value()) {
+/// The apk path a line of /proc/self/maps names: the file-backed mapping under /data/app whose path ends in .apk.
+[[nodiscard]] std::optional<std::string_view> apk_in_line(std::string_view line) {
+  const std::size_t slash = line.find('/');
+  if (slash == std::string_view::npos) {
     return std::nullopt;
   }
-  return apk_in_maps(*content);
+  const std::string_view path = line.substr(slash);
+  if (!path.ends_with(".apk") || !path.contains("/data/app/")) {
+    return std::nullopt;
+  }
+  return path;
+}
+
+/// Whether a line of /proc/self/maps names the app's own base APK.
+[[nodiscard]] bool names_base_apk(std::string_view line) {
+  const std::optional<std::string_view> path = apk_in_line(line);
+  return path.has_value() && path->contains("base.apk");
+}
+
+/// Whether a line of /proc/self/maps names any /data/app APK.
+[[nodiscard]] bool names_an_apk(std::string_view line) { return apk_in_line(line).has_value(); }
+
+/// The APK path read from the process's memory map. The map is scanned line by line through the direct-system-call
+/// reader, not libc, so an interposed libc read function can't answer for the kernel with a forged mapping and steer
+/// the package the `owns_package_data` gate checks — and the scan holds one line at a time, so a map larger than any
+/// whole read would allocate still locates the store, stopping at the base APK's line when there is one and falling
+/// back to the first /data/app APK when there isn't.
+[[nodiscard]] std::optional<std::string> apk_from_maps() {
+  const std::optional<std::string> base =
+      rasp::util::first_proc_line_matching("/proc/self/maps", names_base_apk, kMaxMapsSize);
+  if (base.has_value()) {
+    return std::string(*apk_in_line(*base));
+  }
+  const std::optional<std::string> any =
+      rasp::util::first_proc_line_matching("/proc/self/maps", names_an_apk, kMaxMapsSize);
+  if (any.has_value()) {
+    return std::string(*apk_in_line(*any));
+  }
+  return std::nullopt;
 }
 
 }  // namespace
