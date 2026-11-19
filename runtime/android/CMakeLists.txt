@@ -66,7 +66,7 @@ add_library(rasp SHARED
   src/util/system_property.cpp)
 target_include_directories(rasp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${rasp_kdf_dir})
 target_link_libraries(rasp PRIVATE rasp_core rasp_plugins rasp_loader_dex rasp_tfpsacrypto rasp_warnings rasp_language
-  rasp_shipped nativehelper)
+  rasp_shipped nativehelper ZLIB::ZLIB)
 target_link_options(rasp PRIVATE -Wl,--exclude-libs,ALL)
 target_link_options(rasp PRIVATE $<$<CONFIG:Release>:-Wl,--strip-all>)
 

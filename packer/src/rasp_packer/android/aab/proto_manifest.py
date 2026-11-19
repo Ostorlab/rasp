@@ -719,6 +719,8 @@ _VOLATILE_ATTRIBUTE_NAMES = frozenset(
         "platformBuildVersionCode",
         "platformBuildVersionName",
         "isSplitRequired",
+        "requiredSplitTypes",
+        "splitTypes",
     }
 )
 

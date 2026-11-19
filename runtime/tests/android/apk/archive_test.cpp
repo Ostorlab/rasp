@@ -14,6 +14,8 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#define ZLIB_CONST
+#include <zlib.h>
 
 #include "checks/integrity.h"
 #include "support/files.h"
@@ -363,6 +365,72 @@ constexpr std::size_t kFirstValueString = 2;
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> semantics_of(const TemporaryDirectory& directory,
                                                                     std::string_view manifest) {
   return read_manifest_semantics(apk_file(directory, zip_with_stored_entry("AndroidManifest.xml", manifest)));
+}
+
+/// `data` compressed with raw deflate, the way bundletool writes the manifest into a store-generated APK.
+[[nodiscard]] std::vector<std::uint8_t> deflate_raw(std::string_view data) {
+  const std::vector<std::uint8_t> input(data.begin(), data.end());
+  z_stream stream = {};
+  // A negative window size selects the bare deflate stream a zip entry holds, without a zlib wrapper.
+  constexpr int kRawWindowBits = -15;
+  constexpr int kDefaultMemLevel = 8;
+  EXPECT_EQ(
+      deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, kRawWindowBits, kDefaultMemLevel, Z_DEFAULT_STRATEGY),
+      Z_OK);
+  std::vector<std::uint8_t> out(deflateBound(&stream, static_cast<unsigned long>(input.size())));
+  stream.next_in = input.data();
+  stream.avail_in = static_cast<unsigned int>(input.size());
+  stream.next_out = out.data();
+  stream.avail_out = static_cast<unsigned int>(out.size());
+  EXPECT_EQ(deflate(&stream, Z_FINISH), Z_STREAM_END);
+  out.resize(stream.total_out);
+  deflateEnd(&stream);
+  return out;
+}
+
+/// A zip holding one entry named `name` compressed with raw deflate.
+[[nodiscard]] std::string zip_with_deflated_entry(std::string_view name, std::string_view content) {
+  const std::vector<std::uint8_t> compressed = deflate_raw(content);
+  std::string zip;
+  append_le(zip, Field{.value = 0x04034B50, .width = 4});  // local header signature
+  append_le(zip, Field{.value = 20, .width = 2});          // version needed
+  append_le(zip, Field{.value = 0, .width = 2});           // flags
+  append_le(zip, Field{.value = 8, .width = 2});           // method: deflated
+  append_le(zip, Field{.value = 0, .width = 4});           // mod time and date
+  append_le(zip, Field{.value = 0, .width = 4});           // crc-32 (unchecked by the reader)
+  append_le(zip, Field{.value = compressed.size(), .width = 4});
+  append_le(zip, Field{.value = content.size(), .width = 4});
+  append_le(zip, Field{.value = name.size(), .width = 2});  // name length
+  append_le(zip, Field{.value = 0, .width = 2});            // extra length
+  zip.append(name);
+  for (const std::uint8_t byte : compressed) {
+    zip.push_back(static_cast<char>(byte));
+  }
+  const auto central_offset = static_cast<std::uint32_t>(zip.size());
+  append_le(zip, Field{.value = 0x02014B50, .width = 4});  // central header signature
+  append_le(zip, Field{.value = 20, .width = 2});          // version made by
+  append_le(zip, Field{.value = 20, .width = 2});          // version needed
+  append_le(zip, Field{.value = 0, .width = 2});           // flags
+  append_le(zip, Field{.value = 8, .width = 2});           // method: deflated
+  append_le(zip, Field{.value = 0, .width = 4});           // mod time and date
+  append_le(zip, Field{.value = 0, .width = 4});           // crc-32
+  append_le(zip, Field{.value = compressed.size(), .width = 4});
+  append_le(zip, Field{.value = content.size(), .width = 4});
+  append_le(zip, Field{.value = name.size(), .width = 2});  // name length
+  append_le(zip, Field{.value = 0, .width = 6});            // extra, comment and disk
+  append_le(zip, Field{.value = 0, .width = 2});            // internal attributes
+  append_le(zip, Field{.value = 0, .width = 4});            // external attributes
+  append_le(zip, Field{.value = 0, .width = 4});            // local header offset
+  zip.append(name);
+  const auto central_size = static_cast<std::uint32_t>(zip.size() - central_offset);
+  append_le(zip, Field{.value = 0x06054B50, .width = 4});  // end record signature
+  append_le(zip, Field{.value = 0, .width = 4});           // disk numbers
+  append_le(zip, Field{.value = 1, .width = 2});           // entries on this disk
+  append_le(zip, Field{.value = 1, .width = 2});           // total entries
+  append_le(zip, Field{.value = central_size, .width = 4});
+  append_le(zip, Field{.value = central_offset, .width = 4});
+  append_le(zip, Field{.value = 0, .width = 2});  // comment length
+  return zip;
 }
 
 /// Attribute values beyond ASCII: a Latin-1 letter, Arabic letters, and a character above U+FFFF, which UTF-16 holds
@@ -791,6 +859,40 @@ TEST(Archive, readManifestSemantics_whenThePoolsStringsStartPastItsChunk_returns
       with_field(manifest, kPoolStart + kPoolStringsStartField, Field{.value = chunk_size + 4, .width = 4});
 
   EXPECT_EQ(semantics_of(directory, broken), std::nullopt);
+}
+
+TEST(Archive, readManifestSemantics_whenTheManifestIsDeflated_hashesTheSameAsStored) {
+  // A store install deflates AndroidManifest.xml, so the reader must inflate it to the same bytes the packer sealed.
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string manifest = binary_manifest(kNonAsciiAttributes, true);
+  const std::optional<std::vector<std::uint8_t>> deflated =
+      read_manifest_semantics(apk_file(directory, zip_with_deflated_entry("AndroidManifest.xml", manifest)));
+
+  ASSERT_TRUE(deflated.has_value());
+  EXPECT_EQ(deflated, expected_semantics(kNonAsciiAttributes));
+  EXPECT_EQ(deflated, semantics_of(directory, manifest));
+}
+
+TEST(Archive, readManifestSemantics_ignoresTheStoreStampedSplitTypeAttributes) {
+  // bundletool stamps requiredSplitTypes and splitTypes on the base module's manifest, which the packer never saw.
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::array<StringAttribute, 1> bound{
+      {
+          {.name = "package", .value = "com.example"},
+      },
+  };
+  const std::array<StringAttribute, 3> stamped{
+      {
+          {.name = "package", .value = "com.example"},
+          {.name = "requiredSplitTypes", .value = "x"},
+          {.name = "splitTypes", .value = "y"},
+      },
+  };
+
+  EXPECT_EQ(semantics_of(directory, binary_manifest(stamped, true)),
+            semantics_of(directory, binary_manifest(bound, true)));
 }
 
 }  // namespace
