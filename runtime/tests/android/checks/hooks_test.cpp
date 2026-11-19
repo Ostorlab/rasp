@@ -104,6 +104,71 @@ TEST(Hooks, observeMaps_whenAMarkerIsUppercase_matchesCaseInsensitively) {
   EXPECT_EQ(observe_maps(path).at(0), maps_hits({line}));
 }
 
+TEST(Hooks, observeMaps_whenTheAppsPackageNameContainsFridays_doesNotReportTheAppsOwnMappings) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string maps =
+      "7f0000000000-7f0000010000 r--p 00000000 fd:00 1  /data/app/~~Xk3R==/com.tgifridays.app-Yq9==/base.apk\n"
+      "7f0000010000-7f0000020000 r-xp 00000000 fd:00 2  "
+      "/data/app/~~Xk3R==/com.tgifridays.app-Yq9==/lib/arm64/librasp.so\n"
+      "7f0000020000-7f0000030000 r--p 00000000 fd:00 3  "
+      "/data/app/~~Xk3R==/com.tgifridays.app-Yq9==/oat/arm64/base.odex\n"
+      "7f0000030000-7f0000040000 r--p 00000000 fd:00 4  /data/user/0/com.tgifridays.app/files/menu.db\n"
+      "7f0000040000-7f0000050000 r--p 00000000 00:00 0  [anon:dalvik-classes.dex extracted in memory from "
+      "/data/app/~~Xk3R==/com.tgifridays.app-Yq9==/base.apk]\n";
+  const std::string path = write_maps(directory, maps);
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_maps(path).at(0), maps_hits({}));
+}
+
+TEST(Hooks, observeMaps_whenTheAppsPackageNameContainsGadget_doesNotReportTheAppsOwnMappings) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string maps =
+      "7f0000000000-7f0000010000 r--p 00000000 fd:00 1  /data/app/~~Pq8w==/com.gadgetflow.shop-Tz4==/base.apk\n"
+      "7f0000010000-7f0000020000 r-xp 00000000 fd:00 2  "
+      "/data/app/~~Pq8w==/com.gadgetflow.shop-Tz4==/lib/arm64/librasp.so\n"
+      "7f0000020000-7f0000030000 r--p 00000000 fd:00 3  /data/user/0/com.gadgetflow.shop/files/cart.db (deleted)\n";
+  const std::string path = write_maps(directory, maps);
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_maps(path).at(0), maps_hits({}));
+}
+
+TEST(Hooks, observeMaps_whenARandomInstallFolderSpellsRiru_doesNotReportTheAppsOwnMappings) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string maps =
+      "7f0000000000-7f0000010000 r--p 00000000 fd:00 1  /data/app/~~a7RiRu2b==/co.app-Hw0RIRUx==/base.apk\n"
+      "7f0000010000-7f0000020000 r-xp 00000000 fd:00 2  "
+      "/data/app/~~a7RiRu2b==/co.app-Hw0RIRUx==/lib/arm64/librasp.so\n";
+  const std::string path = write_maps(directory, maps);
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_maps(path).at(0), maps_hits({}));
+}
+
+TEST(Hooks, observeMaps_whenAFileNameIsAFrameworksLibrary_reportsEachLineWhole) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::vector<std::string> lines = {
+      "7f0000500000-7f0000600000 r-xp 00000000 fd:00 300  /data/local/tmp/frida-agent-64.so",
+      "7f0000600000-7f0000700000 r-xp 00000000 fd:00 301  /data/app/~~a==/co.app-1/lib/arm64/libgadget.so",
+      "7f0000700000-7f0000800000 r--p 00000000 fd:00 302  /system/framework/XposedBridge.jar",
+      "7f0000800000-7f0000900000 r-xp 00000000 fd:00 303  /data/local/tmp/frida-agent-64.so (deleted)",
+      "7f0000900000-7f0000a00000 r-xp 00000000 00:01 304  /memfd:frida-agent-64.so (deleted)",
+  };
+  std::string maps(kCleanMaps);
+  for (const std::string& line : lines) {
+    maps += line + "\n";
+  }
+  const std::string path = write_maps(directory, maps);
+  ASSERT_FALSE(path.empty());
+
+  EXPECT_EQ(observe_maps(path).at(0), maps_hits(lines));
+}
+
 TEST(Hooks, observeMaps_whenARegionIsWritableExecutable_reportsItUnderRwxRegions) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
