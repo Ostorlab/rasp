@@ -120,8 +120,11 @@ constexpr long kExdev = 18;
 /// /sys/fs/selinux/enforce is readable at all — the shell domain, platform builds and userdebug images read it.
 ///
 /// @param fd The open file to test.
-/// @return `true` when the file is one the kernel generates, so its content can be the kernel's answer.
-[[nodiscard]] bool on_kernel_filesystem(long fd) {
+/// @return 0 when the file is one the kernel generates, so its content can be the kernel's answer; -EXDEV when it
+/// opened but lives on a filesystem whose files hold stored bytes; and the negative errno fstatfs reported when the
+/// kernel couldn't answer the question at all (statfs(2): EIO, EBADF, EFAULT, ENOMEM, ENOSYS), kept verbatim so a
+/// caller reports the failure it had rather than one it didn't.
+[[nodiscard]] long kernel_filesystem_verdict(long fd) {
   // The magics as the signed type statfs reports f_type in, so each comparison is between like integers.
   constexpr long kProcfsMagic = 0x9fa0;
   constexpr long kSysfsMagic = 0x62656572;
@@ -131,9 +134,12 @@ constexpr long kExdev = 18;
       // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
       raw_syscall(__NR_fstatfs, fd, reinterpret_cast<long>(&filesystem), 0, 0, 0, 0);
   if (failed(stated)) {
-    return false;
+    return stated;
   }
-  return filesystem.f_type == kProcfsMagic || filesystem.f_type == kSysfsMagic || filesystem.f_type == kSelinuxfsMagic;
+  if (filesystem.f_type == kProcfsMagic || filesystem.f_type == kSysfsMagic || filesystem.f_type == kSelinuxfsMagic) {
+    return 0;
+  }
+  return -kExdev;
 }
 
 #else
@@ -156,13 +162,18 @@ constexpr long kExdev = 18;
 
 long open_proc_file(std::string_view path) {
   const long fd = raw_open(path);
-  if (failed(fd) || on_kernel_filesystem(fd)) {
+  if (failed(fd)) {
     return fd;
   }
-  // The file opened but holds stored bytes, so it is closed and refused: whatever the close reports, the descriptor is
-  // not handed out.
-  static_cast<void>(close_file(fd));
-  return -kExdev;
+  // The verdict keeps its three cases apart: a file the kernel generates is handed out, a file that holds stored
+  // bytes is closed and refused as -EXDEV, and a check the kernel couldn't make is closed and reported as the errno
+  // it returned, so -EXDEV names only the stored-bytes refusal it documents.
+  const long verdict = kernel_filesystem_verdict(fd);
+  if (verdict != 0) {
+    static_cast<void>(close_file(fd));
+    return verdict;
+  }
+  return fd;
 }
 
 std::optional<std::string> read_proc_file(std::string_view path, std::size_t limit) {
@@ -247,7 +258,12 @@ std::optional<std::string> first_proc_line_matching(std::string_view path, LineP
       }
       break;
     }
-    const std::string_view bytes(chunk.data(), static_cast<std::size_t>(count));
+    // The cap is a hard bound on the bytes examined: the last chunk is sliced to what remains of it, the way Go's
+    // io.LimitedReader and Chromium's ReadFileToStringWithMaxSize clamp their final read, and a line the cap cuts
+    // short never matches, the same way the file's end cuts one.
+    const std::size_t room = cap - scanned;
+    const bool capped = static_cast<std::size_t>(count) > room;
+    const std::string_view bytes(chunk.data(), capped ? room : static_cast<std::size_t>(count));
     scanned += bytes.size();
     std::size_t start = 0;
     while (start < bytes.size()) {
@@ -265,6 +281,11 @@ std::optional<std::string> first_proc_line_matching(std::string_view path, LineP
       start = newline + 1;
     }
     if (found.has_value()) {
+      break;
+    }
+    if (capped) {
+      // The cap ended the scan mid-chunk: the partial line it leaves is never evaluated, exactly as a line the
+      // file's end cuts short is not.
       break;
     }
   }
