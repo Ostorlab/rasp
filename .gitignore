@@ -12,3 +12,7 @@ htmlcov/
 .venv/
 
 *.egg-info/
+
+# Runtimes built locally into the packer; releases build their own
+packer/src/rasp_packer/android/resources/lib/
+packer/src/rasp_packer/android/resources/stub.dex

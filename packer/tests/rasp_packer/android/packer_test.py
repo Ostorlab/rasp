@@ -39,7 +39,7 @@ _CONFIG = runtime_config.RuntimeConfig(
 )
 # The real prebuilt stub dex: the packer patches it with per-app names, so the tests predict the
 # patch with the same seeded generator the packs below draw.
-_STUB_DEX = resources.load().stub_dex
+_STUB_DEX = conftest.STUB_DEX.read_bytes()
 _NAMES = defingerprint.generate_names(random.Random(0), frozenset(), _STUB_DEX)
 _PATCHED_STUB_DEX = defingerprint.patch_stub_dex(
     _STUB_DEX,
