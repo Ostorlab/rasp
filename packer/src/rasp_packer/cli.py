@@ -16,6 +16,7 @@ EXIT_FAILED = 1
 
 
 def _parser() -> argparse.ArgumentParser:
+    """Builds the parser of the `rasp` command line, with its `pack` and `checks` commands."""
     parser = argparse.ArgumentParser(
         prog="rasp",
         description="Protects built Android (APK, AAB) and iOS (IPA) apps with the RASP runtime.",
@@ -71,6 +72,16 @@ def _parser() -> argparse.ArgumentParser:
         type=pathlib.Path,
         help="the certificate the app will be signed with, PEM or DER; the pack refuses to decrypt "
         "under any other signer (Android only)",
+    )
+
+    listing = commands.add_parser(
+        "checks", help="list the check groups of a platform, or of both"
+    )
+    listing.add_argument(
+        "--platform",
+        type=platforms.Platform,
+        choices=list(platforms.Platform),
+        help="the platform to list (default: both)",
     )
     return parser
 
@@ -137,6 +148,20 @@ def _pack(arguments: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _checks(arguments: argparse.Namespace) -> int:
+    """Prints the check groups of the platform given on the command line, or of both under a heading each."""
+    platform: platforms.Platform | None = arguments.platform
+    if platform is not None:
+        print("\n".join(check_groups.describe_checks(platform)))
+        return EXIT_OK
+    sections = [
+        f"{each}:\n" + "\n".join(check_groups.describe_checks(each))
+        for each in platforms.Platform
+    ]
+    print("\n\n".join(sections))
+    return EXIT_OK
+
+
 def main(argv: collections.abc.Sequence[str] | None = None) -> int:
     """Runs the `rasp` command line.
 
@@ -150,5 +175,7 @@ def main(argv: collections.abc.Sequence[str] | None = None) -> int:
     match arguments.command:
         case "pack":
             return _pack(arguments)
+        case "checks":
+            return _checks(arguments)
         case _:
             raise AssertionError(f"unknown command {arguments.command!r}")

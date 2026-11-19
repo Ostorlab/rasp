@@ -84,3 +84,27 @@ def testResolveChecks_whenUnknownChecksRepeat_reportsEachOnceInOrder() -> None:
 
     assert resolved.checks == ("identity", "root")
     assert resolved.skipped == ("zeta", "alpha")
+
+
+@pytest.mark.parametrize("platform", list(platforms.Platform))
+def testDescriptions_whenRead_coverEveryCheckOfThePlatform(
+    platform: platforms.Platform,
+) -> None:
+    """Every check group of the platform has a non-empty description."""
+    for check in checks.CHECKS[platform]:
+        assert checks.DESCRIPTIONS[check].strip() != ""
+
+
+def testDescribeChecks_whenIosIsListed_givesOneLinePerGroupInRunOrderAndMarksTheRequiredOne() -> (
+    None
+):
+    """The listing has one line per group, led by its id, and only the required group is marked."""
+    lines = checks.describe_checks(platforms.Platform.IOS)
+
+    assert [line.split()[0] for line in lines] == list(
+        checks.CHECKS[platforms.Platform.IOS]
+    )
+    assert [line.endswith("(always on)") for line in lines] == [
+        check in checks.REQUIRED_CHECKS
+        for check in checks.CHECKS[platforms.Platform.IOS]
+    ]

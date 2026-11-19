@@ -5,9 +5,11 @@ from importlib import metadata
 
 import pytest
 
+from rasp_packer import checks
 from rasp_packer import cli
 from rasp_packer import identity
 from rasp_packer import packer
+from rasp_packer import platforms
 from rasp_packer import runtime_config
 from rasp_packer.android import packer as android_packer
 
@@ -274,3 +276,29 @@ def testMain_whenNoMapping_passesNoneAsTheMapping(
     cli.main(_pack_arguments(tmp_path))
 
     assert captured["mapping"] is None
+
+
+def testMain_whenChecksListedForAPlatform_printsItsGroupsAndReturnsOk(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`rasp checks --platform android` prints one line per Android group."""
+    exit_code = cli.main(["checks", "--platform", "android"])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert output.splitlines() == checks.describe_checks(platforms.Platform.ANDROID)
+    assert "identity" in output
+    assert "(always on)" in output
+
+
+def testMain_whenChecksListedWithoutPlatform_printsEachPlatformUnderAHeading(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`rasp checks` lists both platforms, each under its name."""
+    exit_code = cli.main(["checks"])
+
+    assert exit_code == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert "android:" in lines
+    assert "ios:" in lines
+    assert "codesign" in "".join(lines)

@@ -37,6 +37,22 @@ REQUIRED_CHECKS: frozenset[str] = frozenset({"identity"})
 """The ids of the check groups every protected app runs, whatever the caller chooses, on every platform."""
 
 
+DESCRIPTIONS: collections.abc.Mapping[str, str] = {
+    "root": "root files, writable system partitions, SELinux and build properties",
+    "jailbreak": "jailbreak files, sandbox escape and process spawning",
+    "debugger": "a debugger attached to the app",
+    "hooks": "Frida and other libraries injected into the app",
+    "integrity": "the runtime's code changed in memory",
+    "mitm": "VPN tunnels, and proxies on iOS",
+    "identity": "a repackaged copy of the app",
+    "codesign": "the app's live code-signing flags: an invalid signature, a debugged process, "
+    "task access and relaxed library validation",
+    "emulator": "an emulator or the iOS Simulator",
+    "virtualizer": "the app running inside another app's container",
+}
+"""A one-line description of what each check group detects, by id. Every id in CHECKS has one."""
+
+
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class ResolvedChecks:
     """The check groups the runtime's config lists, and the ids the packer skipped.
@@ -103,3 +119,26 @@ def checks_mask(
             raise ValueError(f"{check!r} is not a check of {platform}")
         mask |= 1 << order.index(check)
     return mask
+
+
+def describe_checks(platform: platforms.Platform) -> list[str]:
+    """Lists the check groups of a platform, one line each, in the order the runtime runs them.
+
+    A line is the id padded to the longest id of the platform, then the description of the group.
+    A required group, which every protected app runs, ends with "(always on)".
+
+    Args:
+        platform: The platform to list.
+
+    Returns:
+        The lines, one per group.
+    """
+    order = CHECKS[platform]
+    width = max(len(check) for check in order)
+    lines = []
+    for check in order:
+        line = f"{check.ljust(width)}  {DESCRIPTIONS[check]}"
+        if check in REQUIRED_CHECKS:
+            line += " (always on)"
+        lines.append(line)
+    return lines

@@ -8,6 +8,14 @@ The packer is a Python library, and the `rasp` command line is a thin client of 
 rasp pack app.apk --platform android --build-id my-build-1 --checks root,debugger,hooks --output app-protected.apk
 ```
 
+To see the check groups of a platform, in the order the runtime runs them, with what each detects:
+
+```
+rasp checks --platform android
+```
+
+Without `--platform`, `rasp checks` lists both platforms, each under a heading. `identity` is marked as always on.
+
 ```python
 import pathlib
 
