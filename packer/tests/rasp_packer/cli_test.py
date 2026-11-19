@@ -5,9 +5,11 @@ from importlib import metadata
 
 import pytest
 
+from rasp_packer import checks as check_groups
 from rasp_packer import cli
 from rasp_packer import identity
 from rasp_packer import packer
+from rasp_packer import platforms
 from rasp_packer import runtime_config
 from rasp_packer.android import packer as android_packer
 
@@ -149,11 +151,12 @@ def testMain_whenChecksHaveNoId_exitsWithUsageError(
     assert "give at least one check id" in capsys.readouterr().err
 
 
-def testMain_whenChecksAreNotGiven_warnsAndPassesNoChecksToThePacker(
+def testMain_whenChecksAreNotGiven_passesEveryCheckOfThePlatformToThePackerWithoutWarning(
     tmp_path: pathlib.Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Without `--checks`, the packer gets every check of the platform and nothing is warned."""
     calls: list[dict[str, object]] = []
 
     def fake_pack(**arguments: object) -> packer.PackResult:
@@ -171,12 +174,10 @@ def testMain_whenChecksAreNotGiven_warnsAndPassesNoChecksToThePacker(
     exit_code = cli.main(_pack_arguments(tmp_path))
 
     assert exit_code == cli.EXIT_OK
-    assert [call["checks"] for call in calls] == [[]]
-    assert capsys.readouterr().err == (
-        "rasp pack: warning: no --checks given, so the app runs only the required checks: "
-        "identity. Pass --checks, such as --checks debugger,hooks, to choose the checks it "
-        "runs.\n"
-    )
+    assert [call["checks"] for call in calls] == [
+        list(check_groups.CHECKS[platforms.Platform.IOS])
+    ]
+    assert capsys.readouterr().err == ""
 
 
 def testMain_whenACheckIsUnknown_warnsAndPacksWithTheOtherChecks(

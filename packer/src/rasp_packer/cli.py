@@ -16,6 +16,7 @@ EXIT_FAILED = 1
 
 
 def _parser() -> argparse.ArgumentParser:
+    """Returns the parser of the `rasp` command line, with its `pack` command."""
     parser = argparse.ArgumentParser(
         prog="rasp",
         description="Protects built Android (APK, AAB) and iOS (IPA) apps with the RASP runtime.",
@@ -55,7 +56,7 @@ def _parser() -> argparse.ArgumentParser:
         "--checks",
         type=_split_checks,
         help="the check groups the app runs, comma-separated, such as debugger,hooks; "
-        f"{_required_checks()} always runs (default: only {_required_checks()})",
+        f"{_required_checks()} always runs (default: every check group of the platform)",
     )
     pack.add_argument(
         "--mapping",
@@ -100,18 +101,12 @@ def _required_checks() -> str:
 def _pack(arguments: argparse.Namespace) -> int:
     """Packs the app given on the command line and prints the result.
 
-    Without `--checks`, it warns and packs the app with only the required check groups. It warns
+    Without `--checks`, it packs the app with every check group of the platform. It warns
     about each given check id that is not one of the platform's groups, which the packer skips.
     """
     checks: list[str] | None = arguments.checks
     if checks is None:
-        print(
-            "rasp pack: warning: no --checks given, so the app runs only the required checks: "
-            f"{_required_checks()}. Pass --checks, such as --checks debugger,hooks, to choose "
-            "the checks it runs.",
-            file=sys.stderr,
-        )
-        checks = []
+        checks = list(check_groups.CHECKS[arguments.platform])
     try:
         result = packer.pack(
             app=arguments.app,
