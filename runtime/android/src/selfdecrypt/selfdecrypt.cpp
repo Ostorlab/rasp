@@ -60,13 +60,38 @@ long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) 
                    : "rcx", "r11", "memory");
   return ret;
 }
+#elif defined(__arm__)
+/// A 32-bit ARM (EABI) syscall: number in r7, arguments in r0..r5, result in r0. r7 is saved and restored so the
+/// syscall stub works whether or not the build keeps r7 as the frame pointer.
+long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) {
+  register long r0 __asm__("r0") = a0;
+  register long r1 __asm__("r1") = a1;
+  register long r2 __asm__("r2") = a2;
+  register long r3 __asm__("r3") = a3;
+  register long r4 __asm__("r4") = a4;
+  register long r5 __asm__("r5") = a5;
+  __asm__ volatile(
+      "push {r7}\n\t"
+      "mov r7, %[nr]\n\t"
+      "svc #0\n\t"
+      "pop {r7}\n\t"
+      : "+r"(r0)
+      : [nr] "r"(nr), "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)
+      : "memory", "cc");
+  return r0;
+}
 #else
-#error "the self-decrypt bootstrap supports only aarch64 and x86_64"
+#error "the self-decrypt bootstrap supports only aarch64, arm and x86_64"
 #endif
 
 /// A raw mmap; returns MAP_FAILED on the kernel's -errno range, as libc does.
 [[nodiscard]] void* raw_mmap(void* addr, std::size_t len, int prot, int flags, int fd, long offset) {
+#if defined(__arm__)
+  // 32-bit ARM has no sys_mmap with register arguments; mmap2 takes the offset in pages, and every call here passes 0.
+  long r = raw_syscall(__NR_mmap2, reinterpret_cast<long>(addr), static_cast<long>(len), prot, flags, fd, offset >> 12);
+#else
   long r = raw_syscall(__NR_mmap, reinterpret_cast<long>(addr), static_cast<long>(len), prot, flags, fd, offset);
+#endif
   if (r < 0 && r >= -4095) {
     return MAP_FAILED;
   }
@@ -113,6 +138,10 @@ void flush_icache(void* start, std::size_t len) {
   }
   __asm__ volatile("dsb ish" : : : "memory");
   __asm__ volatile("isb" : : : "memory");
+#elif defined(__arm__)
+  // Cache maintenance is privileged in user mode on 32-bit ARM, so the kernel does it: __ARM_NR_cacheflush is 0xf0002.
+  std::uintptr_t begin = reinterpret_cast<std::uintptr_t>(start);
+  raw_syscall(0xf0002, static_cast<long>(begin), static_cast<long>(begin + len), 0, 0, 0, 0);
 #else
   static_cast<void>(start);
   static_cast<void>(len);
@@ -200,14 +229,18 @@ void store32_le(std::uint8_t* p, std::uint32_t v) {
   return k < n && buf[k] != '0';
 }
 
-/// The smallest load base a real 64-bit Android process maps a shared library at: the loader places libraries in the
-/// high ASLR region, an order of magnitude above 4 GiB. Whole-app emulators map their first module at their own
-/// default base, below this bound, which no real 64-bit device produces.
+/// The smallest load base a real Android process maps a shared library at. On 64-bit the loader places libraries in
+/// the high ASLR region, an order of magnitude above 4 GiB; on 32-bit it maps them well above the low addresses a
+/// whole-app emulator leaves its first module at. A base below the bound means no real loader mapped the image.
+#if defined(__LP64__)
 inline constexpr std::uintptr_t kMinimumLibraryBase = 1ULL << 32;
+#else
+inline constexpr std::uintptr_t kMinimumLibraryBase = 1U << 24;
+#endif
 
 /// Whether the library's own load base looks implausible. The base is the load bias (link base is 0 for a PIE), so
 /// it is `&g_meta - meta_vaddr`, and the ELF header sits there in the first LOAD segment, which is always mapped
-/// readable. A base of 0 (what a bare Unicorn run leaves), no ELF magic at the base, or a base below what a 64-bit
+/// readable. A base of 0 (what a bare Unicorn run leaves), no ELF magic at the base, or a base below what the
 /// loader's ASLR ever produces, means the image was not mapped by a real loader. It reads only the base page, never
 /// the unreadable gaps the loader leaves between segments, so it is safe on 4 KB- and 16 KB-page devices alike.
 /// Reached only once g_meta.packed == 1, so meta_vaddr holds the link address.

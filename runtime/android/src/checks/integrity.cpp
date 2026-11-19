@@ -519,10 +519,11 @@ namespace {
 /// @return The digest as hex. Nothing when the section is missing, too small, or unwritten.
 [[nodiscard]] std::optional<std::string> expected_text_hash(std::span<const std::uint8_t> image) {
   const std::optional<SectionRegion> section = find_section_region(image, kConfigSectionName);
-  if (!section || section->size < 2 * kDigestSize || !range_fits(section->file_offset, section->size, image.size())) {
+  const std::uint64_t digest_pair = std::uint64_t{2} * kDigestSize;
+  if (!section || section->size < digest_pair || !range_fits(section->file_offset, section->size, image.size())) {
     return std::nullopt;
   }
-  const auto start = static_cast<std::size_t>(section->file_offset + section->size - (2 * kDigestSize));
+  const auto start = static_cast<std::size_t>(section->file_offset + section->size - digest_pair);
   const std::span<const std::uint8_t> digest = image.subspan(start, kDigestSize);
   if (std::ranges::all_of(digest, [](std::uint8_t byte) { return byte == 0; })) {
     return std::nullopt;
