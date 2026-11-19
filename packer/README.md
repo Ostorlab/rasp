@@ -32,6 +32,25 @@ result = packer.pack(
 
 `pack` returns the path of the protected app, the app's package name, version and build id, and the check groups it skipped.
 
+## Inspecting an app
+
+`inspect` reads a built app without changing it and says whether it is protected. For a protected app it also prints the build id and the check groups the packer wrote into the runtime's config, and on Android the ABIs that carry the runtime.
+
+```
+rasp inspect app-protected.apk --platform android
+```
+
+```
+protected  yes
+package    com.example.app
+version    2.4.1
+build id   my-build-1
+checks     debugger,hooks,identity,root
+abis       arm64-v8a,armeabi-v7a
+```
+
+An app without the runtime prints `protected  no` with its package and version. From Python, `rasp_packer.inspect.inspect(app=..., platform=...)` returns the same fields.
+
 ## What a protected app gets
 
 On Android, the packer encrypts the app's own classes, adds a small stub and the runtime library, and points the manifest at the stub. The keys are not stored in the app: the runtime rebuilds them on the device from the app and the device, so a modified app, library or environment cannot decrypt them. The protected app needs Android 12 (API 31) or later, and the packer raises a lower minimum SDK. An app with native libraries for an ABI the runtime is not built for is refused.
