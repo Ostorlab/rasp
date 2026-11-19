@@ -29,8 +29,9 @@ result = packer.pack(
 - `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added, an unknown group is skipped with a warning, and without `--checks` only `identity` is chosen. See the groups in the [repository's README](../README.md#checks).
 - `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
 - `--pin-certificate` (Android): the certificate the app will be signed with, PEM or DER. The protected app then works only when it is signed with that certificate.
+- `--json`: prints the result as one JSON object with sorted keys instead of text: `build_id`, `checks`, `output`, `package_name`, `skipped_checks` and `version`. Warnings still go to stderr.
 
-`pack` returns the path of the protected app, the app's package name, version and build id, and the check groups it skipped.
+`pack` returns the path of the protected app, the app's package name, version and build id, the check groups the app runs, and the check groups it skipped.
 
 ## How do I check whether an app is protected?
 
@@ -49,7 +50,7 @@ checks     debugger,hooks,identity,root
 abis       arm64-v8a,armeabi-v7a
 ```
 
-An app without the runtime prints `protected  no` with its package and version. From Python, `rasp_packer.inspection.inspect(app=..., platform=...)` returns the same fields.
+An app without the runtime prints `protected  no` with its package and version. With `--json`, `inspect` prints one JSON object with sorted keys instead: `abis`, `build_id` (null for an unprotected app), `checks`, `package_name`, `protected` and `version`. From Python, `rasp_packer.inspection.inspect(app=..., platform=...)` returns the same fields.
 
 ## What a protected app gets
 
