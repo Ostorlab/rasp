@@ -218,3 +218,56 @@ def testRemoveDebuggable_whenTheAppDoesNotDeclareIt_returnsTheManifestUnchanged(
     data = (_DEBUGGABLE_FIXTURES / "manifest_not_debuggable.pb").read_bytes()
 
     assert proto_manifest.remove_debuggable(data) == data
+
+
+# ── semantics ────────────────────────────────────────────────
+
+
+def _varint(value: int) -> bytes:
+    out = bytearray()
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        out.append(byte | (0x80 if value else 0))
+        if not value:
+            return bytes(out)
+
+
+def _length_delimited(field_number: int, payload: bytes) -> bytes:
+    return _varint((field_number << 3) | 2) + _varint(len(payload)) + payload
+
+
+def _manifest_with_stamped_attributes(manifest: bytes) -> bytes:
+    """The fixture manifest with the two attributes bundletool stamps on the base module added to <manifest>."""
+    # The root XmlNode's first field is the <manifest> XmlElement; append two XmlAttribute (field 4) entries to it.
+    assert manifest[0] == 0x0A
+    length, size = _decode_varint(manifest, 1)
+    header = 1 + size
+    element = manifest[header : header + length]
+    for name in ("requiredSplitTypes", "splitTypes"):
+        name_field = _length_delimited(2, name.encode("utf-8"))
+        value_field = _length_delimited(3, b"")
+        element += _length_delimited(4, name_field + value_field)
+    return bytes([0x0A]) + _varint(len(element)) + element + manifest[header + length :]
+
+
+def _decode_varint(data: bytes, pos: int) -> tuple[int, int]:
+    value = 0
+    shift = 0
+    size = 0
+    while True:
+        byte = data[pos + size]
+        value |= (byte & 0x7F) << shift
+        size += 1
+        if not byte & 0x80:
+            return value, size
+        shift += 7
+
+
+def testSemantics_whenTheStoreStampsSplitTypeAttributes_isUnchanged(
+    manifest_bytes: bytes,
+) -> None:
+    stamped = _manifest_with_stamped_attributes(manifest_bytes)
+
+    assert b"requiredSplitTypes" in stamped
+    assert proto_manifest.semantics(stamped) == proto_manifest.semantics(manifest_bytes)

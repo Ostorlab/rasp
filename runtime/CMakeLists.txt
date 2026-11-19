@@ -61,6 +61,7 @@ endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Android" OR RASP_BUILD_TESTS)
   include(cmake/loader_dex.cmake)
+  find_package(ZLIB REQUIRED)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")

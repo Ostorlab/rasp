@@ -130,7 +130,7 @@ add_executable(rasp_android_archive_test android/apk/archive_test.cpp ${PROJECT_
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
 target_include_directories(rasp_android_archive_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(rasp_android_archive_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language GTest::gtest_main)
+target_link_libraries(rasp_android_archive_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language GTest::gtest_main ZLIB::ZLIB)
 gtest_discover_tests(rasp_android_archive_test)
 
 add_executable(rasp_android_apk_file_test android/util/apk_file_test.cpp
@@ -162,7 +162,7 @@ add_executable(rasp_android_dex_store_test android/payload/dex_store_test.cpp
 target_include_directories(rasp_android_dex_store_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_dex_store_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
-  GTest::gtest_main)
+  GTest::gtest_main ZLIB::ZLIB)
 gtest_discover_tests(rasp_android_dex_store_test)
 
 add_executable(rasp_android_cipher_test android/payload/cipher_test.cpp ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp)
@@ -186,7 +186,7 @@ add_executable(rasp_android_key_schedule_test android/payload/key_schedule_test.
 target_include_directories(rasp_android_key_schedule_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_key_schedule_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
-  GTest::gtest_main)
+  GTest::gtest_main ZLIB::ZLIB)
 gtest_discover_tests(rasp_android_key_schedule_test)
 
 add_executable(rasp_android_key_schedule_bounds_test android/payload/key_schedule_bounds_test.cpp
@@ -199,7 +199,7 @@ add_executable(rasp_android_key_schedule_bounds_test android/payload/key_schedul
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
 target_include_directories(rasp_android_key_schedule_bounds_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
 target_link_libraries(rasp_android_key_schedule_bounds_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings
-  rasp_language GTest::gtest_main)
+  rasp_language GTest::gtest_main ZLIB::ZLIB)
 gtest_discover_tests(rasp_android_key_schedule_bounds_test DISCOVERY_MODE PRE_TEST)
 
 add_executable(rasp_android_selfdecrypt_chacha20_test android/selfdecrypt/chacha20_test.cpp
