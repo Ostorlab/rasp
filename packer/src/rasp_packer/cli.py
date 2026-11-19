@@ -16,6 +16,7 @@ EXIT_FAILED = 1
 
 
 def _parser() -> argparse.ArgumentParser:
+    """Builds the argument parser of the `rasp` command line."""
     parser = argparse.ArgumentParser(
         prog="rasp",
         description="Protects built Android (APK, AAB) and iOS (IPA) apps with the RASP runtime.",
@@ -48,8 +49,9 @@ def _parser() -> argparse.ArgumentParser:
     pack.add_argument(
         "--output",
         type=pathlib.Path,
-        required=True,
-        help="where to write the protected app",
+        default=None,
+        help="where to write the protected app (default: next to the app, named "
+        "<name>-protected<extension>, such as app-protected.apk)",
     )
     pack.add_argument(
         "--checks",
@@ -112,11 +114,14 @@ def _pack(arguments: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         checks = []
+    output: pathlib.Path | None = arguments.output
+    if output is None:
+        output = packer.default_output_path(arguments.app)
     try:
         result = packer.pack(
             app=arguments.app,
             platform=arguments.platform,
-            output=arguments.output,
+            output=output,
             build_id=arguments.build_id,
             checks=checks,
             mapping=arguments.mapping,
