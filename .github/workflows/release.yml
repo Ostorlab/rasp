@@ -138,6 +138,8 @@ jobs:
         include:
           - abi: arm64-v8a
             file: "ELF 64-bit LSB shared object, ARM aarch64"
+          - abi: armeabi-v7a
+            file: "ELF 32-bit LSB shared object, ARM"
           - abi: x86_64
             file: "ELF 64-bit LSB shared object, x86-64"
     defaults:
@@ -275,14 +277,14 @@ jobs:
           venv/bin/python -c 'from rasp_packer.android import resources
           artifacts = resources.load()
           print(len(artifacts.stub_dex), sorted(artifacts.libraries))
-          assert sorted(artifacts.libraries) == ["arm64-v8a", "x86_64"], sorted(artifacts.libraries)'
+          assert sorted(artifacts.libraries) == ["arm64-v8a", "armeabi-v7a", "x86_64"], sorted(artifacts.libraries)'
       - name: Pack the Android test app with the wheel
         run: |
           "$RUNNER_TEMP/venv/bin/rasp" pack --platform android --build-id "release-${VERSION}" \
             --output "$RUNNER_TEMP/packed.aab" packer/tests/apps/android/InsecureBankv2.aab
           libraries="$(unzip -Z1 "$RUNNER_TEMP/packed.aab" 'base/lib/*' | sort)"
           echo "$libraries"
-          test "$(grep -c '\.so$' <<< "$libraries")" -eq 2
+          test "$(grep -c '\.so$' <<< "$libraries")" -eq 3
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
