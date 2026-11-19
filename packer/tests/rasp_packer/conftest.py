@@ -10,6 +10,7 @@ import pytest
 
 _DATA = pathlib.Path(__file__).parent / "ios" / "data"
 RUNTIME_CONFIG_DATA = pathlib.Path(__file__).parent / "data" / "runtime_config"
+STUB_DEX = pathlib.Path(__file__).parent / "data" / "stub.dex"
 PACKAGE_NAME = "dev.ostorlab.demo"
 VERSION = "1.2.3"
 APP_INFO = {

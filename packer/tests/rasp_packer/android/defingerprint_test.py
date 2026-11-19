@@ -5,9 +5,9 @@ import random
 import pytest
 
 from rasp_packer.android import defingerprint
-from rasp_packer.android import resources
+from tests.rasp_packer import conftest
 
-_STUB_DEX = resources.load().stub_dex
+_STUB_DEX = conftest.STUB_DEX.read_bytes()
 
 
 def testGenerateNames_whenGivenTheSameSeed_repeatsTheNames() -> None:
