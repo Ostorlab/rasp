@@ -84,3 +84,27 @@ def testResolveChecks_whenUnknownChecksRepeat_reportsEachOnceInOrder() -> None:
 
     assert resolved.checks == ("identity", "root")
     assert resolved.skipped == ("zeta", "alpha")
+
+
+def testSuggestCheck_whenTheIdIsATypo_returnsTheClosestCheck() -> None:
+    """Checks that a typo of a check id gets that check as the suggestion."""
+
+    suggestion = checks.suggest_check(platforms.Platform.ANDROID, "debuger")
+
+    assert suggestion == "debugger"
+
+
+def testSuggestCheck_whenNoCheckIsClose_returnsNone() -> None:
+    """Checks that an id unlike every check gets no suggestion."""
+
+    suggestion = checks.suggest_check(platforms.Platform.ANDROID, "telepathy")
+
+    assert suggestion is None
+
+
+def testSuggestCheck_whenTheCloseCheckIsOfTheOtherPlatform_returnsNone() -> None:
+    """Checks that the suggestion comes from the platform's own checks only."""
+
+    suggestion = checks.suggest_check(platforms.Platform.ANDROID, "jailbrek")
+
+    assert suggestion is None
