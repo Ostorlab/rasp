@@ -79,7 +79,9 @@ constexpr std::size_t kMaxMapsSize = std::size_t{4} << 20U;
 /// reader, not libc, so an interposed libc read function can't answer for the kernel with a forged mapping and steer
 /// the package the `owns_package_data` gate checks — and the scan holds one line at a time, so a map larger than any
 /// whole read would allocate still locates the store, stopping at the base APK's line when there is one and falling
-/// back to the first /data/app APK when there isn't.
+/// back to the first /data/app APK when there isn't. The shape follows the standard prior art: Chromium's maps
+/// reader (https://chromium.googlesource.com/chromium/src/+/main/base/debug/proc_maps_linux.cc) reads
+/// /proc/self/maps in a loop because a fixed whole-file cap silently truncates and loses the trailing regions.
 [[nodiscard]] std::optional<std::string> apk_from_maps() {
   // The base APK's line first, and the first /data/app APK's when there is none.
   for (const rasp::util::LinePredicate matches : {names_base_apk, names_an_apk}) {

@@ -28,7 +28,8 @@ namespace {
 constexpr long kErrnoRange = 4095;
 
 /// EINTR, the errno a direct system call reports when a signal whose handler wasn't installed with SA_RESTART
-/// interrupts it — several of the handlers ART and bionic install aren't. stdio's readers retry these silently; a raw
+/// (https://man7.org/linux/man-pages/man7/signal.7.html) interrupts it — several of the handlers ART and bionic
+/// install aren't. stdio's readers retry these silently; a raw
 /// one reports them, so the open and the read retry it, and the close ignores it (the kernel has already freed the
 /// descriptor), or a random signal would turn a sensor fact into an error observation, which the key schedule's gates
 /// fold as a cleared gate and a wrong key.
@@ -105,15 +106,18 @@ constexpr long kExdev = 18;
 /// Whether the open file `fd` lives on a filesystem whose files the kernel generates at read time.
 ///
 /// The sensor files this reader serves come from procfs, sysfs and selinuxfs. Their bytes are built at read time:
-/// sysfs attributes report the page size rather than any content length (the kernel's sysfs documentation specifies
-/// "the buffer will always be PAGE_SIZE bytes in length"), and seq_file's seek handles only the start and the current
-/// position, so an end-of-file size is not a fact these files carry. A file someone wrote — a copy on storage, a
-/// memfd — holds its bytes elsewhere, so the filesystem the descriptor sits on, not any size it claims, names a
-/// copy: an empty regular file reports no size and still isn't the kernel's answer.
+/// sysfs attributes report the page size rather than any content length (the kernel's sysfs documentation,
+/// https://docs.kernel.org/filesystems/sysfs.html, specifies "the buffer will always be PAGE_SIZE bytes in
+/// length"), and a seq_file's seek handles only the start and the current position (fs/seq_file.c, seq_lseek:
+/// https://github.com/torvalds/linux/blob/master/fs/seq_file.c), so an end-of-file size is not a fact these files
+/// carry. A file someone wrote — a copy on storage, a memfd — holds its bytes elsewhere, so the filesystem the
+/// descriptor sits on, not any size it claims, names a copy: an empty regular file reports no size and still isn't
+/// the kernel's answer.
 ///
-/// The magics are the uapi's stable numbers, measured on the kernel this runtime was verified against: procfs
-/// 0x9fa0, sysfs 0x62656572, selinuxfs 0xf97cff8c. The selinux magic matters wherever /sys/fs/selinux/enforce is
-/// readable at all — the shell domain, platform builds and userdebug images read it.
+/// The magics are the uapi's stable numbers, from include/uapi/linux/magic.h
+/// (https://github.com/torvalds/linux/blob/master/include/uapi/linux/magic.h), measured on the kernel this runtime
+/// was verified against: procfs 0x9fa0, sysfs 0x62656572, selinuxfs 0xf97cff8c. The selinux magic matters wherever
+/// /sys/fs/selinux/enforce is readable at all — the shell domain, platform builds and userdebug images read it.
 ///
 /// @param fd The open file to test.
 /// @return `true` when the file is one the kernel generates, so its content can be the kernel's answer.
@@ -167,6 +171,11 @@ std::optional<std::string> read_proc_file(std::string_view path, std::size_t lim
     return std::nullopt;
   }
   std::string content;
+  // read(2) may return fewer bytes than requested
+  // (https://man7.org/linux/man-pages/man2/read.2.html), and a seq_file-backed /proc file returns at most one page
+  // per read (Chromium's maps reader documents reading /proc/self/maps atomically as "next-to-impossible":
+  // https://chromium.googlesource.com/chromium/src/+/main/base/debug/proc_maps_linux.cc), so the loop reads to the
+  // end rather than trusting one call.
   std::array<char, 1024> chunk{};
   bool ok = true;
   while (true) {
@@ -220,6 +229,8 @@ std::optional<std::string> first_proc_line_matching(std::string_view path, LineP
   std::size_t scanned = 0;
   std::optional<std::string> found;
   bool ok = true;
+  // The same page-per-read behavior read_proc_file's comment names is why the scan carries a partial line between
+  // chunks instead of assuming one read returns one line.
   while (scanned < cap) {
     const long count = read_some(fd, chunk.data(), chunk.size());
     if (count == -kEintr) {
