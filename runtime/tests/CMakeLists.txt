@@ -131,9 +131,9 @@ target_include_directories(rasp_android_app_storage_test PRIVATE ${PROJECT_SOURC
 target_link_libraries(rasp_android_app_storage_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_app_storage_test)
 
-# read_proc_file's direct-system-call path belongs to Linux on x86_64 or aarch64, and its redirect tell refuses a file
-# that holds stored bytes, so its test writes one: only that reader refuses it. On any other host read_proc_file falls
-# back to read_file, which reads the regular file, so the test must not run there.
+# read_proc_file's direct-system-call path belongs to Linux on x86_64 or aarch64, and it refuses a file that doesn't live
+# on procfs, sysfs or selinuxfs, so its test writes a regular one: only that reader refuses it. On any other host
+# read_proc_file falls back to read_file, which reads the regular file, so the test must not run there.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|aarch64)$")
   add_executable(rasp_android_raw_file_test android/util/raw_file_test.cpp
     ${PROJECT_SOURCE_DIR}/android/src/util/raw_file.cpp)

@@ -34,6 +34,25 @@ TEST(RawFile, readProcFile_whenTheFileHoldsStoredBytes_refusesIt) {
   EXPECT_FALSE(read_proc_file(path.string(), kLimit).has_value());
 }
 
+TEST(RawFile, readProcFile_whenTheFileIsEmpty_refusesIt) {
+  // The copy a size check can't tell apart: it claims no size, as the kernel's files do, and read as an empty scan it
+  // would report a clean process. It lives on a regular filesystem, so the reader refuses it.
+  const TemporaryDirectory dir{};
+  const std::filesystem::path path = std::filesystem::path(dir.path()) / "empty_copy";
+  ASSERT_TRUE(write_file(path.string(), ""));
+
+  EXPECT_FALSE(read_proc_file(path.string(), kLimit).has_value());
+}
+
+TEST(RawFile, readProcFile_whenTheFileLivesOnASysfsPath_readsIt) {
+  // sysfs attributes report the page size as their st_size, so a size-based refusal would reject this genuine
+  // kernel file; the filesystem check accepts it.
+  const std::optional<std::string> online = read_proc_file("/sys/devices/system/cpu/online", kLimit);
+
+  ASSERT_TRUE(online.has_value());
+  EXPECT_FALSE(online->empty());
+}
+
 TEST(RawFile, readProcFile_whenTheFileIsLongerThanTheLimit_refusesIt) {
   EXPECT_FALSE(read_proc_file("/proc/self/status", 8).has_value());
 }

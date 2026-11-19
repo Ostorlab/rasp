@@ -11,6 +11,7 @@
 
 #include <array>
 #include <fcntl.h>
+#include <sys/statfs.h>
 #include <sys/syscall.h>
 
 namespace rasp::util {
@@ -60,10 +61,6 @@ constexpr long kErrnoRange = 4095;
 /// fold as a cleared gate and a wrong key.
 constexpr long kEintr = 4;
 
-/// lseek's whence values, named here so the reader needs no libc header for them: the start of the file, and its end.
-constexpr long kSeekSet = 0;
-constexpr long kSeekEnd = 2;
-
 /// Whether `r` is the kernel's encoding of an error, rather than a result or a return address.
 [[nodiscard]] bool failed(long r) { return r < 0 && r >= -kErrnoRange; }
 
@@ -81,21 +78,30 @@ constexpr long kSeekEnd = 2;
   return fd;
 }
 
-/// Whether the open file `fd` names is a copy someone wrote, not a file the kernel generates at read time.
+/// Whether the open file `fd` lives on a filesystem whose files the kernel generates at read time.
 ///
-/// Kernel-generated files — /proc and /sys — report no size, because their bytes don't exist until they are read. A
-/// regular file or a memfd holds its bytes, so seeking to its end answers a size. The kernel refuses the seek on some
-/// of its generated files instead, which names the same fact: nothing is stored to seek to.
+/// The sensor files this reader serves come from procfs, sysfs and selinuxfs. Their bytes are built at read time:
+/// sysfs attributes report the page size rather than any content length (the kernel's sysfs documentation specifies
+/// "the buffer will always be PAGE_SIZE bytes in length"), and seq_file's seek handles only the start and the current
+/// position, so an end-of-file size is not a fact these files carry. A file someone wrote — a copy on storage, a
+/// memfd — holds its bytes elsewhere, so the filesystem the descriptor sits on, not any size it claims, names a
+/// copy: an empty regular file reports no size and still isn't the kernel's answer.
+///
+/// The magics are the uapi's stable numbers, measured on the kernel this runtime was verified against: procfs
+/// 0x9fa0, sysfs 0x62656572, selinuxfs 0xf97cff8c. The selinux magic matters wherever /sys/fs/selinux/enforce is
+/// readable at all — the shell domain, platform builds and userdebug images read it.
 ///
 /// @param fd The open file to test.
-/// @return `true` when the file reports stored bytes, so its content can't be the kernel's answer.
-[[nodiscard]] bool is_redirected(long fd) {
-  const long end = raw_syscall(__NR_lseek, fd, 0, kSeekEnd, 0, 0, 0);
-  if (!failed(end) && end > 0) {
-    return true;
+/// @return `true` when the file is one the kernel generates, so its content can be the kernel's answer.
+[[nodiscard]] bool on_kernel_filesystem(long fd) {
+  struct statfs filesystem{};
+  const long stated =
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+      raw_syscall(__NR_fstatfs, fd, reinterpret_cast<long>(&filesystem), 0, 0, 0, 0);
+  if (failed(stated)) {
+    return false;
   }
-  raw_syscall(__NR_lseek, fd, 0, kSeekSet, 0, 0, 0);
-  return false;
+  return filesystem.f_type == 0x9fa0 || filesystem.f_type == 0x62656572 || filesystem.f_type == 0xf97cff8c;
 }
 
 }  // namespace
@@ -107,7 +113,7 @@ std::optional<std::string> read_proc_file(std::string_view path, std::size_t lim
   }
   std::string content;
   std::array<char, 1024> chunk{};
-  bool ok = !is_redirected(fd);
+  bool ok = on_kernel_filesystem(fd);
   while (ok) {
     const long count =
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
