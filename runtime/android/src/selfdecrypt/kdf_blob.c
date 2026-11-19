@@ -17,15 +17,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define KB_INLINE static inline __attribute__((always_inline))
+
 /// Copy `n` bytes from `s` to `d` (no libc).
-static void b_copy(uint8_t* d, const uint8_t* s, unsigned long n) {
+KB_INLINE void b_copy(uint8_t* d, const uint8_t* s, unsigned long n) {
   for (unsigned long i = 0; i < n; i++) {
     d[i] = s[i];
   }
 }
 
 /// Set `n` bytes of `d` to `v` (no libc).
-static void b_set(uint8_t* d, uint8_t v, unsigned long n) {
+KB_INLINE void b_set(uint8_t* d, uint8_t v, unsigned long n) {
   for (unsigned long i = 0; i < n; i++) {
     d[i] = v;
   }
@@ -40,7 +42,7 @@ static void b_set(uint8_t* d, uint8_t v, unsigned long n) {
 #define KB_SIG1(x) (KB_ROTR(x, 17) ^ KB_ROTR(x, 19) ^ ((x) >> 10))
 
 /// Fill `k` with the 64 SHA-256 round constants by assignment (no table).
-static void kb_round_constants(uint32_t k[64]) {
+KB_INLINE void kb_round_constants(uint32_t k[64]) {
   k[0] = 0x428a2f98u;
   k[1] = 0x71374491u;
   k[2] = 0xb5c0fbcfu;
@@ -108,7 +110,7 @@ static void kb_round_constants(uint32_t k[64]) {
 }
 
 /// Compress one 64-byte block into the eight-word state `s`.
-static void kb_transform(uint32_t s[8], const uint8_t data[64]) {
+KB_INLINE void kb_transform(uint32_t s[8], const uint8_t data[64]) {
   uint32_t k[64];
   kb_round_constants(k);
   uint32_t m[64];
@@ -148,13 +150,13 @@ static void kb_transform(uint32_t s[8], const uint8_t data[64]) {
 /// carries both the obfuscated value and the mask as separate immediates, and the standard IV
 /// never appears in the instruction stream. A dump of the runtime-generated page shows two
 /// random-looking constants being XORed, not a recognizable SHA-256 IV.
-static uint32_t kb_dexor(uint32_t obfuscated, uint32_t mask) {
+KB_INLINE uint32_t kb_dexor(uint32_t obfuscated, uint32_t mask) {
   volatile uint32_t m = mask;
   return obfuscated ^ m;
 }
 
 /// One-shot SHA-256 of `data[0..len)` into `out[32]`.
-static void kb_sha256(const uint8_t* data, unsigned long len, uint8_t out[32]) {
+KB_INLINE void kb_sha256(const uint8_t* data, unsigned long len, uint8_t out[32]) {
   uint32_t s[8];
   // Standard SHA-256 IVs, XOR-obfuscated: each pair of constants XORs to the standard value.
   // The values and masks are fixed source literals; gen_kdf_shovel.py compiles them unchanged.
@@ -198,7 +200,7 @@ static void kb_sha256(const uint8_t* data, unsigned long len, uint8_t out[32]) {
 }
 
 /// HMAC-SHA256 of `msg` keyed by `key` (key_len <= 64), into `out[32]`.
-static void kb_hmac(const uint8_t* key, unsigned long key_len, const uint8_t* msg, unsigned long msg_len,
+KB_INLINE void kb_hmac(const uint8_t* key, unsigned long key_len, const uint8_t* msg, unsigned long msg_len,
                     uint8_t out[32]) {
   uint8_t k0[64];
   b_set(k0, 0, 64);

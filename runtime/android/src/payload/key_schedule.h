@@ -31,11 +31,12 @@ struct Environment {
   bool no_tracer = false;
   /// The library is loaded from a path under /data, as an installed app's is.
   bool installed_under_data = false;
-  /// On arm64, the system counter frequency (CNTFRQ_EL0) is in the range a real mobile SoC reports, 1-100 MHz;
-  /// QEMU and unicorn default to 1 GHz or 0, which a real device never produces. x86_64 has no such register, so
-  /// the fact holds there.
+  /// On arm64, the system counter frequency (CNTFRQ_EL0) is in the range a real mobile SoC reports, 1-100 MHz; QEMU
+  /// and unicorn default to 1 GHz or 0, which a real device never produces. x86_64 and armeabi-v7a have no register
+  /// read here, so the fact holds there.
   bool counter_frequency_plausible = false;
-  /// The CPU reports an identity: on arm64 a non-zero MIDR_EL1, on x86_64 a CPUID vendor. Some emulators report 0.
+  /// The CPU reports an identity: on arm64 a non-zero MIDR_EL1, on x86_64 a CPUID vendor. The identity register is
+  /// privileged on armeabi-v7a, so the fact holds there. Some emulators report 0.
   bool cpu_identity_plausible = false;
   /// The process's uid is the one that owns the package's data directory, as an installed app's process always is:
   /// the package's name comes from the APK's install path, and /data/user/<user>/<package> is stat-ed, where the

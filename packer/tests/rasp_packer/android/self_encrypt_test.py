@@ -75,12 +75,17 @@ class _Region:
 
 def _sections(library: bytes) -> dict[str, _Section]:
     """The sections of ``library``, by name."""
-    shoff, shentsize, shnum, shstrndx = (
-        struct.unpack_from("<Q", library, 40)[0],
-        *struct.unpack_from("<HHH", library, 58),
-    )
+    is64 = library[4] == 2
+    if is64:
+        shoff = struct.unpack_from("<Q", library, 40)[0]
+        shentsize, shnum, shstrndx = struct.unpack_from("<HHH", library, 58)
+        shdr_fmt = "<IIQQQQIIQQ"
+    else:
+        shoff = struct.unpack_from("<I", library, 32)[0]
+        shentsize, shnum, shstrndx = struct.unpack_from("<HHH", library, 46)
+        shdr_fmt = "<IIIIIIIIII"
     headers = [
-        struct.unpack_from("<IIQQQQIIQQ", library, shoff + index * shentsize)
+        struct.unpack_from(shdr_fmt, library, shoff + index * shentsize)
         for index in range(shnum)
     ]
     names = headers[shstrndx][4]
@@ -169,15 +174,19 @@ class _Spec:
 
 
 def _elf(
-    specs: collections.abc.Sequence[_Spec], relro: str | None = None
+    specs: collections.abc.Sequence[_Spec], relro: str | None = None, bits: int = 64
 ) -> tuple[bytes, dict[str, int]]:
-    """A little-endian ELF64 shared object holding ``specs``, each section at an address equal to its file offset.
+    """A little-endian ELF shared object of the given class holding ``specs``, each section at an address equal to its
+    file offset.
 
     A spec's content can be a function of the addresses of the sections before it, to point relocations at them.
     ``relro`` names a section a PT_GNU_RELRO segment covers. Returns the file and the address of each section.
     """
+    is64 = bits == 64
+    ehsize, phentsize, shentsize = (64, 56, 64) if is64 else (52, 32, 40)
+    shdr_fmt = "<IIQQQQIIQQ" if is64 else "<IIIIIIIIII"
     program_headers = 1 if relro is not None else 0
-    body = bytearray(64 + 56 * program_headers)
+    body = bytearray(ehsize + phentsize * program_headers)
     addresses: dict[str, int] = {}
     placed: list[tuple[_Spec, int, int]] = []
     for spec in specs:
@@ -197,23 +206,13 @@ def _elf(
     body += names
     body += bytes(-len(body) % 8)
     shoff = len(body)
-    body += bytes(64)
+    body += bytes(shentsize)
     for (spec, offset, size), name in zip(placed, name_offsets, strict=True):
         body += struct.pack(
-            "<IIQQQQIIQQ",
-            name,
-            spec.type,
-            2,
-            offset,
-            offset,
-            size,
-            0,
-            0,
-            8,
-            spec.entsize,
+            shdr_fmt, name, spec.type, 2, offset, offset, size, 0, 0, 8, spec.entsize
         )
     body += struct.pack(
-        "<IIQQQQIIQQ",
+        shdr_fmt,
         shstrtab_name,
         _SHT_STRTAB,
         0,
@@ -226,40 +225,59 @@ def _elf(
         0,
     )
     shnum = len(placed) + 2
-    body[0:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
+    elf_class = 2 if is64 else 1
+    machine = 183 if is64 else 40
+    body[0:16] = b"\x7fELF" + bytes([elf_class]) + b"\x01\x01" + bytes(9)
+    header_fmt = "<HHIQQQIHHHHHH" if is64 else "<HHIIIIIHHHHHH"
     struct.pack_into(
-        "<HHIQQQIHHHHHH",
+        header_fmt,
         body,
         16,
         3,
-        183,
+        machine,
         1,
         0,
-        64,
+        ehsize,
         shoff,
         0,
-        64,
-        56,
+        ehsize,
+        phentsize,
         program_headers,
-        64,
+        shentsize,
         shnum,
         shnum - 1,
     )
     if relro is not None:
         size = next(size for spec, _offset, size in placed if spec.name == relro)
-        struct.pack_into(
-            "<IIQQQQQQ",
-            body,
-            64,
-            _PT_GNU_RELRO,
-            4,
-            addresses[relro],
-            addresses[relro],
-            addresses[relro],
-            size,
-            size,
-            1,
-        )
+        addr = addresses[relro]
+        if is64:
+            struct.pack_into(
+                "<IIQQQQQQ",
+                body,
+                ehsize,
+                _PT_GNU_RELRO,
+                4,
+                addr,
+                addr,
+                addr,
+                size,
+                size,
+                1,
+            )
+        else:
+            struct.pack_into(
+                "<IIIIIIII",
+                body,
+                ehsize,
+                _PT_GNU_RELRO,
+                addr,
+                addr,
+                addr,
+                size,
+                size,
+                4,
+                1,
+            )
     return bytes(body), addresses
 
 
@@ -278,13 +296,14 @@ def _rela(
 
 
 def _rel(
-    *targets: str | tuple[str, int],
+    *targets: str | tuple[str, int], bits: int = 64
 ) -> collections.abc.Callable[[dict[str, int]], bytes]:
     """A REL table whose entries patch the given sections, at their start or at an offset into them."""
+    fmt = "<QQ" if bits == 64 else "<II"
 
     def build(addresses: dict[str, int]) -> bytes:
         return b"".join(
-            struct.pack("<QQ", _address(addresses, target), 1027) for target in targets
+            struct.pack(fmt, _address(addresses, target), 1027) for target in targets
         )
 
     return build
@@ -304,6 +323,7 @@ def _library(
     packmeta_size: int = _META_SIZE,
     relro: str | None = None,
     soname: bool = True,
+    bits: int = 64,
 ) -> tuple[bytes, dict[str, int]]:
     """A small library with the sections the encryption needs, followed by ``extra``."""
     specs = [
@@ -315,13 +335,14 @@ def _library(
         _Spec(".eh_frame", bytes(range(48))),
     ]
     if soname:
-        specs.append(_Spec(".dynstr", b"\x00librasp.so\x00", _SHT_STRTAB))
-        specs.append(
-            _Spec(
-                ".dynamic", struct.pack("<qQqQ", _DT_SONAME, 1, 0, 0), _SHT_DYNAMIC, 16
-            )
+        dyn = (
+            struct.pack("<qQqQ", _DT_SONAME, 1, 0, 0)
+            if bits == 64
+            else struct.pack("<iIiI", _DT_SONAME, 1, 0, 0)
         )
-    return _elf([*specs, *extra], relro)
+        specs.append(_Spec(".dynstr", b"\x00librasp.so\x00", _SHT_STRTAB))
+        specs.append(_Spec(".dynamic", dyn, _SHT_DYNAMIC, 16 if bits == 64 else 8))
+    return _elf([*specs, *extra], relro, bits)
 
 
 def _rodata_regions(
@@ -359,6 +380,32 @@ def testEncryptLibrary_whenGivenTheRuntimeStandIn_decryptsBackToEveryOriginalByt
     encrypted = self_encrypt.encrypt_library(_LIBRARY)
 
     assert _restored(encrypted, _LIBRARY) == _LIBRARY
+
+
+def testEncryptLibrary_whenTheLibraryIsElf32_encryptsAndDecryptsBackToTheOriginal() -> (
+    None
+):
+    library, _addresses = _library(bits=32)
+
+    encrypted = self_encrypt.encrypt_library(library)
+
+    after = _sections(encrypted)
+    before = _sections(library)
+    assert _bytes_of(encrypted, after[".text"]) != _bytes_of(library, before[".text"])
+    assert len(encrypted) == len(library)
+    assert _restored(encrypted, library) == library
+
+
+def testEncryptLibrary_whenAnElf32RelRelocationPatchesTheReadOnlyData_leavesItsWordClear() -> (
+    None
+):
+    library, addresses = _library(
+        _Spec(".rel.dyn", _rel((".rodata", 128), bits=32), _SHT_REL, 8), bits=32
+    )
+
+    encrypted = self_encrypt.encrypt_library(library)
+
+    assert _rodata_regions(encrypted, addresses, 256) == [(0, 128), (132, 256)]
 
 
 def testEncryptLibrary_whenGivenTheRuntimeStandIn_leavesTheBootstrapAndTheRelocatedDataClear() -> (
@@ -505,6 +552,27 @@ def testEncryptLibrary_whenRelrEntriesPatchTheReadOnlyData_leavesEveryWordTheyNa
     assert _rodata_regions(encrypted, addresses, 256) == [(0, 16), (32, 40), (48, 256)]
 
 
+def testEncryptLibrary_whenElf32RelrEntriesPatchTheReadOnlyData_leavesEveryWordTheyNameClear() -> (
+    None
+):
+    def relr(addresses: dict[str, int]) -> bytes:
+        start = addresses[".rodata"] + 16
+        first = ((1 << 0) | (1 << 2)) << 1 | 1
+        second = (1 << 0) << 1 | 1
+        return struct.pack("<III", start, first, second)
+
+    library, addresses = _library(_Spec(".relr.dyn", relr, _SHT_RELR, 4), bits=32)
+
+    encrypted = self_encrypt.encrypt_library(library)
+
+    assert _rodata_regions(encrypted, addresses, 256) == [
+        (0, 16),
+        (24, 28),
+        (32, 144),
+        (148, 256),
+    ]
+
+
 def testEncryptLibrary_whenRelocationsPatchAdjacentWords_carvesOneHole() -> None:
     library, addresses = _library(
         _Spec(".rela.dyn", _rela((".rodata", 32), (".rodata", 40)), _SHT_RELA, 24)
@@ -529,6 +597,18 @@ def testEncryptLibrary_whenARelocationPatchesTheLastBytes_endsTheHoleAtTheSectio
 
 def testEncryptLibrary_whenTheReadOnlyDataIsRelro_leavesItClear() -> None:
     library, addresses = _library(relro=".rodata")
+
+    encrypted = self_encrypt.encrypt_library(library)
+
+    assert _rodata_regions(encrypted, addresses, 256) == []
+    start = addresses[".rodata"]
+    assert encrypted[start : start + 256] == library[start : start + 256]
+
+
+def testEncryptLibrary_whenTheReadOnlyDataOfAnElf32LibraryIsRelro_leavesItClear() -> (
+    None
+):
+    library, addresses = _library(relro=".rodata", bits=32)
 
     encrypted = self_encrypt.encrypt_library(library)
 
@@ -612,13 +692,13 @@ def testEncryptLibrary_whenABootstrapSectionIsMissing_raisesInvalidRuntimeError(
     ("change", "message"),
     [
         (lambda data: bytes(4) + data[4:], "not an ELF file"),
-        (lambda data: data[:4] + b"\x01" + data[5:], "not a little-endian ELF64"),
-        (lambda data: data[:5] + b"\x02" + data[6:], "not a little-endian ELF64"),
+        (lambda data: data[:4] + b"\x00" + data[5:], "not a little-endian ELF object"),
+        (lambda data: data[:5] + b"\x02" + data[6:], "not a little-endian ELF object"),
         (lambda data: data[:32], "not an ELF file"),
     ],
-    ids=["no magic", "32-bit", "big-endian", "cut inside the header"],
+    ids=["no magic", "bad class", "big-endian", "cut inside the header"],
 )
-def testEncryptLibrary_whenTheFileIsNotALittleEndianElf64_raisesInvalidRuntimeError(
+def testEncryptLibrary_whenTheFileIsNotALittleEndianElf_raisesInvalidRuntimeError(
     change: collections.abc.Callable[[bytes], bytes], message: str
 ) -> None:
     library, _addresses = _library()
