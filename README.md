@@ -9,7 +9,31 @@
 rasp protects an app you have already built. It adds a small runtime to the APK, AAB or IPA, and the protected app
 checks the device it runs on and itself while it is in use. No change to the app's source code is needed.
 
+rasp is built from the ground up to resist AI-assisted reverse engineering: there is no key to find, no single check
+to patch, and no bypass that carries over from one protected app to the next.
+
 https://github.com/user-attachments/assets/a43d48ed-75ec-43b1-ad76-77fc08826493
+
+## Built to resist AI-assisted reverse engineering
+
+AI tools now read decompiled code, find the line that says "if rooted, exit", and write a Frida script that skips
+it, in minutes. Protections that keep a key in the app, or rely on one check that can be patched, fall quickly to
+this. rasp was designed against it from the start:
+
+- **No key in the app (Android).** The packer encrypts the app's own classes, and no key is stored. The runtime
+  rebuilds the keys on the device from the app and the device itself.
+- **Nothing to patch (Android).** A failed check doesn't jump to an exit that can be found and skipped. It changes
+  the key instead, so a hooked, debugged or modified app silently fails to decrypt, and the attacker isn't told why.
+- **Every app is different (Android).** Each app gets its own random recipe for rebuilding its keys, mixing real
+  inputs with decoys. Understanding one protected app doesn't give a script that works on the next one.
+- **Obfuscated, and different each release.** Release builds of the runtime are obfuscated with
+  [O-MVLL](https://github.com/open-obfuscator/o-mvll) on Android and iOS, with a new secret seed for each release.
+- **Checks at random times.** The checks run again at random intervals, not only at start-up, so there is no single
+  moment to intercept.
+
+This raises the cost of an attack; it doesn't make one impossible. The known limits are listed in
+[`TODO.md`](TODO.md), for example: the decryption code is the same in every app packed from one
+release, and a carefully built emulator can still run it.
 
 ## Features
 
@@ -19,6 +43,8 @@ https://github.com/user-attachments/assets/a43d48ed-75ec-43b1-ad76-77fc08826493
 - **Detects:** root and jailbreak, debuggers, Frida and other hooking, emulators, app virtualizers, network
   interception (VPN tunnels and proxies), tampering with the runtime's code, and repackaged copies.
 - **Runs all the time:** the checks run when the app starts, then again at random intervals until the app exits.
+- **AI-resistant by design:** each protected app is different, so a bypass an AI writes for one app doesn't work on
+  another ([details](#built-to-resist-ai-assisted-reverse-engineering)).
 - **Events on the Ostorlab platform:** protect apps and see their events in
   [Mobile ADR](#use-adr-on-the-ostorlab-platform) (Mobile Application Detection & Response).
 
