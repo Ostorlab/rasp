@@ -82,10 +82,24 @@ TEST(Debugger, observeTracerPidLibc_whenNothingIsAttached_reportsZeroThroughADif
   const Observation direct = observe_tracer_pid(status, rasp::util::read_file);
   const Observation libc = observe_tracer_pid_libc(status);
 
+  EXPECT_EQ(direct, tracer_pid(0));
   EXPECT_EQ(libc, tracer_pid_libc(0));
-  EXPECT_EQ(libc.signal, direct.signal);
-  EXPECT_NE(libc.source, direct.source);
 }
+
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+TEST(Debugger, observeTracerPid_whenBothProductionReadersReadTheRealStatusFile_agreeOnTheTracer) {
+  // Neither probe is given a reader: the direct-system-call probe and the libc probe each read the kernel's own status
+  // file the way the shipped runtime does. Both must read it, and both must name the same tracer, or the disagreement
+  // panic reports when something answers one of them has no clean baseline to stand on. The direct reader exists only
+  // on Linux x86_64 and aarch64; anywhere else both probes would read through libc and compare nothing.
+  const Observation direct = observe_tracer_pid("/proc/self/status");
+  const Observation libc = observe_tracer_pid_libc("/proc/self/status");
+
+  ASSERT_EQ(direct.status, Status::kOk);
+  ASSERT_EQ(libc.status, Status::kOk);
+  EXPECT_EQ(direct.value, libc.value);
+}
+#endif
 
 TEST(Debugger, observeTracerPidLibc_whenADebuggerIsAttached_reportsItsProcessId) {
   const TemporaryDirectory directory;

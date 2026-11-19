@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "support/files.h"
 
