@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <dlfcn.h>
+#include <initializer_list>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -80,15 +81,16 @@ constexpr std::size_t kMaxMapsSize = std::size_t{4} << 20U;
 /// whole read would allocate still locates the store, stopping at the base APK's line when there is one and falling
 /// back to the first /data/app APK when there isn't.
 [[nodiscard]] std::optional<std::string> apk_from_maps() {
-  const std::optional<std::string> base =
-      rasp::util::first_proc_line_matching("/proc/self/maps", names_base_apk, kMaxMapsSize);
-  if (base.has_value()) {
-    return std::string(*apk_in_line(*base));
-  }
-  const std::optional<std::string> any =
-      rasp::util::first_proc_line_matching("/proc/self/maps", names_an_apk, kMaxMapsSize);
-  if (any.has_value()) {
-    return std::string(*apk_in_line(*any));
+  // The base APK's line first, and the first /data/app APK's when there is none.
+  for (const rasp::util::LinePredicate matches : {names_base_apk, names_an_apk}) {
+    const std::optional<std::string> line =
+        rasp::util::first_proc_line_matching("/proc/self/maps", matches, kMaxMapsSize);
+    if (!line.has_value()) {
+      continue;
+    }
+    if (const std::optional<std::string_view> path = apk_in_line(*line)) {
+      return std::string(*path);
+    }
   }
   return std::nullopt;
 }

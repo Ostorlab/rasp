@@ -22,6 +22,12 @@ using test_support::write_file;
 /// The size limit the device's sensors read with, 64 KiB.
 constexpr std::size_t kLimit = std::size_t{64} << 10U;
 
+/// A plain open, standing in for the production opener so a scan runs over a regular file of known content.
+[[nodiscard]] long plain_open(std::string_view path) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): open is a libc variadic function.
+  return static_cast<long>(open(std::string(path).c_str(), O_RDONLY | O_CLOEXEC));
+}
+
 TEST(RawFile, firstProcLineMatching_whenTheLineSitsInABigScan_findsItWithoutHoldingTheFile) {
   // The regression the streaming scan exists for: a map larger than the cap on a whole read, with the APK's line
   // early. A plain open stands in for the production opener so the scan runs over a regular file of known content.
@@ -35,8 +41,7 @@ TEST(RawFile, firstProcLineMatching_whenTheLineSitsInABigScan_findsItWithoutHold
   ASSERT_TRUE(write_file(path.string(), content));
 
   const std::optional<std::string> line = first_proc_line_matching(
-      path.string(), [](std::string_view l) { return l.contains("base.apk"); }, 8U << 20U,
-      [](std::string_view p) { return static_cast<long>(open(std::string(p).c_str(), O_RDONLY)); });
+      path.string(), [](std::string_view l) { return l.contains("base.apk"); }, 8U << 20U, plain_open);
 
   ASSERT_TRUE(line.has_value());
   EXPECT_TRUE(line->contains("/data/app~~x/base.apk"));
@@ -53,8 +58,7 @@ TEST(RawFile, firstProcLineMatching_whenNothingMatchesWithinTheCap_findsNothing)
   ASSERT_TRUE(write_file(path.string(), content));
 
   const std::optional<std::string> line = first_proc_line_matching(
-      path.string(), [](std::string_view l) { return l.contains("base.apk"); }, 4096,
-      [](std::string_view p) { return static_cast<long>(open(std::string(p).c_str(), O_RDONLY)); });
+      path.string(), [](std::string_view l) { return l.contains("base.apk"); }, 4096, plain_open);
 
   EXPECT_FALSE(line.has_value());
 }
@@ -148,8 +152,7 @@ TEST(RawFile, firstProcLineMatching_whenTheLastLineHasNoLineBreak_findsIt) {
                          "7a0c00007000-7a0c0000e000 r-xp 00000000 00:01 4913 /data/app~~x/base.apk"));
 
   const std::optional<std::string> line = first_proc_line_matching(
-      path.string(), [](std::string_view l) { return l.contains("base.apk"); }, kMapsCap,
-      [](std::string_view p) { return static_cast<long>(open(std::string(p).c_str(), O_RDONLY)); });
+      path.string(), [](std::string_view l) { return l.contains("base.apk"); }, kMapsCap, plain_open);
 
   ASSERT_TRUE(line.has_value());
   EXPECT_TRUE(line->contains("/data/app~~x/base.apk"));

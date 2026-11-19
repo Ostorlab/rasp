@@ -82,17 +82,18 @@ constexpr long kExdev = 18;
 /// descriptor, so the retry leaks none.
 [[nodiscard]] long raw_open(std::string_view path) {
   const std::string name(path);
-  long fd = 0;
-  do {
+  long fd = -kEintr;
+  while (fd == -kEintr) {
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
     fd = raw_syscall(__NR_openat, static_cast<long>(AT_FDCWD), reinterpret_cast<long>(name.c_str()),
                      O_RDONLY | O_CLOEXEC, 0, 0, 0);
-  } while (fd == -kEintr);
+  }
   return fd;
 }
 
 /// Reads up to `size` bytes of `fd` into `data` through a direct system call: the count read, 0 at the end of the
 /// file, or the negative errno.
+// NOLINTNEXTLINE(misc-const-correctness): the kernel writes through `data`, which reaches it as an integer register.
 [[nodiscard]] long read_some(long fd, char* data, std::size_t size) {
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
   return raw_syscall(__NR_read, fd, reinterpret_cast<long>(data), static_cast<long>(size), 0, 0, 0);
@@ -117,6 +118,10 @@ constexpr long kExdev = 18;
 /// @param fd The open file to test.
 /// @return `true` when the file is one the kernel generates, so its content can be the kernel's answer.
 [[nodiscard]] bool on_kernel_filesystem(long fd) {
+  // The magics as the signed type statfs reports f_type in, so each comparison is between like integers.
+  constexpr long kProcfsMagic = 0x9fa0;
+  constexpr long kSysfsMagic = 0x62656572;
+  constexpr long kSelinuxfsMagic = 0xf97cff8c;
   struct statfs filesystem{};
   const long stated =
       // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
@@ -124,7 +129,7 @@ constexpr long kExdev = 18;
   if (failed(stated)) {
     return false;
   }
-  return filesystem.f_type == 0x9fa0 || filesystem.f_type == 0x62656572 || filesystem.f_type == 0xf97cff8c;
+  return filesystem.f_type == kProcfsMagic || filesystem.f_type == kSysfsMagic || filesystem.f_type == kSelinuxfsMagic;
 }
 
 #else
@@ -231,22 +236,22 @@ std::optional<std::string> first_proc_line_matching(std::string_view path, LineP
       }
       break;
     }
-    scanned += static_cast<std::size_t>(count);
+    const std::string_view bytes(chunk.data(), static_cast<std::size_t>(count));
+    scanned += bytes.size();
     std::size_t start = 0;
-    while (start < static_cast<std::size_t>(count)) {
-      const std::size_t newline =
-          std::string_view(chunk.data() + start, static_cast<std::size_t>(count) - start).find('\n');
+    while (start < bytes.size()) {
+      const std::size_t newline = bytes.find('\n', start);
       if (newline == std::string_view::npos) {
-        line.append(chunk.data() + start, static_cast<std::size_t>(count) - start);
+        line.append(bytes.substr(start));
         break;
       }
-      line.append(chunk.data() + start, newline);
+      line.append(bytes.substr(start, newline - start));
       if (matches(line)) {
         found = line;
         break;
       }
       line.clear();
-      start += newline + 1;
+      start = newline + 1;
     }
     if (found.has_value()) {
       break;
