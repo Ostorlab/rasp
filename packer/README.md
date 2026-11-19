@@ -32,6 +32,10 @@ result = packer.pack(
 
 `pack` returns the path of the protected app, the app's package name, version and build id, and the check groups it skipped.
 
+## The banner
+
+`rasp` with no command prints a shaded RASP banner and the help, and exits 0. `rasp --help` shows the same banner above the help. The banner shows only when stdout is a terminal, `NO_COLOR` is unset or empty, and `TERM` is not `dumb`, so a pipe, a redirect or CI gets the plain help. The subcommands never print it. It uses 24-bit color when `COLORTERM` is `truecolor` or `24bit`, and the nearest 256 colors otherwise.
+
 ## What a protected app gets
 
 On Android, the packer encrypts the app's own classes, adds a small stub and the runtime library, and points the manifest at the stub. The keys are not stored in the app: the runtime rebuilds them on the device from the app and the device, so a modified app, library or environment cannot decrypt them. The protected app needs Android 12 (API 31) or later, and the packer raises a lower minimum SDK. An app with native libraries for an ABI the runtime is not built for is refused.
