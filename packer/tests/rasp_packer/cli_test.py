@@ -210,6 +210,7 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The first line printed names the app identity and the build id."""
     monkeypatch.setattr(
         packer,
         "pack",
@@ -225,7 +226,7 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     exit_code = cli.main(_pack_arguments(tmp_path))
 
     assert exit_code == cli.EXIT_OK
-    assert capsys.readouterr().out.strip() == (
+    assert capsys.readouterr().out.splitlines()[0] == (
         f"packed ios app: {tmp_path / 'out.ipa'} "
         f"(package dev.ostorlab.demo, version 1.2.3, build {_BUILD_ID})"
     )
@@ -274,3 +275,49 @@ def testMain_whenNoMapping_passesNoneAsTheMapping(
     cli.main(_pack_arguments(tmp_path))
 
     assert captured["mapping"] is None
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        (
+            "my app.apk",
+            "next: sign it with apksigner sign --ks <your-keystore.jks> 'DIR/my app.apk'",
+        ),
+        (
+            "OUT.AAB",
+            "next: sign it with jarsigner -keystore <your-keystore.jks> DIR/OUT.AAB <key-alias>",
+        ),
+        (
+            "out.ipa",
+            "next: re-sign DIR/out.ipa with the app's distribution certificate and "
+            "provisioning profile before uploading it",
+        ),
+    ],
+)
+def testMain_whenPackSucceeds_printsHowToSignTheOutput(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    expected: str,
+) -> None:
+    """The line after the result line is the signing command for the output's suffix."""
+    monkeypatch.setattr(
+        packer,
+        "pack",
+        lambda **_: packer.PackResult(
+            output=tmp_path / name,
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+            skipped_checks=(),
+        ),
+    )
+
+    exit_code = cli.main(_pack_arguments(tmp_path))
+
+    assert exit_code == cli.EXIT_OK
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("packed ios app: ")
+    assert lines[1:] == [expected.replace("DIR", str(tmp_path))]
