@@ -111,7 +111,8 @@ def _inspect_android(app: pathlib.Path) -> InspectResult:
         archive = apk_archive.Apk.read(app)
         app_identity = apk_manifest.app_identity(archive.manifest())
         prefix = _APK_LIBRARY_PREFIX
-    configs: dict[str, _Config] = {}
+    configs: list[_Config] = []
+    abis: set[str] = set()
     for name in sorted(archive.names()):
         abi = _library_abi(name, prefix)
         data = archive.get(name)
@@ -119,12 +120,10 @@ def _inspect_android(app: pathlib.Path) -> InspectResult:
             continue
         config = _android_config(data)
         if config is not None:
-            configs[abi] = config
+            configs.append(config)
+            abis.add(abi)
     return _result(
-        app_identity,
-        list(configs.values()),
-        tuple(sorted(configs)),
-        platforms.Platform.ANDROID,
+        app_identity, configs, tuple(sorted(abis)), platforms.Platform.ANDROID
     )
 
 

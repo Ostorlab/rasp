@@ -13,6 +13,7 @@ from rasp_packer import platforms
 from rasp_packer import runtime_config
 from rasp_packer.android import packer as android_packer
 from rasp_packer.android import resources
+from rasp_packer.android import runtime_library
 from rasp_packer.android import split
 from rasp_packer.ios import packer as ios_packer
 from tests.rasp_packer import conftest
@@ -167,6 +168,50 @@ def testInspect_whenApkCarriesNoPackedRuntime_reportsItUnprotectedWithItsIdentit
         checks=(),
         abis=(),
     )
+
+
+def _library_with(build_id: str) -> bytes:
+    """Returns a runtime library whose config carries the given build id."""
+    config = runtime_config.RuntimeConfig(
+        build_id=build_id,
+        checks=_ANDROID_CHECKS,
+        checks_mask=check_groups.checks_mask(
+            platforms.Platform.ANDROID, _ANDROID_CHECKS
+        ),
+    )
+    return runtime_library.write_config(_ARM64_SO, config)
+
+
+def testInspect_whenAbiDirectoriesCarryDifferentConfigs_raisesInvalidAppError(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Two ABI directories whose runtime libraries carry different configs are rejected."""
+    app = _make_apk(
+        tmp_path / "app.apk",
+        {
+            "lib/arm64-v8a/librasp.so": _library_with("build-a"),
+            "lib/x86_64/librasp.so": _library_with("build-b"),
+        },
+    )
+
+    with pytest.raises(errors.InvalidAppError):
+        inspection.inspect(app=app, platform=platforms.Platform.ANDROID)
+
+
+def testInspect_whenOneAbiDirectoryCarriesTwoDifferentConfigs_raisesInvalidAppError(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Two runtime libraries with different configs in the same ABI directory are rejected."""
+    app = _make_apk(
+        tmp_path / "app.apk",
+        {
+            "lib/arm64-v8a/liba.so": _library_with("build-a"),
+            "lib/arm64-v8a/libb.so": _library_with("build-b"),
+        },
+    )
+
+    with pytest.raises(errors.InvalidAppError):
+        inspection.inspect(app=app, platform=platforms.Platform.ANDROID)
 
 
 def testInspect_whenIpaIsProtected_reportsTheConfigAndTheIdentity(
