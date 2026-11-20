@@ -481,6 +481,7 @@ def testMain_whenNoOutput_packsToTheProtectedNameNextToTheApp(
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            checks=("identity",),
             skipped_checks=(),
         )
 
