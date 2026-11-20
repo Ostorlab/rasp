@@ -32,9 +32,17 @@ result = packer.pack(
 
 `pack` returns the path of the protected app, the app's package name, version and build id, and the check groups it skipped.
 
-## The banner
+## When does `rasp` print the banner?
 
-`rasp` with no command prints a shaded RASP banner and the help, and exits 0. `rasp --help` shows the same banner above the help. The banner shows only when stdout is a terminal, `NO_COLOR` is unset or empty, and `TERM` is not `dumb`, so a pipe, a redirect or CI gets the plain help. The subcommands never print it. It uses 24-bit color when `COLORTERM` is `truecolor` or `24bit`, and the nearest 256 colors otherwise.
+**The banner** is the shaded ASCII-art RASP logo the CLI prints above the help text. `rasp` and `rasp --help` start with it, and bare `rasp` exits 0. Subcommands never print it.
+
+The banner shows only when all of these hold:
+
+- stdout is a terminal
+- `NO_COLOR` is unset or empty
+- `TERM` is not `dumb`
+
+Otherwise, a pipe, a redirect or CI gets the plain help. The color depth follows `COLORTERM`: 24-bit when it is `truecolor` or `24bit`, and the closest match in the 256-color palette otherwise.
 
 ## What a protected app gets
 
