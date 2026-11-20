@@ -7,10 +7,18 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+#ifdef __ANDROID__
+// Bionic takes AT_FDCWD from the kernel's uapi <linux/fcntl.h> and declares struct statfs in <sys/vfs.h>; glibc
+// declares both in <fcntl.h> and <sys/statfs.h>.
+#include <linux/fcntl.h>
+#include <sys/vfs.h>
+#else
 #include <fcntl.h>
 #include <sys/statfs.h>
+#endif
 #include <sys/syscall.h>
 #else
 #include <cerrno>
@@ -37,6 +45,28 @@ constexpr long kEintr = 4;
 
 /// Whether `r` is the kernel's encoding of an error, rather than a result or a return address.
 [[nodiscard]] bool failed(long r) { return r < 0 && r >= -kErrnoRange; }
+
+/// Feeds one chunk of a file to the line being assembled in `line`: each line the chunk completes is tested with
+/// `matches`, and the first that matches is returned. The chunk's trailing part, with no line break yet, stays in
+/// `line` for the next chunk.
+[[nodiscard]] std::optional<std::string> first_completed_line_matching(std::string_view bytes, std::string& line,
+                                                                       LinePredicate matches) {
+  std::size_t start = 0;
+  while (start < bytes.size()) {
+    const std::size_t newline = bytes.find('\n', start);
+    if (newline == std::string_view::npos) {
+      line.append(bytes.substr(start));
+      return std::nullopt;
+    }
+    line.append(bytes.substr(start, newline - start));
+    if (matches(line)) {
+      return line;
+    }
+    line.clear();
+    start = newline + 1;
+  }
+  return std::nullopt;
+}
 
 #if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
 
@@ -262,30 +292,13 @@ std::optional<std::string> first_proc_line_matching(std::string_view path, LineP
     // io.LimitedReader and Chromium's ReadFileToStringWithMaxSize clamp their final read, and a line the cap cuts
     // short never matches, the same way the file's end cuts one.
     const std::size_t room = cap - scanned;
-    const bool capped = static_cast<std::size_t>(count) > room;
+    const bool capped = std::cmp_greater(count, room);
     const std::string_view bytes(chunk.data(), capped ? room : static_cast<std::size_t>(count));
     scanned += bytes.size();
-    std::size_t start = 0;
-    while (start < bytes.size()) {
-      const std::size_t newline = bytes.find('\n', start);
-      if (newline == std::string_view::npos) {
-        line.append(bytes.substr(start));
-        break;
-      }
-      line.append(bytes.substr(start, newline - start));
-      if (matches(line)) {
-        found = line;
-        break;
-      }
-      line.clear();
-      start = newline + 1;
-    }
-    if (found.has_value()) {
-      break;
-    }
-    if (capped) {
-      // The cap ended the scan mid-chunk: the partial line it leaves is never evaluated, exactly as a line the
-      // file's end cuts short is not.
+    found = first_completed_line_matching(bytes, line, matches);
+    // When the cap ended the scan mid-chunk, the partial line it leaves is never evaluated, exactly as a line the
+    // file's end cuts short is not.
+    if (found.has_value() || capped) {
       break;
     }
   }

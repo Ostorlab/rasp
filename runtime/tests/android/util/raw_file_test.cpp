@@ -158,5 +158,36 @@ TEST(RawFile, firstProcLineMatching_whenTheLastLineHasNoLineBreak_findsIt) {
   EXPECT_TRUE(line->contains("/data/app~~x/base.apk"));
 }
 
+/// The two lines the cap tests scan: the APK's line is the second, and ends exactly at the content's end.
+constexpr std::string_view kTwoLineMap =
+    "7a0c00000000-7a0c00001000 r--p 00000000 00:01 12 /system/lib64/libc.so\n"
+    "7a0c00007000-7a0c0000e000 r-xp 00000000 00:01 4913 /data/app~~x/base.apk\n";
+
+TEST(RawFile, firstProcLineMatching_whenTheMatchingLineEndsAtTheCap_findsIt) {
+  const TemporaryDirectory dir{};
+  const std::filesystem::path path = std::filesystem::path(dir.path()) / "two_line_map";
+  ASSERT_TRUE(write_file(path.string(), kTwoLineMap));
+
+  const std::optional<std::string> line = first_proc_line_matching(
+      path.string(), [](std::string_view l) { return l.contains("base.apk"); }, kTwoLineMap.size(), plain_open);
+
+  ASSERT_TRUE(line.has_value());
+  EXPECT_TRUE(line->contains("/data/app~~x/base.apk"));
+}
+
+TEST(RawFile, firstProcLineMatching_whenTheCapCutsTheMatchingLine_findsNothing) {
+  // The cap is a hard bound: the bytes past it are never examined, so a line it cuts short is never evaluated. Only
+  // the line break falls past the cap here, so the cut line still names the APK: a scan that evaluated it would
+  // match.
+  const TemporaryDirectory dir{};
+  const std::filesystem::path path = std::filesystem::path(dir.path()) / "two_line_map";
+  ASSERT_TRUE(write_file(path.string(), kTwoLineMap));
+
+  const std::optional<std::string> line = first_proc_line_matching(
+      path.string(), [](std::string_view l) { return l.contains("base.apk"); }, kTwoLineMap.size() - 1, plain_open);
+
+  EXPECT_FALSE(line.has_value());
+}
+
 }  // namespace
 }  // namespace rasp::util
