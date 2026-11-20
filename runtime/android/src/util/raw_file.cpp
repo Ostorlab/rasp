@@ -262,7 +262,9 @@ std::optional<std::string> read_proc_file(std::string_view path, std::size_t lim
 std::optional<std::string> first_proc_line_matching(std::string_view path, LinePredicate matches, std::size_t cap,
                                                     ProcOpener open_file) {
   const long fd = open_file(path);
-  if (failed(fd)) {
+  // Any negative result is a failure, not only the kernel's errno range: the opener is pluggable, and no descriptor
+  // is negative.
+  if (fd < 0) {
     return std::nullopt;
   }
   std::array<char, 1024> chunk{};
