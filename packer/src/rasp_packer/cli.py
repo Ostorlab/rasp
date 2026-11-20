@@ -88,7 +88,7 @@ def _parser() -> argparse.ArgumentParser:
         "--checks",
         type=_split_checks,
         help="the check groups the app runs, comma-separated, such as debugger,hooks; "
-        f"{_required_checks()} always runs (default: only {_required_checks()})",
+        f"{_required_checks()} always runs (default: every check group of the platform)",
     )
     pack.add_argument(
         "--strict",
@@ -195,20 +195,14 @@ def _pack(arguments: argparse.Namespace) -> int:
     """Packs the app given on the command line and prints the result, as text or, with `--json`, as one JSON object.
 
     Without `--build-id`, it derives the build id from the app, the platform, the packer version and the resolved checks.
-    Without `--checks`, it warns and packs the app with only the required check groups. It warns
+    Without `--checks`, it packs the app with every check group of the platform. It warns
     about each given check id that is not one of the platform's groups, which the packer skips,
     and suggests the closest id. With `--strict`, it prints an error for each of them instead, writes
     nothing and fails. After the result line it prints a reminder that the output is unsigned.
     """
     checks: list[str] | None = arguments.checks
     if checks is None:
-        print(
-            "rasp pack: warning: no --checks given, so the app runs only the required checks: "
-            f"{_required_checks()}. Pass --checks, such as --checks debugger,hooks, to choose "
-            "the checks it runs.",
-            file=sys.stderr,
-        )
-        checks = []
+        checks = list(check_groups.CHECKS[arguments.platform])
     if arguments.strict is True:
         unknown = check_groups.resolve_checks(arguments.platform, checks).skipped
         for check in unknown:

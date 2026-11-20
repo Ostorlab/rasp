@@ -98,7 +98,7 @@ result = packer.pack(
 
 - Pass the groups with `--checks` (or `checks=` in Python). `identity` is always added.
 - An unknown group is skipped with a warning, so a list written for an older version still packs.
-- Without `--checks`, only `identity` is chosen.
+- Without `--checks`, the command line runs every check group the target platform supports. `checks=` in Python is required.
 - Some checks also run when the app starts, whatever the choice.
 
 ## Requirements
