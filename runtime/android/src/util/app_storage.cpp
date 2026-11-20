@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "rasp/util/read_file.h"
+#include "util/raw_file.h"
 
 namespace rasp::android::util {
 
@@ -47,7 +47,7 @@ std::string no_backup_directory(std::string_view package, std::uint32_t uid) {
 }
 
 std::optional<std::string> make_no_backup_directory() {
-  const std::optional<std::string> cmdline = rasp::util::read_file(kCmdlinePath, kMaxCmdlineSize);
+  const std::optional<std::string> cmdline = rasp::util::read_proc_file(kCmdlinePath, kMaxCmdlineSize);
   if (!cmdline) {
     return std::nullopt;
   }
