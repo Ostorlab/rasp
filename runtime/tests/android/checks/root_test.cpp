@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "rasp/util/read_file.h"
 #include "support/files.h"
 
 namespace rasp::android::checks {
@@ -168,7 +169,7 @@ TEST_P(RootMountLine, observeMounts_whenTheTableHasTheLine_reportsOnlyThatLine) 
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, std::string(kStockMounts) + std::string(GetParam()) + "\n"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({std::string(GetParam())}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({std::string(GetParam())}));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -191,7 +192,7 @@ TEST(Root, observeMounts_whenTheAppsOwnDataFoldersNameAMarker_ignoresThem) {
                  "/dev/block/dm-40 /data/misc/profiles/cur/0/com.topjohnwu.magisk ext4 rw,seclabel,nosuid 0 0\n"
                  "/dev/block/dm-40 /data/misc/profiles/ref/com.example.zygiskhelper ext4 rw,seclabel 0 0\n"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({}));
 }
 
 TEST(Root, observeMounts_whenMagisksFolderIsOnlyInTheMountPoint_reportsTheLine) {
@@ -201,7 +202,7 @@ TEST(Root, observeMounts_whenMagisksFolderIsOnlyInTheMountPoint_reportsTheLine) 
   const std::string line = "devpts /dev/2ItJ/.magisk/pts devpts rw,seclabel,nosuid,noexec,relatime 0 0";
   ASSERT_TRUE(write_file(table, std::string(kStockMounts) + line + "\n"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({line}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({line}));
 }
 
 TEST(Root, observeMounts_whenNoLineMentionsARootTool_reportsAnEmptyList) {
@@ -210,7 +211,7 @@ TEST(Root, observeMounts_whenNoLineMentionsARootTool_reportsAnEmptyList) {
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, kStockMounts));
 
-  EXPECT_EQ(observe_mounts(table), mounts({}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({}));
 }
 
 TEST(Root, observeMounts_whenTheTableIsEmpty_reportsAnEmptyList) {
@@ -219,7 +220,7 @@ TEST(Root, observeMounts_whenTheTableIsEmpty_reportsAnEmptyList) {
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, ""));
 
-  EXPECT_EQ(observe_mounts(table), mounts({}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({}));
 }
 
 TEST(Root, observeMounts_whenTheLastLineHasNoLineBreak_stillReportsIt) {
@@ -228,7 +229,7 @@ TEST(Root, observeMounts_whenTheLastLineHasNoLineBreak_stillReportsIt) {
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, std::string(kStockMounts) + "KSU /vendor overlay ro 0 0"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({"KSU /vendor overlay ro 0 0"}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({"KSU /vendor overlay ro 0 0"}));
 }
 
 TEST(Root, observeMounts_whenMoreThan32LinesMatch_reportsTheFirst32) {
@@ -246,7 +247,7 @@ TEST(Root, observeMounts_whenMoreThan32LinesMatch_reportsTheFirst32) {
   }
   ASSERT_TRUE(write_file(table, content));
 
-  EXPECT_EQ(observe_mounts(table), mounts(first));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts(first));
 }
 
 TEST(Root, observeMounts_whenTheTableIsExactly1MiB_readsItWhole) {
@@ -258,7 +259,7 @@ TEST(Root, observeMounts_whenTheTableIsExactly1MiB_readsItWhole) {
   ASSERT_EQ(content.size(), kMountsLimit);
   ASSERT_TRUE(write_file(table, content));
 
-  EXPECT_EQ(observe_mounts(table), mounts({last}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({last}));
 }
 
 TEST(Root, observeMounts_whenTheTableIsLargerThan1MiB_reportsAnError) {
@@ -268,7 +269,7 @@ TEST(Root, observeMounts_whenTheTableIsLargerThan1MiB_reportsAnError) {
   const std::string last = "magisk /debug_ramdisk tmpfs rw 0 0";
   ASSERT_TRUE(write_file(table, std::string(kMountsLimit - last.size(), 'a') + "\n" + last));
 
-  EXPECT_EQ(observe_mounts(table), unreadable_mounts());
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), unreadable_mounts());
 }
 
 TEST(Root, observeMounts_whenTheTableIsMissing_reportsAnError) {
@@ -294,7 +295,7 @@ TEST(Root, observeMounts_whenKsuOrAPatchIsNotTheSource_ignoresTheLine) {
                                     "tmpfs /mnt/APatch tmpfs ro,relatime 0 0\n"
                                     "KSUX /mnt overlay ro 0 0\n"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({}));
 }
 
 /// A mount line that mounts a system folder writable.
@@ -306,7 +307,7 @@ TEST_P(RootWritableMountLine, observeMounts_whenASystemFolderIsMountedWritable_r
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, std::string(kStockMounts) + std::string(GetParam()) + "\n"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({}, {std::string(GetParam())}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({}, {std::string(GetParam())}));
 }
 
 INSTANTIATE_TEST_SUITE_P(Root, RootWritableMountLine,
@@ -326,7 +327,7 @@ TEST(Root, observeMounts_whenOnlyAFolderBelowASystemFolderIsWritable_ignoresIt) 
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, std::string(kStockMounts) + "/dev/block/dm-5 /system/etc/hosts f2fs rw 0 0\n"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({}));
 }
 
 TEST(Root, observeMounts_whenAnOptionOnlyStartsWithRw_ignoresIt) {
@@ -335,7 +336,7 @@ TEST(Root, observeMounts_whenAnOptionOnlyStartsWithRw_ignoresIt) {
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, std::string(kStockMounts) + "/dev/block/dm-0 /system ext4 ro,rwx 0 0\n"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({}));
 }
 
 TEST(Root, observeMounts_whenALineHasFewerThanFourFields_ignoresItForWritableMounts) {
@@ -344,7 +345,7 @@ TEST(Root, observeMounts_whenALineHasFewerThanFourFields_ignoresItForWritableMou
   const std::string table = directory.path() + "/mounts";
   ASSERT_TRUE(write_file(table, std::string(kStockMounts) + "/dev/block/dm-0 /system ext4\nrw\n\n"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({}));
 }
 
 TEST(Root, observeMounts_whenARootToolMountsASystemFolderWritable_reportsTheLineInBothLists) {
@@ -354,7 +355,7 @@ TEST(Root, observeMounts_whenARootToolMountsASystemFolderWritable_reportsTheLine
   const std::string line = "magisk /sbin tmpfs rw,seclabel,relatime,mode=755 0 0";
   ASSERT_TRUE(write_file(table, std::string(kStockMounts) + line + "\n"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({line}, {line}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({line}, {line}));
 }
 
 /// What a SELinux enforce file holds, and whether observe_selinux must read it as enforcing.
@@ -374,7 +375,7 @@ TEST_P(RootEnforceFile, observeSelinux_whenTheFileHoldsADigit_reportsWhatItMeans
   const std::string enforce = directory.path() + "/enforce";
   ASSERT_TRUE(write_file(enforce, GetParam().content));
 
-  EXPECT_EQ(observe_selinux(enforce), selinux(GetParam().enforcing));
+  EXPECT_EQ(observe_selinux(enforce, rasp::util::read_file), selinux(GetParam().enforcing));
 }
 
 INSTANTIATE_TEST_SUITE_P(Root, RootEnforceFile,
@@ -393,7 +394,7 @@ TEST_P(RootMalformedEnforceFile, observeSelinux_whenTheFileHoldsAnythingElse_rep
   ASSERT_TRUE(write_file(enforce, GetParam()));
 
   EXPECT_EQ(
-      observe_selinux(enforce),
+      observe_selinux(enforce, rasp::util::read_file),
       (Observation{.signal = "root.selinux_enforcing", .source = "selinuxfs", .status = Status::kError, .value = {}}));
 }
 
@@ -416,7 +417,7 @@ TEST(Root, observeSelinux_whenTheFileIsLargerThanTheLimit_reportsAnError) {
   ASSERT_TRUE(write_file(enforce, "1" + std::string(64, '\n')));
 
   EXPECT_EQ(
-      observe_selinux(enforce),
+      observe_selinux(enforce, rasp::util::read_file),
       (Observation{.signal = "root.selinux_enforcing", .source = "selinuxfs", .status = Status::kError, .value = {}}));
 }
 

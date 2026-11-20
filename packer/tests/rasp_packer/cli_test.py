@@ -7,10 +7,12 @@ from importlib import metadata
 
 import pytest
 
+from rasp_packer import build_ids
 from rasp_packer import cli
 from rasp_packer import identity
 from rasp_packer import inspection
 from rasp_packer import packer
+from rasp_packer import platforms
 from rasp_packer import runtime_config
 from rasp_packer.android import packer as android_packer
 
@@ -68,14 +70,51 @@ def testMain_whenPlatformUnknown_exitsWithUsageError(tmp_path: pathlib.Path) -> 
     assert exit_info.value.code == _USAGE_ERROR
 
 
-def testMain_whenBuildIdIsMissing_exitsWithUsageError(tmp_path: pathlib.Path) -> None:
+def testMain_whenBuildIdIsMissing_packsWithTheDerivedBuildId(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without --build-id, the packer gets the derived id and the success line shows it."""
+    (tmp_path / "app.ipa").write_bytes(b"app bytes")
+    calls: list[dict[str, object]] = []
+
+    def fake_pack(**arguments: object) -> packer.PackResult:
+        """Records the arguments of the pack and returns a result carrying the given build id."""
+        calls.append(arguments)
+        return packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=str(arguments["build_id"]),
+            skipped_checks=(),
+        )
+
+    monkeypatch.setattr(packer, "pack", fake_pack)
+    arguments = _pack_arguments(tmp_path)
+    del arguments[arguments.index("--build-id") : arguments.index("--build-id") + 2]
+    expected = build_ids.default_build_id(
+        app=tmp_path / "app.ipa", platform=platforms.Platform.IOS, checks=[]
+    )
+
+    exit_code = cli.main(arguments)
+
+    assert exit_code == cli.EXIT_OK
+    assert [call["build_id"] for call in calls] == [expected]
+    assert f"build {expected})" in capsys.readouterr().out
+
+
+def testMain_whenBuildIdIsMissingAndTheAppIsMissing_printsTheErrorAndReturnsFailed(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Without --build-id and with an unreadable app, the command prints the error and fails."""
     arguments = _pack_arguments(tmp_path)
     del arguments[arguments.index("--build-id") : arguments.index("--build-id") + 2]
 
-    with pytest.raises(SystemExit) as exit_info:
-        cli.main(arguments)
+    exit_code = cli.main(arguments)
 
-    assert exit_info.value.code == _USAGE_ERROR
+    assert exit_code == cli.EXIT_FAILED
+    assert "cannot read" in capsys.readouterr().err
 
 
 def testMain_whenBuildIdIsEmpty_printsTheErrorAndReturnsFailed(
@@ -220,6 +259,7 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The first line printed names the app identity and the build id."""
     monkeypatch.setattr(
         packer,
         "pack",
@@ -235,7 +275,7 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     exit_code = cli.main(_pack_arguments(tmp_path))
 
     assert exit_code == cli.EXIT_OK
-    assert capsys.readouterr().out.strip() == (
+    assert capsys.readouterr().out.splitlines()[0] == (
         f"packed ios app: {tmp_path / 'out.ipa'} "
         f"(package dev.ostorlab.demo, version 1.2.3, build {_BUILD_ID})"
     )
@@ -345,6 +385,34 @@ def testMain_whenInspectFails_printsTheErrorAndReturnsFailed(
     assert exit_code == cli.EXIT_FAILED
     assert captured.out == ""
     assert captured.err.startswith("rasp inspect: ")
+
+
+def testMain_whenPackSucceeds_printsTheUnsignedReminderAfterTheResultLine(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The line after the result line reminds that the protected app is unsigned."""
+    monkeypatch.setattr(
+        packer,
+        "pack",
+        lambda **_: packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+            skipped_checks=(),
+        ),
+    )
+
+    exit_code = cli.main(_pack_arguments(tmp_path))
+
+    lines = capsys.readouterr().out.splitlines()
+    assert exit_code == cli.EXIT_OK
+    assert lines[0].startswith("packed ios app: ")
+    assert lines[1:] == [
+        "next: the protected app is unsigned; sign it with your upload or release key before you upload it"
+    ]
 
 
 class _Terminal(io.StringIO):

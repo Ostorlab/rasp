@@ -20,13 +20,11 @@
 
 #include "rasp/observation.h"
 #include "rasp/util/obfuscation.h"
-#include "rasp/util/read_file.h"
+#include "util/raw_file.h"
 
 namespace rasp::android::checks {
 
 namespace {
-
-using rasp::util::read_file;
 
 #ifdef __ANDROID__
 /// Whether this build runs on Android, the only place the probe means anything.
@@ -185,8 +183,8 @@ constexpr auto kFrameworkMarkers = std::to_array<std::string_view>({
 
 }  // namespace
 
-std::vector<Observation> observe_maps(std::string_view maps_path) {
-  const std::optional<std::string> maps = read_file(maps_path, kMaxMapsSize);
+std::vector<Observation> observe_maps(std::string_view maps_path, rasp::util::ProcReader read) {
+  const std::optional<std::string> maps = read(maps_path, kMaxMapsSize);
   if (!maps) {
     return {
         failed(kMapsHitsSignal, kMapsSource),
@@ -201,7 +199,11 @@ std::vector<Observation> observe_maps(std::string_view maps_path) {
   };
 }
 
-std::vector<Observation> observe_threads(std::string_view task_path) {
+std::vector<Observation> observe_threads(std::string_view task_path, rasp::util::ProcReader read) {
+  // The task folder is listed through libc opendir/readdir. Unlike the per-thread comm reads below, which go through
+  // the direct-syscall reader, this listing stays a libc surface an interposer can answer — for example to hide a
+  // thread from the scan. Reading it through a raw getdents64 would close that; it is a follow-up, like the property
+  // reads and the integrity check's file side.
   // NOLINTNEXTLINE(concurrency-mt-unsafe): the thread list is read once, on the monitoring thread.
   ::DIR* const directory = opendir(std::string(task_path).c_str());
   if (directory == nullptr) {
@@ -228,7 +230,7 @@ std::vector<Observation> observe_threads(std::string_view task_path) {
       break;
     }
     const std::string folder = std::string(task_path) + "/" + std::string(thread);
-    const std::optional<std::string> name = read_file(folder + "/comm", kMaxCommSize);
+    const std::optional<std::string> name = read(folder + "/comm", kMaxCommSize);
     if (!name) {
       if (access(folder.c_str(), F_OK) == 0) {
         complete = false;
