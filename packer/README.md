@@ -31,7 +31,12 @@ result = packer.pack(
 - `--pin-certificate` (Android): the certificate the app will be signed with, PEM or DER. The protected app then works only when it is signed with that certificate.
 - `--json`: prints the result as one JSON object with sorted keys instead of text: `build_id`, `checks`, `output`, `package_name`, `skipped_checks` and `version`. Warnings still go to stderr.
 
-`pack` returns the path of the protected app, the app's package name, version and build id, the check groups the app runs, and the check groups it skipped.
+`pack` returns a result with:
+
+- the path of the protected app
+- the app's package name, version and build id
+- the check groups the app runs (`checks`)
+- the check groups it skipped (`skipped_checks`)
 
 ## How do I check whether an app is protected?
 
