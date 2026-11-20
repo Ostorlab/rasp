@@ -25,7 +25,7 @@ result = packer.pack(
 
 ## Options
 
-- `--build-id` (`build_id=`): the id of the protected build, written into the app as it is.
+- `--build-id` (`build_id=`): the id of the protected build, written into the app as it is. `rasp pack` derives it when it is not given: the SHA-256 of the app's contents, the platform, the installed packer version and the resolved checks. The same inputs give the same id, and any change to the app, the packer version or the checks gives a new one. `pack` requires it.
 - `--output` (`output=`): where to write the protected app; an existing file at that path is refused. The command line defaults to `<name>-protected<extension>` next to the app, such as `app-protected.apk` for `app.apk`.
 - `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added, an unknown group is skipped with a warning, and without `--checks` only `identity` is chosen. See the groups in the [repository's README](../README.md#checks).
 - `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
