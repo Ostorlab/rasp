@@ -37,6 +37,25 @@ The packer returns the app unsigned and prints a reminder after a successful `ra
 
 `pack` returns the path of the protected app, the app's package name, version and build id, and the check groups it skipped.
 
+## How do I check whether an app is protected?
+
+**`rasp inspect`** opens a built app, never modifies it, and reports whether it carries the RASP runtime. For a protected app it also prints the build id and the check groups from the runtime's config, and on Android the ABIs that carry the runtime. It does not run the app, so it cannot tell whether a check actually fires, only that the runtime and its config are present.
+
+```
+rasp inspect app-protected.apk --platform android
+```
+
+```
+protected  yes
+package    com.example.app
+version    2.4.1
+build id   my-build-1
+checks     debugger,hooks,identity,root
+abis       arm64-v8a,armeabi-v7a
+```
+
+An app without the runtime is not an error: `inspect` prints `protected  no` with its package and version and exits 0. From Python, `rasp_packer.inspection.inspect(app=pathlib.Path("app-protected.apk"), platform=platforms.Platform.ANDROID)` returns the same fields.
+
 ## When does `rasp` print the banner?
 
 **The banner** is the shaded ASCII-art RASP logo the CLI prints above the help text. `rasp` and `rasp --help` start with it, and bare `rasp` exits 0. Subcommands never print it.

@@ -12,6 +12,7 @@ from rasp_packer import banner
 from rasp_packer import build_ids
 from rasp_packer import checks as check_groups
 from rasp_packer import errors
+from rasp_packer import inspection
 from rasp_packer import packer
 from rasp_packer import platforms
 
@@ -42,7 +43,7 @@ class _RootParser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
-    """Returns the parser of the `rasp` command line."""
+    """Builds the parser of the `rasp` command line, with its `pack` and `inspect` commands."""
     parser = _RootParser(
         prog="rasp",
         description="Protects built Android (APK, AAB) and iOS (IPA) apps with the RASP runtime.",
@@ -106,6 +107,21 @@ def _parser() -> argparse.ArgumentParser:
         type=pathlib.Path,
         help="the certificate the app will be signed with, PEM or DER; the pack refuses to decrypt "
         "under any other signer (Android only)",
+    )
+
+    inspect_command = commands.add_parser(
+        "inspect",
+        help="report whether a built app is protected, and the runtime config it carries",
+    )
+    inspect_command.add_argument(
+        "app", type=pathlib.Path, help="the built app, an APK, AAB, or IPA"
+    )
+    inspect_command.add_argument(
+        "--platform",
+        type=platforms.Platform,
+        choices=list(platforms.Platform),
+        required=True,
+        help="the platform of the app",
     )
     return parser
 
@@ -214,6 +230,32 @@ def _pack(arguments: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _inspect(arguments: argparse.Namespace) -> int:
+    """Inspects the app given on the command line and prints what it read, one aligned `label  value` line each.
+
+    The build id, the check groups and the ABIs are printed only for a protected app, and the ABIs only for Android.
+    """
+    try:
+        result = inspection.inspect(app=arguments.app, platform=arguments.platform)
+    except errors.Error as error:
+        print(f"rasp inspect: {error}", file=sys.stderr)
+        return EXIT_FAILED
+    lines = [
+        ("protected", "yes" if result.protected is True else "no"),
+        ("package", result.package_name),
+        ("version", result.version),
+    ]
+    if result.build_id is not None:
+        lines.append(("build id", result.build_id))
+        lines.append(("checks", ",".join(result.checks)))
+    if len(result.abis) > 0:
+        lines.append(("abis", ",".join(result.abis)))
+    width = max(len(label) for label, _ in lines)
+    for label, value in lines:
+        print(f"{label.ljust(width)}  {value}")
+    return EXIT_OK
+
+
 def main(argv: collections.abc.Sequence[str] | None = None) -> int:
     """Runs the `rasp` command line.
 
@@ -231,5 +273,7 @@ def main(argv: collections.abc.Sequence[str] | None = None) -> int:
     match arguments.command:
         case "pack":
             return _pack(arguments)
+        case "inspect":
+            return _inspect(arguments)
         case _:
             raise AssertionError(f"unknown command {arguments.command!r}")
