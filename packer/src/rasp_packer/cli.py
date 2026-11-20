@@ -45,7 +45,7 @@ class _RootParser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
-    """Builds the parser of the `rasp` command line, with its `pack` and `inspect` commands."""
+    """Builds the parser of the `rasp` command line, with its `pack`, `checks` and `inspect` commands."""
     parser = _RootParser(
         prog="rasp",
         description="Protects built Android (APK, AAB) and iOS (IPA) apps with the RASP runtime.",
@@ -113,6 +113,16 @@ def _parser() -> argparse.ArgumentParser:
         "under any other signer (Android only)",
     )
     _add_json_argument(pack)
+
+    listing = commands.add_parser(
+        "checks", help="list the check groups of a platform, or of both"
+    )
+    listing.add_argument(
+        "--platform",
+        type=platforms.Platform,
+        choices=list(platforms.Platform),
+        help="the platform to list (default: both)",
+    )
 
     inspect_command = commands.add_parser(
         "inspect",
@@ -250,6 +260,20 @@ def _pack(arguments: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _checks(arguments: argparse.Namespace) -> int:
+    """Prints the check groups of the platform given on the command line, or of both under a heading each."""
+    platform: platforms.Platform | None = arguments.platform
+    if platform is not None:
+        print("\n".join(check_groups.describe_checks(platform)))
+        return EXIT_OK
+    sections = [
+        f"{each}:\n" + "\n".join(check_groups.describe_checks(each))
+        for each in platforms.Platform
+    ]
+    print("\n\n".join(sections))
+    return EXIT_OK
+
+
 def _inspect(arguments: argparse.Namespace) -> int:
     """Inspects the app given on the command line and prints what it read, one aligned `label  value` line each.
 
@@ -303,6 +327,8 @@ def main(argv: collections.abc.Sequence[str] | None = None) -> int:
     match arguments.command:
         case "pack":
             return _pack(arguments)
+        case "checks":
+            return _checks(arguments)
         case "inspect":
             return _inspect(arguments)
         case _:
