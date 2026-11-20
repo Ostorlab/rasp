@@ -29,7 +29,7 @@ result = packer.pack(
 - `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added, an unknown group is skipped with a warning, and without `--checks` only `identity` is chosen. See the groups in the [repository's README](../README.md#checks).
 - `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
 - `--pin-certificate` (Android): the certificate the app will be signed with, PEM or DER. The protected app then works only when it is signed with that certificate.
-- `--json`: prints the result as one JSON object with sorted keys instead of text: `build_id`, `checks`, `output`, `package_name`, `skipped_checks` and `version`. Warnings still go to stderr.
+- `--json`: prints the result as one JSON object with sorted keys instead of text: `build_id`, `checks` (an array of check ids), `output` (the path as a string), `package_name`, `skipped_checks` (an array of check ids) and `version`. Warnings still go to stderr.
 
 `pack` returns a result with:
 
@@ -55,7 +55,7 @@ checks     debugger,hooks,identity,root
 abis       arm64-v8a,armeabi-v7a
 ```
 
-An app without the runtime is not an error: `inspect` prints `protected  no` with its package and version and exits 0. With `--json`, `inspect` prints one JSON object with sorted keys instead: `abis`, `build_id` (null for an unprotected app), `checks`, `package_name`, `protected` and `version`. From Python, `rasp_packer.inspection.inspect(app=pathlib.Path("app-protected.apk"), platform=platforms.Platform.ANDROID)` returns the same fields.
+An app without the runtime is not an error: `inspect` prints `protected  no` with its package and version and exits 0. With `--json`, `inspect` prints one JSON object with sorted keys instead: `abis` (an array of ABIs), `build_id` (a string, or null for an unprotected app), `checks` (an array of check ids), `package_name`, `protected` and `version`. `checks` and `abis` are always present: both are empty arrays for an unprotected app, and `abis` is also empty on iOS. From Python, `rasp_packer.inspection.inspect(app=pathlib.Path("app-protected.apk"), platform=platforms.Platform.ANDROID)` returns the same fields.
 
 ## When does `rasp` print the banner?
 
