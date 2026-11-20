@@ -69,8 +69,9 @@ def _parser() -> argparse.ArgumentParser:
         "--platform",
         type=platforms.Platform,
         choices=list(platforms.Platform),
-        required=True,
-        help="the platform of the app",
+        default=None,
+        help="the platform of the app (default: inferred from the app's extension, "
+        f"{', '.join(platforms.accepted_extensions())})",
     )
     pack.add_argument(
         "--build-id",
@@ -296,6 +297,11 @@ def main(argv: collections.abc.Sequence[str] | None = None) -> int:
     if arguments.command is None:
         parser.print_help()
         return EXIT_OK
+    if arguments.command == "pack" and arguments.platform is None:
+        try:
+            arguments.platform = platforms.infer(arguments.app)
+        except ValueError as error:
+            parser.error(str(error))
     match arguments.command:
         case "pack":
             return _pack(arguments)

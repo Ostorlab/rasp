@@ -5,7 +5,7 @@ Adds the RASP runtime to a built app: an APK or an AAB for Android, an IPA for i
 The packer is a Python library, and the `rasp` command line is a thin client of it.
 
 ```
-rasp pack app.apk --platform android --build-id my-build-1 --checks root,debugger,hooks --output app-protected.apk
+rasp pack app.apk --build-id my-build-1 --checks root,debugger,hooks --output app-protected.apk
 ```
 
 ```python
@@ -25,6 +25,7 @@ result = packer.pack(
 
 ## Options
 
+- `--platform` (`platform=`): `android` or `ios`. When it is not given, the command line infers the platform from the app's extension, case-insensitively: `.apk` and `.aab` are Android, `.ipa` is iOS. Any other extension requires `--platform`.
 - `--build-id` (`build_id=`): the id of the protected build, written into the app as it is. `rasp pack` derives it when it is not given: the SHA-256 of the app's contents, the platform, the installed packer version and the resolved checks. The same inputs give the same id, and any change to the app, the packer version or the checks gives a new one. `pack` requires it.
 - `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added. Without `--checks`, only `identity` is chosen. An unknown group is skipped with a warning. The warning suggests the closest matching group name. With `--strict`, `rasp pack` exits with status 1 instead. See the groups in the [repository's README](../README.md#checks).
 - `--strict`: print an error for every unknown check group, write nothing, and exit with status 1, instead of skipping it with a warning.
