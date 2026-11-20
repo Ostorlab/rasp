@@ -1,6 +1,8 @@
 """Tests of the `rasp` command line."""
 
+import io
 import pathlib
+import sys
 from importlib import metadata
 
 import pytest
@@ -45,11 +47,18 @@ def testMain_whenVersionRequested_printsTheInstalledVersion(
     assert capsys.readouterr().out.strip() == f"rasp {metadata.version('rasp-packer')}"
 
 
-def testMain_whenNoCommand_exitsWithUsageError() -> None:
-    with pytest.raises(SystemExit) as exit_info:
-        cli.main([])
+def testMain_whenNoCommand_printsTheHelpAndReturnsOk(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Without a command the plain help is printed to stdout and the exit code is 0."""
 
-    assert exit_info.value.code == _USAGE_ERROR
+    exit_code = cli.main([])
+
+    out = capsys.readouterr().out
+    assert exit_code == cli.EXIT_OK
+    assert out.startswith("usage: rasp")
+    assert "\x1b" not in out
+    assert "pack" in out
 
 
 def testMain_whenPlatformUnknown_exitsWithUsageError(tmp_path: pathlib.Path) -> None:
@@ -336,3 +345,78 @@ def testMain_whenInspectFails_printsTheErrorAndReturnsFailed(
     assert exit_code == cli.EXIT_FAILED
     assert captured.out == ""
     assert captured.err.startswith("rasp inspect: ")
+
+
+class _Terminal(io.StringIO):
+    """A stdout that is a terminal."""
+
+    def isatty(self) -> bool:
+        """Returns True."""
+        return True
+
+
+def _use_terminal(monkeypatch: pytest.MonkeyPatch) -> _Terminal:
+    """Replaces stdout with a terminal and clears the variables that turn the banner off."""
+    terminal = _Terminal()
+    monkeypatch.setattr(sys, "stdout", terminal)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    return terminal
+
+
+def testMain_whenNoCommandOnATerminal_printsTheBannerThenTheHelp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On a terminal, the banner with the version comes before the help."""
+
+    terminal = _use_terminal(monkeypatch)
+
+    exit_code = cli.main([])
+
+    out = terminal.getvalue()
+    assert exit_code == cli.EXIT_OK
+    assert out.index("██████╗") < out.index("Protects built Android")
+    assert f"apps · {metadata.version('rasp-packer')}" in out
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def testMain_whenHelpRequestedOnATerminal_printsTheBannerAboveTheHelp(
+    monkeypatch: pytest.MonkeyPatch, flag: str
+) -> None:
+    """On a terminal, --help and -h print the banner above the help."""
+
+    terminal = _use_terminal(monkeypatch)
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main([flag])
+
+    out = terminal.getvalue()
+    assert exit_info.value.code == cli.EXIT_OK
+    assert out.index("██████╗") < out.index("Protects built Android")
+
+
+def testMain_whenHelpRequestedAndStdoutIsNotATerminal_printsThePlainHelp(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Off a terminal, the help has no banner and no escape sequences."""
+
+    with pytest.raises(SystemExit):
+        cli.main(["--help"])
+
+    out = capsys.readouterr().out
+    assert out.startswith("usage: rasp")
+    assert "\x1b" not in out
+    assert "█" not in out
+
+
+def testMain_whenSubcommandHelpRequestedOnATerminal_printsNoBanner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The help of a subcommand has no banner."""
+
+    terminal = _use_terminal(monkeypatch)
+
+    with pytest.raises(SystemExit):
+        cli.main(["pack", "--help"])
+
+    assert "█" not in terminal.getvalue()

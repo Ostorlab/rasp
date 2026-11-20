@@ -51,6 +51,18 @@ abis       arm64-v8a,armeabi-v7a
 
 An app without the runtime prints `protected  no` with its package and version. From Python, `rasp_packer.inspection.inspect(app=..., platform=...)` returns the same fields.
 
+## When does `rasp` print the banner?
+
+**The banner** is the shaded ASCII-art RASP logo the CLI prints above the help text. `rasp` and `rasp --help` start with it, and bare `rasp` exits 0. Subcommands never print it.
+
+The banner shows only when all of these hold:
+
+- stdout is a terminal
+- `NO_COLOR` is unset or empty
+- `TERM` is not `dumb`
+
+Otherwise, a pipe, a redirect or CI gets the plain help. The color depth follows `COLORTERM`: 24-bit when it is `truecolor` or `24bit`, and the closest match in the 256-color palette otherwise.
+
 ## What a protected app gets
 
 On Android, the packer encrypts the app's own classes, adds a small stub and the runtime library, and points the manifest at the stub. The keys are not stored in the app: the runtime rebuilds them on the device from the app and the device, so a modified app, library or environment cannot decrypt them. The protected app needs Android 12 (API 31) or later, and the packer raises a lower minimum SDK. An app with native libraries for an ABI the runtime is not built for is refused.
