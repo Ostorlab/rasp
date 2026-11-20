@@ -12,7 +12,7 @@
 rasp protects an app you have already built. It adds a small runtime to the APK, AAB or IPA, and the protected app
 checks the device it runs on and itself while it is in use. No change to the app's source code is needed.
 
-https://github.com/user-attachments/assets/a43d48ed-75ec-43b1-ad76-77fc08826493
+https://github.com/user-attachments/assets/9b5e266e-1334-4427-b5ec-0095379fac16
 
 ## Features
 
