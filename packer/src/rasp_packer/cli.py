@@ -87,6 +87,12 @@ def _parser() -> argparse.ArgumentParser:
         f"{_required_checks()} always runs (default: only {_required_checks()})",
     )
     pack.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail without writing anything when a given check id is not a check of the platform, "
+        "instead of skipping it with a warning",
+    )
+    pack.add_argument(
         "--mapping",
         type=pathlib.Path,
         default=None,
@@ -126,13 +132,38 @@ def _required_checks() -> str:
     return ",".join(sorted(check_groups.REQUIRED_CHECKS))
 
 
+def _did_you_mean(platform: platforms.Platform, check: str) -> str:
+    """Returns the question naming the closest check of the platform to an unknown id, or an empty text if none is close."""
+    suggestion = check_groups.suggest_check(platform, check)
+    if suggestion is None:
+        return ""
+    return f" Did you mean {suggestion!r}?"
+
+
+def _unknown_check_message(
+    platform: platforms.Platform, check: str, skipped: bool
+) -> str:
+    """Returns the text that says an id is not a check of the platform, with the closest id if there is one.
+
+    The text says the id was skipped when `skipped` is true.
+    """
+    message = f"{check!r} is not a check of {platform}"
+    hint = _did_you_mean(platform, check)
+    if skipped is True:
+        message = f"{message}, skipped"
+        if hint == "":
+            return message
+    return f"{message}.{hint}"
+
+
 def _pack(arguments: argparse.Namespace) -> int:
     """Packs the app given on the command line and prints the result.
 
     Without `--build-id`, it derives the build id from the app, the platform, the packer version and the resolved checks.
     Without `--checks`, it warns and packs the app with only the required check groups. It warns
-    about each given check id that is not one of the platform's groups, which the packer skips.
-    After the result line it prints a reminder that the output is unsigned.
+    about each given check id that is not one of the platform's groups, which the packer skips,
+    and suggests the closest id. With `--strict`, it prints an error for each of them instead, writes
+    nothing and fails. After the result line it prints a reminder that the output is unsigned.
     """
     checks: list[str] | None = arguments.checks
     if checks is None:
@@ -143,6 +174,15 @@ def _pack(arguments: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         checks = []
+    if arguments.strict is True:
+        unknown = check_groups.resolve_checks(arguments.platform, checks).skipped
+        for check in unknown:
+            print(
+                f"rasp pack: error: {_unknown_check_message(arguments.platform, check, skipped=False)}",
+                file=sys.stderr,
+            )
+        if len(unknown) > 0:
+            return EXIT_FAILED
     build_id: str | None = arguments.build_id
     try:
         if build_id is None:
@@ -163,7 +203,7 @@ def _pack(arguments: argparse.Namespace) -> int:
         return EXIT_FAILED
     for check in result.skipped_checks:
         print(
-            f"rasp pack: warning: {check!r} is not a check of {arguments.platform}, skipped",
+            f"rasp pack: warning: {_unknown_check_message(arguments.platform, check, skipped=True)}",
             file=sys.stderr,
         )
     print(
