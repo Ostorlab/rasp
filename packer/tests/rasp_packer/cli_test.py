@@ -11,6 +11,7 @@ from rasp_packer import build_ids
 from rasp_packer import checks as check_groups
 from rasp_packer import cli
 from rasp_packer import identity
+from rasp_packer import inspection
 from rasp_packer import packer
 from rasp_packer import platforms
 from rasp_packer import runtime_config
@@ -255,6 +256,121 @@ def testMain_whenACheckIsUnknown_warnsAndPacksWithTheOtherChecks(
     )
 
 
+def testMain_whenACheckIsATypo_warnsWithTheSuggestion(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checks that the warning for a skipped typo names the closest check."""
+
+    monkeypatch.setattr(
+        android_packer,
+        "pack",
+        lambda **_: identity.AppIdentity(
+            package_name="dev.ostorlab.demo", version="1.2.3"
+        ),
+    )
+
+    exit_code = cli.main(
+        [*_pack_arguments(tmp_path, platform="android"), "--checks", "debuger"]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert capsys.readouterr().err == (
+        "rasp pack: warning: 'debuger' is not a check of android, skipped. "
+        "Did you mean 'debugger'?\n"
+    )
+
+
+def testMain_whenStrictAndACheckIsUnknown_printsTheErrorsAndPacksNothing(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checks that `--strict` prints an error per unknown id, fails and does not call the packer."""
+
+    calls: list[object] = []
+
+    def fake_pack(**kwargs: object) -> identity.AppIdentity:
+        """Records the call and returns an identity."""
+        calls.append(kwargs)
+        return identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+
+    exit_code = cli.main(
+        [
+            *_pack_arguments(tmp_path, platform="android"),
+            "--checks",
+            "hooks,debuger,telepathy",
+            "--strict",
+        ]
+    )
+
+    assert exit_code == cli.EXIT_FAILED
+    assert calls == []
+    assert capsys.readouterr().err == (
+        "rasp pack: error: 'debuger' is not a check of android. Did you mean 'debugger'?\n"
+        "rasp pack: error: 'telepathy' is not a check of android.\n"
+    )
+
+
+def testMain_whenStrictAndChecksAreKnown_packsTheApp(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checks that `--strict` packs the app when every id is a check of the platform."""
+
+    configs: list[runtime_config.RuntimeConfig] = []
+
+    def fake_pack(
+        *, config: runtime_config.RuntimeConfig, **_: object
+    ) -> identity.AppIdentity:
+        """Records the config and returns an identity."""
+        configs.append(config)
+        return identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+
+    exit_code = cli.main(
+        [
+            *_pack_arguments(tmp_path, platform="android"),
+            "--checks",
+            "hooks",
+            "--strict",
+        ]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert [config.checks for config in configs] == [("hooks", "identity")]
+
+
+def testMain_whenStrictWithoutChecks_packsWithEveryCheckOfThePlatformAndWarnsNothing(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checks that `--strict` without `--checks` packs with every check of the platform, warns nothing and exits 0."""
+    configs: list[runtime_config.RuntimeConfig] = []
+
+    def fake_pack(
+        *, config: runtime_config.RuntimeConfig, **_: object
+    ) -> identity.AppIdentity:
+        """Records the config and returns an identity."""
+        configs.append(config)
+        return identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+
+    exit_code = cli.main([*_pack_arguments(tmp_path, platform="android"), "--strict"])
+
+    assert exit_code == cli.EXIT_OK
+    assert [config.checks for config in configs] == [
+        tuple(sorted(check_groups.CHECKS[platforms.Platform.ANDROID]))
+    ]
+    assert capsys.readouterr().err == ""
+
+
 def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     tmp_path: pathlib.Path,
     capsys: pytest.CaptureFixture[str],
@@ -325,6 +441,67 @@ def testMain_whenNoMapping_passesNoneAsTheMapping(
     cli.main(_pack_arguments(tmp_path))
 
     assert captured["mapping"] is None
+
+
+def testMain_whenInspectedAppIsProtected_printsAlignedLabelsAndValues(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A protected app prints every field as an aligned label and value."""
+    monkeypatch.setattr(
+        inspection,
+        "inspect",
+        lambda **_: inspection.InspectResult(
+            protected=True,
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+            checks=("debugger", "identity"),
+            abis=("arm64-v8a", "x86_64"),
+        ),
+    )
+
+    exit_code = cli.main(
+        ["inspect", str(tmp_path / "app.apk"), "--platform", "android"]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert capsys.readouterr().out == (
+        "protected  yes\n"
+        "package    dev.ostorlab.demo\n"
+        "version    1.2.3\n"
+        f"build id   {_BUILD_ID}\n"
+        "checks     debugger,identity\n"
+        "abis       arm64-v8a,x86_64\n"
+    )
+
+
+def testMain_whenInspectedAppIsNotProtected_printsOnlyTheIdentity(
+    ipa_file: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unprotected app prints that it is not protected, with its package and version only."""
+    exit_code = cli.main(["inspect", str(ipa_file), "--platform", "ios"])
+
+    assert exit_code == cli.EXIT_OK
+    assert capsys.readouterr().out == (
+        "protected  no\npackage    dev.ostorlab.demo\nversion    1.2.3\n"
+    )
+
+
+def testMain_whenInspectFails_printsTheErrorAndReturnsFailed(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A file that is not an app prints the error to stderr and nothing to stdout."""
+    app = tmp_path / "app.ipa"
+    app.write_bytes(b"not a zip")
+
+    exit_code = cli.main(["inspect", str(app), "--platform", "ios"])
+
+    captured = capsys.readouterr()
+    assert exit_code == cli.EXIT_FAILED
+    assert captured.out == ""
+    assert captured.err.startswith("rasp inspect: ")
 
 
 def testMain_whenPackSucceeds_printsTheUnsignedReminderAfterTheResultLine(

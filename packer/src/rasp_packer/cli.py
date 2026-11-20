@@ -12,6 +12,7 @@ from rasp_packer import banner
 from rasp_packer import build_ids
 from rasp_packer import checks as check_groups
 from rasp_packer import errors
+from rasp_packer import inspection
 from rasp_packer import packer
 from rasp_packer import platforms
 
@@ -42,7 +43,7 @@ class _RootParser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
-    """Returns the parser of the `rasp` command line."""
+    """Builds the parser of the `rasp` command line, with its `pack` and `inspect` commands."""
     parser = _RootParser(
         prog="rasp",
         description="Protects built Android (APK, AAB) and iOS (IPA) apps with the RASP runtime.",
@@ -87,6 +88,12 @@ def _parser() -> argparse.ArgumentParser:
         f"{_required_checks()} always runs (default: every check group of the platform)",
     )
     pack.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail without writing anything when a given check id is not a check of the platform, "
+        "instead of skipping it with a warning",
+    )
+    pack.add_argument(
         "--mapping",
         type=pathlib.Path,
         default=None,
@@ -100,6 +107,21 @@ def _parser() -> argparse.ArgumentParser:
         type=pathlib.Path,
         help="the certificate the app will be signed with, PEM or DER; the pack refuses to decrypt "
         "under any other signer (Android only)",
+    )
+
+    inspect_command = commands.add_parser(
+        "inspect",
+        help="report whether a built app is protected, and the runtime config it carries",
+    )
+    inspect_command.add_argument(
+        "app", type=pathlib.Path, help="the built app, an APK, AAB, or IPA"
+    )
+    inspect_command.add_argument(
+        "--platform",
+        type=platforms.Platform,
+        choices=list(platforms.Platform),
+        required=True,
+        help="the platform of the app",
     )
     return parser
 
@@ -126,17 +148,51 @@ def _required_checks() -> str:
     return ",".join(sorted(check_groups.REQUIRED_CHECKS))
 
 
+def _did_you_mean(platform: platforms.Platform, check: str) -> str:
+    """Returns the question naming the closest check of the platform to an unknown id, or an empty text if none is close."""
+    suggestion = check_groups.suggest_check(platform, check)
+    if suggestion is None:
+        return ""
+    return f" Did you mean {suggestion!r}?"
+
+
+def _unknown_check_message(
+    platform: platforms.Platform, check: str, skipped: bool
+) -> str:
+    """Returns the text that says an id is not a check of the platform, with the closest id if there is one.
+
+    The text says the id was skipped when `skipped` is true.
+    """
+    message = f"{check!r} is not a check of {platform}"
+    hint = _did_you_mean(platform, check)
+    if skipped is True:
+        message = f"{message}, skipped"
+        if hint == "":
+            return message
+    return f"{message}.{hint}"
+
+
 def _pack(arguments: argparse.Namespace) -> int:
     """Packs the app given on the command line and prints the result.
 
     Without `--build-id`, it derives the build id from the app, the platform, the packer version and the resolved checks.
     Without `--checks`, it packs the app with every check group of the platform. It warns
-    about each given check id that is not one of the platform's groups, which the packer skips.
-    After the result line it prints a reminder that the output is unsigned.
+    about each given check id that is not one of the platform's groups, which the packer skips,
+    and suggests the closest id. With `--strict`, it prints an error for each of them instead, writes
+    nothing and fails. After the result line it prints a reminder that the output is unsigned.
     """
     checks: list[str] | None = arguments.checks
     if checks is None:
         checks = list(check_groups.CHECKS[arguments.platform])
+    if arguments.strict is True:
+        unknown = check_groups.resolve_checks(arguments.platform, checks).skipped
+        for check in unknown:
+            print(
+                f"rasp pack: error: {_unknown_check_message(arguments.platform, check, skipped=False)}",
+                file=sys.stderr,
+            )
+        if len(unknown) > 0:
+            return EXIT_FAILED
     build_id: str | None = arguments.build_id
     try:
         if build_id is None:
@@ -157,7 +213,7 @@ def _pack(arguments: argparse.Namespace) -> int:
         return EXIT_FAILED
     for check in result.skipped_checks:
         print(
-            f"rasp pack: warning: {check!r} is not a check of {arguments.platform}, skipped",
+            f"rasp pack: warning: {_unknown_check_message(arguments.platform, check, skipped=True)}",
             file=sys.stderr,
         )
     print(
@@ -165,6 +221,32 @@ def _pack(arguments: argparse.Namespace) -> int:
         f"(package {result.package_name}, version {result.version}, build {result.build_id})"
     )
     print(NEXT_STEP)
+    return EXIT_OK
+
+
+def _inspect(arguments: argparse.Namespace) -> int:
+    """Inspects the app given on the command line and prints what it read, one aligned `label  value` line each.
+
+    The build id, the check groups and the ABIs are printed only for a protected app, and the ABIs only for Android.
+    """
+    try:
+        result = inspection.inspect(app=arguments.app, platform=arguments.platform)
+    except errors.Error as error:
+        print(f"rasp inspect: {error}", file=sys.stderr)
+        return EXIT_FAILED
+    lines = [
+        ("protected", "yes" if result.protected is True else "no"),
+        ("package", result.package_name),
+        ("version", result.version),
+    ]
+    if result.build_id is not None:
+        lines.append(("build id", result.build_id))
+        lines.append(("checks", ",".join(result.checks)))
+    if len(result.abis) > 0:
+        lines.append(("abis", ",".join(result.abis)))
+    width = max(len(label) for label, _ in lines)
+    for label, value in lines:
+        print(f"{label.ljust(width)}  {value}")
     return EXIT_OK
 
 
@@ -185,5 +267,7 @@ def main(argv: collections.abc.Sequence[str] | None = None) -> int:
     match arguments.command:
         case "pack":
             return _pack(arguments)
+        case "inspect":
+            return _inspect(arguments)
         case _:
             raise AssertionError(f"unknown command {arguments.command!r}")
