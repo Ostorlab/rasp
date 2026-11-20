@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "rasp/util/read_file.h"
 #include "support/files.h"
 
 namespace rasp::android::checks {
@@ -78,7 +79,8 @@ TEST(Hooks, observeMaps_whenMapIsClean_reportsEmptyLists) {
   const std::string path = write_maps(directory, kCleanMaps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path), (std::vector<Observation>{maps_hits({}), rwx_regions({}), foreign_libs({})}));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file),
+            (std::vector<Observation>{maps_hits({}), rwx_regions({}), foreign_libs({})}));
 }
 
 TEST(Hooks, observeMaps_whenFridaAgentIsMapped_reportsItUnderMapsHits) {
@@ -89,7 +91,7 @@ TEST(Hooks, observeMaps_whenFridaAgentIsMapped_reportsItUnderMapsHits) {
   const std::string path = write_maps(directory, std::string(kCleanMaps) + line + "\n");
   ASSERT_FALSE(path.empty());
 
-  const std::vector<Observation> observations = observe_maps(path);
+  const std::vector<Observation> observations = observe_maps(path, rasp::util::read_file);
 
   EXPECT_EQ(observations.at(0), maps_hits({line}));
 }
@@ -101,7 +103,7 @@ TEST(Hooks, observeMaps_whenAMarkerIsUppercase_matchesCaseInsensitively) {
   const std::string path = write_maps(directory, line + "\n");
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(0), maps_hits({line}));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(0), maps_hits({line}));
 }
 
 TEST(Hooks, observeMaps_whenTheAppsPackageNameContainsFridays_doesNotReportTheAppsOwnMappings) {
@@ -119,7 +121,7 @@ TEST(Hooks, observeMaps_whenTheAppsPackageNameContainsFridays_doesNotReportTheAp
   const std::string path = write_maps(directory, maps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(0), maps_hits({}));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(0), maps_hits({}));
 }
 
 TEST(Hooks, observeMaps_whenTheAppsPackageNameContainsGadget_doesNotReportTheAppsOwnMappings) {
@@ -133,7 +135,7 @@ TEST(Hooks, observeMaps_whenTheAppsPackageNameContainsGadget_doesNotReportTheApp
   const std::string path = write_maps(directory, maps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(0), maps_hits({}));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(0), maps_hits({}));
 }
 
 TEST(Hooks, observeMaps_whenARandomInstallFolderSpellsRiru_doesNotReportTheAppsOwnMappings) {
@@ -146,7 +148,7 @@ TEST(Hooks, observeMaps_whenARandomInstallFolderSpellsRiru_doesNotReportTheAppsO
   const std::string path = write_maps(directory, maps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(0), maps_hits({}));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(0), maps_hits({}));
 }
 
 TEST(Hooks, observeMaps_whenAFileNameIsAFrameworksLibrary_reportsEachLineWhole) {
@@ -166,7 +168,7 @@ TEST(Hooks, observeMaps_whenAFileNameIsAFrameworksLibrary_reportsEachLineWhole) 
   const std::string path = write_maps(directory, maps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(0), maps_hits(lines));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(0), maps_hits(lines));
 }
 
 TEST(Hooks, observeMaps_whenARegionIsWritableExecutable_reportsItUnderRwxRegions) {
@@ -176,7 +178,7 @@ TEST(Hooks, observeMaps_whenARegionIsWritableExecutable_reportsItUnderRwxRegions
   const std::string path = write_maps(directory, std::string(kCleanMaps) + line + "\n");
   ASSERT_FALSE(path.empty());
 
-  const std::vector<Observation> observations = observe_maps(path);
+  const std::vector<Observation> observations = observe_maps(path, rasp::util::read_file);
 
   EXPECT_EQ(observations.at(1), rwx_regions({line}));
 }
@@ -188,7 +190,7 @@ TEST(Hooks, observeMaps_whenARegionIsWritableButNotExecutable_doesNotReportIt) {
   const std::string path = write_maps(directory, line + "\n");
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(1), rwx_regions({}));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(1), rwx_regions({}));
 }
 
 TEST(Hooks, observeMaps_whenALibraryIsLoadedFromOutsideTheAppAndSystem_reportsItUnderForeignLibs) {
@@ -199,7 +201,7 @@ TEST(Hooks, observeMaps_whenALibraryIsLoadedFromOutsideTheAppAndSystem_reportsIt
   const std::string path = write_maps(directory, std::string(kCleanMaps) + line + "\n");
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(2), foreign_libs({line}));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(2), foreign_libs({line}));
 }
 
 TEST(Hooks, observeMaps_whenTheForeignLibrarysFileWasDeleted_reportsItUnderForeignLibs) {
@@ -209,7 +211,7 @@ TEST(Hooks, observeMaps_whenTheForeignLibrarysFileWasDeleted_reportsItUnderForei
   const std::string path = write_maps(directory, std::string(kCleanMaps) + line + "\n");
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(2), foreign_libs({line}));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(2), foreign_libs({line}));
 }
 
 TEST(Hooks, observeMaps_whenLibrariesComeFromTheExpectedDirectories_doesNotReportThem) {
@@ -225,7 +227,7 @@ TEST(Hooks, observeMaps_whenLibrariesComeFromTheExpectedDirectories_doesNotRepor
   const std::string path = write_maps(directory, maps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(2), foreign_libs({}));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(2), foreign_libs({}));
 }
 
 TEST(Hooks, observeMaps_whenAForeignMappingIsNotALibrary_doesNotReportIt) {
@@ -237,7 +239,7 @@ TEST(Hooks, observeMaps_whenAForeignMappingIsNotALibrary_doesNotReportIt) {
   const std::string path = write_maps(directory, maps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(2), foreign_libs({}));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(2), foreign_libs({}));
 }
 
 TEST(Hooks, observeMaps_whenTheFileIsMissing_reportsAnErrorForEach) {
@@ -265,7 +267,7 @@ TEST(Hooks, observeThreads_whenNoThreadHasAFrameworkName_reportsAnEmptyList) {
   ASSERT_TRUE(add_folder(task.path(), "100", "co.app\n"));
   ASSERT_TRUE(add_folder(task.path(), "101", "RenderThread\n"));
 
-  EXPECT_EQ(observe_threads(task.path()), (std::vector<Observation>{threads({})}));
+  EXPECT_EQ(observe_threads(task.path(), rasp::util::read_file), (std::vector<Observation>{threads({})}));
 }
 
 TEST(Hooks, observeThreads_whenAThreadHasAFridaName_reportsTheNameWithoutItsLineBreak) {
@@ -274,7 +276,7 @@ TEST(Hooks, observeThreads_whenAThreadHasAFridaName_reportsTheNameWithoutItsLine
   ASSERT_TRUE(add_folder(task.path(), "100", "co.app\n"));
   ASSERT_TRUE(add_folder(task.path(), "102", "gum-js-loop\n"));
 
-  EXPECT_EQ(observe_threads(task.path()), (std::vector<Observation>{threads({"gum-js-loop"})}));
+  EXPECT_EQ(observe_threads(task.path(), rasp::util::read_file), (std::vector<Observation>{threads({"gum-js-loop"})}));
 }
 
 TEST(Hooks, observeThreads_whenThreadsShareAFrameworkName_reportsEachNameOnceInOrder) {
@@ -284,7 +286,8 @@ TEST(Hooks, observeThreads_whenThreadsShareAFrameworkName_reportsEachNameOnceInO
   ASSERT_TRUE(add_folder(task.path(), "101", "gdbus\n"));
   ASSERT_TRUE(add_folder(task.path(), "102", "gmain\n"));
 
-  EXPECT_EQ(observe_threads(task.path()), (std::vector<Observation>{threads({"gdbus", "gmain"})}));
+  EXPECT_EQ(observe_threads(task.path(), rasp::util::read_file),
+            (std::vector<Observation>{threads({"gdbus", "gmain"})}));
 }
 
 TEST(Hooks, observeThreads_whenMoreThan16NamesMatch_reportsTheFirst16InOrder) {
@@ -299,7 +302,7 @@ TEST(Hooks, observeThreads_whenMoreThan16NamesMatch_reportsTheFirst16InOrder) {
     }
   }
 
-  EXPECT_EQ(observe_threads(task.path()), (std::vector<Observation>{threads(expected)}));
+  EXPECT_EQ(observe_threads(task.path(), rasp::util::read_file), (std::vector<Observation>{threads(expected)}));
 }
 
 TEST(Hooks, observeThreads_whenTheListHoldsEntriesThatAreNotThreads_ignoresThem) {
@@ -308,7 +311,7 @@ TEST(Hooks, observeThreads_whenTheListHoldsEntriesThatAreNotThreads_ignoresThem)
   ASSERT_TRUE(add_folder(task.path(), "notes", "gmain\n"));
   ASSERT_TRUE(add_folder(task.path(), "100", "co.app\n"));
 
-  EXPECT_EQ(observe_threads(task.path()), (std::vector<Observation>{threads({})}));
+  EXPECT_EQ(observe_threads(task.path(), rasp::util::read_file), (std::vector<Observation>{threads({})}));
 }
 
 TEST(Hooks, observeThreads_whenTheListIsMissing_reportsAnError) {
@@ -325,7 +328,7 @@ TEST(Hooks, observeThreads_whenARunningThreadsNameCannotBeRead_reportsAnErrorRat
   std::error_code error;
   ASSERT_TRUE(std::filesystem::create_directory(task.path() + "/101", error));
 
-  EXPECT_EQ(observe_threads(task.path()), (std::vector<Observation>{unreadable_threads()}));
+  EXPECT_EQ(observe_threads(task.path(), rasp::util::read_file), (std::vector<Observation>{unreadable_threads()}));
 }
 
 TEST(Hooks, observeThreads_whenTheListHoldsMoreThan4096Threads_reportsAnErrorRatherThanAPartialList) {
@@ -335,7 +338,7 @@ TEST(Hooks, observeThreads_whenTheListHoldsMoreThan4096Threads_reportsAnErrorRat
     ASSERT_TRUE(add_folder(task.path(), std::to_string(id), "worker\n"));
   }
 
-  EXPECT_EQ(observe_threads(task.path()), (std::vector<Observation>{unreadable_threads()}));
+  EXPECT_EQ(observe_threads(task.path(), rasp::util::read_file), (std::vector<Observation>{unreadable_threads()}));
 }
 
 }  // namespace
