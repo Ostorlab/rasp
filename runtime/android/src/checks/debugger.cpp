@@ -25,6 +25,7 @@
 
 #include "rasp/observation.h"
 #include "rasp/util/read_file.h"
+#include "util/raw_file.h"
 
 namespace rasp::android::checks {
 
@@ -42,6 +43,8 @@ constexpr bool kOnAndroid = false;
 constexpr std::string_view kTracerPidSignal = "dbg.tracer_pid";
 /// The source of the tracer probe.
 constexpr std::string_view kTracerPidSource = "proc_status";
+/// The source that reads the status file through libc, whose answer is the kernel's unless someone interposes it.
+constexpr std::string_view kTracerPidLibcSource = "proc_status_libc";
 
 /// The app's status file.
 constexpr std::string_view kStatusPath = "/proc/self/status";
@@ -108,8 +111,8 @@ constexpr std::string_view kDebugApiSource = "debug_api";
 
 /// The name of the thread whose folder is `thread_path`, without the line break that ends it, or nothing when it can't
 /// be read.
-[[nodiscard]] std::optional<std::string> thread_name(const std::string& thread_path) {
-  std::optional<std::string> name = rasp::util::read_file(thread_path + "/comm", kMaxThreadNameSize);
+[[nodiscard]] std::optional<std::string> thread_name(const std::string& thread_path, rasp::util::ProcReader read) {
+  std::optional<std::string> name = read(thread_path + "/comm", kMaxThreadNameSize);
   if (name && name->ends_with('\n')) {
     name->pop_back();
   }
@@ -117,8 +120,11 @@ constexpr std::string_view kDebugApiSource = "debug_api";
 }
 
 /// Whether the thread folder at `task_path` holds a thread of a JDWP connection, or nothing when the folder can't be
-/// read or holds more than kMaxThreads threads.
-[[nodiscard]] std::optional<bool> has_jdwp_thread(std::string_view task_path) {
+/// read or holds more than kMaxThreads threads. The folder is listed through std::filesystem's directory_iterator —
+/// libc opendir/readdir under it — so the listing stays a surface an interposer can answer, for example to hide a
+/// JDWP thread's folder, while the per-thread comm reads below go through the direct-system-call reader. Reading the
+/// listing through a raw getdents64 would close that; it is the same follow-up observe_threads names.
+[[nodiscard]] std::optional<bool> has_jdwp_thread(std::string_view task_path, rasp::util::ProcReader read) {
   std::error_code error;
   std::filesystem::directory_iterator entries(task_path, error);
   std::size_t threads = 0;
@@ -130,7 +136,7 @@ constexpr std::string_view kDebugApiSource = "debug_api";
     if (threads > kMaxThreads) {
       return std::nullopt;
     }
-    const std::optional<std::string> name = thread_name(entries->path().string());
+    const std::optional<std::string> name = thread_name(entries->path().string(), read);
     if (name && is_jdwp_thread(*name)) {
       return true;
     }
@@ -186,8 +192,8 @@ constexpr jint kLocalFrameCapacity = 4;
 
 }  // namespace
 
-Observation observe_tracer_pid(std::string_view status_path) {
-  const std::optional<std::string> status = rasp::util::read_file(status_path, kMaxStatusSize);
+Observation observe_tracer_pid(std::string_view status_path, rasp::util::ProcReader read) {
+  const std::optional<std::string> status = read(status_path, kMaxStatusSize);
   if (!status) {
     return failed(kTracerPidSignal, kTracerPidSource);
   }
@@ -198,8 +204,20 @@ Observation observe_tracer_pid(std::string_view status_path) {
   return observed(kTracerPidSignal, kTracerPidSource, *pid);
 }
 
-Observation observe_jdwp_threads(std::string_view task_path) {
-  const std::optional<bool> found = has_jdwp_thread(task_path);
+Observation observe_tracer_pid_libc(std::string_view status_path) {
+  const std::optional<std::string> status = rasp::util::read_file(status_path, kMaxStatusSize);
+  if (!status) {
+    return failed(kTracerPidSignal, kTracerPidLibcSource);
+  }
+  const std::optional<std::int64_t> pid = parse_tracer_pid(*status);
+  if (!pid) {
+    return failed(kTracerPidSignal, kTracerPidLibcSource);
+  }
+  return observed(kTracerPidSignal, kTracerPidLibcSource, *pid);
+}
+
+Observation observe_jdwp_threads(std::string_view task_path, rasp::util::ProcReader read) {
+  const std::optional<bool> found = has_jdwp_thread(task_path, read);
   if (!found) {
     return failed(kJavaDebuggerSignal, kJdwpThreadsSource);
   }
@@ -217,11 +235,16 @@ std::vector<Observation> debugger() {
   if (!kOnAndroid) {
     return {
         unsupported(kTracerPidSignal, kTracerPidSource),
+        unsupported(kTracerPidSignal, kTracerPidLibcSource),
         unsupported(kJavaDebuggerSignal, kJdwpThreadsSource),
         unsupported(kJavaDebuggerSignal, kDebugApiSource),
     };
   }
-  std::vector<Observation> observations{observe_tracer_pid(kStatusPath), observe_jdwp_threads(kTaskPath)};
+  std::vector<Observation> observations{
+      observe_tracer_pid(kStatusPath),
+      observe_tracer_pid_libc(kStatusPath),
+      observe_jdwp_threads(kTaskPath),
+  };
 #ifdef __ANDROID__
   observations.push_back(observe_debug_api(debugger_connected()));
 #endif

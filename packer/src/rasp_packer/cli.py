@@ -16,6 +16,7 @@ from rasp_packer import platforms
 
 EXIT_OK = 0
 EXIT_FAILED = 1
+NEXT_STEP = "next: the protected app is unsigned; sign it with your upload or release key before you upload it"
 
 
 class _Writer(typing.Protocol):
@@ -139,6 +140,7 @@ def _pack(arguments: argparse.Namespace) -> int:
 
     Without `--checks`, it warns and packs the app with only the required check groups. It warns
     about each given check id that is not one of the platform's groups, which the packer skips.
+    After the result line it prints a reminder that the output is unsigned.
     """
     checks: list[str] | None = arguments.checks
     if checks is None:
@@ -171,6 +173,7 @@ def _pack(arguments: argparse.Namespace) -> int:
         f"packed {arguments.platform} app: {result.output} "
         f"(package {result.package_name}, version {result.version}, build {result.build_id})"
     )
+    print(NEXT_STEP)
     return EXIT_OK
 
 

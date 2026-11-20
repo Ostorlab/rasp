@@ -221,6 +221,7 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The first line printed names the app identity and the build id."""
     monkeypatch.setattr(
         packer,
         "pack",
@@ -236,7 +237,7 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     exit_code = cli.main(_pack_arguments(tmp_path))
 
     assert exit_code == cli.EXIT_OK
-    assert capsys.readouterr().out.strip() == (
+    assert capsys.readouterr().out.splitlines()[0] == (
         f"packed ios app: {tmp_path / 'out.ipa'} "
         f"(package dev.ostorlab.demo, version 1.2.3, build {_BUILD_ID})"
     )
@@ -311,6 +312,34 @@ def testMain_whenChecksListedWithoutPlatform_printsEachPlatformUnderAHeading(
     assert "android:" in lines
     assert "ios:" in lines
     assert "codesign" in "".join(lines)
+
+
+def testMain_whenPackSucceeds_printsTheUnsignedReminderAfterTheResultLine(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The line after the result line reminds that the protected app is unsigned."""
+    monkeypatch.setattr(
+        packer,
+        "pack",
+        lambda **_: packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+            skipped_checks=(),
+        ),
+    )
+
+    exit_code = cli.main(_pack_arguments(tmp_path))
+
+    lines = capsys.readouterr().out.splitlines()
+    assert exit_code == cli.EXIT_OK
+    assert lines[0].startswith("packed ios app: ")
+    assert lines[1:] == [
+        "next: the protected app is unsigned; sign it with your upload or release key before you upload it"
+    ]
 
 
 class _Terminal(io.StringIO):

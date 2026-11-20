@@ -38,6 +38,10 @@ result = packer.pack(
 - `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
 - `--pin-certificate` (Android): the certificate the app will be signed with, PEM or DER. The protected app then works only when it is signed with that certificate.
 
+## How do I sign the protected app?
+
+The packer returns the app unsigned and prints a reminder after a successful `rasp pack`. Sign it with your upload key (Play App Signing then signs the copy users install) or your release key, and on iOS with your distribution certificate and provisioning profile.
+
 `pack` returns the path of the protected app, the app's package name, version and build id, and the check groups it skipped.
 
 ## When does `rasp` print the banner?
