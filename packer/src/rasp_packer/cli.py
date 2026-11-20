@@ -209,9 +209,6 @@ def _pack(arguments: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         checks = []
-    output: pathlib.Path | None = arguments.output
-    if output is None:
-        output = packer.default_output_path(arguments.app)
     if arguments.strict is True:
         unknown = check_groups.resolve_checks(arguments.platform, checks).skipped
         for check in unknown:
@@ -221,6 +218,9 @@ def _pack(arguments: argparse.Namespace) -> int:
             )
         if len(unknown) > 0:
             return EXIT_FAILED
+    output: pathlib.Path | None = arguments.output
+    if output is None:
+        output = packer.default_output_path(arguments.app)
     build_id: str | None = arguments.build_id
     try:
         if build_id is None:

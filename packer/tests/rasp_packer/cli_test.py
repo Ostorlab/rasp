@@ -29,23 +29,14 @@ def _pack_arguments(
 ) -> list[str]:
     """Returns the `rasp pack` arguments for an app and output in `tmp_path`."""
     return [
-        *_pack_arguments_without_output(tmp_path, platform, build_id),
-        "--output",
-        str(tmp_path / "out.ipa"),
-    ]
-
-
-def _pack_arguments_without_output(
-    tmp_path: pathlib.Path, platform: str, build_id: str
-) -> list[str]:
-    """Returns the `rasp pack` arguments for an app in `tmp_path`, without an output."""
-    return [
         "pack",
         str(tmp_path / "app.ipa"),
         "--platform",
         platform,
         "--build-id",
         build_id,
+        "--output",
+        str(tmp_path / "out.ipa"),
     ]
 
 
@@ -416,6 +407,41 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     )
 
 
+def testMain_whenNoOutput_packsToTheProtectedNameNextToTheApp(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without --output the packer receives the default output path."""
+    captured: dict[str, object] = {}
+
+    def fake_pack(**kwargs: object) -> packer.PackResult:
+        """Records the pack arguments."""
+        captured.update(kwargs)
+        return packer.PackResult(
+            output=tmp_path / "app-protected.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+            checks=("identity",),
+            skipped_checks=(),
+        )
+
+    monkeypatch.setattr(packer, "pack", fake_pack)
+
+    exit_code = cli.main(
+        [
+            "pack",
+            str(tmp_path / "app.ipa"),
+            "--platform",
+            "ios",
+            "--build-id",
+            _BUILD_ID,
+        ]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert captured["output"] == tmp_path / "app-protected.ipa"
+
+
 def testMain_whenMappingGiven_passesTheMappingPathToPack(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -465,32 +491,6 @@ def testMain_whenNoMapping_passesNoneAsTheMapping(
     cli.main(_pack_arguments(tmp_path))
 
     assert captured["mapping"] is None
-
-
-def testMain_whenNoOutput_packsToTheProtectedNameNextToTheApp(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Without --output the packer receives the default output path."""
-    captured: dict[str, object] = {}
-
-    def fake_pack(**kwargs: object) -> packer.PackResult:
-        """Records the pack arguments."""
-        captured.update(kwargs)
-        return packer.PackResult(
-            output=tmp_path / "app-protected.ipa",
-            package_name="dev.ostorlab.demo",
-            version="1.2.3",
-            build_id=_BUILD_ID,
-            checks=("identity",),
-            skipped_checks=(),
-        )
-
-    monkeypatch.setattr(packer, "pack", fake_pack)
-
-    exit_code = cli.main(_pack_arguments_without_output(tmp_path, "ios", _BUILD_ID))
-
-    assert exit_code == cli.EXIT_OK
-    assert captured["output"] == tmp_path / "app-protected.ipa"
 
 
 def testMain_whenInspectedAppIsProtected_printsAlignedLabelsAndValues(

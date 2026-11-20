@@ -26,9 +26,9 @@ result = packer.pack(
 ## Options
 
 - `--build-id` (`build_id=`): the id of the protected build, written into the app as it is. `rasp pack` derives it when it is not given: the SHA-256 of the app's contents, the platform, the installed packer version and the resolved checks. The same inputs give the same id, and any change to the app, the packer version or the checks gives a new one. `pack` requires it.
-- `--output` (`output=`): where to write the protected app; an existing file at that path is refused. The command line defaults to `<name>-protected<extension>` next to the app, such as `app-protected.apk` for `app.apk`.
 - `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added. Without `--checks`, only `identity` is chosen. An unknown group is skipped with a warning. The warning suggests the closest matching group name. With `--strict`, `rasp pack` exits with status 1 instead. See the groups in the [repository's README](../README.md#checks).
 - `--strict`: print an error for every unknown check group, write nothing, and exit with status 1, instead of skipping it with a warning.
+- `--output` (`output=`): where to write the protected app; an existing file at that path is refused. The command line defaults to `<name>-protected<extension>` next to the app, such as `app-protected.apk` for `app.apk`.
 - `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
 - `--pin-certificate` (Android): the certificate the app will be signed with, PEM or DER. The protected app then works only when it is signed with that certificate.
 - `--json`: prints the result as one JSON object with sorted keys instead of text: `build_id`, `checks` (an array of check ids), `output` (the path as a string), `package_name`, `skipped_checks` (an array of check ids) and `version`. Warnings still go to stderr.
