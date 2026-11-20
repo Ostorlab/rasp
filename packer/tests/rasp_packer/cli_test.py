@@ -2,6 +2,7 @@
 
 import io
 import pathlib
+import shlex
 import sys
 from importlib import metadata
 
@@ -291,15 +292,15 @@ def testMain_whenNoMapping_passesNoneAsTheMapping(
     [
         (
             "my app.apk",
-            "next: sign it with apksigner sign --ks <your-keystore.jks> --ks-key-alias <key-alias> 'DIR/my app.apk'",
+            "next: sign it with apksigner sign --ks <your-keystore.jks> --ks-key-alias <key-alias> {path}",
         ),
         (
             "OUT.AAB",
-            "next: sign it with jarsigner -keystore <your-keystore.jks> DIR/OUT.AAB <key-alias>",
+            "next: sign it with jarsigner -keystore <your-keystore.jks> {path} <key-alias>",
         ),
         (
             "out.ipa",
-            "next: re-sign DIR/out.ipa with the app's distribution certificate and "
+            "next: re-sign {path} with the app's distribution certificate and "
             "provisioning profile before uploading it",
         ),
     ],
@@ -330,7 +331,7 @@ def testMain_whenPackSucceeds_printsHowToSignTheOutput(
     assert exit_code == cli.EXIT_OK
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].startswith("packed ios app: ")
-    assert lines[1:] == [expected.replace("DIR", str(tmp_path))]
+    assert lines[1:] == [expected.format(path=shlex.quote(str(tmp_path / name)))]
 
 
 class _Terminal(io.StringIO):
