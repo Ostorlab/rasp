@@ -136,6 +136,15 @@ def pack(
     )
 
 
+def default_output_path(app: pathlib.Path) -> pathlib.Path:
+    """Returns the path a protected app is written to by default.
+
+    The path sits next to the app and is named `<stem>-protected<suffix>`, so `dir/app.apk` gives
+    `dir/app-protected.apk`.
+    """
+    return app.with_name(f"{app.stem}-protected{app.suffix}")
+
+
 def _check_build_id(build_id: str) -> None:
     """Refuses an empty build id, or one with control characters."""
     if len(build_id) == 0:

@@ -186,6 +186,16 @@ def testPack_whenChecksAreNotOfThePlatform_packsWithTheOthersAndReportsThem(
     assert result.skipped_checks == ("root", "telepathy")
 
 
+def testDefaultOutputPath_whenAppHasASuffix_returnsProtectedNameNextToTheApp(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The default output keeps the original suffix."""
+    assert (
+        packer.default_output_path(tmp_path / "my.app.apk")
+        == tmp_path / "my.app-protected.apk"
+    )
+
+
 def testPack_whenOutputExists_raisesOutputExistsError(tmp_path: pathlib.Path) -> None:
     output = tmp_path / "out.ipa"
     output.write_bytes(b"")

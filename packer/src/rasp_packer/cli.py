@@ -81,8 +81,9 @@ def _parser() -> argparse.ArgumentParser:
     pack.add_argument(
         "--output",
         type=pathlib.Path,
-        required=True,
-        help="where to write the protected app",
+        default=None,
+        help="where to write the protected app (default: next to the app, named "
+        "<name>-protected<extension>, such as app-protected.apk)",
     )
     pack.add_argument(
         "--checks",
@@ -212,6 +213,9 @@ def _pack(arguments: argparse.Namespace) -> int:
             )
         if len(unknown) > 0:
             return EXIT_FAILED
+    output: pathlib.Path | None = arguments.output
+    if output is None:
+        output = packer.default_output_path(arguments.app)
     build_id: str | None = arguments.build_id
     try:
         if build_id is None:
@@ -221,7 +225,7 @@ def _pack(arguments: argparse.Namespace) -> int:
         result = packer.pack(
             app=arguments.app,
             platform=arguments.platform,
-            output=arguments.output,
+            output=output,
             build_id=build_id,
             checks=checks,
             mapping=arguments.mapping,
