@@ -48,7 +48,7 @@ def default_build_id(
             digest.hexdigest(),
             str(platform),
             metadata.version("rasp-packer"),
-            ",".join(sorted(resolved)),
+            ",".join(resolved),
         ]
     )
     return hashlib.sha256(canonical.encode()).hexdigest()
