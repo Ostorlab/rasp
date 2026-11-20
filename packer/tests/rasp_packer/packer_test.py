@@ -52,6 +52,7 @@ def testPack_whenIosApp_packsWithAConfigHoldingTheGivenBuildId(
 def testPack_whenIosApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
     ipa_file: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """An iOS pack returns the protected app, its identity, the build id and the check groups."""
     monkeypatch.setattr(ios_packer, "pack", lambda **_: _IDENTITY)
 
     result = packer.pack(
@@ -67,6 +68,7 @@ def testPack_whenIosApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
         package_name="dev.ostorlab.demo",
         version="1.2.3",
         build_id=_BUILD_ID,
+        checks=("identity",),
         skipped_checks=(),
     )
 
@@ -159,6 +161,7 @@ def testPack_whenGivenNoChecks_packsWithAConfigHoldingOnlyTheRequiredOnes(
 def testPack_whenChecksAreNotOfThePlatform_packsWithTheOthersAndReportsThem(
     ipa_file: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Ids that are not groups of the platform are skipped and reported, and the others are returned as the app's checks."""
     configs: list[object] = []
 
     def fake_pack(*, config: object, **_: object) -> identity.AppIdentity:
@@ -179,6 +182,7 @@ def testPack_whenChecksAreNotOfThePlatform_packsWithTheOthersAndReportsThem(
             build_id=_BUILD_ID, checks=("hooks", "identity"), checks_mask=12
         )
     ]
+    assert result.checks == ("hooks", "identity")
     assert result.skipped_checks == ("root", "telepathy")
 
 
@@ -272,6 +276,7 @@ def testPack_whenIosAppWithMapping_raisesMappingError(
 def testPack_whenAndroidApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """An Android pack returns the protected app, its identity, the build id and the check groups."""
     app = tmp_path / "app.apk"
     app.write_bytes(b"an apk")
     monkeypatch.setattr(android_packer, "pack", lambda **_: _IDENTITY)
@@ -289,6 +294,7 @@ def testPack_whenAndroidApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
         package_name="dev.ostorlab.demo",
         version="1.2.3",
         build_id=_BUILD_ID,
+        checks=("identity",),
         skipped_checks=(),
     )
 
