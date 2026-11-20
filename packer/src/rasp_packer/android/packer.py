@@ -137,7 +137,7 @@ def pack(
         artifacts = resources_module.load()
     pinned_signer = _read_pinned_certificate(pin_certificate)
     class_mapping = _load_mapping(mapping) if mapping is not None else None
-    if _is_aab(app):
+    if is_aab(app) is True:
         return _pack_aab(
             app=app,
             output=output,
@@ -208,8 +208,11 @@ def _load_mapping(mapping: pathlib.Path) -> mapping_module.ClassMapping:
     return mapping_module.parse(text)
 
 
-def _is_aab(app: pathlib.Path) -> bool:
-    """An AAB contains ``BundleConfig.pb``; an APK does not."""
+def is_aab(app: pathlib.Path) -> bool:
+    """Returns whether the app is an AAB: it holds ``BundleConfig.pb``, which an APK does not.
+
+    A file that cannot be read as a zip archive is not an AAB.
+    """
     try:
         with zipfile.ZipFile(app) as zf:
             return "BundleConfig.pb" in zf.namelist()

@@ -34,7 +34,8 @@ result = packer.pack(
 ## Options
 
 - `--build-id` (`build_id=`): the id of the protected build, written into the app as it is. `rasp pack` derives it when it is not given: the SHA-256 of the app's contents, the platform, the installed packer version and the resolved checks. The same inputs give the same id, and any change to the app, the packer version or the checks gives a new one. `pack` requires it.
-- `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added, an unknown group is skipped with a warning, and without `--checks` only `identity` is chosen. See the groups in the [repository's README](../README.md#checks).
+- `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added. Without `--checks`, only `identity` is chosen. An unknown group is skipped with a warning. The warning suggests the closest matching group name. With `--strict`, `rasp pack` exits with status 1 instead. See the groups in the [repository's README](../README.md#checks).
+- `--strict`: print an error for every unknown check group, write nothing, and exit with status 1, instead of skipping it with a warning.
 - `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
 - `--pin-certificate` (Android): the certificate the app will be signed with, PEM or DER. The protected app then works only when it is signed with that certificate.
 
@@ -43,6 +44,25 @@ result = packer.pack(
 The packer returns the app unsigned and prints a reminder after a successful `rasp pack`. Sign it with your upload key (Play App Signing then signs the copy users install) or your release key, and on iOS with your distribution certificate and provisioning profile.
 
 `pack` returns the path of the protected app, the app's package name, version and build id, and the check groups it skipped.
+
+## How do I check whether an app is protected?
+
+**`rasp inspect`** opens a built app, never modifies it, and reports whether it carries the RASP runtime. For a protected app it also prints the build id and the check groups from the runtime's config, and on Android the ABIs that carry the runtime. It does not run the app, so it cannot tell whether a check actually fires, only that the runtime and its config are present.
+
+```
+rasp inspect app-protected.apk --platform android
+```
+
+```
+protected  yes
+package    com.example.app
+version    2.4.1
+build id   my-build-1
+checks     debugger,hooks,identity,root
+abis       arm64-v8a,armeabi-v7a
+```
+
+An app without the runtime is not an error: `inspect` prints `protected  no` with its package and version and exits 0. From Python, `rasp_packer.inspection.inspect(app=pathlib.Path("app-protected.apk"), platform=platforms.Platform.ANDROID)` returns the same fields.
 
 ## When does `rasp` print the banner?
 
