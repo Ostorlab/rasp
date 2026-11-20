@@ -43,7 +43,7 @@ DESCRIPTIONS: collections.abc.Mapping[str, str] = {
     "debugger": "a debugger attached to the app",
     "hooks": "Frida and other libraries injected into the app",
     "integrity": "the runtime's code changed in memory",
-    "mitm": "VPN tunnels, and proxies on iOS",
+    "mitm": "VPN tunnels, a user-installed certificate on Android and a proxy on iOS",
     "identity": "a repackaged copy of the app",
     "codesign": "the app's live code-signing flags: an invalid signature, a debugged process, "
     "task access and relaxed library validation",

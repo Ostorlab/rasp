@@ -91,7 +91,7 @@ result = packer.pack(
 | `debugger` | ✓ | ✓ | A debugger attached to the app |
 | `hooks` | ✓ | ✓ | Frida and other libraries injected into the app |
 | `integrity` | ✓ | | The runtime's code changed in memory |
-| `mitm` | ✓ | ✓ | VPN tunnels, and proxies on iOS |
+| `mitm` | ✓ | ✓ | VPN tunnels, a user-installed certificate on Android and a proxy on iOS |
 | `identity` | ✓ | ✓ | A repackaged copy of the app (always on) |
 | `emulator` | ✓ | ✓ | An emulator or the iOS Simulator |
 | `virtualizer` | | ✓ | The app running inside another app's container |
