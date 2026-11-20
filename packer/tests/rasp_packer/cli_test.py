@@ -473,6 +473,7 @@ def testMain_whenPlatformIsNotGiven_infersItFromTheAppExtension(
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            checks=("identity",),
             skipped_checks=(),
         )
 
@@ -498,6 +499,7 @@ def testMain_whenPlatformIsGiven_itWinsOverTheExtension(
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            checks=("identity",),
             skipped_checks=(),
         )
 
