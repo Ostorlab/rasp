@@ -2,6 +2,8 @@
 
 import argparse
 import collections.abc
+import dataclasses
+import json
 import os
 import pathlib
 import sys
@@ -108,6 +110,7 @@ def _parser() -> argparse.ArgumentParser:
         help="the certificate the app will be signed with, PEM or DER; the pack refuses to decrypt "
         "under any other signer (Android only)",
     )
+    _add_json_argument(pack)
 
     listing = commands.add_parser(
         "checks", help="list the check groups of a platform, or of both"
@@ -133,7 +136,22 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="the platform of the app",
     )
+    _add_json_argument(inspect_command)
     return parser
+
+
+def _add_json_argument(command: argparse.ArgumentParser) -> None:
+    """Adds `--json` to a command, which then prints its result as one JSON object instead of text."""
+    command.add_argument(
+        "--json",
+        action="store_true",
+        help="print the result as one JSON object with sorted keys; warnings still go to stderr",
+    )
+
+
+def _print_json(fields: dict[str, object]) -> None:
+    """Prints the fields as one JSON object, with its keys sorted."""
+    print(json.dumps(fields, sort_keys=True))
 
 
 def _split_checks(value: str) -> list[str]:
@@ -183,7 +201,7 @@ def _unknown_check_message(
 
 
 def _pack(arguments: argparse.Namespace) -> int:
-    """Packs the app given on the command line and prints the result.
+    """Packs the app given on the command line and prints the result, as text or, with `--json`, as one JSON object.
 
     Without `--build-id`, it derives the build id from the app, the platform, the packer version and the resolved checks.
     Without `--checks`, it warns and packs the app with only the required check groups. It warns
@@ -232,6 +250,9 @@ def _pack(arguments: argparse.Namespace) -> int:
             f"rasp pack: warning: {_unknown_check_message(arguments.platform, check, skipped=True)}",
             file=sys.stderr,
         )
+    if arguments.json is True:
+        _print_json({**dataclasses.asdict(result), "output": str(result.output)})
+        return EXIT_OK
     print(
         f"packed {arguments.platform} app: {result.output} "
         f"(package {result.package_name}, version {result.version}, build {result.build_id})"
@@ -257,6 +278,8 @@ def _checks(arguments: argparse.Namespace) -> int:
 def _inspect(arguments: argparse.Namespace) -> int:
     """Inspects the app given on the command line and prints what it read, one aligned `label  value` line each.
 
+    With `--json`, it prints the inspection's fields as one JSON object instead.
+
     The build id, the check groups and the ABIs are printed only for a protected app, and the ABIs only for Android.
     """
     try:
@@ -264,6 +287,9 @@ def _inspect(arguments: argparse.Namespace) -> int:
     except errors.Error as error:
         print(f"rasp inspect: {error}", file=sys.stderr)
         return EXIT_FAILED
+    if arguments.json is True:
+        _print_json(dataclasses.asdict(result))
+        return EXIT_OK
     lines = [
         ("protected", "yes" if result.protected is True else "no"),
         ("package", result.package_name),

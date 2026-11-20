@@ -1,6 +1,7 @@
 """Tests of the `rasp` command line."""
 
 import io
+import json
 import pathlib
 import sys
 from importlib import metadata
@@ -88,6 +89,7 @@ def testMain_whenBuildIdIsMissing_packsWithTheDerivedBuildId(
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=str(arguments["build_id"]),
+            checks=("identity",),
             skipped_checks=(),
         )
 
@@ -139,15 +141,18 @@ def testMain_whenPackFails_printsTheErrorAndReturnsFailed(
 def testMain_whenChecksAreGiven_passesThemToThePacker(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The ids given with `--checks` reach the packer as given."""
     calls: list[dict[str, object]] = []
 
     def fake_pack(**arguments: object) -> packer.PackResult:
+        """Records the arguments of the pack and returns a fixed result."""
         calls.append(arguments)
         return packer.PackResult(
             output=tmp_path / "out.ipa",
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            checks=("identity",),
             skipped_checks=(),
         )
 
@@ -168,15 +173,18 @@ def testMain_whenChecksHaveSpacesOrATrailingComma_passesTheIdsAloneToThePacker(
     value: str,
     expected: list[str],
 ) -> None:
+    """Spaces around ids and empty ids are dropped before the ids reach the packer."""
     calls: list[dict[str, object]] = []
 
     def fake_pack(**arguments: object) -> packer.PackResult:
+        """Records the arguments of the pack and returns a fixed result."""
         calls.append(arguments)
         return packer.PackResult(
             output=tmp_path / "out.ipa",
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            checks=("identity",),
             skipped_checks=(),
         )
 
@@ -204,15 +212,18 @@ def testMain_whenChecksAreNotGiven_warnsAndPassesNoChecksToThePacker(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Without `--checks`, the command warns and packs with no chosen check."""
     calls: list[dict[str, object]] = []
 
     def fake_pack(**arguments: object) -> packer.PackResult:
+        """Records the arguments of the pack and returns a fixed result."""
         calls.append(arguments)
         return packer.PackResult(
             output=tmp_path / "out.ipa",
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            checks=("identity",),
             skipped_checks=(),
         )
 
@@ -374,7 +385,7 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The first line printed names the app identity and the build id."""
+    """A pack prints the protected app, its identity and the build id."""
     monkeypatch.setattr(
         packer,
         "pack",
@@ -383,6 +394,7 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            checks=("identity",),
             skipped_checks=(),
         ),
     )
@@ -399,15 +411,18 @@ def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
 def testMain_whenMappingGiven_passesTheMappingPathToPack(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The `--mapping` path reaches the packer."""
     captured: dict[str, object] = {}
 
     def fake_pack(**kwargs: object) -> packer.PackResult:
+        """Records the arguments of the pack and returns a fixed result."""
         captured.update(kwargs)
         return packer.PackResult(
             output=tmp_path / "out.ipa",
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            checks=("identity",),
             skipped_checks=(),
         )
 
@@ -422,15 +437,18 @@ def testMain_whenMappingGiven_passesTheMappingPathToPack(
 def testMain_whenNoMapping_passesNoneAsTheMapping(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Without `--mapping`, the packer gets no mapping."""
     captured: dict[str, object] = {}
 
     def fake_pack(**kwargs: object) -> packer.PackResult:
+        """Records the arguments of the pack and returns a fixed result."""
         captured.update(kwargs)
         return packer.PackResult(
             output=tmp_path / "out.ipa",
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            checks=("identity",),
             skipped_checks=(),
         )
 
@@ -528,6 +546,102 @@ def testMain_whenInspectFails_printsTheErrorAndReturnsFailed(
     assert captured.err.startswith("rasp inspect: ")
 
 
+def testMain_whenPackIsGivenJson_printsOneJsonObjectWithSortedKeysAndWarnsOnStderr(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With `--json`, pack prints its result as one JSON object, and its warnings still go to stderr."""
+    monkeypatch.setattr(
+        packer,
+        "pack",
+        lambda **_: packer.PackResult(
+            output=tmp_path / "out.ipa",
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+            checks=("hooks", "identity"),
+            skipped_checks=("oldcheck",),
+        ),
+    )
+
+    exit_code = cli.main(
+        [*_pack_arguments(tmp_path), "--checks", "hooks,oldcheck", "--json"]
+    )
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert exit_code == cli.EXIT_OK
+    assert captured.out.count("\n") == 1
+    assert list(output) == sorted(output)
+    assert output == {
+        "build_id": _BUILD_ID,
+        "checks": ["hooks", "identity"],
+        "output": str(tmp_path / "out.ipa"),
+        "package_name": "dev.ostorlab.demo",
+        "skipped_checks": ["oldcheck"],
+        "version": "1.2.3",
+    }
+    assert (
+        captured.err
+        == "rasp pack: warning: 'oldcheck' is not a check of ios, skipped\n"
+    )
+
+
+def testMain_whenInspectIsGivenJson_printsTheInspectionAsOneJsonObjectWithSortedKeys(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With `--json`, inspect prints every field of the inspection as one JSON object."""
+    monkeypatch.setattr(
+        inspection,
+        "inspect",
+        lambda **_: inspection.InspectResult(
+            protected=True,
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+            checks=("debugger", "identity"),
+            abis=("arm64-v8a",),
+        ),
+    )
+
+    exit_code = cli.main(
+        ["inspect", str(tmp_path / "app.apk"), "--platform", "android", "--json"]
+    )
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert exit_code == cli.EXIT_OK
+    assert list(output) == sorted(output)
+    assert output == {
+        "abis": ["arm64-v8a"],
+        "build_id": _BUILD_ID,
+        "checks": ["debugger", "identity"],
+        "package_name": "dev.ostorlab.demo",
+        "protected": True,
+        "version": "1.2.3",
+    }
+
+
+def testMain_whenUnprotectedAppIsInspectedWithJson_printsANullBuildId(
+    ipa_file: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With `--json`, an unprotected app reports protected false and a null build id."""
+    exit_code = cli.main(["inspect", str(ipa_file), "--platform", "ios", "--json"])
+
+    assert exit_code == cli.EXIT_OK
+    assert json.loads(capsys.readouterr().out) == {
+        "abis": [],
+        "build_id": None,
+        "checks": [],
+        "package_name": "dev.ostorlab.demo",
+        "protected": False,
+        "version": "1.2.3",
+    }
+
+
 def testMain_whenPackSucceeds_printsTheUnsignedReminderAfterTheResultLine(
     tmp_path: pathlib.Path,
     capsys: pytest.CaptureFixture[str],
@@ -542,6 +656,7 @@ def testMain_whenPackSucceeds_printsTheUnsignedReminderAfterTheResultLine(
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
+            checks=("identity",),
             skipped_checks=(),
         ),
     )
