@@ -138,12 +138,19 @@ def _did_you_mean(platform: platforms.Platform, check: str) -> str:
     return f" Did you mean {suggestion!r}?"
 
 
-def _skipped_message(platform: platforms.Platform, check: str) -> str:
-    """Returns the text that says an unknown check id was skipped, with the closest id if there is one."""
-    message = f"{check!r} is not a check of {platform}, skipped"
+def _unknown_check_message(
+    platform: platforms.Platform, check: str, skipped: bool
+) -> str:
+    """Returns the text that says an id is not a check of the platform, with the closest id if there is one.
+
+    The text says the id was skipped when `skipped` is true.
+    """
+    message = f"{check!r} is not a check of {platform}"
     hint = _did_you_mean(platform, check)
-    if hint == "":
-        return message
+    if skipped is True:
+        message = f"{message}, skipped"
+        if hint == "":
+            return message
     return f"{message}.{hint}"
 
 
@@ -168,7 +175,7 @@ def _pack(arguments: argparse.Namespace) -> int:
         unknown = check_groups.resolve_checks(arguments.platform, checks).skipped
         for check in unknown:
             print(
-                f"rasp pack: error: {check!r} is not a check of {arguments.platform}.{_did_you_mean(arguments.platform, check)}",
+                f"rasp pack: error: {_unknown_check_message(arguments.platform, check, skipped=False)}",
                 file=sys.stderr,
             )
         if len(unknown) > 0:
@@ -188,7 +195,7 @@ def _pack(arguments: argparse.Namespace) -> int:
         return EXIT_FAILED
     for check in result.skipped_checks:
         print(
-            f"rasp pack: warning: {_skipped_message(arguments.platform, check)}",
+            f"rasp pack: warning: {_unknown_check_message(arguments.platform, check, skipped=True)}",
             file=sys.stderr,
         )
     print(

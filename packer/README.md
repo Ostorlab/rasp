@@ -26,8 +26,8 @@ result = packer.pack(
 ## Options
 
 - `--build-id` (`build_id=`): the id of the protected build, written into the app as it is.
-- `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added. Without `--checks`, only `identity` is chosen. An unknown group is skipped with a warning. The warning suggests the closest matching group name. With `--strict`, the pack fails instead. See the groups in the [repository's README](../README.md#checks).
-- `--strict`: print an error for every unknown check group and write nothing, instead of skipping it with a warning.
+- `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added. Without `--checks`, only `identity` is chosen. An unknown group is skipped with a warning. The warning suggests the closest matching group name. With `--strict`, `rasp pack` exits with status 1 instead. See the groups in the [repository's README](../README.md#checks).
+- `--strict`: print an error for every unknown check group, write nothing, and exit with status 1, instead of skipping it with a warning.
 - `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
 - `--pin-certificate` (Android): the certificate the app will be signed with, PEM or DER. The protected app then works only when it is signed with that certificate.
 

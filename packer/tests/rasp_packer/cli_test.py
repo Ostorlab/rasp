@@ -303,6 +303,31 @@ def testMain_whenStrictAndChecksAreKnown_packsTheApp(
     assert [config.checks for config in configs] == [("hooks", "identity")]
 
 
+def testMain_whenStrictWithoutChecks_warnsAndPacksWithTheRequiredChecks(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checks that `--strict` without `--checks` warns, packs with the required checks and exits 0."""
+
+    configs: list[runtime_config.RuntimeConfig] = []
+
+    def fake_pack(
+        *, config: runtime_config.RuntimeConfig, **_: object
+    ) -> identity.AppIdentity:
+        """Records the config and returns an identity."""
+        configs.append(config)
+        return identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+
+    exit_code = cli.main([*_pack_arguments(tmp_path, platform="android"), "--strict"])
+
+    assert exit_code == cli.EXIT_OK
+    assert [config.checks for config in configs] == [("identity",)]
+    assert "no --checks given" in capsys.readouterr().err
+
+
 def testMain_whenPackSucceeds_printsTheAppIdentityAndTheBuildId(
     tmp_path: pathlib.Path,
     capsys: pytest.CaptureFixture[str],
