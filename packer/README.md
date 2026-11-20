@@ -33,7 +33,7 @@ result = packer.pack(
 
 `pack` returns a result with:
 
-- the path of the protected app
+- the path of the protected app (`output`)
 - the app's package name, version and build id
 - the check groups the app runs (`checks`)
 - the check groups it skipped (`skipped_checks`)
