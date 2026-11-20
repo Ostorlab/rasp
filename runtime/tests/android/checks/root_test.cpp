@@ -192,7 +192,7 @@ TEST(Root, observeMounts_whenTheAppsOwnDataFoldersNameAMarker_ignoresThem) {
                  "/dev/block/dm-40 /data/misc/profiles/cur/0/com.topjohnwu.magisk ext4 rw,seclabel,nosuid 0 0\n"
                  "/dev/block/dm-40 /data/misc/profiles/ref/com.example.zygiskhelper ext4 rw,seclabel 0 0\n"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({}));
 }
 
 TEST(Root, observeMounts_whenMagisksFolderIsOnlyInTheMountPoint_reportsTheLine) {
@@ -202,7 +202,7 @@ TEST(Root, observeMounts_whenMagisksFolderIsOnlyInTheMountPoint_reportsTheLine) 
   const std::string line = "devpts /dev/2ItJ/.magisk/pts devpts rw,seclabel,nosuid,noexec,relatime 0 0";
   ASSERT_TRUE(write_file(table, std::string(kStockMounts) + line + "\n"));
 
-  EXPECT_EQ(observe_mounts(table), mounts({line}));
+  EXPECT_EQ(observe_mounts(table, rasp::util::read_file), mounts({line}));
 }
 
 TEST(Root, observeMounts_whenNoLineMentionsARootTool_reportsAnEmptyList) {

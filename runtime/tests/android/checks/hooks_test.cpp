@@ -121,7 +121,7 @@ TEST(Hooks, observeMaps_whenTheAppsPackageNameContainsFridays_doesNotReportTheAp
   const std::string path = write_maps(directory, maps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(0), maps_hits({}));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(0), maps_hits({}));
 }
 
 TEST(Hooks, observeMaps_whenTheAppsPackageNameContainsGadget_doesNotReportTheAppsOwnMappings) {
@@ -135,7 +135,7 @@ TEST(Hooks, observeMaps_whenTheAppsPackageNameContainsGadget_doesNotReportTheApp
   const std::string path = write_maps(directory, maps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(0), maps_hits({}));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(0), maps_hits({}));
 }
 
 TEST(Hooks, observeMaps_whenARandomInstallFolderSpellsRiru_doesNotReportTheAppsOwnMappings) {
@@ -148,7 +148,7 @@ TEST(Hooks, observeMaps_whenARandomInstallFolderSpellsRiru_doesNotReportTheAppsO
   const std::string path = write_maps(directory, maps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(0), maps_hits({}));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(0), maps_hits({}));
 }
 
 TEST(Hooks, observeMaps_whenAFileNameIsAFrameworksLibrary_reportsEachLineWhole) {
@@ -168,7 +168,7 @@ TEST(Hooks, observeMaps_whenAFileNameIsAFrameworksLibrary_reportsEachLineWhole) 
   const std::string path = write_maps(directory, maps);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_maps(path).at(0), maps_hits(lines));
+  EXPECT_EQ(observe_maps(path, rasp::util::read_file).at(0), maps_hits(lines));
 }
 
 TEST(Hooks, observeMaps_whenARegionIsWritableExecutable_reportsItUnderRwxRegions) {
