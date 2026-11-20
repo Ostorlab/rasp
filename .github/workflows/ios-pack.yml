@@ -1,0 +1,76 @@
+# Loop packer. On push to the loop branch it builds the obfuscated iOS runtime FROM THIS BRANCH'S
+# runtime/ code, embeds it in the packer, packs the committed test IPA (ci/app.ipa.b64), and uploads
+# the packed (unsigned) IPA as the `app-protected-ipa` artifact. Signing + device install happen off-CI.
+name: iOS pack (loop)
+
+on:
+  push:
+    branches: ["wip/zakaria-ios-rasp-loop"]
+
+env:
+  CMAKE_VERSION: "4.4.4"
+
+jobs:
+  pack:
+    runs-on: xcode-27
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_27.0.app
+          xcodebuild -version
+
+      - name: Install CMake
+        run: |
+          python3 -m venv "$RUNNER_TEMP/build-tools"
+          "$RUNNER_TEMP/build-tools/bin/pip" install "cmake==${CMAKE_VERSION}"
+          echo "$RUNNER_TEMP/build-tools/bin" >> "$GITHUB_PATH"
+
+      - name: "Configure (release: obfuscated, logging OFF)"
+        working-directory: runtime
+        # The release 'ios' preset builds Release, which defaults RASP_OBFUSCATE_IOS=ON and RASP_LOGGING off. The
+        # inline termination (terminate_now, welded at the detection sites) is active only in a non-logging build, so
+        # this is the build that actually ends the app under a debugger or a hooking framework such as Frida.
+        run: cmake --preset ios
+
+      - name: Build the framework (release)
+        working-directory: runtime
+        run: cmake --build --preset ios --parallel
+
+      - name: Embed the framework in the packer
+        working-directory: runtime
+        run: |
+          dest="../packer/src/rasp_packer/ios/resources"
+          rm -rf "$dest/RaspRuntime.framework"
+          cp -R build/ios/ios/RaspRuntime.framework "$dest/RaspRuntime.framework"
+
+      - name: Install the packer
+        working-directory: packer
+        run: |
+          python3 -m venv "$RUNNER_TEMP/packer"
+          "$RUNNER_TEMP/packer/bin/pip" install .
+          echo "$RUNNER_TEMP/packer/bin" >> "$GITHUB_PATH"
+
+      - name: Decode the app
+        run: |
+          base64 --decode < ci/app.ipa.b64 > "$RUNNER_TEMP/app.ipa"
+          file "$RUNNER_TEMP/app.ipa"
+
+      - name: Pack the app
+        run: |
+          rasp pack "$RUNNER_TEMP/app.ipa" \
+            --platform ios \
+            --build-id "${GITHUB_SHA}" \
+            --checks 'debugger,hooks,jailbreak' \
+            --output "$RUNNER_TEMP/app-protected.ipa"
+
+      - name: Upload the packed IPA
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: app-protected-ipa
+          path: ${{ runner.temp }}/app-protected.ipa
+          if-no-files-found: error
