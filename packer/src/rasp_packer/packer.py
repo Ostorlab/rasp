@@ -29,6 +29,8 @@ class PackResult:
         version: The app's version, read from the app: the manifest's `android:versionName` on
             Android, the short version string on iOS.
         build_id: The id of the protected build, as written into the app.
+        checks: The ids of the check groups the protected app runs, as written into the app: the
+            chosen groups of the platform and the required ones, each once, sorted.
         skipped_checks: The ids of the chosen check groups that are not groups of the platform,
             each once, in the order the caller gave them. The packer skipped them: the protected
             app does not run them.
@@ -38,6 +40,7 @@ class PackResult:
     package_name: str
     version: str
     build_id: str
+    checks: tuple[str, ...]
     skipped_checks: tuple[str, ...]
 
 
@@ -81,8 +84,8 @@ def pack(
             install derives a different key and nothing decrypts. None leaves the pack unpinned.
 
     Returns:
-        The protected app, the app's package name and version, the build id, and the skipped
-        check ids.
+        The protected app, the app's package name and version, the build id, the check groups the
+        app runs, and the skipped check ids.
 
     Raises:
         InvalidBuildIdError: The build id is empty or has control characters.
@@ -128,6 +131,7 @@ def pack(
         package_name=app_identity.package_name,
         version=app_identity.version,
         build_id=build_id,
+        checks=resolved_checks.checks,
         skipped_checks=resolved_checks.skipped,
     )
 
