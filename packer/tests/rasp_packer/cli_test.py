@@ -2,7 +2,6 @@
 
 import io
 import pathlib
-import shlex
 import sys
 from importlib import metadata
 
@@ -287,38 +286,17 @@ def testMain_whenNoMapping_passesNoneAsTheMapping(
     assert captured["mapping"] is None
 
 
-@pytest.mark.parametrize(
-    ("name", "expected"),
-    [
-        (
-            "my app.apk",
-            "next: sign it with apksigner sign --ks <your-keystore.jks> --ks-key-alias <key-alias> {path}",
-        ),
-        (
-            "OUT.AAB",
-            "next: sign it with jarsigner -keystore <your-keystore.jks> {path} <key-alias>",
-        ),
-        (
-            "out.ipa",
-            "next: re-sign {path} with the app's distribution certificate and "
-            "provisioning profile before uploading it",
-        ),
-    ],
-)
-def testMain_whenPackSucceeds_printsHowToSignTheOutput(
+def testMain_whenPackSucceeds_printsTheUnsignedReminderAfterTheResultLine(
     tmp_path: pathlib.Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
-    name: str,
-    expected: str,
 ) -> None:
-    """The line after the result line is the signing command for the output's suffix."""
-    monkeypatch.setattr(sys, "platform", "linux")
+    """The line after the result line reminds that the protected app is unsigned."""
     monkeypatch.setattr(
         packer,
         "pack",
         lambda **_: packer.PackResult(
-            output=tmp_path / name,
+            output=tmp_path / "out.ipa",
             package_name="dev.ostorlab.demo",
             version="1.2.3",
             build_id=_BUILD_ID,
@@ -328,10 +306,12 @@ def testMain_whenPackSucceeds_printsHowToSignTheOutput(
 
     exit_code = cli.main(_pack_arguments(tmp_path))
 
-    assert exit_code == cli.EXIT_OK
     lines = capsys.readouterr().out.splitlines()
+    assert exit_code == cli.EXIT_OK
     assert lines[0].startswith("packed ios app: ")
-    assert lines[1:] == [expected.format(path=shlex.quote(str(tmp_path / name)))]
+    assert lines[1:] == [
+        "next: the protected app is unsigned; sign it with your upload or release key before you upload it"
+    ]
 
 
 class _Terminal(io.StringIO):

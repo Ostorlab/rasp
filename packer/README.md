@@ -32,11 +32,7 @@ result = packer.pack(
 
 ## How do I sign the protected app?
 
-After a successful `rasp pack`, the command line prints a `next:` line that tells how to sign the output:
-
-- **APK:** `apksigner sign --ks <your-keystore.jks> --ks-key-alias <key-alias> <output>`
-- **AAB:** `jarsigner -keystore <your-keystore.jks> <output> <key-alias>`
-- **IPA:** re-sign it with the app's distribution certificate and provisioning profile.
+The packer returns the app unsigned and prints a reminder after a successful `rasp pack`. Sign it with your upload key (Play App Signing then signs the copy users install) or your release key, and on iOS with your distribution certificate and provisioning profile.
 
 `pack` returns the path of the protected app, the app's package name, version and build id, and the check groups it skipped.
 
