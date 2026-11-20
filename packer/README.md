@@ -34,7 +34,7 @@ result = packer.pack(
 
 ## How do I check whether an app is protected?
 
-`inspect` opens a built app, never modifies it, and reports whether it carries the RASP runtime. For a protected app it also prints the build id and the check groups from the runtime's config, and on Android the ABIs that carry the runtime. It does not run the app, so it cannot tell whether a check actually fires, only that the runtime and its config are present.
+**`rasp inspect`** opens a built app, never modifies it, and reports whether it carries the RASP runtime. For a protected app it also prints the build id and the check groups from the runtime's config, and on Android the ABIs that carry the runtime. It does not run the app, so it cannot tell whether a check actually fires, only that the runtime and its config are present.
 
 ```
 rasp inspect app-protected.apk --platform android
@@ -49,7 +49,7 @@ checks     debugger,hooks,identity,root
 abis       arm64-v8a,armeabi-v7a
 ```
 
-An app without the runtime prints `protected  no` with its package and version. From Python, `rasp_packer.inspection.inspect(app=..., platform=...)` returns the same fields.
+An app without the runtime is not an error: `inspect` prints `protected  no` with its package and version and exits 0. From Python, `rasp_packer.inspection.inspect(app=..., platform=...)` returns the same fields.
 
 ## When does `rasp` print the banner?
 
