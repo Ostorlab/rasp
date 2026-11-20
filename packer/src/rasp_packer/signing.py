@@ -13,7 +13,10 @@ def next_step(output: pathlib.Path) -> str | None:
     path = shlex.quote(str(output))
     match output.suffix.lower():
         case ".apk":
-            return f"next: sign it with apksigner sign --ks <your-keystore.jks> {path}"
+            return (
+                "next: sign it with apksigner sign --ks <your-keystore.jks> "
+                f"--ks-key-alias <key-alias> {path}"
+            )
         case ".aab":
             return (
                 "next: sign it with jarsigner -keystore <your-keystore.jks> "

@@ -282,7 +282,7 @@ def testMain_whenNoMapping_passesNoneAsTheMapping(
     [
         (
             "my app.apk",
-            "next: sign it with apksigner sign --ks <your-keystore.jks> 'DIR/my app.apk'",
+            "next: sign it with apksigner sign --ks <your-keystore.jks> --ks-key-alias <key-alias> 'DIR/my app.apk'",
         ),
         (
             "OUT.AAB",
