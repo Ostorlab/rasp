@@ -25,7 +25,7 @@ result = packer.pack(
 
 ## Options
 
-- `--platform` (`platform=`): `android` or `ios`. The command line infers it from the app's extension when it is not given: `.apk` and `.aab` are Android, `.ipa` is iOS, in any case. Any other extension needs `--platform`.
+- `--platform` (`platform=`): `android` or `ios`. When it is not given, the command line infers the platform from the app's extension, case-insensitively: `.apk` and `.aab` are Android, `.ipa` is iOS. Any other extension requires `--platform`.
 - `--build-id` (`build_id=`): the id of the protected build, written into the app as it is.
 - `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added, an unknown group is skipped with a warning, and without `--checks` only `identity` is chosen. See the groups in the [repository's README](../README.md#checks).
 - `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
