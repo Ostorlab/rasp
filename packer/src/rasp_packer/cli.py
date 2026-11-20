@@ -2,10 +2,13 @@
 
 import argparse
 import collections.abc
+import os
 import pathlib
 import sys
+import typing
 from importlib import metadata
 
+from rasp_packer import banner
 from rasp_packer import checks as check_groups
 from rasp_packer import errors
 from rasp_packer import packer
@@ -15,9 +18,30 @@ EXIT_OK = 0
 EXIT_FAILED = 1
 
 
+class _Writer(typing.Protocol):
+    """An output that takes text."""
+
+    def write(self, text: str, /) -> object:
+        """Writes the text."""
+        ...
+
+
+class _RootParser(argparse.ArgumentParser):
+    """The parser of `rasp` itself, whose help starts with the banner when the output is a terminal."""
+
+    def print_help(self, file: _Writer | None = None) -> None:
+        """Prints the help to the file, or to stdout.
+
+        Printed to stdout, it starts with the banner when stdout is a terminal.
+        """
+        if file is None and banner.is_enabled(sys.stdout, os.environ) is True:
+            sys.stdout.write(banner.render(metadata.version("rasp-packer"), os.environ))
+        super().print_help(file)
+
+
 def _parser() -> argparse.ArgumentParser:
-    """Returns the parser of the `rasp` command line, with its `pack` command."""
-    parser = argparse.ArgumentParser(
+    """Returns the parser of the `rasp` command line."""
+    parser = _RootParser(
         prog="rasp",
         description="Protects built Android (APK, AAB) and iOS (IPA) apps with the RASP runtime.",
     )
@@ -26,7 +50,9 @@ def _parser() -> argparse.ArgumentParser:
         action="version",
         version=f"%(prog)s {metadata.version('rasp-packer')}",
     )
-    commands = parser.add_subparsers(dest="command", required=True)
+    commands = parser.add_subparsers(
+        dest="command", parser_class=argparse.ArgumentParser
+    )
 
     pack = commands.add_parser(
         "pack", help="add the runtime to a built app (the result is unsigned)"
@@ -139,9 +165,13 @@ def main(argv: collections.abc.Sequence[str] | None = None) -> int:
         argv: The arguments, without the program name. None reads them from the process.
 
     Returns:
-        The exit code of the process.
+        The exit code of the process. Without a command it prints the help and returns 0.
     """
-    arguments = _parser().parse_args(argv)
+    parser = _parser()
+    arguments = parser.parse_args(argv)
+    if arguments.command is None:
+        parser.print_help()
+        return EXIT_OK
     match arguments.command:
         case "pack":
             return _pack(arguments)
