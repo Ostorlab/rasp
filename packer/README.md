@@ -30,6 +30,8 @@ result = packer.pack(
 - `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
 - `--pin-certificate` (Android): the certificate the app will be signed with, PEM or DER. The protected app then works only when it is signed with that certificate.
 
+## How do I sign the protected app?
+
 After a successful `rasp pack`, the command line prints a `next:` line that tells how to sign the output:
 
 - **APK:** `apksigner sign --ks <your-keystore.jks> --ks-key-alias <key-alias> <output>`

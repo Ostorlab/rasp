@@ -312,6 +312,7 @@ def testMain_whenPackSucceeds_printsHowToSignTheOutput(
     expected: str,
 ) -> None:
     """The line after the result line is the signing command for the output's suffix."""
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(
         packer,
         "pack",
