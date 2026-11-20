@@ -7,6 +7,7 @@ writes them into the runtime's config, and the runtime runs only those.
 
 import collections.abc
 import dataclasses
+import difflib
 
 from rasp_packer import platforms
 
@@ -74,6 +75,22 @@ def resolve_checks(
         else:
             skipped[check] = None
     return ResolvedChecks(checks=tuple(sorted(resolved)), skipped=tuple(skipped))
+
+
+def suggest_check(platform: platforms.Platform, check: str) -> str | None:
+    """Returns the check group of the platform whose id is closest to an unknown id.
+
+    Args:
+        platform: The platform of the app.
+        check: The id that is not a check group of the platform.
+
+    Returns:
+        The closest id of the platform's groups, or None when none is close enough.
+    """
+    matches = difflib.get_close_matches(check, CHECKS[platform], n=1, cutoff=0.6)
+    if len(matches) == 0:
+        return None
+    return matches[0]
 
 
 def checks_mask(
