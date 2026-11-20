@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "util/raw_file.h"
 
 namespace rasp::android::checks {
 
@@ -36,9 +37,12 @@ namespace rasp::android::checks {
 /// the packer recorded.
 ///
 /// @param cmdline_path The command line to read, `/proc/self/cmdline` on a device.
+/// @param read The reader the command line is read with: read_proc_file on a device, so an interposed libc function
+/// can't answer for the kernel. A test passes read_file instead, to feed a regular file (read_proc_file refuses one).
 /// @return One id.package observation read through proc_cmdline: the package name. It has an error status when the file
 /// can't be read or holds no name.
-[[nodiscard]] Observation observe_package(std::string_view cmdline_path);
+[[nodiscard]] Observation observe_package(std::string_view cmdline_path,
+                                          rasp::util::ProcReader read = rasp::util::read_proc_file);
 
 /// Reports the process's own user id `uid`.
 ///

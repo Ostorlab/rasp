@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "util/raw_file.h"
 #include "util/system_property.h"
 
 namespace rasp::android::checks {
@@ -46,10 +47,13 @@ namespace rasp::android::checks {
 /// first 32 lines.
 ///
 /// @param mounts_path The mount table to read, `/proc/self/mounts` on a device.
+/// @param read The function the mount table is read with; the shipped runtime uses read_proc_file, a test passes
+/// read_file to feed a regular file.
 /// @return Two observations read through proc_mounts: root.mounts, the lines a root tool made, then root.rw_mounts, the
 /// lines that mount a system folder writable, both without their line breaks. Both have an error status when the
 /// table can't be read or is larger than 1 MiB.
-[[nodiscard]] std::vector<Observation> observe_mounts(std::string_view mounts_path);
+[[nodiscard]] std::vector<Observation> observe_mounts(std::string_view mounts_path,
+                                                      rasp::util::ProcReader read = rasp::util::read_proc_file);
 
 /// Reports whether SELinux enforces its policy, from the file at `enforce_path`.
 ///
@@ -59,9 +63,12 @@ namespace rasp::android::checks {
 /// line break.
 ///
 /// @param enforce_path The file to read, `/sys/fs/selinux/enforce` on a device.
+/// @param read The function the enforce file is read with; the shipped runtime uses read_proc_file, a test passes
+/// read_file to feed a regular file.
 /// @return One root.selinux_enforcing observation read through selinuxfs: true for `1`, false for `0`, and an error
 /// status when the file can't be read or holds anything else.
-[[nodiscard]] Observation observe_selinux(std::string_view enforce_path);
+[[nodiscard]] Observation observe_selinux(std::string_view enforce_path,
+                                          rasp::util::ProcReader read = rasp::util::read_proc_file);
 
 /// Reports the build properties that tell a debuggable build, a test-signed build or an unlocked bootloader.
 ///

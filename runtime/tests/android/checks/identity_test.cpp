@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "rasp/util/read_file.h"
 #include "support/files.h"
 
 namespace rasp::android::checks {
@@ -63,7 +64,7 @@ TEST(Identity, observePackage_whenTheCommandLineHoldsThePackage_reportsIt) {
   const std::string path = write_cmdline(directory, std::string_view("co.ostorlab.app\0some-argument", 29));
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_package(path), package("co.ostorlab.app"));
+  EXPECT_EQ(observe_package(path, rasp::util::read_file), package("co.ostorlab.app"));
 }
 
 TEST(Identity, observePackage_whenThereIsNoArgument_reportsTheWholeLine) {
@@ -72,7 +73,7 @@ TEST(Identity, observePackage_whenThereIsNoArgument_reportsTheWholeLine) {
   const std::string path = write_cmdline(directory, "co.ostorlab.app");
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_package(path), package("co.ostorlab.app"));
+  EXPECT_EQ(observe_package(path, rasp::util::read_file), package("co.ostorlab.app"));
 }
 
 TEST(Identity, observePackage_whenRunningInANamedProcess_reportsThePackageWithoutTheSuffix) {
@@ -83,7 +84,7 @@ TEST(Identity, observePackage_whenRunningInANamedProcess_reportsThePackageWithou
   const std::string path = write_cmdline(directory, "co.ostorlab.app:remote");
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_package(path), package("co.ostorlab.app"));
+  EXPECT_EQ(observe_package(path, rasp::util::read_file), package("co.ostorlab.app"));
 }
 
 TEST(Identity, observePackage_whenTheCommandLineIsEmpty_reportsAnError) {
@@ -92,7 +93,7 @@ TEST(Identity, observePackage_whenTheCommandLineIsEmpty_reportsAnError) {
   const std::string path = write_cmdline(directory, "");
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_package(path), unreadable_package());
+  EXPECT_EQ(observe_package(path, rasp::util::read_file), unreadable_package());
 }
 
 TEST(Identity, observePackage_whenTheFileIsMissing_reportsAnError) {
@@ -112,7 +113,7 @@ TEST(Identity, observePackage_whenTheCommandLineIsExactly64KiB_readsThePackage) 
   const std::string path = write_cmdline(directory, content);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_package(path), package("co.ostorlab.app"));
+  EXPECT_EQ(observe_package(path, rasp::util::read_file), package("co.ostorlab.app"));
 }
 
 TEST(Identity, observePackage_whenTheCommandLineIsLargerThan64KiB_reportsAnError) {
@@ -124,7 +125,7 @@ TEST(Identity, observePackage_whenTheCommandLineIsLargerThan64KiB_reportsAnError
   const std::string path = write_cmdline(directory, content);
   ASSERT_FALSE(path.empty());
 
-  EXPECT_EQ(observe_package(path), unreadable_package());
+  EXPECT_EQ(observe_package(path, rasp::util::read_file), unreadable_package());
 }
 
 TEST(Identity, observePackage_whenThePathCantBeRead_reportsAnError) {

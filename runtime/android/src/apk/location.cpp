@@ -4,17 +4,21 @@
 
 #include <cstddef>
 #include <dlfcn.h>
-#include <fcntl.h>
+#include <initializer_list>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <vector>
+
+#include "util/raw_file.h"
 
 namespace rasp::android::apk {
 
 namespace {
+
+/// The largest memory map read. A real /proc/self/maps is a few hundred KiB.
+constexpr std::size_t kMaxMapsSize = std::size_t{4} << 20U;
 
 /// The path with its last component removed, or nothing when it has no directory part.
 [[nodiscard]] std::optional<std::string> parent_dir(std::string_view path) {
@@ -49,58 +53,48 @@ namespace {
   return candidate;
 }
 
-/// The APK path in a /proc/self/maps dump: the file-backed mapping under /data/app whose path ends in .apk.
-[[nodiscard]] std::optional<std::string> apk_in_maps(std::string_view maps) {
-  std::optional<std::string> fallback;
-  std::size_t start = 0;
-  while (start < maps.size()) {
-    std::size_t end = maps.find('\n', start);
-    if (end == std::string_view::npos) {
-      end = maps.size();
-    }
-    const std::string_view line = maps.substr(start, end - start);
-    start = end + 1;
-    const std::size_t slash = line.find('/');
-    if (slash == std::string_view::npos) {
-      continue;
-    }
-    const std::string_view path = line.substr(slash);
-    if (!path.ends_with(".apk") || !path.contains("/data/app/")) {
-      continue;
-    }
-    if (path.contains("base.apk")) {
-      return std::string(path);
-    }
-    if (!fallback.has_value()) {
-      fallback = std::string(path);
-    }
-  }
-  return fallback;
-}
-
-/// The APK path read from the process's memory map.
-[[nodiscard]] std::optional<std::string> apk_from_maps() {
-  // open is a libc variadic function, and its flags come from the included <fcntl.h>.
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,misc-include-cleaner)
-  const int descriptor = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
-  if (descriptor < 0) {
+/// The apk path a line of /proc/self/maps names: the file-backed mapping under /data/app whose path ends in .apk.
+[[nodiscard]] std::optional<std::string_view> apk_in_line(std::string_view line) {
+  const std::size_t slash = line.find('/');
+  if (slash == std::string_view::npos) {
     return std::nullopt;
   }
-  std::string content;
-  std::vector<char> buffer(8192);
-  for (;;) {
-    const ssize_t count = read(descriptor, buffer.data(), buffer.size());
-    if (count < 0) {
-      close(descriptor);
-      return std::nullopt;
-    }
-    if (count == 0) {
-      break;
-    }
-    content.append(buffer.data(), static_cast<std::size_t>(count));
+  const std::string_view path = line.substr(slash);
+  if (!path.ends_with(".apk") || !path.contains("/data/app/")) {
+    return std::nullopt;
   }
-  close(descriptor);
-  return apk_in_maps(content);
+  return path;
+}
+
+/// Whether a line of /proc/self/maps names the app's own base APK.
+[[nodiscard]] bool names_base_apk(std::string_view line) {
+  const std::optional<std::string_view> path = apk_in_line(line);
+  return path.has_value() && path->contains("base.apk");
+}
+
+/// Whether a line of /proc/self/maps names any /data/app APK.
+[[nodiscard]] bool names_an_apk(std::string_view line) { return apk_in_line(line).has_value(); }
+
+/// The APK path read from the process's memory map. The map is scanned line by line through the direct-system-call
+/// reader, not libc, so an interposed libc read function can't answer for the kernel with a forged mapping and steer
+/// the package the `owns_package_data` gate checks — and the scan holds one line at a time, so a map larger than any
+/// whole read would allocate still locates the store, stopping at the base APK's line when there is one and falling
+/// back to the first /data/app APK when there isn't. The shape follows the standard prior art: Chromium's maps
+/// reader (https://chromium.googlesource.com/chromium/src/+/main/base/debug/proc_maps_linux.cc) reads
+/// /proc/self/maps in a loop because a fixed whole-file cap silently truncates and loses the trailing regions.
+[[nodiscard]] std::optional<std::string> apk_from_maps() {
+  // The base APK's line first, and the first /data/app APK's when there is none.
+  for (const rasp::util::LinePredicate matches : {names_base_apk, names_an_apk}) {
+    const std::optional<std::string> line =
+        rasp::util::first_proc_line_matching("/proc/self/maps", matches, kMaxMapsSize);
+    if (!line.has_value()) {
+      continue;
+    }
+    if (const std::optional<std::string_view> path = apk_in_line(*line)) {
+      return std::string(*path);
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace
