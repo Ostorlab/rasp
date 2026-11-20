@@ -2,6 +2,15 @@
 
 import pathlib
 import shlex
+import subprocess
+import sys
+
+
+def _quote(path: str) -> str:
+    """Quotes the path for the shell of the platform: `cmd.exe` quoting on Windows, POSIX quoting elsewhere."""
+    if sys.platform == "win32":
+        return subprocess.list2cmdline([path])
+    return shlex.quote(path)
 
 
 def next_step(output: pathlib.Path) -> str | None:
@@ -10,7 +19,7 @@ def next_step(output: pathlib.Path) -> str | None:
     The suffix picks the variant, whatever its case: `apksigner` for an APK, `jarsigner` for an AAB, and
     an instruction to re-sign with the distribution certificate and provisioning profile for an IPA.
     """
-    path = shlex.quote(str(output))
+    path = _quote(str(output))
     match output.suffix.lower():
         case ".apk":
             return (

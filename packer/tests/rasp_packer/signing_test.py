@@ -1,6 +1,9 @@
 """Tests for the signing hint."""
 
 import pathlib
+import sys
+
+import pytest
 
 from rasp_packer import signing
 
@@ -46,3 +49,27 @@ def testNextStep_whenUppercaseSuffix_matchesTheVariant() -> None:
 def testNextStep_whenUnknownSuffix_returnsNone() -> None:
     """A suffix that is not an app format has no hint."""
     assert signing.next_step(pathlib.Path("app-protected.zip")) is None
+
+
+def testNextStep_whenPathHasSpacesOnPosix_quotesItWithSingleQuotes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On a POSIX platform the path is single-quoted."""
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    hint = signing.next_step(pathlib.Path("my app-protected.ipa"))
+
+    assert hint is not None
+    assert "'my app-protected.ipa'" in hint
+
+
+def testNextStep_whenPathHasSpacesOnWindows_quotesItWithDoubleQuotes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On Windows the path is double-quoted so that cmd.exe and PowerShell accept it."""
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    hint = signing.next_step(pathlib.Path("my app-protected.ipa"))
+
+    assert hint is not None
+    assert '"my app-protected.ipa"' in hint
