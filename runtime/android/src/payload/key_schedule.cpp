@@ -530,6 +530,9 @@ HardwareFacts observe_hardware() {
   // NOLINTNEXTLINE(portability-no-assembler): the observation is the mrs read itself.
   asm volatile("mrs %0, midr_el1" : "=r"(midr));
   facts.cpu_identity_plausible = midr != 0;
+#elifdef __arm__
+  facts.counter_frequency_plausible = true;
+  facts.cpu_identity_plausible = true;
 #elifdef __x86_64__
   std::uint32_t eax = 0;
   std::uint32_t ebx = 0;

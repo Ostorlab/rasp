@@ -102,8 +102,8 @@ constexpr auto kArtifactPaths = std::to_array<std::string_view>({
     "/data/adb/apd",
 });
 
-/// The text that marks a mount made by Magisk, anywhere in its line: Magisk names its mounts and folders after itself,
-/// and modules of every root tool live under `/data/adb`.
+/// The text that marks a mount made by Magisk: Magisk names its mounts and folders after itself, and modules of every
+/// root tool live under `/data/adb`.
 constexpr auto kMountMarkers = std::to_array<std::string_view>({
     "magisk",
     "zygisk",
@@ -209,10 +209,27 @@ struct MountLine {
   });
 }
 
+/// Whether a folder of `point` is named `marker`, with or without a leading dot.
+[[nodiscard]] bool has_folder_named(std::string_view point, std::string_view marker) {
+  return std::ranges::any_of(std::views::split(point, '/'), [marker](const auto piece) {
+    std::string_view folder(piece.begin(), piece.end());
+    if (folder.starts_with('.')) {
+      folder.remove_prefix(1);
+    }
+    return folder == marker;
+  });
+}
+
 /// Whether `line` is a mount a root tool made.
 [[nodiscard]] bool made_by_root_tool(std::string_view line) {
-  return std::ranges::contains(kRootToolSources, parse_mount_line(line).source) ||
-         std::ranges::any_of(kMountMarkers, [line](std::string_view marker) { return line.contains(marker); });
+  const MountLine mount = parse_mount_line(line);
+  // The app's own data folders are mount points named after its package, which can contain a marker.
+  return std::ranges::contains(kRootToolSources, mount.source) ||
+         std::ranges::any_of(kMountMarkers, [&](std::string_view marker) {
+           return marker.contains('/') ? line.contains(marker)
+                                       : mount.source.contains(marker) || mount.options.contains(marker) ||
+                                             has_folder_named(mount.point, marker);
+         });
 }
 
 /// Whether `line` mounts a system folder writable.

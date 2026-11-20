@@ -51,7 +51,7 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
           echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "clang-tidy-${LLVM_VERSION}"
+          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "clang-tidy-${LLVM_VERSION}" "zlib1g-dev"
           echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
       - name: Install CMake
         run: |
@@ -82,7 +82,7 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
           echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "llvm-${LLVM_VERSION}"
+          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "llvm-${LLVM_VERSION}" "zlib1g-dev"
           echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
       - name: Install CMake
         run: |
@@ -111,7 +111,7 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
           echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "libclang-rt-${LLVM_VERSION}-dev" "llvm-${LLVM_VERSION}"
+          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "libclang-rt-${LLVM_VERSION}-dev" "llvm-${LLVM_VERSION}" "zlib1g-dev"
           echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
       - name: Install CMake
         run: |
@@ -140,7 +140,7 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
           echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "libclang-rt-${LLVM_VERSION}-dev" "llvm-${LLVM_VERSION}"
+          sudo apt-get install -y --no-install-recommends "clang-${LLVM_VERSION}" "libclang-rt-${LLVM_VERSION}-dev" "llvm-${LLVM_VERSION}" "zlib1g-dev"
           echo "/usr/lib/llvm-${LLVM_VERSION}/bin" >> "$GITHUB_PATH"
       - name: Install CMake
         run: |
@@ -273,6 +273,8 @@ jobs:
         include:
           - abi: arm64-v8a
             file: "ELF 64-bit LSB shared object, ARM aarch64"
+          - abi: armeabi-v7a
+            file: "ELF 32-bit LSB shared object, ARM"
           - abi: x86_64
             file: "ELF 64-bit LSB shared object, x86-64"
     defaults:

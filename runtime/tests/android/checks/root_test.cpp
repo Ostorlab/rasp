@@ -178,7 +178,32 @@ INSTANTIATE_TEST_SUITE_P(
         "magisk /debug_ramdisk tmpfs rw,seclabel,relatime,mode=755 0 0", "tmpfs /dev/zygisk tmpfs rw,relatime 0 0",
         "/dev/block/dm-0 /sbin/.core/mirror/system ext4 ro,relatime 0 0", "tmpfs /debug_ramdisk tmpfs rw,relatime 0 0",
         "overlay /system/etc overlay ro,lowerdir=/data/adb/modules/hosts/system/etc 0 0",
-        "KSU /vendor overlay ro,seclabel,relatime 0 0", "APatch /system/bin overlay ro,seclabel,relatime 0 0"));
+        "KSU /vendor overlay ro,seclabel,relatime 0 0", "APatch /system/bin overlay ro,seclabel,relatime 0 0",
+        "/dev/2ItJ/.magisk/block/system_root /system/bin/am ext4 ro,seclabel,relatime 0 0"));
+
+TEST(Root, observeMounts_whenTheAppsOwnDataFoldersNameAMarker_ignoresThem) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string table = directory.path() + "/mounts";
+  ASSERT_TRUE(write_file(
+      table, std::string(kStockMounts) +
+                 "/dev/block/dm-40 /data/user_de/0/com.topjohnwu.magisk ext4 rw,seclabel,nosuid,nodev 0 0\n"
+                 "/dev/block/dm-40 /data/data/com.topjohnwu.magisk ext4 rw,seclabel,nosuid,nodev 0 0\n"
+                 "/dev/block/dm-40 /data/misc/profiles/cur/0/com.topjohnwu.magisk ext4 rw,seclabel,nosuid 0 0\n"
+                 "/dev/block/dm-40 /data/misc/profiles/ref/com.example.zygiskhelper ext4 rw,seclabel 0 0\n"));
+
+  EXPECT_EQ(observe_mounts(table), mounts({}));
+}
+
+TEST(Root, observeMounts_whenMagisksFolderIsOnlyInTheMountPoint_reportsTheLine) {
+  const TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string table = directory.path() + "/mounts";
+  const std::string line = "devpts /dev/2ItJ/.magisk/pts devpts rw,seclabel,nosuid,noexec,relatime 0 0";
+  ASSERT_TRUE(write_file(table, std::string(kStockMounts) + line + "\n"));
+
+  EXPECT_EQ(observe_mounts(table), mounts({line}));
+}
 
 TEST(Root, observeMounts_whenNoLineMentionsARootTool_reportsAnEmptyList) {
   const TemporaryDirectory directory;

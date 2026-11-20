@@ -38,7 +38,6 @@ KEY_LEN = 32
 IKM_LEN = 32
 IKM_WORDS = 8
 NONCE_LEN = 16
-WORD = 8
 
 # Post-encryption section renames, so the shipped library does not advertise its runtime. The replacements are no
 # longer than the originals (edited in place); the runtime reads the config section under its renamed name, which is
@@ -52,13 +51,20 @@ SECTION_RENAMES = {
 # A neutral soname (<= the 10 bytes of "librasp.so"), so the shipped library does not carry the project name.
 NEUTRAL_SONAME = b"libjni.so"
 
-_ELF_HEADER = struct.Struct("<HHIQQQIHHHHHH")
-_SECTION_HEADER = struct.Struct("<IIQQQQIIQQ")
-_PROGRAM_HEADER = struct.Struct("<IIQQQQQQ")
-_DYNAMIC_ENTRY = struct.Struct("<qQ")
-_RELA = struct.Struct("<QQq")
-_REL = struct.Struct("<QQ")
-_RELR = struct.Struct("<Q")
+_ELF_HEADER64 = struct.Struct("<HHIQQQIHHHHHH")
+_ELF_HEADER32 = struct.Struct("<HHIIIIIHHHHHH")
+_SECTION_HEADER64 = struct.Struct("<IIQQQQIIQQ")
+_SECTION_HEADER32 = struct.Struct("<IIIIIIIIII")
+_PROGRAM_HEADER64 = struct.Struct("<IIQQQQQQ")
+_PROGRAM_HEADER32 = struct.Struct("<IIIIIIII")
+_DYNAMIC_ENTRY64 = struct.Struct("<qQ")
+_DYNAMIC_ENTRY32 = struct.Struct("<iI")
+_RELA64 = struct.Struct("<QQq")
+_RELA32 = struct.Struct("<IIi")
+_REL64 = struct.Struct("<QQ")
+_REL32 = struct.Struct("<II")
+_RELR64 = struct.Struct("<Q")
+_RELR32 = struct.Struct("<I")
 _META_HEADER = struct.Struct("<15I")
 _META_TEXT_DIGEST = struct.Struct("<32s")
 _REGION = struct.Struct("<IIII16s")
@@ -88,7 +94,7 @@ class _Section:
 
 @dataclasses.dataclass(frozen=True)
 class _ElfHeader:
-    """The ELF64 header fields the encryptor uses."""
+    """The ELF header fields the encryptor uses, with the structs of its 32- or 64-bit class."""
 
     shoff: int
     shentsize: int
@@ -97,6 +103,13 @@ class _ElfHeader:
     phoff: int
     phentsize: int
     phnum: int
+    word: int
+    shdr: struct.Struct
+    phdr: struct.Struct
+    dyn: struct.Struct
+    rel: struct.Struct
+    rela: struct.Struct
+    relr: struct.Struct
 
 
 @dataclasses.dataclass(frozen=True)
@@ -132,14 +145,23 @@ def _string_end(data: bytes | bytearray, start: int) -> int:
 
 
 def _read_header(data: bytes | bytearray) -> _ElfHeader:
-    """Parses the ELF64 header, or raises when the file is not a little-endian ELF64 object."""
-    if len(data) < 64 or data[0:4] != b"\x7fELF":
+    """Parses the ELF header, or raises when the file is not a little-endian ELF object."""
+    if len(data) < 52 or data[0:4] != b"\x7fELF":
         raise errors.InvalidRuntimeError("the runtime library is not an ELF file")
-    if data[4] != 2 or data[5] != 1:
+    if data[4] not in (1, 2) or data[5] != 1:
         raise errors.InvalidRuntimeError(
-            "the runtime library is not a little-endian ELF64 object"
+            "the runtime library is not a little-endian ELF object"
         )
-    fields = _ELF_HEADER.unpack_from(data, _ELF_HEADER_OFFSET)
+    is64 = data[4] == 2
+    if is64:
+        head, word = _ELF_HEADER64, 8
+        shdr, phdr, dyn = _SECTION_HEADER64, _PROGRAM_HEADER64, _DYNAMIC_ENTRY64
+        rel, rela, relr = _REL64, _RELA64, _RELR64
+    else:
+        head, word = _ELF_HEADER32, 4
+        shdr, phdr, dyn = _SECTION_HEADER32, _PROGRAM_HEADER32, _DYNAMIC_ENTRY32
+        rel, rela, relr = _REL32, _RELA32, _RELR32
+    fields = head.unpack_from(data, _ELF_HEADER_OFFSET)
     return _ElfHeader(
         phoff=fields[4],
         shoff=fields[5],
@@ -148,14 +170,21 @@ def _read_header(data: bytes | bytearray) -> _ElfHeader:
         shentsize=fields[10],
         shnum=fields[11],
         shstrndx=fields[12],
+        word=word,
+        shdr=shdr,
+        phdr=phdr,
+        dyn=dyn,
+        rel=rel,
+        rela=rela,
+        relr=relr,
     )
 
 
 def _read_sections(data: bytes | bytearray, header: _ElfHeader) -> list[_Section]:
-    """Parses the ELF64 section headers with their names."""
+    """Parses the section headers with their names."""
     if header.shoff == 0 or header.shnum == 0:
         raise errors.InvalidRuntimeError("the runtime library has no section headers")
-    if header.shentsize != _SECTION_HEADER.size:
+    if header.shentsize != header.shdr.size:
         raise errors.InvalidRuntimeError(
             "the runtime library has an unexpected section header size"
         )
@@ -163,7 +192,7 @@ def _read_sections(data: bytes | bytearray, header: _ElfHeader) -> list[_Section
     raw: list[tuple[int, int, int, int, int, int]] = []
     for index in range(header.shnum):
         name, stype, _flags, addr, offset, size, _link, _info, _align, entsize = (
-            _unpack(_SECTION_HEADER, data, header.shoff + index * header.shentsize)
+            _unpack(header.shdr, data, header.shoff + index * header.shentsize)
         )
         if stype != _SHT_NOBITS and offset + size > len(data):
             raise _malformed()
@@ -199,34 +228,39 @@ def _find_section(sections: list[_Section], name: str) -> _Section:
 
 def _relro_range(data: bytes | bytearray, header: _ElfHeader) -> tuple[int, int] | None:
     """Returns the ``[start, end)`` vaddr range of PT_GNU_RELRO, or None."""
-    if header.phentsize != _PROGRAM_HEADER.size:
+    if header.phentsize != header.phdr.size:
         return None
     for index in range(header.phnum):
-        ptype, _flags, _off, vaddr, _paddr, _filesz, memsz, _align = _unpack(
-            _PROGRAM_HEADER, data, header.phoff + index * header.phentsize
+        fields = _unpack(header.phdr, data, header.phoff + index * header.phentsize)
+        if fields[0] != _PT_GNU_RELRO:
+            continue
+        # The 64-bit program header reorders flags ahead of offset, so vaddr and memsz sit at different indices.
+        vaddr, memsz = (
+            (fields[3], fields[6]) if header.word == 8 else (fields[2], fields[5])
         )
-        if ptype == _PT_GNU_RELRO:
-            return (vaddr, vaddr + memsz)
+        return (vaddr, vaddr + memsz)
     return None
 
 
-def _reloc_offsets(data: bytes | bytearray, sections: list[_Section]) -> set[int]:
+def _reloc_offsets(
+    data: bytes | bytearray, sections: list[_Section], header: _ElfHeader
+) -> set[int]:
     """Collects every vaddr that a dynamic relocation patches."""
     offsets: set[int] = set()
     for section in sections:
         if section.type == _SHT_RELA:
-            offsets.update(_table_offsets(data, section, _RELA))
+            offsets.update(_table_offsets(data, section, header.rela))
         elif section.type == _SHT_REL:
-            offsets.update(_table_offsets(data, section, _REL))
+            offsets.update(_table_offsets(data, section, header.rel))
         elif section.type == _SHT_RELR:
-            offsets.update(_relr_offsets(data, section))
+            offsets.update(_relr_offsets(data, section, header))
     return offsets
 
 
 def _table_offsets(
     data: bytes | bytearray, section: _Section, entry: struct.Struct
 ) -> set[int]:
-    """The ``r_offset`` of each Elf64_Rel/Rela entry in ``section``."""
+    """The ``r_offset`` of each relocation entry in ``section``."""
     entsize = section.entsize if section.entsize > 0 else entry.size
     return {
         _unpack(entry, data, pos)[0]
@@ -234,32 +268,36 @@ def _table_offsets(
     }
 
 
-def _relr_offsets(data: bytes | bytearray, section: _Section) -> set[int]:
+def _relr_offsets(
+    data: bytes | bytearray, section: _Section, header: _ElfHeader
+) -> set[int]:
     """Decodes a SHT_RELR section into the set of relocated vaddrs."""
     offsets: set[int] = set()
+    word = header.word
+    bits_per_entry = word * 8 - 1
     base = 0
-    for pos in range(section.offset, section.offset + section.size, _RELR.size):
-        entry = _unpack(_RELR, data, pos)[0]
+    for pos in range(section.offset, section.offset + section.size, header.relr.size):
+        entry = _unpack(header.relr, data, pos)[0]
         if entry & 1 == 0:
             offsets.add(entry)
-            base = entry + WORD
+            base = entry + word
         else:
             bits = entry >> 1
-            for i in range(63):
+            for i in range(bits_per_entry):
                 if bits & (1 << i) != 0:
-                    offsets.add(base + i * WORD)
-            base += 63 * WORD
+                    offsets.add(base + i * word)
+            base += bits_per_entry * word
     return offsets
 
 
 def _holes(
-    section: _Section, relocs: set[int], relro: tuple[int, int] | None
+    section: _Section, relocs: set[int], relro: tuple[int, int] | None, word: int
 ) -> list[tuple[int, int]]:
     """Byte ranges inside ``section`` that must not be encrypted, merged and sorted."""
     start = section.addr
     end = section.addr + section.size
     raw: list[tuple[int, int]] = [
-        (off, min(off + WORD, end)) for off in relocs if start <= off < end
+        (off, min(off + word, end)) for off in relocs if start <= off < end
     ]
     if relro is not None:
         lo = max(start, relro[0])
@@ -387,11 +425,11 @@ def _write_meta(
 def _scrub_section_names(data: bytearray, header: _ElfHeader) -> None:
     """Renames the telltale bootstrap sections in place, by editing the section-header string table."""
     shstr = _unpack(
-        _SECTION_HEADER, data, header.shoff + header.shstrndx * header.shentsize
+        header.shdr, data, header.shoff + header.shstrndx * header.shentsize
     )
     shstr_offset = shstr[4]
     for index in range(header.shnum):
-        fields = _unpack(_SECTION_HEADER, data, header.shoff + index * header.shentsize)
+        fields = _unpack(header.shdr, data, header.shoff + index * header.shentsize)
         start = shstr_offset + fields[0]
         end = _string_end(data, start)
         name = data[start:end].decode("ascii", errors="replace")
@@ -418,10 +456,8 @@ def _neutralise_soname(
     except errors.InvalidRuntimeError:
         return
     soname_str: int | None = None
-    for pos in range(
-        dynamic.offset, dynamic.offset + dynamic.size, _DYNAMIC_ENTRY.size
-    ):
-        tag, value = _unpack(_DYNAMIC_ENTRY, data, pos)
+    for pos in range(dynamic.offset, dynamic.offset + dynamic.size, header.dyn.size):
+        tag, value = _unpack(header.dyn, data, pos)
         if tag == _DT_SONAME:
             soname_str = value
         elif tag == _DT_NULL:
@@ -461,7 +497,7 @@ def encrypt_library(library: bytes) -> bytes:
     if _unpack(_PACKED_FLAG, data, meta.offset)[0] != 0:
         raise errors.InvalidRuntimeError("the runtime library is already packed")
 
-    relocs = _reloc_offsets(data, sections)
+    relocs = _reloc_offsets(data, sections, header)
     relro = _relro_range(data, header)
     salt = _stubcode_salt(data, sections, relocs)
     ikm = os.urandom(IKM_LEN)
@@ -476,7 +512,9 @@ def encrypt_library(library: bytes) -> bytes:
         if section.size == 0:
             continue
         is_code = 1 if name == ".text" else 0
-        for lo, hi in _regions_for(section, _holes(section, relocs, relro)):
+        for lo, hi in _regions_for(
+            section, _holes(section, relocs, relro, header.word)
+        ):
             nonce = b"\x00\x00\x00\x00" + os.urandom(NONCE_LEN - 4)
             file_off = section.offset + (lo - section.addr)
             plaintext = bytes(data[file_off : file_off + (hi - lo)])

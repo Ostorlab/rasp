@@ -5,14 +5,19 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/omvll.cmake)
 # The self-decrypt bootstrap. kdf_blob.c is NOT a library source: it is compiled separately by gen_kdf_shovel.py and only
 # its machine code ships, shovelled as immediates by the generated kdf_shovel.cpp. The bootstrap decrypts the library's
 # own .text/.rodata/.eh_frame, which the packer encrypts; it lives in the clear, page-isolated .stubcode section.
+string(REGEX REPLACE "^android-" "" rasp_android_api "${ANDROID_PLATFORM}")
 if(ANDROID_ABI STREQUAL "arm64-v8a")
   set(rasp_selfdecrypt_arch aarch64)
+  set(rasp_selfdecrypt_triple aarch64-linux-android${rasp_android_api})
 elseif(ANDROID_ABI STREQUAL "x86_64")
   set(rasp_selfdecrypt_arch x86_64)
+  set(rasp_selfdecrypt_triple x86_64-linux-android${rasp_android_api})
+elseif(ANDROID_ABI STREQUAL "armeabi-v7a")
+  set(rasp_selfdecrypt_arch arm)
+  set(rasp_selfdecrypt_triple armv7a-linux-androideabi${rasp_android_api})
 else()
-  message(FATAL_ERROR "the self-decrypt bootstrap supports arm64-v8a and x86_64, not ${ANDROID_ABI}")
+  message(FATAL_ERROR "the self-decrypt bootstrap supports arm64-v8a, armeabi-v7a and x86_64, not ${ANDROID_ABI}")
 endif()
-string(REGEX REPLACE "^android-" "" rasp_android_api "${ANDROID_PLATFORM}")
 get_filename_component(rasp_ndk_bin ${CMAKE_CXX_COMPILER} DIRECTORY)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
@@ -23,7 +28,7 @@ add_custom_command(
   OUTPUT ${rasp_kdf_cpp} ${rasp_kdf_header}
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/gen_kdf_shovel.py
           --cc ${rasp_ndk_bin}/clang
-          --target ${rasp_selfdecrypt_arch}-linux-android${rasp_android_api}
+          --target ${rasp_selfdecrypt_triple}
           --arch ${rasp_selfdecrypt_arch}
           --src ${CMAKE_CURRENT_SOURCE_DIR}/src/selfdecrypt/kdf_blob.c
           --out-dir ${rasp_kdf_dir}
@@ -62,7 +67,7 @@ add_library(rasp SHARED
   src/util/system_property.cpp)
 target_include_directories(rasp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${rasp_kdf_dir})
 target_link_libraries(rasp PRIVATE rasp_core rasp_plugins rasp_loader_dex rasp_tfpsacrypto rasp_warnings rasp_language
-  rasp_shipped nativehelper)
+  rasp_shipped nativehelper ZLIB::ZLIB)
 target_link_options(rasp PRIVATE -Wl,--exclude-libs,ALL)
 target_link_options(rasp PRIVATE $<$<CONFIG:Release>:-Wl,--strip-all>)
 

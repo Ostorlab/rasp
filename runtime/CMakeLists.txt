@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.4)
 
-project(rasp_runtime VERSION 0.4.4 LANGUAGES CXX)
+project(rasp_runtime VERSION 0.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,6 +61,7 @@ endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Android" OR RASP_BUILD_TESTS)
   include(cmake/loader_dex.cmake)
+  find_package(ZLIB REQUIRED)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")

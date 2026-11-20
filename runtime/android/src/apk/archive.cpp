@@ -21,6 +21,8 @@
 #include <unistd.h>
 #include <utility>
 #include <vector>
+#define ZLIB_CONST
+#include <zlib.h>
 
 #include "apk/location.h"
 #include "checks/integrity.h"
@@ -43,8 +45,12 @@ constexpr std::size_t kCentralEntrySize = 46;
 constexpr std::size_t kLocalHeaderSize = 30;
 /// The compression method of an entry stored without compression.
 constexpr std::uint16_t kStored = 0;
+/// The compression method of a raw-deflate entry.
+constexpr std::uint16_t kDeflated = 8;
 /// The largest ZIP comment, which bounds how far back the end record is searched.
 constexpr std::size_t kMaxComment = 65535;
+/// The upper bound on a manifest's inflated size, so a crafted entry cannot force an unbounded allocation.
+constexpr std::uint32_t kMaxManifestSize = std::uint32_t{16} << 20U;
 
 /// Reads a little-endian 16-bit number from the start of `data`, which must hold at least two bytes.
 [[nodiscard]] std::uint16_t read_u16(std::span<const std::uint8_t> data) {
@@ -151,6 +157,82 @@ struct LocalEntry {
         return std::nullopt;
       }
       return read_local_data(file, LocalEntry{.local_offset = local_offset, .data_size = stored_size});
+    }
+    const std::size_t entry_size = kCentralEntrySize + name_length + extra_length + comment_length;
+    if (rest.size() < entry_size) {
+      return std::nullopt;
+    }
+    rest = rest.subspan(entry_size);
+  }
+  return std::nullopt;
+}
+
+/// Inflates a raw-deflate payload into exactly `expected_size` bytes, or nothing on any zlib error or a size mismatch.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> inflate_raw(std::span<const std::uint8_t> compressed,
+                                                                   std::uint32_t expected_size) {
+  if (expected_size == 0 || expected_size > kMaxManifestSize || compressed.size() > kMaxManifestSize) {
+    return std::nullopt;
+  }
+  std::vector<std::uint8_t> out(expected_size);
+  z_stream stream = {};
+  if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) {
+    return std::nullopt;
+  }
+  stream.next_in = compressed.data();
+  stream.avail_in = static_cast<uInt>(compressed.size());
+  stream.next_out = out.data();
+  stream.avail_out = static_cast<uInt>(out.size());
+  const int result = inflate(&stream, Z_FINISH);
+  const uLong produced = stream.total_out;
+  inflateEnd(&stream);
+  if (result != Z_STREAM_END || produced != expected_size) {
+    return std::nullopt;
+  }
+  return out;
+}
+
+/// The bytes of the entry named `name`, inflating it when the archive deflated it; nothing when the entry is absent,
+/// is neither stored nor deflated, or its data does not reconstruct.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> find_entry_any_method(std::span<const std::uint8_t> file,
+                                                                             std::string_view name) {
+  const std::optional<std::span<const std::uint8_t>> record = find_end_record(file);
+  if (!record.has_value()) {
+    return std::nullopt;
+  }
+  const std::uint16_t count = read_u16(record->subspan(10));
+  const std::uint32_t directory_size = read_u32(record->subspan(12));
+  const std::uint32_t directory_offset = read_u32(record->subspan(16));
+  if (directory_offset > file.size() || directory_size > file.size() - directory_offset) {
+    return std::nullopt;
+  }
+  std::span<const std::uint8_t> rest = file.subspan(directory_offset, directory_size);
+  for (std::uint16_t index = 0; index < count; ++index) {
+    if (rest.size() < kCentralEntrySize || read_u32(rest) != kCentralSignature) {
+      return std::nullopt;
+    }
+    const std::uint16_t method = read_u16(rest.subspan(10));
+    const std::uint32_t compressed_size = read_u32(rest.subspan(20));
+    const std::uint32_t uncompressed_size = read_u32(rest.subspan(24));
+    const std::size_t name_length = read_u16(rest.subspan(28));
+    const std::size_t extra_length = read_u16(rest.subspan(30));
+    const std::size_t comment_length = read_u16(rest.subspan(32));
+    const std::uint32_t local_offset = read_u32(rest.subspan(42));
+    if (rest.size() < kCentralEntrySize + name_length) {
+      return std::nullopt;
+    }
+    if (equals(rest.subspan(kCentralEntrySize, name_length), name)) {
+      const std::optional<std::vector<std::uint8_t>> data =
+          read_local_data(file, LocalEntry{.local_offset = local_offset, .data_size = compressed_size});
+      if (!data.has_value()) {
+        return std::nullopt;
+      }
+      if (method == kStored) {
+        return data;
+      }
+      if (method == kDeflated) {
+        return inflate_raw(*data, uncompressed_size);
+      }
+      return std::nullopt;
     }
     const std::size_t entry_size = kCentralEntrySize + name_length + extra_length + comment_length;
     if (rest.size() < entry_size) {
@@ -449,7 +531,8 @@ void append_utf8(std::string& out, std::uint32_t code_point) {
 /// packer's to predict nor the runtime's to verify; every other attribute of the two sealed elements is bound.
 [[nodiscard]] bool is_volatile_manifest_attribute(std::string_view name) {
   return name == "compileSdkVersion" || name == "compileSdkVersionCodename" || name == "platformBuildVersionCode" ||
-         name == "platformBuildVersionName" || name == "isSplitRequired";
+         name == "platformBuildVersionName" || name == "isSplitRequired" || name == "requiredSplitTypes" ||
+         name == "splitTypes";
 }
 
 /// Canonicalises one binary attribute's value the way the packer canonicalises the proto's.
@@ -1101,7 +1184,8 @@ std::optional<std::vector<std::uint8_t>> read_split_dex_flag(const std::string& 
 }
 
 std::optional<std::vector<std::uint8_t>> read_manifest_semantics(const std::string& apk_path) {
-  const std::optional<std::vector<std::uint8_t>> manifest = read_stored_entry(apk_path, "AndroidManifest.xml");
+  const std::optional<std::vector<std::uint8_t>> manifest = read_mapped(
+      apk_path, [](std::span<const std::uint8_t> file) { return find_entry_any_method(file, "AndroidManifest.xml"); });
   if (!manifest.has_value()) {
     return std::nullopt;
   }
