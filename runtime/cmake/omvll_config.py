@@ -191,7 +191,10 @@ class RaspConfig(omvll.ObfuscationConfig):
                                   var: omvll.GlobalVariable):
         return omvll.VarAccessOpt(self._heavy_pass_on(mod, func, 20))
 
-    # anti_hooking stays off until it is confirmed on a device that it can't crash the app.
+    def anti_hooking(self, mod: omvll.Module, func: omvll.Function):
+        if any(entry in func.demangled_name for entry in SENSITIVE_FUNCTIONS):
+            return omvll.AntiHookOpt(True)
+        return omvll.AntiHookOpt(False)
 
 
 @lru_cache(maxsize=1)
