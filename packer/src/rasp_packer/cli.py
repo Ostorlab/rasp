@@ -9,6 +9,7 @@ import typing
 from importlib import metadata
 
 from rasp_packer import banner
+from rasp_packer import build_ids
 from rasp_packer import checks as check_groups
 from rasp_packer import errors
 from rasp_packer import packer
@@ -16,6 +17,7 @@ from rasp_packer import platforms
 
 EXIT_OK = 0
 EXIT_FAILED = 1
+NEXT_STEP = "next: the protected app is unsigned; sign it with your upload or release key before you upload it"
 
 
 class _Writer(typing.Protocol):
@@ -69,8 +71,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     pack.add_argument(
         "--build-id",
-        required=True,
-        help="id of the protected build, written into the app",
+        help="id of the protected build, written into the app (default: derived from the app, "
+        "the platform, the packer version and the resolved checks)",
     )
     pack.add_argument(
         "--output",
@@ -127,18 +129,25 @@ def _required_checks() -> str:
 def _pack(arguments: argparse.Namespace) -> int:
     """Packs the app given on the command line and prints the result.
 
+    Without `--build-id`, it derives the build id from the app, the platform, the packer version and the resolved checks.
     Without `--checks`, it packs the app with every check group of the platform. It warns
     about each given check id that is not one of the platform's groups, which the packer skips.
+    After the result line it prints a reminder that the output is unsigned.
     """
     checks: list[str] | None = arguments.checks
     if checks is None:
         checks = list(check_groups.CHECKS[arguments.platform])
+    build_id: str | None = arguments.build_id
     try:
+        if build_id is None:
+            build_id = build_ids.default_build_id(
+                app=arguments.app, platform=arguments.platform, checks=checks
+            )
         result = packer.pack(
             app=arguments.app,
             platform=arguments.platform,
             output=arguments.output,
-            build_id=arguments.build_id,
+            build_id=build_id,
             checks=checks,
             mapping=arguments.mapping,
             pin_certificate=getattr(arguments, "pin_certificate", None),
@@ -155,6 +164,7 @@ def _pack(arguments: argparse.Namespace) -> int:
         f"packed {arguments.platform} app: {result.output} "
         f"(package {result.package_name}, version {result.version}, build {result.build_id})"
     )
+    print(NEXT_STEP)
     return EXIT_OK
 
 

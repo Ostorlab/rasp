@@ -91,6 +91,11 @@ foreach(check emulator root)
   gtest_discover_tests(rasp_android_${check}_test)
 endforeach()
 
+# The debugger, hooking and root checks read /proc through the shared raw reader, so their tests link it too.
+foreach(check debugger hooks root)
+  target_sources(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src/util/raw_file.cpp)
+endforeach()
+
 add_executable(rasp_android_integrity_test android/checks/integrity_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
@@ -103,7 +108,8 @@ gtest_discover_tests(rasp_android_integrity_test)
 # The identity check hashes the signer's certificate with the integrity check's sha256_hex, so its test links it too.
 add_executable(rasp_android_identity_test android/checks/identity_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/identity.cpp ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/raw_file.cpp)
 target_include_directories(rasp_android_identity_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_identity_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language
@@ -120,14 +126,26 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 add_executable(rasp_android_app_storage_test android/util/app_storage_test.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/util/app_storage.cpp ${PROJECT_SOURCE_DIR}/android/src/util/raw_file.cpp)
 target_include_directories(rasp_android_app_storage_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
 target_link_libraries(rasp_android_app_storage_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_app_storage_test)
 
+# read_proc_file's direct-system-call path belongs to Linux on x86_64 or aarch64, and it refuses a file that doesn't live
+# on procfs, sysfs or selinuxfs, so its test writes a regular one: only that reader refuses it. On any other host
+# read_proc_file falls back to read_file, which reads the regular file, so the test must not run there.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|aarch64)$")
+  add_executable(rasp_android_raw_file_test android/util/raw_file_test.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/raw_file.cpp)
+  target_include_directories(rasp_android_raw_file_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(rasp_android_raw_file_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+  gtest_discover_tests(rasp_android_raw_file_test)
+endif()
+
 add_executable(rasp_android_archive_test android/apk/archive_test.cpp ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp ${PROJECT_SOURCE_DIR}/android/src/apk/location.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp ${PROJECT_SOURCE_DIR}/android/src/util/raw_file.cpp)
 target_include_directories(rasp_android_archive_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rasp_android_archive_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings rasp_language GTest::gtest_main ZLIB::ZLIB)
@@ -157,6 +175,7 @@ add_executable(rasp_android_dex_store_test android/payload/dex_store_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/raw_file.cpp
   ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
   ${PROJECT_SOURCE_DIR}/android/src/apk/location.cpp)
 target_include_directories(rasp_android_dex_store_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
@@ -181,6 +200,7 @@ add_executable(rasp_android_key_schedule_test android/payload/key_schedule_test.
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
   ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/raw_file.cpp
   ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
   ${PROJECT_SOURCE_DIR}/android/src/apk/location.cpp)
 target_include_directories(rasp_android_key_schedule_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
@@ -196,7 +216,8 @@ add_executable(rasp_android_key_schedule_bounds_test android/payload/key_schedul
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
   ${PROJECT_SOURCE_DIR}/android/src/apk/archive.cpp
   ${PROJECT_SOURCE_DIR}/android/src/apk/location.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp)
+  ${PROJECT_SOURCE_DIR}/android/src/util/apk_file.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/raw_file.cpp)
 target_include_directories(rasp_android_key_schedule_bounds_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
 target_link_libraries(rasp_android_key_schedule_bounds_test PRIVATE rasp_core rasp_tfpsacrypto rasp_warnings
   rasp_language GTest::gtest_main ZLIB::ZLIB)

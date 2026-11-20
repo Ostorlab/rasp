@@ -25,10 +25,14 @@ result = packer.pack(
 
 ## Options
 
-- `--build-id` (`build_id=`): the id of the protected build, written into the app as it is.
+- `--build-id` (`build_id=`): the id of the protected build, written into the app as it is. `rasp pack` derives it when it is not given: the SHA-256 of the app's contents, the platform, the installed packer version and the resolved checks. The same inputs give the same id, and any change to the app, the packer version or the checks gives a new one. `pack` requires it.
 - `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added. An unknown group is skipped with a warning. Without `--checks`, the command line runs every group the target platform supports (`checks=` in Python is required). See the groups in the [repository's README](../README.md#checks).
 - `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
 - `--pin-certificate` (Android): the certificate the app will be signed with, PEM or DER. The protected app then works only when it is signed with that certificate.
+
+## How do I sign the protected app?
+
+The packer returns the app unsigned and prints a reminder after a successful `rasp pack`. Sign it with your upload key (Play App Signing then signs the copy users install) or your release key, and on iOS with your distribution certificate and provisioning profile.
 
 `pack` returns the path of the protected app, the app's package name, version and build id, and the check groups it skipped.
 

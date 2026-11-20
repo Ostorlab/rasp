@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "util/raw_file.h"
 
 namespace rasp::android::checks {
 
@@ -39,10 +40,14 @@ namespace rasp::android::checks {
 /// its first 32 matching lines, without their line breaks.
 ///
 /// @param maps_path The memory map to read, `/proc/self/maps` on a device.
+/// @param read The reader the map is read with. The shipped runtime leaves the default, read_proc_file, so an
+/// interposed libc function can't answer for the kernel; a test passes read_file to feed a regular file of controlled
+/// content.
 /// @return Three observations read through proc_maps: hook.maps_hits, the lines that name a framework, then
 /// hook.rwx_regions, the writable-executable lines, then hook.foreign_libs, the foreign-library lines. All three have
 /// an error status when the map can't be read or is larger than 4 MiB.
-[[nodiscard]] std::vector<Observation> observe_maps(std::string_view maps_path);
+[[nodiscard]] std::vector<Observation> observe_maps(std::string_view maps_path,
+                                                    rasp::util::ProcReader read = rasp::util::read_proc_file);
 
 /// Reports the threads of the process whose names a hooking framework gave them, read from the `comm` file of each
 /// thread in `task_path`.
@@ -55,8 +60,12 @@ namespace rasp::android::checks {
 /// be read; the observation then has an error status rather than a partial list.
 ///
 /// @param task_path The thread list to read, `/proc/self/task` on a device.
+/// @param read The reader each thread's `comm` file is read with. The shipped runtime leaves the default,
+/// read_proc_file, so an interposed libc function can't answer for the kernel; a test passes read_file to feed regular
+/// files of controlled content.
 /// @return One observation read through proc_task: hook.threads, the framework-named thread names, at most 16 of
 /// them, sorted and without duplicates. It has an error status when the thread list can't be read whole.
-[[nodiscard]] std::vector<Observation> observe_threads(std::string_view task_path);
+[[nodiscard]] std::vector<Observation> observe_threads(std::string_view task_path,
+                                                       rasp::util::ProcReader read = rasp::util::read_proc_file);
 
 }  // namespace rasp::android::checks
