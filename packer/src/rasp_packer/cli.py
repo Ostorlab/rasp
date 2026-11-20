@@ -71,7 +71,7 @@ def _parser() -> argparse.ArgumentParser:
     pack.add_argument(
         "--build-id",
         help="id of the protected build, written into the app (default: derived from the app, "
-        "the platform, the packer version and the checks)",
+        "the platform, the packer version and the resolved checks)",
     )
     pack.add_argument(
         "--output",
@@ -128,7 +128,7 @@ def _required_checks() -> str:
 def _pack(arguments: argparse.Namespace) -> int:
     """Packs the app given on the command line and prints the result.
 
-    Without `--build-id`, it derives the build id from the app, the platform, the packer version and the checks.
+    Without `--build-id`, it derives the build id from the app, the platform, the packer version and the resolved checks.
     Without `--checks`, it warns and packs the app with only the required check groups. It warns
     about each given check id that is not one of the platform's groups, which the packer skips.
     """
