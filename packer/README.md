@@ -49,7 +49,7 @@ checks     debugger,hooks,identity,root
 abis       arm64-v8a,armeabi-v7a
 ```
 
-An app without the runtime is not an error: `inspect` prints `protected  no` with its package and version and exits 0. From Python, `rasp_packer.inspection.inspect(app=..., platform=...)` returns the same fields.
+An app without the runtime is not an error: `inspect` prints `protected  no` with its package and version and exits 0. From Python, `rasp_packer.inspection.inspect(app=pathlib.Path("app-protected.apk"), platform=platforms.Platform.ANDROID)` returns the same fields.
 
 ## When does `rasp` print the banner?
 
