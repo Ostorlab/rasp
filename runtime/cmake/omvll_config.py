@@ -92,6 +92,9 @@ DATA_READ_LITERALS = re.compile(
     rb"|x86_64|arm64|i386"
     rb"|assets/rasp/(?:[a-z]+\.bin|r)"
     rb"|/(?:proc|sys)/.*"
+    # Android property names: the checks iterate over them in arrays, and a name also used directly elsewhere shares
+    # its bytes with the array entry.
+    rb"|ro\.[a-z0-9_.]+"
     rb"|TracerPid:"
     rb"|__rasp_config"
     rb"|__DATA"
