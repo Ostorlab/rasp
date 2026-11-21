@@ -362,10 +362,10 @@ TEST(Panic, panicOnDetection_whenMitmReportsOnly_neverArmsForAVpnOrDisagreementO
       observed("mitm.user_cas", "store", Strings{"certificate"}),
   };
   EXPECT_FALSE(panic_on_detection(observations, record_end,
-                                  {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = 1U << 4},
+                                  {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = 1U << 4U},
                                   CheckPlatform::kAndroid));
   EXPECT_FALSE(panic_on_detection(observations, record_end,
-                                  {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = 1U << 7},
+                                  {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = 1U << 7U},
                                   CheckPlatform::kIos));
   EXPECT_EQ(detect(observations).size(), 4U);
 }
@@ -418,7 +418,7 @@ TEST(Panic, panicOnDetection_whenOnlyTheSevereGroupReports_usesTheLongDelayForTh
   };
   const steady_clock::time_point start = steady_clock::now();
   ASSERT_TRUE(panic_on_detection(observations, record_end,
-                                 {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = 1U << 1},
+                                 {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = 1U << 1U},
                                  CheckPlatform::kAndroid));
   ASSERT_TRUE(wait_for_end_calls(before + 1, kMaxPanicDelay + kWaitMargin));
   EXPECT_GE(steady_clock::now() - start, kMinPanicDelay);
@@ -440,7 +440,7 @@ TEST(Panic, panicOnDetection_whenDeviceStateChecksAreOff_armsNothingInEitherPlat
   const std::vector<Observation> root = {observed("root.fs_paths", "access", Strings{"su"})};
   const std::vector<Observation> jailbreak = {observed("jb.fs_paths", "access", Strings{"/var/jb"})};
   // Root is Android-only; jailbreak is its iOS counterpart. Bit zero belongs to each platform's device check.
-  const Config mask{.build_id = {}, .checks_mask = 1U << 1};
+  const Config mask{.build_id = {}, .checks_mask = 1U << 1U};
   const Config list{.build_id = {}, .checks = Strings{"debugger"}};
   for (const Config& config : {mask, list}) {
     EXPECT_FALSE(panic_on_detection(root, record_end, config, CheckPlatform::kAndroid));

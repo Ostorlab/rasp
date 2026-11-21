@@ -74,10 +74,12 @@ TEST(PanicDevelopment, panicOnDetection_whenAGroupReports_logsItsActionAndKeepsB
       observed("dbg.tracer_pid", "proc_status", std::int64_t{42}),
   };
   EXPECT_FALSE(panic_on_detection(observations, record_end,
-                                  {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = 1U << 4},
+                                  {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = 1U << 4U},
                                   CheckPlatform::kAndroid));
-  const std::vector<std::string> expected = {"report only: mitm.tunnels/getifaddrs",
-                                             "would panic: dbg.tracer_pid/proc_status"};
+  const std::vector<std::string> expected = {
+      "report only: mitm.tunnels/getifaddrs",
+      "would panic: dbg.tracer_pid/proc_status",
+  };
   EXPECT_EQ(logged(), expected);
   EXPECT_EQ(end_calls().load(), 0);
 }
@@ -89,7 +91,7 @@ TEST(PanicDevelopment, panicOnDetection_whenAGroupIsOff_logsItDistinctlyFromRepo
       observed("mitm.tunnels", "getifaddrs", std::vector<std::string>{"tun0"}),
       observed("dbg.tracer_pid", "proc_status", std::int64_t{42}),
   };
-  const Config config{.build_id = {}, .checks_mask = (1U << 1) | (1U << 4), .report_only_mask = 1U << 4};
+  const Config config{.build_id = {}, .checks_mask = (1U << 1U) | (1U << 4U), .report_only_mask = 1U << 4U};
   EXPECT_FALSE(panic_on_detection(observations, record_end, config, CheckPlatform::kAndroid));
   const std::vector<std::string> expected = {
       "check off: root.fs_paths/access",

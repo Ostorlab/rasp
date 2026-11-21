@@ -4,6 +4,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <span>
 #include <string>
 #include <vector>
@@ -14,7 +15,7 @@
 namespace rasp {
 
 /// The platform whose check order defines the report-only mask.
-enum class CheckPlatform {
+enum class CheckPlatform : std::uint8_t {
   /// The Android monitoring order.
   kAndroid,
   /// The iOS monitoring order.
