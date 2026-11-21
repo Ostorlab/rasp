@@ -207,8 +207,14 @@ constexpr long kExdev = 18;
 
 /// Maps `size` bytes of `fd` read-only and shared through a direct system call: the address, or nothing.
 [[nodiscard]] std::optional<void*> map_file(long fd, std::size_t size) {
-  const long address =
-      raw_syscall(__NR_mmap, 0, static_cast<long>(size), PROT_READ, MAP_SHARED, fd, 0);  // NOLINT(misc-include-cleaner)
+#ifdef __arm__
+  // 32-bit ARM maps through mmap2, whose offset counts pages.
+  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
+  const long address = raw_syscall(__NR_mmap2, 0, static_cast<long>(size), PROT_READ, MAP_SHARED, fd, 0);
+#else
+  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
+  const long address = raw_syscall(__NR_mmap, 0, static_cast<long>(size), PROT_READ, MAP_SHARED, fd, 0);
+#endif
   if (failed(address)) {
     return std::nullopt;
   }
@@ -329,7 +335,7 @@ std::optional<std::string> read_proc_file(std::string_view path, std::size_t lim
 
 #endif
 
-#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__) || defined(__arm__))
 
 long access_path(std::string_view path) {
   const std::string name(path);
@@ -348,7 +354,7 @@ long access_path(std::string_view path) {
 #endif
 
 std::optional<MappedFile> MappedFile::map(std::string_view path, std::size_t limit) {
-#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__) || defined(__arm__))
   const long fd = raw_open(path);
 #else
   const long fd = open_proc_file(path);
