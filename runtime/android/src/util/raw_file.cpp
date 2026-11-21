@@ -4,13 +4,14 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <sys/mman.h>  // NOLINT(misc-include-cleaner): declares the mmap flags.
 #include <utility>
 
-#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__) || defined(__arm__))
 #ifdef __ANDROID__
 // Bionic takes AT_FDCWD from the kernel's uapi <linux/fcntl.h> and declares struct statfs in <sys/vfs.h>; glibc
 // declares both in <fcntl.h> and <sys/statfs.h>.
@@ -69,7 +70,7 @@ constexpr long kEintr = 4;
   return std::nullopt;
 }
 
-#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__) || defined(__arm__))
 
 // NOLINTBEGIN(portability-no-assembler, misc-const-correctness): this reader exists to issue raw system calls through
 // inline assembler, and the result register it writes through an output operand can't be declared const.
@@ -100,6 +101,23 @@ long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) 
                    : "a"(nr), "D"(a0), "S"(a1), "d"(a2), "r"(r10), "r"(r8), "r"(r9)
                    : "rcx", "r11", "memory");
   return ret;
+}
+#elifdef __arm__
+/// A 32-bit ARM syscall: number in r7, arguments in r0..r5, result in r0. r7 is saved and restored, since a Thumb build
+/// may keep it as the frame pointer.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+long raw_syscall(long nr, long a0, long a1, long a2, long a3, long a4, long a5) {
+  register long r0 __asm__("r0") = a0;
+  register const long r1 __asm__("r1") = a1;
+  register const long r2 __asm__("r2") = a2;
+  register const long r3 __asm__("r3") = a3;
+  register const long r4 __asm__("r4") = a4;
+  register const long r5 __asm__("r5") = a5;
+  __asm__ volatile("push {r7}\n\tmov r7, %[nr]\n\tsvc #0\n\tpop {r7}"
+                   : "+r"(r0)
+                   : [nr] "r"(nr), "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)
+                   : "memory", "cc");
+  return r0;
 }
 #endif
 // NOLINTEND(portability-no-assembler, misc-const-correctness)
@@ -156,18 +174,26 @@ constexpr long kExdev = 18;
 /// kernel couldn't answer the question at all (statfs(2): EIO, EBADF, EFAULT, ENOMEM, ENOSYS), kept verbatim so a
 /// caller reports the failure it had rather than one it didn't.
 [[nodiscard]] long kernel_filesystem_verdict(long fd) {
-  // The magics as the signed type statfs reports f_type in, so each comparison is between like integers.
-  constexpr long kProcfsMagic = 0x9fa0;
-  constexpr long kSysfsMagic = 0x62656572;
-  constexpr long kSelinuxfsMagic = 0xf97cff8c;
+  // f_type is a different integer type on each ABI, so every comparison is made on 64 bits.
+  constexpr std::uint64_t kProcfsMagic = 0x9fa0U;
+  constexpr std::uint64_t kSysfsMagic = 0x62656572U;
+  constexpr std::uint64_t kSelinuxfsMagic = 0xf97cff8cU;
   struct statfs filesystem{};
+#ifdef __arm__
+  // 32-bit bionic's struct statfs has the kernel's statfs64 layout, which only fstatfs64 fills.
+  const long stated = raw_syscall(__NR_fstatfs64, fd, static_cast<long>(sizeof(filesystem)),
+                                  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                                  reinterpret_cast<long>(&filesystem), 0, 0, 0);
+#else
   const long stated =
       // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
       raw_syscall(__NR_fstatfs, fd, reinterpret_cast<long>(&filesystem), 0, 0, 0, 0);
+#endif
   if (failed(stated)) {
     return stated;
   }
-  if (filesystem.f_type == kProcfsMagic || filesystem.f_type == kSysfsMagic || filesystem.f_type == kSelinuxfsMagic) {
+  const auto type = static_cast<std::uint64_t>(filesystem.f_type);
+  if (type == kProcfsMagic || type == kSysfsMagic || type == kSelinuxfsMagic) {
     return 0;
   }
   return -kExdev;
@@ -232,7 +258,7 @@ void unmap_file(void* address, std::size_t size) { static_cast<void>(::munmap(ad
 
 }  // namespace
 
-#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__) || defined(__arm__))
 
 long open_proc_file(std::string_view path) {
   const long fd = raw_open(path);
@@ -288,7 +314,7 @@ std::optional<std::string> read_proc_file(std::string_view path, std::size_t lim
 #else
 
 long open_proc_file(std::string_view path) {
-  // A host that isn't Linux on x86_64 or aarch64 opens through libc, so the code that scans the kernel's files builds
+  // A host the direct system calls don't serve opens through libc, so the code that scans the kernel's files builds
   // and runs everywhere; the device build is the one that matters, and it takes the direct-system-call path above.
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
   const int fd = ::open(std::string(path).c_str(), O_RDONLY | O_CLOEXEC);
@@ -296,7 +322,7 @@ long open_proc_file(std::string_view path) {
 }
 
 std::optional<std::string> read_proc_file(std::string_view path, std::size_t limit) {
-  // A host that isn't Linux on x86_64 or aarch64 runs the portable reader, so the checks' tests build and run
+  // A host the direct system calls don't serve runs the portable reader, so the checks' tests build and run
   // everywhere; the device build is the one that matters, and it takes the direct-system-call path above.
   return read_file(path, limit);
 }

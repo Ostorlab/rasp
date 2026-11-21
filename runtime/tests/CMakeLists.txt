@@ -139,10 +139,10 @@ target_include_directories(rasp_android_property_area_test PRIVATE ${PROJECT_SOU
 target_link_libraries(rasp_android_property_area_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_property_area_test)
 
-# read_proc_file's direct-system-call path belongs to Linux on x86_64 or aarch64, and it refuses a file that doesn't live
-# on procfs, sysfs or selinuxfs, so its test writes a regular one: only that reader refuses it. On any other host
-# read_proc_file falls back to read_file, which reads the regular file, so the test must not run there.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|aarch64)$")
+# read_proc_file's direct-system-call path belongs to Linux on x86_64, aarch64 or 32-bit ARM, and it refuses a file
+# that doesn't live on procfs, sysfs or selinuxfs, so its test writes a regular one: only that reader refuses it. On any
+# other host read_proc_file falls back to read_file, which reads the regular file, so the test must not run there.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|aarch64|armv7.*)$")
   add_executable(rasp_android_raw_file_test android/util/raw_file_test.cpp
     ${PROJECT_SOURCE_DIR}/android/src/util/raw_file.cpp)
   target_include_directories(rasp_android_raw_file_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
