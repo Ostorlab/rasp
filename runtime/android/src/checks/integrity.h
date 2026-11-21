@@ -21,8 +21,8 @@ inline constexpr std::size_t kDigestSize = 32;
 /// Runs the self-integrity check and returns what it observed.
 ///
 /// The memory source is the SHA-256 of the running `.text` section. On packed builds, the file source is the expected
-/// plaintext digest written into `.rasp_config` at pack time; the installed `.text` bytes are ciphertext and are not
-/// hashed for this observation. On unpacked builds, the file source is computed from the installed `.text` bytes.
+/// plaintext digest the packer wrote into its slot; the installed `.text` bytes are ciphertext and are not hashed for
+/// this observation. On unpacked builds, the file source is computed from the installed `.text` bytes.
 /// Equal values mean the running code matches that expectation. The digest slot is attacker-patchable in the file;
 /// this observation does not authenticate it. The key schedule's fold binds the slot into payload-key recovery.
 ///
@@ -106,17 +106,18 @@ struct SectionRegion {
 /// `text_memory` in the process.
 ///
 /// It reads the file, finds its `.text` section and hashes the same count of bytes from `text_memory`. For the file
-/// source, a nonzero expected plaintext digest in `.rasp_config` is reported directly; otherwise it hashes the
-/// installed
-/// `.text` bytes. The slot is attacker-patchable: its binding is enforced by the key schedule's fold, not by this
-/// observation. This function does not touch the dynamic loader, so tests can supply their own file and memory span.
+/// source, a nonzero `expected` digest is reported directly; otherwise it hashes the installed `.text` bytes. The slot
+/// is attacker-patchable: its binding is enforced by the key schedule's fold, not by this observation. This function
+/// does not touch the dynamic loader, so tests can supply their own file and memory span.
 ///
 /// @param library_path The path of the installed library file.
 /// @param text_memory The library's loaded image, starting at its load address. The function reads only the `.text`
 /// bytes inside it, found from the file's section and program headers.
+/// @param expected The plaintext `.text` digest the packer wrote, or nothing for a library that was never packed.
 /// @return The file observation, then the memory observation. An observation has an error status when the file can't
 /// be read, has no usable `.text` section, the section reaches past `text_memory`, or the hash can't be computed.
-[[nodiscard]] std::vector<Observation> observe_text_hashes(std::string_view library_path,
-                                                           std::span<const std::uint8_t> text_memory);
+[[nodiscard]] std::vector<Observation> observe_text_hashes(
+    std::string_view library_path, std::span<const std::uint8_t> text_memory,
+    const std::optional<std::array<std::uint8_t, kDigestSize>>& expected = std::nullopt);
 
 }  // namespace rasp::android::checks

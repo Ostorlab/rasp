@@ -167,9 +167,26 @@ if(TARGET rasp_loader_dex)
   gtest_discover_tests(rasp_android_loader_dex_test)
 endif()
 
+set(rasp_android_config_sources
+  ${PROJECT_SOURCE_DIR}/android/src/config/slots.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/config/slot_build_id.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/config/slot_checks.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/config/slot_program.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/config/slot_digest.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/config/slot_pad.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/config/slot_decoy_0.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/config/slot_decoy_1.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/config/slot_decoy_2.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/config/slot_share.cpp)
+
+add_executable(rasp_android_config_slots_test android/config/slots_test.cpp ${rasp_android_config_sources})
+target_include_directories(rasp_android_config_slots_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_config_slots_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_config_slots_test)
+
 add_executable(rasp_android_dex_store_test android/payload/dex_store_test.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/dex_store.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp ${rasp_android_config_sources}
   ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp
@@ -194,7 +211,7 @@ gtest_discover_tests(rasp_android_cipher_test)
 # recovery with a library and an APK the packer's tools made, so the ELF reader, the digests, the HKDF and the fold are
 # exercised end to end without a device.
 add_executable(rasp_android_key_schedule_test android/payload/key_schedule_test.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp ${rasp_android_config_sources}
   ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp
   ${PROJECT_SOURCE_DIR}/android/src/payload/cipher.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp
@@ -210,7 +227,7 @@ target_link_libraries(rasp_android_key_schedule_test PRIVATE rasp_core rasp_tfps
 gtest_discover_tests(rasp_android_key_schedule_test)
 
 add_executable(rasp_android_key_schedule_bounds_test android/payload/key_schedule_bounds_test.cpp
-  ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/payload/key_schedule.cpp ${rasp_android_config_sources}
   ${PROJECT_SOURCE_DIR}/android/src/checks/hooks.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/integrity.cpp
   ${PROJECT_SOURCE_DIR}/android/src/checks/debugger.cpp

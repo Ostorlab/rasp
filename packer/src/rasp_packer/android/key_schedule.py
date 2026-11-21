@@ -1,9 +1,9 @@
 """The key schedule that protects the payload: no key ships in the app, and no input stands alone.
 
-The schedule replaces the single clear key the packer once shipped as an APK entry. Nothing in the package is "the key", and no single input, and no proper subset of them, is enough: the payload's root key is the output of two HKDF chains whose inputs are gathered from all over the shipped app, listed by a per-app recipe, the fold program, that the packer writes into the library's ``.rasp_config`` section:
+The schedule replaces the single clear key the packer once shipped as an APK entry. Nothing in the package is "the key", and no single input, and no proper subset of them, is enough: the payload's root key is the output of two HKDF chains whose inputs are gathered from all over the shipped app, listed by a per-app recipe, the fold program, that the packer writes into the library:
 
 - chain A, per ABI, over the library's own content: the digest of its ``.text``, and the digests of sections and byte ranges the recipe names — so patching the library's code or data breaks the chain silently.
-- chain S, shared by every ABI, over the app's shipped artifacts and the environment: the asset share (the stored ``assets/rasp/s.bin`` entry), the digest of the config region (the section's content up to the keystore share), the gate block of the environment the recovery observes, and whatever decoys the recipe lists: random constants inside the program, digests of stored decoy entries (``assets/rasp/r<i>.bin``), or any of the same sources again in another position.
+- chain S, shared by every ABI, over the app's shipped artifacts and the environment: the asset share (the stored ``assets/rasp/s.bin`` entry), the digest of the region record (the packer's value slots but the keystore share), the gate block of the environment the recovery observes, and whatever decoys the recipe lists: random constants inside the program, digests of stored decoy entries (``assets/rasp/r<i>.bin``), or any of the same sources again in another position.
 
 Every input, real or decoy, is just the salt of one HKDF step, and the chains are order-sensitive: the recipe's steps cannot be reordered, and dropping, altering or adding any one of them changes the root. The decoys are indistinguishable from the real inputs to anything short of a full reversal of the runtime, so there is no "the one that matters" to aim at: the fold is a forest, not a line.
 
@@ -36,9 +36,8 @@ SHARE_ENTRY = "assets/rasp/s.bin"
 # digests are inputs of the chain. Named "<prefix>r<i>.bin", with i the record's parameter.
 DECOY_ENTRY_PREFIX = "assets/rasp/r"
 
-# The fold program: the per-app recipe of the chains, written into the `.rasp_config` section
-# between the config's zero padding and the keystore share. Its bytes are masked, and its layout
-# is fixed and mirrored by the runtime's interpreter.
+# The fold program: the per-app recipe of the chains the packer writes into the library. Its bytes
+# are masked, and its layout is fixed and mirrored by the runtime's interpreter.
 PROGRAM_SIZE = 512
 MASK_SIZE = 16
 MAX_RECORDS = 16

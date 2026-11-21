@@ -11,6 +11,12 @@ import hashlib
 
 from rasp_packer.android import key_schedule
 from rasp_packer.android import runtime_library
+from rasp_packer.android import slots
+from tests.rasp_packer import conftest
+from tests.rasp_packer.android import packed_slots
+
+# The runtime build the tests pack, unwritten, whose layout locates the slots of a packed copy.
+_RAW_LIBRARY = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 
 
 def recover_root(
@@ -23,12 +29,12 @@ def recover_root(
     module_dexes: dict[str, bytes] | None = None,
     manifest_semantics: bytes | None = None,
     pinned_signer: bytes | None = None,
+    raw: bytes = _RAW_LIBRARY,
 ) -> bytes | None:
     """Recovers the root key of a packed library from the library and its APK's stored entries.
 
     Args:
-        library: The content of a packed `librasp.so`, with its config, fold program and keystore
-            share.
+        library: The content of a packed `librasp.so`, with its slots written.
         entries: The APK's stored entries by name, which hold the asset share and the decoy entries
             the fold program names.
         gates: The gate block of the environment the recovery folds in, the clean device's
@@ -38,6 +44,7 @@ def recover_root(
         stub_dex: The stub dex's bytes, which the fold program folds in as the stub record's input,
             the way the runtime reads the highest-numbered `classesN.dex` entry.
         module_dexes: The base module's class dexes by entry name, for an AAB pack's dex record.
+        raw: The same runtime build unwritten, whose layout locates the library's slots.
 
     Returns:
         The root key. Nothing when the library's fold program or any input it names cannot be read,
@@ -54,6 +61,7 @@ def recover_root(
             module_dexes,
             manifest_semantics,
             pinned_signer,
+            raw,
         )
     except KeyError, IndexError, ValueError:
         return None
@@ -69,10 +77,14 @@ def _recover(
     module_dexes: dict[str, bytes] | None = None,
     manifest_semantics: bytes | None = None,
     pinned_signer: bytes | None = None,
+    raw: bytes = _RAW_LIBRARY,
 ) -> bytes:
     """Recovers the root key, raising on any input that cannot be gathered."""
-    program = key_schedule.decode_program(runtime_library.program(library))
-    keystore = runtime_library.keystore(library)
+    program = key_schedule.decode_program(
+        packed_slots.read(library, raw, slots.PROGRAM)
+    )
+    keystore = packed_slots.read(library, raw, slots.SHARE)
+    region = packed_slots.region(library, raw)
     # The APK digest skips the runtime's own libraries, the way the runtime skips them: it derives
     # their filename from its own load path. The library this recovery reads is one of them, so the
     # entries that hold its content give the filename, which covers every ABI the pack shipped under
@@ -103,7 +115,7 @@ def _recover(
                 raise ValueError("the asset share has the wrong size")
             return share
         if record.kind == key_schedule.KIND_REGION:
-            return hashlib.sha256(runtime_library.config_region(library)).digest()
+            return hashlib.sha256(region).digest()
         if record.kind == key_schedule.KIND_GATES:
             return gates
         if record.kind == key_schedule.KIND_CONSTANT:

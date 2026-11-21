@@ -1,7 +1,9 @@
 """Tests of inspecting a built app."""
 
 import collections.abc
+import hashlib
 import pathlib
+import random
 import zipfile
 
 import pytest
@@ -14,6 +16,8 @@ from rasp_packer import runtime_config
 from rasp_packer.android import packer as android_packer
 from rasp_packer.android import resources
 from rasp_packer.android import runtime_library
+from rasp_packer.android import self_encrypt
+from rasp_packer.android import slots
 from rasp_packer.android import split
 from rasp_packer.ios import packer as ios_packer
 from tests.rasp_packer import conftest
@@ -115,7 +119,9 @@ def testInspect_whenApkIsProtected_reportsTheConfigTheIdentityAndTheAbis(
     )
     protected = _pack_android(app, tmp_path / "protected.apk")
 
-    result = inspection.inspect(app=protected, platform=platforms.Platform.ANDROID)
+    result = inspection.inspect(
+        app=protected, platform=platforms.Platform.ANDROID, artifacts=_artifacts()
+    )
 
     assert result == inspection.InspectResult(
         protected=True,
@@ -135,7 +141,9 @@ def testInspect_whenAabIsProtected_reportsTheConfigTheIdentityAndTheAbis(
         _make_aab(tmp_path / "app.aab"), tmp_path / "protected.aab"
     )
 
-    result = inspection.inspect(app=protected, platform=platforms.Platform.ANDROID)
+    result = inspection.inspect(
+        app=protected, platform=platforms.Platform.ANDROID, artifacts=_artifacts()
+    )
 
     assert result.protected is True
     assert result.package_name == "com.android.insecurebankv2"
@@ -158,7 +166,9 @@ def testInspect_whenApkCarriesNoPackedRuntime_reportsItUnprotectedWithItsIdentit
     """An APK without a runtime library holding a packed config is reported unprotected."""
     app = _make_apk(tmp_path / "app.apk", libraries)
 
-    result = inspection.inspect(app=app, platform=platforms.Platform.ANDROID)
+    result = inspection.inspect(
+        app=app, platform=platforms.Platform.ANDROID, artifacts=_artifacts()
+    )
 
     assert result == inspection.InspectResult(
         protected=False,
@@ -171,15 +181,18 @@ def testInspect_whenApkCarriesNoPackedRuntime_reportsItUnprotectedWithItsIdentit
 
 
 def _library_with(build_id: str) -> bytes:
-    """Returns a runtime library whose config carries the given build id."""
-    config = runtime_config.RuntimeConfig(
+    """Returns a packed runtime library whose slots carry the given build id."""
+    layout = slots.locate(_ARM64_SO)
+    values = slots.Values(
         build_id=build_id,
-        checks=_ANDROID_CHECKS,
         checks_mask=check_groups.checks_mask(
             platforms.Platform.ANDROID, _ANDROID_CHECKS
         ),
+        program=bytes(slots.PROGRAM.size),
+        text_digest=hashlib.sha256(runtime_library.text_region(_ARM64_SO)).digest(),
     )
-    return runtime_library.write_config(_ARM64_SO, config)
+    written = slots.write(_ARM64_SO, layout, values, random.Random(0))
+    return self_encrypt.encrypt_library(written)
 
 
 def testInspect_whenAbiDirectoriesCarryDifferentConfigs_raisesInvalidAppError(
@@ -195,7 +208,9 @@ def testInspect_whenAbiDirectoriesCarryDifferentConfigs_raisesInvalidAppError(
     )
 
     with pytest.raises(errors.InvalidAppError):
-        inspection.inspect(app=app, platform=platforms.Platform.ANDROID)
+        inspection.inspect(
+            app=app, platform=platforms.Platform.ANDROID, artifacts=_artifacts()
+        )
 
 
 def testInspect_whenOneAbiDirectoryCarriesTwoDifferentConfigs_raisesInvalidAppError(
@@ -211,7 +226,9 @@ def testInspect_whenOneAbiDirectoryCarriesTwoDifferentConfigs_raisesInvalidAppEr
     )
 
     with pytest.raises(errors.InvalidAppError):
-        inspection.inspect(app=app, platform=platforms.Platform.ANDROID)
+        inspection.inspect(
+            app=app, platform=platforms.Platform.ANDROID, artifacts=_artifacts()
+        )
 
 
 def testInspect_whenIpaIsProtected_reportsTheConfigAndTheIdentity(

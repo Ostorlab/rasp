@@ -36,13 +36,12 @@
 #include "payload/cipher.h"
 #include "payload/dex_store.h"
 #include "payload/key_schedule.h"
-#include "rasp/config.h"
-#include "rasp/embedded_config.h"
 #include "rasp/heartbeat.h"
 #include "rasp/observation.h"
 #include "rasp/panic.h"
 #include "rasp/schedule.h"
 #include "rasp/util/logging.h"
+#include "util/jni.h"
 #include "util/system_property.h"
 
 namespace rasp::android::loader {
@@ -671,13 +670,107 @@ void arm(JNIEnv* env, jclass /*stub*/, jbyteArray share) {
 
 }  // namespace rasp::android::loader
 
+namespace rasp::android::loader {
+
+namespace {
+
+/// The name of the class whose code called System.loadLibrary for this library: the frame right below that call on
+/// the current Java stack.
+[[nodiscard]] std::optional<std::string> loading_class(JNIEnv* env) {
+  jclass thread_class = env->FindClass("java/lang/Thread");
+  jclass frame_class = env->FindClass("java/lang/StackTraceElement");
+  if (util::threw(env) || thread_class == nullptr || frame_class == nullptr) {
+    return std::nullopt;
+  }
+  jmethodID current_thread = env->GetStaticMethodID(thread_class, "currentThread", "()Ljava/lang/Thread;");
+  jmethodID stack_trace = env->GetMethodID(thread_class, "getStackTrace", "()[Ljava/lang/StackTraceElement;");
+  jmethodID class_name = env->GetMethodID(frame_class, "getClassName", "()Ljava/lang/String;");
+  jmethodID method_name = env->GetMethodID(frame_class, "getMethodName", "()Ljava/lang/String;");
+  if (util::threw(env) || current_thread == nullptr || stack_trace == nullptr || class_name == nullptr ||
+      method_name == nullptr) {
+    return std::nullopt;
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): the JNI call methods are variadic by design.
+  jobject thread = env->CallStaticObjectMethod(thread_class, current_thread);
+  if (util::threw(env) || thread == nullptr) {
+    return std::nullopt;
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,cppcoreguidelines-pro-type-static-cast-downcast): JNI call, jobject to jobjectArray.
+  auto* const frames = static_cast<jobjectArray>(env->CallObjectMethod(thread, stack_trace));
+  if (util::threw(env) || frames == nullptr) {
+    return std::nullopt;
+  }
+  const auto text = [env](jobject frame, jmethodID method) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,cppcoreguidelines-pro-type-static-cast-downcast): JNI call, jobject to jstring.
+    auto* const value = static_cast<jstring>(env->CallObjectMethod(frame, method));
+    std::string out;
+    if (!util::threw(env) && value != nullptr) {
+      const char* const chars = env->GetStringUTFChars(value, nullptr);
+      if (chars != nullptr) {
+        out = chars;
+        env->ReleaseStringUTFChars(value, chars);
+      }
+    }
+    env->DeleteLocalRef(value);
+    return out;
+  };
+  const jsize count = env->GetArrayLength(frames);
+  bool below_load = false;
+  std::optional<std::string> caller;
+  for (jsize index = 0; index < count && !caller; ++index) {
+    jobject frame = env->GetObjectArrayElement(frames, index);
+    const std::string name = text(frame, class_name);
+    if (below_load) {
+      caller = name;
+    } else if (name == "java.lang.System" && text(frame, method_name) == "loadLibrary") {
+      below_load = true;
+    }
+    env->DeleteLocalRef(frame);
+  }
+  env->DeleteLocalRef(frames);
+  env->DeleteLocalRef(thread);
+  return caller;
+}
+
+/// Overwrites `text` before it is freed, so the class name doesn't stay readable in freed memory.
+void wipe(std::string& text) {
+  // NOLINTNEXTLINE(misc-const-correctness): the character is written through a volatile pointer to it.
+  for (char& character : text) {
+    *static_cast<volatile char*>(&character) = '\0';
+  }
+  text.clear();
+}
+
+/// The stub class, looked up by the name the Java stack gives, or null when the caller isn't an app component
+/// factory.
+[[nodiscard]] jclass stub_class(JNIEnv* env) {
+  std::optional<std::string> name = loading_class(env);
+  if (!name || name->empty()) {
+    return nullptr;
+  }
+  std::ranges::replace(*name, '.', '/');
+  jclass stub = env->FindClass(name->c_str());
+  wipe(*name);
+  jclass factory = env->FindClass("android/app/AppComponentFactory");
+  if (util::threw(env) || stub == nullptr || factory == nullptr || env->IsAssignableFrom(stub, factory) == JNI_FALSE) {
+    env->DeleteLocalRef(stub);
+    env->DeleteLocalRef(factory);
+    return nullptr;
+  }
+  env->DeleteLocalRef(factory);
+  return stub;
+}
+
+}  // namespace
+
+}  // namespace rasp::android::loader
+
 /// Binds the stub's native entry points with RegisterNatives when the library loads, so the loader's native entry
 /// point is not an exported `Java_...` symbol. JNI_OnLoad is the only symbol the VM resolves by name.
 ///
-/// The stub class the packer points the app's manifest at is named per app, so its name arrives with the runtime's
-/// config: the class is looked up under the name the config carries, and the library holds none. A config without a
-/// class name, or one that fails to resolve, leaves the entry points unbound, the library reports JNI_ERR, and the
-/// load fails the way a load of a runtime whose app was never packed for fails.
+/// The stub's name is per app and the library carries none: the stub is the class whose static initializer loads the
+/// library, so it is the caller of System.loadLibrary on the current Java stack. A caller that isn't an app component
+/// factory leaves the entry points unbound, the library reports JNI_ERR, and the load fails.
 ///
 /// @param vm The Java virtual machine loading the library.
 /// @return The JNI version the library needs, or JNI_ERR when the method can't be bound.
@@ -687,15 +780,8 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     return JNI_ERR;
   }
   auto* env = static_cast<JNIEnv*>(raw_env);
-  const rasp::Config config = rasp::read_embedded_config();
-  if (!config.stub_class.has_value() || config.stub_class->empty()) {
-    return JNI_ERR;
-  }
-  std::string class_name = *config.stub_class;
-  std::ranges::replace(class_name, '.', '/');
-  jclass stub = env->FindClass(class_name.c_str());
+  jclass stub = rasp::android::loader::stub_class(env);
   if (stub == nullptr) {
-    env->ExceptionClear();
     return JNI_ERR;
   }
   const std::array<JNINativeMethod, 3> methods = {

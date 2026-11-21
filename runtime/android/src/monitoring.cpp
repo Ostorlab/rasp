@@ -21,10 +21,10 @@
 #include "checks/integrity.h"
 #include "checks/mitm.h"
 #include "checks/root.h"
+#include "config/slots.h"
 #include "panic/end_process.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
-#include "rasp/embedded_config.h"
 #include "rasp/heartbeat.h"
 #include "rasp/install_id.h"
 #include "rasp/observation.h"
@@ -81,7 +81,7 @@ namespace {
 ///
 /// @return The config the packer wrote, with its install id, which stays `std::nullopt` when it can't be read or kept.
 [[nodiscard]] Config read_config() {
-  Config config = read_embedded_config();
+  Config config = config::read_config();
   const std::optional<std::string> directory = util::make_no_backup_directory();
   if (directory) {
     config.install_id = load_or_create_install_id(*directory);

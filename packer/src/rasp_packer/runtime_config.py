@@ -1,9 +1,7 @@
 """The runtime's config, which the packer writes into the protected app and the runtime reads when it starts.
 
-The config is one JSON object in UTF-8. The packer writes it into a space the runtime's binary keeps for it: the JSON at
-the start of the space, and zero bytes over the rest. The runtime reads it up to the first zero byte
-(runtime/core/src/embedded_config.cpp). Each platform's module finds the space in its binary, and this one writes and
-reads it: android/runtime_library.py for `librasp.so`, and ios/runtime_binary.py for the `RaspRuntime` binary.
+As JSON, the config is one object in UTF-8, written at the start of a space the runtime's binary keeps for it, with zero
+bytes over the rest; the runtime reads it up to the first zero byte.
 """
 
 import dataclasses
@@ -24,29 +22,19 @@ class RuntimeConfig:
         checks: The ids of the check groups the protected app runs, sorted.
         checks_mask: The same groups as a mask, one bit per group in the platform's run order, which
             is the form the config carries: the shipped library names no check group.
-        stub_class: The name of the app's component factory class, with ``.`` separators: the stub the
-            packer points the manifest at, whose native entry points the runtime binds. Empty when the
-            platform has no stub (iOS), which leaves the field out of the JSON.
     """
 
     build_id: str
     checks: tuple[str, ...]
     checks_mask: int
-    stub_class: str = ""
 
     def to_json(self) -> bytes:
         """Writes the config as the runtime reads it.
 
-        The build id stays readable, for support; the check groups go as their mask; the stub's class
-        name goes along, so the runtime binds its native entry points on the class the manifest names
-        without carrying the class name in its own bytes.
-
         Returns:
-            A JSON object with the build id, the check mask and the stub class, in UTF-8.
+            A JSON object with the build id and the check mask, in UTF-8.
         """
         fields: dict[str, object] = {"build_id": self.build_id, "m": self.checks_mask}
-        if self.stub_class:
-            fields["s"] = self.stub_class
         return json.dumps(
             fields,
             ensure_ascii=False,

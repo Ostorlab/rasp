@@ -13,9 +13,8 @@ runtime's ``payload/dex_store.*``, ``payload/assets.h``, ``payload/key_schedule.
 - ``assets/rasp/map.bin`` — the class map (see loader_map), encrypted, stored.
 - ``assets/business/<i>.dex`` — one encrypted business dex per file, stored.
 - the framework dexes and the stub, in the clear, as ``classes.dex`` … ``classesN.dex``.
-- ``lib/<abi>/lib<random>.so`` — the runtime library, one per ABI, with the runtime's config and a
-  per-ABI keystore share written into its ``.rasp_config`` section (see runtime_library). The
-  loader's own dex is already embedded in it at the runtime's build.
+- ``lib/<abi>/lib<random>.so`` — the runtime library, one per ABI, with the per-app values written into
+  its slots (see slots). The loader's own dex is already embedded in it at the runtime's build.
 
 No key ships in the app: every frame's key is derived, on the device, from the schedule in
 ``payload/key_schedule.*`` — the library's own sections, the s.bin entry, the map frame as shipped,
@@ -27,16 +26,14 @@ instead of binary AXML, and no zipalign or v1 signature stripping is needed.
 
 Every pack draws fresh names for the pieces an attacker could read and recognize (defingerprint): the
 stub dex's classes, the library it loads, and the component factory the manifest names. The manifest's
-``appComponentFactory`` points at the per-app stub class, the APK carries the library under its per-app
-name, and the runtime's config carries the class name, which the runtime reads to bind its native entry
-points on the class the manifest names. The packer raises minSdk to the runtime's floor (API 31,
+``appComponentFactory`` points at the per-app stub class and the APK carries the library under its per-app
+name. The packer raises minSdk to the runtime's floor (API 31,
 which the in-memory loader and ``JNI_GetCreatedJavaVMs`` need), drops the app's original dexes and v1
 signatures (APK only), and returns the protected app unsigned, so the customer signs it. The stub and
 the native runtime are prebuilt artifacts from the runtime build; see resources.
 """
 
 import collections.abc
-import dataclasses
 import hashlib
 import pathlib
 import random
@@ -58,6 +55,7 @@ from rasp_packer.android import mapping as mapping_module
 from rasp_packer.android import resources as resources_module
 from rasp_packer.android import runtime_library
 from rasp_packer.android import self_encrypt
+from rasp_packer.android import slots
 from rasp_packer.android import split as split_module
 from rasp_packer.android.aab import archive as aab_archive
 from rasp_packer.android.aab import manifest as aab_manifest_module
@@ -125,8 +123,8 @@ def pack(
         InvalidAabError: The AAB is invalid or missing required entries.
         ManifestError: The app's manifest cannot be read or edited.
         MissingRuntimeArtifactError: A prebuilt runtime artifact is missing.
-        InvalidRuntimeError: A runtime library is not an ELF file or has no ``.rasp_config`` section.
-        ConfigTooLargeError: The runtime's config does not fit in a runtime library.
+        InvalidRuntimeError: A runtime library is not an ELF file or lacks a slot.
+        ConfigTooLargeError: The build id does not fit in a runtime library.
         UnsupportedAbiError: The app ships native libraries for an ABI the runtime is not built for.
         AlreadyProtectedError: The app was already protected: it holds the pack's map entry, or its
             manifest still names the older vendor-named stub.
@@ -252,7 +250,6 @@ def _pack_apk(
         generator or random.Random(),
         _taken_library_filenames(apk.names(), "lib/"),
     )
-    config = dataclasses.replace(config, stub_class=names.stub_class_dotted)
 
     result = splitter(app, app_identity.package_name, mapping)
 
@@ -262,14 +259,7 @@ def _pack_apk(
         ),
         names.stub_class_dotted,
     )
-    libraries: dict[str, bytes] = {}
-    digests: dict[str, bytes] = {}
-    for name, library in injection.library_entries(
-        apk, artifacts, names.library_filename
-    ).items():
-        configured = runtime_library.write_config(library, config)
-        libraries[name] = self_encrypt.encrypt_library(configured)
-        digests[name] = hashlib.sha256(runtime_library.text_region(configured)).digest()
+    libraries = injection.library_entries(apk, artifacts, names.library_filename)
     base_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
     remove_set = set(dex_names) | injection.stale_signature_entries(apk)
     apk_stored_entries = _stored_apk_entries(
@@ -277,7 +267,7 @@ def _pack_apk(
     )
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
         libraries,
-        digests,
+        config,
         app_identity.package_name.encode(),
         artifacts.stub_dex,
         apk_stored_entries,
@@ -341,7 +331,6 @@ def _pack_aab(
         generator or random.Random(),
         _taken_library_filenames(aab.names(), _AAB_LIB_PREFIX),
     )
-    config = dataclasses.replace(config, stub_class=names.stub_class_dotted)
 
     dex_entries: dict[str, bytes] = {}
     for name in dex_names:
@@ -357,15 +346,10 @@ def _pack_aab(
         names.stub_class_dotted,
     )
     abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
-    libraries: dict[str, bytes] = {}
-    digests: dict[str, bytes] = {}
-    for abi in sorted(abis):
-        configured = runtime_library.write_config(artifacts.libraries[abi], config)
-        entry = f"{_AAB_LIB_PREFIX}{abi}/{names.library_filename}"
-        libraries[entry] = self_encrypt.encrypt_library(configured)
-        digests[entry] = hashlib.sha256(
-            runtime_library.text_region(configured)
-        ).digest()
+    libraries = {
+        f"{_AAB_LIB_PREFIX}{abi}/{names.library_filename}": artifacts.libraries[abi]
+        for abi in sorted(abis)
+    }
     # The dex record binds the base module's class dexes as the store installs them: the names the
     # base APK holds, with the content the packer wrote.
     module_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
@@ -378,7 +362,7 @@ def _pack_aab(
         )
     root, share_asset, lib_entries, decoy_entries = _schedule_libraries(
         libraries,
-        digests,
+        config,
         app_identity.package_name.encode(),
         artifacts.stub_dex,
         None,
@@ -452,7 +436,7 @@ def _stored_apk_entries(
 
 def _schedule_libraries(
     libraries: dict[str, bytes],
-    digests: dict[str, bytes],
+    config: runtime_config.RuntimeConfig,
     package: bytes,
     stub_dex: bytes,
     apk_entries: dict[str, tuple[bytes, int]] | None,
@@ -460,47 +444,42 @@ def _schedule_libraries(
     manifest_semantics: bytes | None,
     pinned_signer: bytes | None,
 ) -> tuple[bytes, bytes, dict[str, bytes], dict[str, bytes]]:
-    """Builds the schedule's fold over the app's runtime libraries.
+    """Writes the per-app values into each runtime library, encrypts it, and builds the schedule's fold over it.
 
-    It invents a fresh fold program — the per-app recipe of real inputs and decoys, in a random order — and the decoy entries the program names, then writes into each ABI's library its per-ABI keystore share, the share that makes that library's chains recover the root: the share cancels its ABI's chains, so every ABI recovers the same root. It also writes each library's expected plaintext `.text` digest before the fold's inputs are gathered, so the region digest binds the expectation into the root: a patched digest in the shipped file breaks every decryption, and the integrity check and the sensor guard can only compare the running code against the expectation the app decrypts with. The libraries arrive with their config written and their code and read-only data self-encrypted, and the fold gathers its digests from those shipped bytes: they stay encrypted on disk, and the runtime reads the library file — not the decrypted memory — so both sides gather the same digests.
+    The values go in before the encryption, so the shipped file holds them encrypted, and the fold binds them
+    through its region record. Each library's keystore share is written last, so its chains recover the shared root.
 
     Args:
-        libraries: The runtime libraries with their config written and their code and read-only data self-encrypted, by APK entry name. Each already carries the same config.
-        digests: The SHA-256 of each library's plaintext `.text` section, by APK entry name.
-        package: The app's package name, which the fold program folds in, the way the runtime reads
-            it from its APK's install path.
-        stub_dex: The stub dex's bytes, which the fold program folds in, the way the runtime reads
-            the highest-numbered classesN.dex entry.
+        libraries: The runtime libraries as built, by APK entry name.
+        config: The runtime's config.
+        package: The app's package name, which the fold program folds in.
+        stub_dex: The stub dex's bytes, which the fold program folds in.
         apk_entries: The APK's stored entries by name, which the fold program folds in as the APK digest,
-            or None when the pack can't know the installed entry set (an AAB).
-        module_dexes: The base module's class dexes by entry name, which the fold program folds in as
-            the dex digest when the pack is an AAB; None for an APK pack, whose entry digest already
-            covers them.
-        manifest_semantics: The semantic digest of the manifest the packer wrote, for an AAB pack's
-            manifest record; None for an APK pack, whose entry digest binds the manifest's bytes.
-        pinned_signer: The digest of the certificate the developer pinned, or None to leave the pack
-            unpinned.
+            or None for an AAB.
+        module_dexes: The base module's class dexes by entry name, for an AAB's dex record; None for an APK.
+        manifest_semantics: The semantic digest of the manifest the packer wrote, for an AAB's manifest
+            record; None for an APK.
+        pinned_signer: The digest of the certificate the developer pinned, or None.
 
     Returns:
-        The root key, the asset share to ship as the s.bin entry, the finished libraries, by APK
-        entry name, and the decoy entries the fold program names, by APK entry name.
+        The root key, the asset share to ship as the s.bin entry, the finished libraries by APK entry name,
+        and the decoy entries the fold program names, by APK entry name.
 
     Raises:
-        InvalidRuntimeError: A library is not an ELF file or has no required section.
+        InvalidRuntimeError: A library is not an ELF file or lacks a slot or a section.
+        ConfigTooLargeError: The build id does not fit in its slot.
     """
     generator = random.SystemRandom()
+    layouts = {name: slots.locate(library) for name, library in libraries.items()}
     sections = frozenset(key_schedule.SECTION_NAMES).intersection(
         *(runtime_library.fold_sections(library) for library in libraries.values())
     )
     smallest = min((len(library) for library in libraries.values()), default=0)
-    spans = tuple(
-        runtime_library.keystore_span(library) for library in libraries.values()
-    )
     program = key_schedule.build_program(
         generator,
         sections=tuple(sections),
         library_size=smallest,
-        keystore_spans=spans,
+        keystore_spans=tuple(layout.span(slots.SHARE) for layout in layouts.values()),
         include_apk_digest=apk_entries is not None,
         pinned_signer=pinned_signer,
     )
@@ -514,12 +493,18 @@ def _schedule_libraries(
     share_asset = key_schedule.new_share()
     lib_entries: dict[str, bytes] = {}
     for name, library in libraries.items():
-        with_digest = runtime_library.write_text_digest(
-            runtime_library.write_program(library, encoded),
-            digests[name],
+        layout = layouts[name]
+        values = slots.Values(
+            build_id=config.build_id,
+            checks_mask=config.checks_mask,
+            program=encoded,
+            text_digest=hashlib.sha256(runtime_library.text_region(library)).digest(),
         )
+        written = slots.write(library, layout, values, generator)
+        encrypted = self_encrypt.encrypt_library(written)
         gather = _resolver(
-            with_digest,
+            encrypted,
+            slots.region(written, layout),
             program,
             share_asset,
             decoys,
@@ -537,14 +522,18 @@ def _schedule_libraries(
         s_state = key_schedule.run_chain(
             bytes(key_schedule.KEY_SIZE), program.chain_s, gather, "s"
         )
-        lib_entries[name] = runtime_library.write_keystore(
-            with_digest, key_schedule.fold(a_state, s_state, root)
+        lib_entries[name] = slots.write_share(
+            encrypted,
+            layout,
+            key_schedule.fold(a_state, s_state, root),
+            slots.read(written, layout, slots.PAD),
         )
     return root, share_asset, lib_entries, decoys
 
 
 def _resolver(
     library: bytes,
+    region: bytes,
     program: key_schedule.FoldProgram,
     share_asset: bytes,
     decoys: dict[str, bytes],
@@ -559,7 +548,8 @@ def _resolver(
     """Returns the gatherer of one library's fold inputs, the packer's side of the interpreter.
 
     Args:
-        library: The library with its config and fold program already written.
+        library: The library as shipped, encrypted, before its keystore share is written.
+        region: The plaintext bytes of the library's slots that the region record digests.
         program: The fold program the library carries.
         share_asset: The asset share to ship as the s.bin entry.
         decoys: The decoy entries the program names, by APK entry name.
@@ -595,7 +585,7 @@ def _resolver(
         if record.kind == key_schedule.KIND_SHARE:
             return share_asset
         if record.kind == key_schedule.KIND_REGION:
-            return hashlib.sha256(runtime_library.config_region(library)).digest()
+            return hashlib.sha256(region).digest()
         if record.kind == key_schedule.KIND_GATES:
             return key_schedule.CLEAN_GATES
         if record.kind == key_schedule.KIND_CONSTANT:

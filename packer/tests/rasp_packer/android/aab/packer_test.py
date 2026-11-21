@@ -1,6 +1,5 @@
 """End-to-end tests of the AAB packer, with a recorded split."""
 
-import dataclasses
 import hashlib
 import pathlib
 import random
@@ -18,9 +17,11 @@ from rasp_packer.android import mapping
 from rasp_packer.android import packer
 from rasp_packer.android import resources
 from rasp_packer.android import runtime_library
+from rasp_packer.android import slots
 from rasp_packer.android import split
 from rasp_packer.android.aab import proto_manifest
 from tests.rasp_packer import conftest
+from tests.rasp_packer.android import packed_slots
 from tests.rasp_packer.android import schedule_recovery
 
 _FIXTURE = (
@@ -44,8 +45,6 @@ _PATCHED_STUB_DEX = defingerprint.patch_stub_dex(
     arm_class=_NAMES.arm_class,
     source_file=_NAMES.source_file,
 )
-# The config the packer writes: the same as _CONFIG with the pack's stub class name.
-_PACKED_CONFIG = dataclasses.replace(_CONFIG, stub_class=_NAMES.stub_class_dotted)
 _LIBRARY_ENTRY = f"base/lib/arm64-v8a/{_NAMES.library_filename}"
 _ARM64_SO = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _PACKAGE = "com.android.insecurebankv2"
@@ -199,25 +198,30 @@ def testPackAab_writesTheDecoyEntriesUnderBase(tmp_path: pathlib.Path) -> None:
     pytest.fail("no pack drew a decoy entry in ten rounds")
 
 
-def testPackAab_writesTheConfigProgramAndKeystoreIntoTheRuntimeLibrary(
+def testPackAab_writesTheSlotsOfTheRuntimeLibrary(
     tmp_path: pathlib.Path,
 ) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
         library = zf.read(_LIBRARY_ENTRY)
-    # The placed library is self-encrypted — not the plain config-written library — but the fold's
-    # config, program and keystore still read back from its untouched `.rasp_config` section.
-    assert library != runtime_library.write_config(_ARM64_SO, _PACKED_CONFIG)
-    assert runtime_library.read_config(library) == _PACKED_CONFIG.to_json()
-    assert len(runtime_library.keystore(library)) == key_schedule.KEY_SIZE
+    # The placed library is self-encrypted, so its slots read back only through the raw build's layout.
+    assert library != _ARM64_SO
     assert (
-        runtime_library.text_digest(library)
+        slots.decode_build_id(packed_slots.read(library, _ARM64_SO, slots.BUILD_ID))
+        == _CONFIG.build_id
+    )
+    assert (
+        len(packed_slots.read(library, _ARM64_SO, slots.SHARE)) == key_schedule.KEY_SIZE
+    )
+    assert (
+        packed_slots.read(library, _ARM64_SO, slots.DIGEST)
         == hashlib.sha256(runtime_library.text_region(_ARM64_SO)).digest()
     )
-    assert runtime_library.program(library) != bytes(key_schedule.PROGRAM_SIZE)
+    program_slot = packed_slots.read(library, _ARM64_SO, slots.PROGRAM)
+    assert program_slot != bytes(key_schedule.PROGRAM_SIZE)
     # The AAB pack cannot know the installed entry set, so its program binds the module's dex
     # content and the splits' emptiness instead of the entry digest and the installed set.
-    program = key_schedule.decode_program(runtime_library.program(library))
+    program = key_schedule.decode_program(program_slot)
     assert program is not None
     kinds = [record.kind for record in program.chain_s]
     assert key_schedule.KIND_DEXES in kinds
@@ -378,10 +382,15 @@ def testPackAab_addsRuntimeLibraryUnderBaseLib(tmp_path: pathlib.Path) -> None:
     output = _pack_aab(tmp_path)
     with zipfile.ZipFile(output) as zf:
         library = zf.read(_LIBRARY_ENTRY)
-    # The placed library is the self-encrypted runtime, not the plain config-written library.
-    assert library != runtime_library.write_config(_ARM64_SO, _PACKED_CONFIG)
-    assert runtime_library.read_config(library) == _PACKED_CONFIG.to_json()
-    assert runtime_library.keystore(library) != bytes(key_schedule.KEY_SIZE)
+    # The placed library is the self-encrypted runtime, not the raw build.
+    assert library != _ARM64_SO
+    assert (
+        slots.decode_build_id(packed_slots.read(library, _ARM64_SO, slots.BUILD_ID))
+        == _CONFIG.build_id
+    )
+    assert packed_slots.read(library, _ARM64_SO, slots.SHARE) != bytes(
+        key_schedule.KEY_SIZE
+    )
 
 
 def testPackAab_setsComponentFactoryAndRaisesMinSdk(tmp_path: pathlib.Path) -> None:

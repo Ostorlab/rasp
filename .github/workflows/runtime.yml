@@ -358,6 +358,13 @@ jobs:
             echo "they must stay readable here - the packer's at-rest encryption hides them in the shipped library."
             exit 1
           fi
+      - name: Check the config slot markers stay readable
+        run: |
+          lib=build/android/android/librasp.so
+          syms="$(strings -a -n 3 "$lib")"
+          for marker in RASPSLTbuild RASPSLTchecks RASPSLTprogram RASPSLTdigest RASPSLTpad RASPSLTdecoy0 RASPSLTdecoy1 RASPSLTdecoy2 RASPSLTshare; do
+            grep -qF "$marker" <<< "$syms" || { echo "slot marker not readable: $marker"; exit 1; }
+          done
       - name: Configure the development build
         run: cmake --preset android-dev -DANDROID_ABI=${{ matrix.abi }}
       - name: Build the development build

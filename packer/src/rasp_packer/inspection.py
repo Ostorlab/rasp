@@ -1,12 +1,12 @@
 """Inspection of a built app: whether it is protected, and the runtime config the packer wrote into it.
 
-The app is only read, never modified. The runtime's config ships in the clear in the runtime's binary
-(see runtime_config), so its build id and check groups read back as the packer wrote them. A library or
-framework counts as the runtime only when its config space holds a config the packer writes: a JSON
-object with a string build id and an integer check mask.
+The app is only read, never modified. An Android runtime library holds its values encrypted, so it is read
+back through the packer's own copy of the same runtime build, which shows where the values sit.
 """
 
+import collections.abc
 import dataclasses
+import hashlib
 import json
 import pathlib
 import tempfile
@@ -17,7 +17,10 @@ from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import platforms
 from rasp_packer.android import packer as android_packer
+from rasp_packer.android import resources as resources_module
 from rasp_packer.android import runtime_library
+from rasp_packer.android import self_encrypt
+from rasp_packer.android import slots
 from rasp_packer.android.aab import archive as aab_archive
 from rasp_packer.android.aab import manifest as aab_manifest
 from rasp_packer.android.apk import archive as apk_archive
@@ -64,7 +67,12 @@ class _Config:
     checks: tuple[str, ...]
 
 
-def inspect(*, app: pathlib.Path, platform: platforms.Platform) -> InspectResult:
+def inspect(
+    *,
+    app: pathlib.Path,
+    platform: platforms.Platform,
+    artifacts: resources_module.Artifacts | None = None,
+) -> InspectResult:
     """Reads a built app and reports whether it is protected, and the config the packer wrote.
 
     An app without the runtime is reported as not protected, with its identity.
@@ -72,6 +80,8 @@ def inspect(*, app: pathlib.Path, platform: platforms.Platform) -> InspectResult
     Args:
         app: Path to the built app: an APK or AAB for Android, an IPA for iOS.
         platform: The platform of the app.
+        artifacts: The Android runtime libraries the app was packed with. Loaded from the package
+            resources when an Android app carries a packed runtime and none are given.
 
     Returns:
         The app's identity, whether it is protected and, when it is, the build id, the check groups
@@ -83,8 +93,11 @@ def inspect(*, app: pathlib.Path, platform: platforms.Platform) -> InspectResult
         InvalidApkError: The APK cannot be read, or its manifest has no package or version.
         InvalidAabError: The AAB cannot be read, or its manifest has no package or version.
         ManifestError: The Android manifest cannot be read.
-        InvalidAppError: The IPA cannot be read, the copies of the runtime's config disagree, or the
-            embedded iOS runtime holds no config the packer writes.
+        InvalidAppError: The IPA cannot be read, the copies of the runtime's config disagree, the
+            embedded iOS runtime holds no config the packer writes, or the Android runtime comes from a
+            runtime build the packer does not carry.
+        MissingRuntimeArtifactError: An Android app carries a packed runtime and the packer has no
+            runtime libraries to read it with.
     """
     if archive_safety.is_dangerous(app) is True:
         raise errors.DangerousAppError(
@@ -93,12 +106,14 @@ def inspect(*, app: pathlib.Path, platform: platforms.Platform) -> InspectResult
         )
     match platform:
         case platforms.Platform.ANDROID:
-            return _inspect_android(app)
+            return _inspect_android(app, artifacts)
         case platforms.Platform.IOS:
             return _inspect_ios(app)
 
 
-def _inspect_android(app: pathlib.Path) -> InspectResult:
+def _inspect_android(
+    app: pathlib.Path, artifacts: resources_module.Artifacts | None
+) -> InspectResult:
     """Inspects an APK or AAB: its manifest's identity and the runtime library under each ABI."""
     archive: apk_archive.Apk | aab_archive.Aab
     app_identity: identity.AppIdentity
@@ -111,17 +126,28 @@ def _inspect_android(app: pathlib.Path) -> InspectResult:
         archive = apk_archive.Apk.read(app)
         app_identity = apk_manifest.app_identity(archive.manifest())
         prefix = _APK_LIBRARY_PREFIX
+    builds = _RuntimeBuilds(artifacts)
     configs: list[_Config] = []
     abis: set[str] = set()
+    unreadable = False
     for name in sorted(archive.names()):
         abi = _library_abi(name, prefix)
         data = archive.get(name)
-        if abi is None or data is None:
+        if abi is None or data is None or data.startswith(_ELF_MAGIC) is False:
             continue
-        config = _android_config(data)
-        if config is not None:
-            configs.append(config)
-            abis.add(abi)
+        text_digest = self_encrypt.packed_text_digest(data)
+        if text_digest is None:
+            continue
+        build = builds.matching(text_digest)
+        if build is None:
+            unreadable = True
+            continue
+        configs.append(_android_config(data, build))
+        abis.add(abi)
+    if len(configs) == 0 and unreadable is True:
+        raise errors.InvalidAppError(
+            "the app's runtime comes from a runtime build this packer does not carry"
+        )
     return _result(
         app_identity, configs, tuple(sorted(abis)), platforms.Platform.ANDROID
     )
@@ -137,15 +163,41 @@ def _library_abi(name: str, prefix: tuple[str, ...]) -> str | None:
     return parts[len(prefix)]
 
 
-def _android_config(library: bytes) -> _Config | None:
-    """Reads the runtime config of a native library, or None when the library is not the runtime."""
-    if library.startswith(_ELF_MAGIC) is False:
-        return None
-    try:
-        json_config = runtime_library.read_config(library)
-    except errors.InvalidRuntimeError:
-        return None
-    return _parse_config(json_config, platforms.Platform.ANDROID)
+class _RuntimeBuilds:
+    """The packer's own runtime libraries, loaded on first use, matched to a packed one by its code."""
+
+    def __init__(self, artifacts: resources_module.Artifacts | None) -> None:
+        self._artifacts = artifacts
+        self._by_text: dict[bytes, bytes] | None = None
+
+    def matching(self, text_digest: bytes) -> bytes | None:
+        """The raw library whose plaintext `.text` has the digest, or None."""
+        if self._by_text is None:
+            artifacts = self._artifacts or resources_module.load()
+            self._by_text = _libraries_by_text(artifacts.libraries.values())
+        return self._by_text.get(text_digest)
+
+
+def _libraries_by_text(
+    libraries: collections.abc.Iterable[bytes],
+) -> dict[bytes, bytes]:
+    """The libraries by the digest of their `.text`."""
+    return {
+        hashlib.sha256(runtime_library.text_region(library)).digest(): library
+        for library in libraries
+    }
+
+
+def _android_config(library: bytes, build: bytes) -> _Config:
+    """Reads the config of a packed runtime library through the raw library of the same build."""
+    layout = slots.locate(build)
+    build_id = self_encrypt.decrypt_range(library, *layout.span(slots.BUILD_ID))
+    checks = self_encrypt.decrypt_range(library, *layout.span(slots.CHECKS))
+    return _config_of(
+        slots.decode_build_id(build_id),
+        slots.decode_checks_mask(checks),
+        platforms.Platform.ANDROID,
+    )
 
 
 def _inspect_ios(app: pathlib.Path) -> InspectResult:
@@ -192,6 +244,11 @@ def _parse_config(json_config: bytes, platform: platforms.Platform) -> _Config |
         return None
     if isinstance(mask, bool) is True:
         return None
+    return _config_of(build_id, mask, platform)
+
+
+def _config_of(build_id: str, mask: int, platform: platforms.Platform) -> _Config:
+    """The config with the check groups the mask turns on, one bit per group in the platform's run order."""
     order = check_groups.CHECKS[platform]
     enabled = sorted(
         check for index, check in enumerate(order) if mask & (1 << index) != 0

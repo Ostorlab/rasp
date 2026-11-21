@@ -1,7 +1,6 @@
 """End-to-end tests of the Android packer, with a recorded split."""
 
 import collections.abc
-import dataclasses
 import datetime
 import hashlib
 import io
@@ -26,9 +25,11 @@ from rasp_packer.android import mapping
 from rasp_packer.android import packer
 from rasp_packer.android import resources
 from rasp_packer.android import runtime_library
+from rasp_packer.android import slots
 from rasp_packer.android import split
 from rasp_packer.android.apk import axml
 from tests.rasp_packer import conftest
+from tests.rasp_packer.android import packed_slots
 from tests.rasp_packer.android import schedule_recovery
 
 _FIXTURES = pathlib.Path(__file__).parent / "apk" / "fixtures"
@@ -48,8 +49,6 @@ _PATCHED_STUB_DEX = defingerprint.patch_stub_dex(
     arm_class=_NAMES.arm_class,
     source_file=_NAMES.source_file,
 )
-# The config the packer writes: the same as _CONFIG with the pack's stub class name.
-_PACKED_CONFIG = dataclasses.replace(_CONFIG, stub_class=_NAMES.stub_class_dotted)
 _LIBRARY_ENTRY = f"lib/arm64-v8a/{_NAMES.library_filename}"
 _ARM64_SO = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _ARSC = b"resources table"
@@ -389,14 +388,17 @@ def testPack_whenTheLibraryCodeIsPatched_theMapNoLongerDecrypts(
 ) -> None:
     output = _pack(tmp_path)
     with zipfile.ZipFile(output) as archive:
+        library = archive.read(_LIBRARY_ENTRY)
         root = _recover_root(archive)
         assert root is not None
         _decrypt_map(archive, root)
+    # The shipped library keeps the raw build's section offsets, so its `.text` byte sits where the
+    # raw build's does; patching it leaves the slots intact but breaks the text digest.
     elf = lief.ELF.parse(io.BytesIO(_ARM64_SO))
     assert elf is not None
     text = elf.get_section(".text")
     assert text is not None
-    patched_library = bytearray(_ARM64_SO)
+    patched_library = bytearray(library)
     patched_library[text.offset] ^= 0x01
     repacked = tmp_path / "patched.apk"
     with (
@@ -423,16 +425,7 @@ def testPack_whenTheFoldProgramIsPatched_theMapNoLongerDecrypts(
         root = _recover_root(archive)
         assert root is not None
         _decrypt_map(archive, root)
-    elf = lief.ELF.parse(io.BytesIO(library))
-    assert elf is not None
-    section = elf.get_section(".init")
-    assert section is not None
-    program_offset = (
-        section.offset
-        + section.size
-        - key_schedule.PROGRAM_SIZE
-        - key_schedule.KEY_SIZE
-    )
+    program_offset = slots.locate(_ARM64_SO).offset(slots.PROGRAM)
     patched_library = bytearray(library)
     patched_library[program_offset + 100] ^= 0x01
     repacked = tmp_path / "patched.apk"
@@ -570,27 +563,23 @@ def testPack_whenValidApk_shipsTheStubUnderThePacksPerAppNames(
     tmp_path: pathlib.Path,
 ) -> None:
     """The pack draws fresh names per app, and every piece agrees with every other: the manifest's
-    factory class, the stub dex's classes, its loadLibrary argument, the library entry's filename
-    and the runtime's config — and no vendor or product string ships anywhere in the clear."""
+    factory class, the stub dex's classes, its loadLibrary argument and the library entry's filename —
+    and no vendor or product string ships anywhere in the clear."""
     output = _pack(tmp_path)
     with zipfile.ZipFile(output) as archive:
         manifest = archive.read("AndroidManifest.xml")
         stub = archive.read("classes3.dex")
-        config = runtime_library.read_config(archive.read(_LIBRARY_ENTRY))
     assert axml.read_app_component_factory(manifest) == _NAMES.stub_class_dotted
     assert f"L{_NAMES.stub_class};".encode() in stub
     assert f"L{_NAMES.arm_class};".encode() in stub
     assert b"\x04" + _NAMES.library_name.encode("utf-8") + b"\x00" in stub
-    assert f'"s":"{_NAMES.stub_class_dotted}"'.encode() in config
     for banned in (b"ostorlab", b"rasp", b"Rasp"):
         assert banned not in stub
         assert banned not in manifest
         assert banned not in _LIBRARY_ENTRY.encode()
-    # The config holds the caller's build id, so only the vendor's name must be absent from it.
-    assert b"ostorlab" not in config
 
 
-def testPack_whenValidApk_addsTheRuntimeLibraryWithTheConfigProgramAndKeystore(
+def testPack_whenValidApk_writesTheSlotsOfTheRuntimeLibrary(
     tmp_path: pathlib.Path,
 ) -> None:
     output = _pack(tmp_path)
@@ -598,17 +587,23 @@ def testPack_whenValidApk_addsTheRuntimeLibraryWithTheConfigProgramAndKeystore(
         library = archive.read(_LIBRARY_ENTRY)
         names = archive.namelist()
 
-    # The placed library is self-encrypted — not the plain config-written library — but the fold's
-    # config, program and keystore still read back from its untouched `.rasp_config` section.
-    assert library != runtime_library.write_config(_ARM64_SO, _PACKED_CONFIG)
-    assert runtime_library.read_config(library) == _PACKED_CONFIG.to_json()
-    assert len(runtime_library.keystore(library)) == key_schedule.KEY_SIZE
+    # The placed library is self-encrypted, so its slots read back only through the raw build's layout.
+    assert library != _ARM64_SO
     assert (
-        runtime_library.text_digest(library)
+        slots.decode_build_id(packed_slots.read(library, _ARM64_SO, slots.BUILD_ID))
+        == _CONFIG.build_id
+    )
+    assert (
+        len(packed_slots.read(library, _ARM64_SO, slots.SHARE)) == key_schedule.KEY_SIZE
+    )
+    assert (
+        packed_slots.read(library, _ARM64_SO, slots.DIGEST)
         == hashlib.sha256(runtime_library.text_region(_ARM64_SO)).digest()
     )
     # The pack's program folds the split set, so an APK installed beside the base changes the fold.
-    program = key_schedule.decode_program(runtime_library.program(library))
+    program = key_schedule.decode_program(
+        packed_slots.read(library, _ARM64_SO, slots.PROGRAM)
+    )
     assert program is not None
     assert key_schedule.KIND_SPLITS in [record.kind for record in program.chain_s]
     assert "assets/rasp/config.json" not in names
@@ -781,7 +776,7 @@ def testPack_whenACertificateIsPinned_recoversTheRootOnlyUnderThatCertificate(
     )
     with zipfile.ZipFile(output) as archive:
         program = key_schedule.decode_program(
-            runtime_library.program(archive.read(_LIBRARY_ENTRY))
+            packed_slots.read(archive.read(_LIBRARY_ENTRY), _ARM64_SO, slots.PROGRAM)
         )
         assert program is not None
         assert key_schedule.KIND_SIGNER in [record.kind for record in program.chain_s]
@@ -801,7 +796,7 @@ def testPack_whenNoCertificateIsPinned_foldsNoSignerRecord(
 
     with zipfile.ZipFile(output) as archive:
         program = key_schedule.decode_program(
-            runtime_library.program(archive.read(_LIBRARY_ENTRY))
+            packed_slots.read(archive.read(_LIBRARY_ENTRY), _ARM64_SO, slots.PROGRAM)
         )
     assert program is not None
     assert key_schedule.KIND_SIGNER not in [record.kind for record in program.chain_s]

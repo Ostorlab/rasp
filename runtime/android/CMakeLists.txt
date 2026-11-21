@@ -38,27 +38,37 @@ add_custom_command(
 set_source_files_properties(${rasp_kdf_cpp} PROPERTIES GENERATED TRUE)
 
 add_library(rasp SHARED
+  src/config/slot_decoy_0.cpp
   src/entry.cpp
   src/monitoring.cpp
   src/apk/archive.cpp
   src/apk/location.cpp
+  src/config/slot_checks.cpp
   src/checks/debugger.cpp
   src/checks/emulator.cpp
   src/checks/hooks.cpp
   src/checks/identity.cpp
   src/checks/integrity.cpp
+  src/config/slot_pad.cpp
   src/checks/mitm.cpp
   src/checks/root.cpp
+  src/config/slot_decoy_1.cpp
+  src/config/slots.cpp
   src/loader/loader.cpp
   src/loader/loader_dex.cpp
+  src/config/slot_program.cpp
   src/panic/end_process.cpp
   src/payload/cipher.cpp
+  src/config/slot_build_id.cpp
   src/payload/dex_store.cpp
   src/payload/key_schedule.cpp
+  src/config/slot_decoy_2.cpp
+  src/config/slot_share.cpp
   src/selfdecrypt/selfdecrypt.cpp
   src/selfdecrypt/chacha20.cpp
   src/selfdecrypt/meta.cpp
   src/startup.cpp
+  src/config/slot_digest.cpp
   ${rasp_kdf_cpp}
   src/util/apk_file.cpp
   src/util/app_storage.cpp

@@ -11,12 +11,13 @@ import random
 import lief
 import pytest
 
-from rasp_packer import runtime_config
 from rasp_packer.android import cipher
 from rasp_packer.android import java_program
 from rasp_packer.android import key_schedule
 from rasp_packer.android import runtime_library
+from rasp_packer.android import slots
 from tests.rasp_packer import conftest
+from tests.rasp_packer.android import packed_slots
 from tests.rasp_packer.android import schedule_recovery
 
 _ROOT = bytes.fromhex(
@@ -58,10 +59,10 @@ _PROGRAM_HEX = (
     "08090a0b0c0d0e0f"
 )
 _A_STATE = bytes.fromhex(
-    "80f696036977bec443168ac195612f3bbef55acceddbccc100170f56d18053b4"
+    "17093af0be7fe8bcdde5712e56992e3ed1425c398c668fe7196dfbcc8373aa54"
 )
 _S_STATE = bytes.fromhex(
-    "edf2ff1485219c1a1e93456c8e96570376beca90af8ea811c822d00d07760db2"
+    "91dfd8c97b958b4f1e5dec7fe7bbe14a196e44afe31fd1df72ac7d3cafc5f1ae"
 )
 _MAP_KEY = bytes.fromhex(
     "5148f4c03d5c379482f5e656dfe3ede4a139f570175a397308ae1213c43b014e"
@@ -133,9 +134,9 @@ _DEX0_PLAINTEXT = b"business dex zero: bytes that decrypt_dex must return verbat
 _DEX1_PLAINTEXT = b"business dex one\n"
 
 _LIBRARY = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
-_CONFIG = runtime_config.RuntimeConfig(
-    build_id="rasp-build/v1:" + "ab" * 32, checks=("identity",), checks_mask=32
-)
+_LAYOUT = slots.locate(_LIBRARY)
+_BUILD_ID = "rasp-build/v1:" + "ab" * 32
+_CHECKS_MASK = 32
 # The SHA-256 of the fixture's plaintext `.text`, which the packer writes before the fold's inputs are gathered so
 # the region digest binds the sensor guard's expectation into the root.
 _TEXT_DIGEST = hashlib.sha256(runtime_library.text_region(_LIBRARY)).digest()
@@ -173,21 +174,36 @@ _FIXED_ENTRIES = {
 }
 
 
+def _values(
+    program: bytes = bytes.fromhex(_PROGRAM_HEX), text_digest: bytes = _TEXT_DIGEST
+) -> slots.Values:
+    """The vectors' slot values: the fixed build id, checks mask, fold program and text digest."""
+    return slots.Values(
+        build_id=_BUILD_ID,
+        checks_mask=_CHECKS_MASK,
+        program=program,
+        text_digest=text_digest,
+    )
+
+
 def _configured_library() -> bytes:
-    """Builds the vectors' library with its config, fold program and text digest, before the keystore."""
-    return runtime_library.write_text_digest(
-        runtime_library.write_program(
-            runtime_library.write_config(_LIBRARY, _CONFIG), bytes.fromhex(_PROGRAM_HEX)
-        ),
-        _TEXT_DIGEST,
+    """Builds the vectors' library with its slots written, before the keystore share."""
+    return slots.write(_LIBRARY, _LAYOUT, _values(), random.Random(0))
+
+
+def _with_keystore(configured: bytes) -> bytes:
+    """Writes the keystore share that makes `configured` recover the vectors' root."""
+    return slots.write_share(
+        configured,
+        _LAYOUT,
+        key_schedule.fold(_A_STATE, _S_STATE, _ROOT),
+        slots.read(configured, _LAYOUT, slots.PAD),
     )
 
 
 def _fixed_library() -> bytes:
-    """Builds the vectors' final library: the fixture with the fixed program, digest and keystore."""
-    return runtime_library.write_keystore(
-        _configured_library(), key_schedule.fold(_A_STATE, _S_STATE, _ROOT)
-    )
+    """Builds the vectors' final library: the fixture with the fixed slots and the keystore share."""
+    return _with_keystore(_configured_library())
 
 
 def _gather(
@@ -213,7 +229,7 @@ def _gather(
         if record.kind == key_schedule.KIND_SHARE:
             return entries[key_schedule.SHARE_ENTRY]
         if record.kind == key_schedule.KIND_REGION:
-            return hashlib.sha256(runtime_library.config_region(library)).digest()
+            return hashlib.sha256(slots.region(library, _LAYOUT)).digest()
         if record.kind == key_schedule.KIND_GATES:
             return key_schedule.CLEAN_GATES
         if record.kind == key_schedule.KIND_CONSTANT:
@@ -249,7 +265,7 @@ def testEncodeDecode_whenGivenRandomPrograms_roundTrip() -> None:
             generator,
             sections=sections,
             library_size=len(_LIBRARY),
-            keystore_spans=(runtime_library.keystore_span(_LIBRARY),),
+            keystore_spans=(_LAYOUT.span(slots.SHARE),),
         )
         assert (
             key_schedule.decode_program(key_schedule.encode_program(program)) == program
@@ -299,7 +315,9 @@ def testRootKey_whenFoldedWithTheVectorStatesAndKeystore_givesTheVectorRoot() ->
     library = _fixed_library()
 
     assert (
-        key_schedule.root_key(_A_STATE, _S_STATE, runtime_library.keystore(library))
+        key_schedule.root_key(
+            _A_STATE, _S_STATE, packed_slots.read(library, _LIBRARY, slots.SHARE)
+        )
         == _ROOT
     )
 
@@ -318,7 +336,7 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
     library = _fixed_library()
 
     # A byte inside the fold program.
-    program_offset = library.index(bytes.fromhex(_PROGRAM_HEX[:64]))
+    program_offset = _LAYOUT.offset(slots.PROGRAM)
     tampered_program = bytearray(library)
     tampered_program[program_offset + 100] ^= 1
     assert (
@@ -375,14 +393,15 @@ def testRecovery_whenAnyInputIsTampered_derivesADifferentRoot() -> None:
 
     # The expected text digest: a patched expectation in the shipped file breaks the fold, so the sensor
     # guard can never be aimed at patched code by editing the file it reads its expectation from.
-    patched_expectation = runtime_library.write_text_digest(
-        _configured_library(), bytes(key_schedule.KEY_SIZE)
+    patched_expectation = slots.write(
+        _LIBRARY,
+        _LAYOUT,
+        _values(text_digest=bytes(key_schedule.KEY_SIZE)),
+        random.Random(0),
     )
     assert (
         schedule_recovery.recover_root(
-            runtime_library.write_keystore(
-                patched_expectation, key_schedule.fold(_A_STATE, _S_STATE, _ROOT)
-            ),
+            _with_keystore(patched_expectation),
             _FIXED_ENTRIES,
             key_schedule.CLEAN_GATES,
             _PACKAGE,
@@ -418,7 +437,7 @@ def testRecovery_whenBuiltWithRandomPrograms_recoversOnEveryLibrary() -> None:
             generator,
             sections=sections,
             library_size=len(_LIBRARY),
-            keystore_spans=(runtime_library.keystore_span(_LIBRARY),),
+            keystore_spans=(_LAYOUT.span(slots.SHARE),),
             include_apk_digest=True,
         )
         entries = {
@@ -431,11 +450,13 @@ def testRecovery_whenBuiltWithRandomPrograms_recoversOnEveryLibrary() -> None:
         root = key_schedule.new_root()
         libraries = []
         for _ in range(2):
-            with_program = runtime_library.write_program(
-                runtime_library.write_config(_LIBRARY, _CONFIG),
-                key_schedule.encode_program(program),
+            written = slots.write(
+                _LIBRARY,
+                _LAYOUT,
+                _values(program=key_schedule.encode_program(program)),
+                random.Random(0),
             )
-            gather = _gather(with_program, entries, program.constants)
+            gather = _gather(written, entries, program.constants)
             a_state = key_schedule.run_chain(
                 bytes(key_schedule.KEY_SIZE), program.chain_a, gather, "a"
             )
@@ -443,8 +464,11 @@ def testRecovery_whenBuiltWithRandomPrograms_recoversOnEveryLibrary() -> None:
                 bytes(key_schedule.KEY_SIZE), program.chain_s, gather, "s"
             )
             libraries.append(
-                runtime_library.write_keystore(
-                    with_program, key_schedule.fold(a_state, s_state, root)
+                slots.write_share(
+                    written,
+                    _LAYOUT,
+                    key_schedule.fold(a_state, s_state, root),
+                    slots.read(written, _LAYOUT, slots.PAD),
                 )
             )
 

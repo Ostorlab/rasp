@@ -445,6 +445,51 @@ def testEncryptLibrary_whenGivenTheRuntimeStandIn_writesThePlaintextTextDigest()
     assert digest == hashlib.sha256(_bytes_of(_LIBRARY, text)).digest()
 
 
+def testPackedTextDigest_whenTheLibraryIsPacked_returnsThePlaintextTextDigest() -> None:
+    encrypted = self_encrypt.encrypt_library(_LIBRARY)
+
+    text = _sections(_LIBRARY)[".text"]
+    assert (
+        self_encrypt.packed_text_digest(encrypted)
+        == hashlib.sha256(_bytes_of(_LIBRARY, text)).digest()
+    )
+
+
+def testPackedTextDigest_whenTheLibraryIsNotPacked_returnsNone() -> None:
+    assert self_encrypt.packed_text_digest(_LIBRARY) is None
+
+
+def testPackedTextDigest_whenNotAnElfFile_returnsNone() -> None:
+    assert self_encrypt.packed_text_digest(b"not a library") is None
+
+
+def testDecryptRange_whenGivenARangeInTheText_returnsItsPlaintext() -> None:
+    encrypted = self_encrypt.encrypt_library(_LIBRARY)
+
+    text = _sections(_LIBRARY)[".text"]
+    offset = text.offset + 16
+    assert (
+        self_encrypt.decrypt_range(encrypted, offset, 32)
+        == _bytes_of(_LIBRARY, text)[16:48]
+    )
+
+
+def testDecryptRange_whenTheBytesAreNotInAnEncryptedRegion_raisesInvalidRuntimeError() -> (
+    None
+):
+    encrypted = self_encrypt.encrypt_library(_LIBRARY)
+
+    dynstr = _sections(encrypted)[".dynstr"]
+    with pytest.raises(errors.InvalidRuntimeError, match="not inside one encrypted"):
+        self_encrypt.decrypt_range(encrypted, dynstr.offset, 16)
+
+
+def testDecryptRange_whenTheLibraryIsNotPacked_raisesInvalidRuntimeError() -> None:
+    text = _sections(_LIBRARY)[".text"]
+    with pytest.raises(errors.InvalidRuntimeError, match="not packed"):
+        self_encrypt.decrypt_range(_LIBRARY, text.offset, 16)
+
+
 def testEncryptLibrary_whenGivenTheRuntimeStandIn_renamesTheBootstrapSectionsAndTheSoname() -> (
     None
 ):

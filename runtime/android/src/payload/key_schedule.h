@@ -1,7 +1,7 @@
 /// The key schedule the packer locks the payload with: two order-sensitive HKDF chains over the app's own artifacts
-/// and the environment, their recipe written as a per-app fold program in the library's `.rasp_config` section, and
-/// a sensor guard that re-observes the process on every decryption. Nothing here reads a key from anywhere: there
-/// is no key in the app, only parts that combine into one.
+/// and the environment, their recipe written as a per-app fold program in the packer's slots of the library, and a
+/// sensor guard that re-observes the process on every decryption. Nothing here reads a key from anywhere: there is
+/// no key in the app, only parts that combine into one.
 
 #pragma once
 
@@ -89,8 +89,7 @@ struct Sensors {
 /// writable-executable memory, no framework-named thread, no library from outside the expected directories.
 inline constexpr Key kCleanSensors{{1U, 1U, 1U, 1U, 1U, 1U}};
 
-/// The size of the fold program, in bytes: the masked recipe the packer writes into the library's `.rasp_config`
-/// section, between the config's zero padding and the keystore share.
+/// The size of the fold program, in bytes: the masked recipe the packer writes into its program slot.
 inline constexpr std::size_t kProgramSize = 512;
 
 /// The most records one fold program can hold, across both chains.
@@ -106,7 +105,7 @@ enum class RecordKind : std::uint8_t {
   kRange = 2,
   /// The asset share, the `assets/rasp/s.bin` entry, chain S.
   kShare = 3,
-  /// The digest of the config region, chain S.
+  /// The digest of the region record: the packer's value slots but the keystore share, chain S.
   kRegion = 4,
   /// The gate block of the observed environment, chain S.
   kGates = 5,
@@ -305,11 +304,11 @@ struct HardwareFacts {
 
 /// Recovers the root key from the app the packer produced, the way the loader does at install time.
 ///
-/// It reads the library's own file for its `.init` section: the config region, the fold program and the
-/// keystore share. It decodes the program, gathers every input the program names — the `.text` digest, the named
-/// sections and ranges, the s.bin entry, the config region digest, the environment's gates, the program's constants,
-/// the decoy entries and the app's package name — runs the two chains, and folds the keystore share in: the share
-/// is what the packer wrote to cancel its ABI's chains, so the result is the root.
+/// It reads the packer's slots for the fold program, the keystore share and the region record. It decodes the
+/// program, gathers every input the program names — the `.text` digest, the named sections and ranges, the s.bin
+/// entry, the region digest, the environment's gates, the program's constants, the decoy entries and the app's
+/// package name — runs the two chains, and folds the keystore share in: the share is what the packer wrote to cancel
+/// its ABI's chains, so the result is the root.
 ///
 /// @param environment The environment the loader observed.
 /// @param library_path The library's path as the dynamic loader reports it.
@@ -319,5 +318,18 @@ struct HardwareFacts {
 /// caller then serves no business class, exactly as for a corrupt APK.
 [[nodiscard]] std::optional<Key> recover_root_key(const Environment& environment, std::string_view library_path,
                                                   const std::string& apk);
+
+/// Recovers the root key from slot values given directly, for host tests that cannot write the packer's slots.
+///
+/// @param environment The environment to fold as the gates.
+/// @param image The library file bytes the chain-A records digest.
+/// @param apk The path of the app's APK, which holds the asset share and the decoy entries.
+/// @param program_bytes The fold program.
+/// @param keystore The keystore share.
+/// @param region The region record the kRegion record digests.
+/// @return The root key, or nothing when a named input can't be read.
+[[nodiscard]] std::optional<Key> recover_root_key(const Environment& environment, std::span<const std::uint8_t> image,
+                                                  const std::string& apk, std::span<const std::uint8_t> program_bytes,
+                                                  const Key& keystore, std::span<const std::uint8_t> region);
 
 }  // namespace rasp::android::payload

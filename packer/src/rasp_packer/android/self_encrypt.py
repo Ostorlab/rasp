@@ -40,13 +40,11 @@ IKM_WORDS = 8
 NONCE_LEN = 16
 
 # Post-encryption section renames, so the shipped library does not advertise its runtime. The replacements are no
-# longer than the originals (edited in place); the runtime reads the config section under its renamed name, which is
-# the pair of this map and the two `kConfigSection` constants in the runtime's key schedule and integrity check.
+# longer than the originals, so they are edited in place.
 SECTION_RENAMES = {
     ".stubcode": ".text.hot",
     ".stubrodata": ".rodata.cst",
     ".packmeta": ".data.rel",
-    ".rasp_config": ".init",
 }
 # A neutral soname (<= the 10 bytes of "librasp.so"), so the shipped library does not carry the project name.
 NEUTRAL_SONAME = b"libjni.so"
@@ -69,6 +67,8 @@ _META_HEADER = struct.Struct("<15I")
 _META_TEXT_DIGEST = struct.Struct("<32s")
 _REGION = struct.Struct("<IIII16s")
 _PACKED_FLAG = struct.Struct("<I")
+# The positions of the IKM's words among the metadata header's fields.
+_IKM_FIELDS = (1, 3, 5, 7, 9, 10, 12, 13)
 _ELF_HEADER_OFFSET = 16
 
 _SHT_RELA = 4
@@ -542,3 +542,78 @@ def encrypt_library(library: bytes) -> bytes:
     _scrub_section_names(data, header)
     _neutralise_soname(data, header, sections)
     return bytes(data)
+
+
+def packed_text_digest(library: bytes) -> bytes | None:
+    """The plaintext `.text` digest a packed runtime library records, or None when the library is not one."""
+    try:
+        header = _read_header(library)
+        sections = _read_sections(library, header)
+        meta = _shipped_section(sections, META_SECTION)
+        if _unpack(_PACKED_FLAG, library, meta.offset)[0] != 1:
+            return None
+        return bytes(
+            _unpack(_META_TEXT_DIGEST, library, meta.offset + _META_HEADER.size)[0]
+        )
+    except errors.InvalidRuntimeError:
+        return None
+
+
+def decrypt_range(library: bytes, offset: int, size: int) -> bytes:
+    """Decrypts `size` bytes at file offset `offset` of a packed runtime library.
+
+    Raises:
+        InvalidRuntimeError: The library is not a packed runtime library, or the bytes are not inside one encrypted
+            region.
+    """
+    header = _read_header(library)
+    sections = _read_sections(library, header)
+    meta = _shipped_section(sections, META_SECTION)
+    fields = _unpack(_META_HEADER, library, meta.offset)
+    if fields[0] != 1:
+        raise errors.InvalidRuntimeError("the runtime library is not packed")
+    stub = _shipped_section(sections, STUBCODE_SECTION)
+    ikm = b"".join(fields[index].to_bytes(4, "little") for index in _IKM_FIELDS)
+    key = _derive_key(
+        ikm, hashlib.sha256(library[stub.offset : stub.offset + stub.size]).digest()
+    )
+    holder = _section_holding(sections, offset, size)
+    vaddr = holder.addr + (offset - holder.offset)
+    table = meta.offset + _META_HEADER.size + _META_TEXT_DIGEST.size
+    for index in range(min(fields[2], MAX_REGIONS)):
+        start, length, _code, _zero, nonce = _unpack(
+            _REGION, library, table + index * _REGION.size
+        )
+        if start <= vaddr and vaddr + size <= start + length:
+            region_offset = holder.offset + (start - holder.addr)
+            before = vaddr - start
+            plaintext = _chacha20(
+                library[region_offset : region_offset + before + size], key, nonce
+            )
+            return plaintext[before:]
+    raise errors.InvalidRuntimeError(
+        "the bytes are not inside one encrypted region of the runtime library"
+    )
+
+
+def _shipped_section(sections: list[_Section], name: str) -> _Section:
+    """Returns the section under its shipped name, or under its build name in a library that kept it."""
+    shipped = SECTION_RENAMES.get(name, name)
+    for section in sections:
+        if section.name in (shipped, name):
+            return section
+    raise errors.InvalidRuntimeError(f"the runtime library has no {name} section")
+
+
+def _section_holding(sections: list[_Section], offset: int, size: int) -> _Section:
+    """Returns the section whose file bytes hold `size` bytes at `offset`."""
+    for section in sections:
+        if (
+            section.type != _SHT_NOBITS
+            and section.offset <= offset
+            and offset + size <= section.offset + section.size
+        ):
+            return section
+    raise errors.InvalidRuntimeError(
+        f"no section of the runtime library holds the bytes at {offset:#x}"
+    )

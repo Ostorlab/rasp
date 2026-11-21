@@ -22,6 +22,7 @@
 
 #include "apk/archive.h"
 #include "checks/integrity.h"
+#include "config/slots.h"
 #include "payload/assets.h"
 #include "payload/cipher.h"
 #include "rasp/observation.h"
@@ -96,6 +97,39 @@ constexpr std::string_view kProgramHex =
     "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f00010203"
     "0405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f0001020304050607"
     "08090a0b0c0d0e0f";
+
+/// The region record the kRegion record digests: the packer's value slots but the keystore share, fed to the
+/// host-test recovery in place of the slots the packer writes into a shipped library.
+constexpr std::string_view kRegionHex =
+    "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc"
+    "e3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bc"
+    "c3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959c"
+    "a3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c"
+    "838a91989fa6adb4bbc2c9d0d7dee5ec000102030405060708090a0b0c0d0e0f"
+    "030104030405060708090a0b0d0d0c0f00010203060546076c090a0b080d0e0f"
+    "000102030705060708090a0b0a0d0e0f000102030105060708090a0b0b0d0e0f"
+    "000102030305070708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "00010203444444444c4c4c4c444444444c4c4c4c545454545c5c5c5c54545454"
+    "5c5c5c5c0405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f"
+    "000102030405060708090a0b0c0d0e0ff3fa01080f161d242b323940474e555c"
+    "636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c"
+    "434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c"
+    "232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc"
+    "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc"
+    "e3eaf1f8ff060d141b222930373e454c";
+
+/// The keystore share, fed to the host-test recovery: a_state ^ s_state ^ root over the vector library and region.
+constexpr std::string_view kKeystoreHex = "7627c49c44a22c1e280a48d4e5aa049bb83d42a9625594c46efc5979d0797bb2";
 
 /// The vectors' root key, drawn at random at pack time.
 constexpr std::string_view kRootHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
@@ -462,14 +496,11 @@ constexpr std::string_view kDex1Entry = "assets/business/1.dex";
 /// A fixture that writes the vectors' library and APK into its own temporary directory.
 class KeyScheduleTest : public testing::Test {
  protected:
-  /// Writes the vectors' library as a plain file and the vectors' APK, with the asset share, both decoy entries, the
-  /// map frame and both dex frames, as stored entries.
+  /// Writes the vectors' APK, with the asset share, both decoy entries, the map frame and both dex frames, as stored
+  /// entries.
   ///
-  /// @return Whether both writes succeeded.
+  /// @return Whether the write succeeded.
   [[nodiscard]] bool write_vectors() {
-    if (!write_file(directory_.path() + "/librasp.so", bytes_of(kLibraryHex))) {
-      return false;
-    }
     const std::string share = bytes_of(kShareHex);
     const std::string map = bytes_of(kMapFrameHex);
     const std::string dex0 = bytes_of(kDex0FrameHex);
@@ -488,15 +519,19 @@ class KeyScheduleTest : public testing::Test {
     return write_file(directory_.path() + "/base.apk", zip_with_stored_entries(entries));
   }
 
-  /// The path of the written library.
-  ///
-  /// @return The path.
-  [[nodiscard]] std::string library_path() const { return directory_.path() + "/librasp.so"; }
-
   /// The path of the written APK.
   ///
   /// @return The path.
   [[nodiscard]] std::string apk_path() const { return directory_.path() + "/base.apk"; }
+
+  /// Recovers the root from the vector slot values, over the given image, program and region.
+  ///
+  /// @return The recovered root, or nothing.
+  [[nodiscard]] std::optional<Key> recover(const Environment& environment, std::span<const std::uint8_t> image,
+                                           std::span<const std::uint8_t> program,
+                                           std::span<const std::uint8_t> region) const {
+    return recover_root_key(environment, image, apk_path(), program, from_key(kKeystoreHex), region);
+  }
 
  private:
   /// The directory the library and APK are written into; removed when the test ends.
@@ -1111,7 +1146,8 @@ TEST(KeySchedule, foldHookObservations_whenTheChecksAreUnsupported_keepsTheClean
 TEST_F(KeyScheduleTest, recoverRootKey_whenGivenTheVectorLibraryAndApk_givesTheVectorRoot) {
   ASSERT_TRUE(write_vectors());
 
-  const std::optional<Key> recovered = recover_root_key(kCleanEnvironment, library_path(), apk_path());
+  const std::optional<Key> recovered =
+      recover(kCleanEnvironment, from_hex(kLibraryHex), from_hex(kProgramHex), from_hex(kRegionHex));
 
   ASSERT_TRUE(recovered.has_value());
   EXPECT_EQ(*recovered, from_key(kRootHex));
@@ -1121,7 +1157,8 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenAGateFails_givesADifferentRoot) {
   ASSERT_TRUE(write_vectors());
   const Environment traced{.java_environment = true, .no_tracer = false, .installed_under_data = true};
 
-  const std::optional<Key> recovered = recover_root_key(traced, library_path(), apk_path());
+  const std::optional<Key> recovered =
+      recover(traced, from_hex(kLibraryHex), from_hex(kProgramHex), from_hex(kRegionHex));
 
   ASSERT_TRUE(recovered.has_value());
   EXPECT_NE(*recovered, from_key(kRootHex));
@@ -1129,15 +1166,13 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenAGateFails_givesADifferentRoot) {
 
 TEST_F(KeyScheduleTest, recoverRootKey_whenTheLibraryCodeIsPatched_givesADifferentRoot) {
   ASSERT_TRUE(write_vectors());
-  std::vector<std::uint8_t> library = from_hex(kLibraryHex);
-  const std::span<const std::uint8_t> image(library);
+  std::vector<std::uint8_t> image = from_hex(kLibraryHex);
   const std::optional<checks::TextRegion> text = checks::find_text_region(image, 0);
   ASSERT_TRUE(text.has_value());
-  library[static_cast<std::size_t>(text->file_offset)] =
-      static_cast<std::uint8_t>(library[static_cast<std::size_t>(text->file_offset)] ^ 0x01U);
-  ASSERT_TRUE(write_file(library_path(), std::string(library.begin(), library.end())));
+  image[static_cast<std::size_t>(text->file_offset)] =
+      static_cast<std::uint8_t>(image[static_cast<std::size_t>(text->file_offset)] ^ 0x01U);
 
-  const std::optional<Key> recovered = recover_root_key(kCleanEnvironment, library_path(), apk_path());
+  const std::optional<Key> recovered = recover(kCleanEnvironment, image, from_hex(kProgramHex), from_hex(kRegionHex));
 
   ASSERT_TRUE(recovered.has_value());
   EXPECT_NE(*recovered, from_key(kRootHex));
@@ -1145,42 +1180,36 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenTheLibraryCodeIsPatched_givesADiffere
 
 TEST_F(KeyScheduleTest, recoverRootKey_whenOnlyTheExpectedTextDigestIsPatched_givesADifferentRoot) {
   ASSERT_TRUE(write_vectors());
-  const std::optional<Key> original = recover_root_key(kCleanEnvironment, library_path(), apk_path());
+  const std::optional<Key> original =
+      recover(kCleanEnvironment, from_hex(kLibraryHex), from_hex(kProgramHex), from_hex(kRegionHex));
   ASSERT_TRUE(original.has_value() && *original == from_key(kRootHex));
-  std::vector<std::uint8_t> library = from_hex(kLibraryHex);
-  const std::optional<checks::SectionRegion> section = checks::find_section_region(library, ".init");
-  if (!section.has_value()) {
-    FAIL() << "the vector library has no config section";
-    return;
-  }
-  const auto digest_offset = static_cast<std::size_t>(section->file_offset + section->size - (2 * kKeySize));
-  library[digest_offset] = static_cast<std::uint8_t>(library[digest_offset] ^ 0x01U);
-  ASSERT_TRUE(write_file(library_path(), std::string(library.begin(), library.end())));
+  // The digest slot sits after the build-id, checks and program slots in the region record.
+  std::vector<std::uint8_t> region = from_hex(kRegionHex);
+  const std::size_t digest_offset = config::kBuildIdSlotSize + config::kChecksSlotSize + config::kProgramSlotSize;
+  region[digest_offset] = static_cast<std::uint8_t>(region[digest_offset] ^ 0x01U);
 
-  const std::optional<Key> recovered = recover_root_key(kCleanEnvironment, library_path(), apk_path());
+  const std::optional<Key> recovered = recover(kCleanEnvironment, from_hex(kLibraryHex), from_hex(kProgramHex), region);
 
   EXPECT_TRUE(recovered.has_value() && *recovered != from_key(kRootHex));
 }
 
 TEST_F(KeyScheduleTest, recoverRootKey_whenTheFoldProgramIsPatched_givesADifferentRoot) {
   ASSERT_TRUE(write_vectors());
-  std::vector<std::uint8_t> library = from_hex(kLibraryHex);
-  const std::span<const std::uint8_t> image(library);
-  const std::optional<checks::SectionRegion> section = checks::find_section_region(image, ".init");
-  ASSERT_TRUE(section.has_value());
-  const std::uint64_t program_offset = section->file_offset + section->size - kProgramSize - kKeySize + 100;
-  library[static_cast<std::size_t>(program_offset)] =
-      static_cast<std::uint8_t>(library[static_cast<std::size_t>(program_offset)] ^ 0x01U);
-  ASSERT_TRUE(write_file(library_path(), std::string(library.begin(), library.end())));
+  std::vector<std::uint8_t> program = from_hex(kProgramHex);
+  program[100] = static_cast<std::uint8_t>(program[100] ^ 0x01U);
+  // The program slot sits inside the region record, after the build-id and checks slots, so the same edit lands in
+  // both the program the recovery decodes and the region digest it folds.
+  std::vector<std::uint8_t> region = from_hex(kRegionHex);
+  const std::size_t program_offset = config::kBuildIdSlotSize + config::kChecksSlotSize;
+  region[program_offset + 100] = static_cast<std::uint8_t>(region[program_offset + 100] ^ 0x01U);
 
-  const std::optional<Key> recovered = recover_root_key(kCleanEnvironment, library_path(), apk_path());
+  const std::optional<Key> recovered = recover(kCleanEnvironment, from_hex(kLibraryHex), program, region);
 
   ASSERT_TRUE(recovered.has_value());
   EXPECT_NE(*recovered, from_key(kRootHex));
 }
 
 TEST_F(KeyScheduleTest, recoverRootKey_whenADecoyEntryIsAbsent_returnsNothing) {
-  ASSERT_TRUE(write_file(library_path(), bytes_of(kLibraryHex)));
   const std::string share = bytes_of(kShareHex);
   const std::string map = bytes_of(kMapFrameHex);
   const std::vector<StoredEntry> entries = {
@@ -1189,30 +1218,32 @@ TEST_F(KeyScheduleTest, recoverRootKey_whenADecoyEntryIsAbsent_returnsNothing) {
   };
   ASSERT_TRUE(write_file(apk_path(), zip_with_stored_entries(entries)));
 
-  EXPECT_FALSE(recover_root_key(kCleanEnvironment, library_path(), apk_path()).has_value());
+  EXPECT_FALSE(
+      recover(kCleanEnvironment, from_hex(kLibraryHex), from_hex(kProgramHex), from_hex(kRegionHex)).has_value());
 }
 
 TEST_F(KeyScheduleTest, recoverRootKey_whenTheApkHasNoShareEntry_returnsNothing) {
-  ASSERT_TRUE(write_file(library_path(), bytes_of(kLibraryHex)));
   const std::string map = bytes_of(kMapFrameHex);
   const std::vector<StoredEntry> entries = {
       {.name = kMapEntryName, .content = map},
   };
   ASSERT_TRUE(write_file(apk_path(), zip_with_stored_entries(entries)));
 
-  EXPECT_FALSE(recover_root_key(kCleanEnvironment, library_path(), apk_path()).has_value());
+  EXPECT_FALSE(
+      recover(kCleanEnvironment, from_hex(kLibraryHex), from_hex(kProgramHex), from_hex(kRegionHex)).has_value());
 }
 
 TEST_F(KeyScheduleTest, recoverRootKey_whenTheLibraryIsNotAnElfFile_returnsNothing) {
-  ASSERT_TRUE(write_file(library_path(), "not a library"));
-  ASSERT_TRUE(write_file(apk_path(), zip_with_stored_entries({})));
+  ASSERT_TRUE(write_vectors());
+  const std::vector<std::uint8_t> image = {'n', 'o', 't', ' ', 'e', 'l', 'f'};
 
-  EXPECT_FALSE(recover_root_key(kCleanEnvironment, library_path(), apk_path()).has_value());
+  EXPECT_FALSE(recover(kCleanEnvironment, image, from_hex(kProgramHex), from_hex(kRegionHex)).has_value());
 }
 
 TEST_F(KeyScheduleTest, decrypt_whenGivenTheVectorMapFrame_opensThePlaintext) {
   ASSERT_TRUE(write_vectors());
-  const std::optional<Key> root = recover_root_key(kCleanEnvironment, library_path(), apk_path());
+  const std::optional<Key> root =
+      recover(kCleanEnvironment, from_hex(kLibraryHex), from_hex(kProgramHex), from_hex(kRegionHex));
   ASSERT_TRUE(root.has_value());
   const std::optional<Key> key = frame_key(*root, from_hex(kMapNonceHex), kMapEntryName);
   ASSERT_TRUE(key.has_value());

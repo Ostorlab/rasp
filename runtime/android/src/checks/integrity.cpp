@@ -24,6 +24,8 @@
 #include <dlfcn.h>
 #include <link.h>
 
+#include "config/slots.h"
+
 #endif
 
 namespace rasp::android::checks {
@@ -167,11 +169,6 @@ constexpr std::uint64_t kShfAlloc = 0x2;
 
 /// The name of the executable code section.
 constexpr std::string_view kTextSectionName = ".text";
-
-/// The name of the runtime's config section, whose trailing 32 bytes carry the expected plaintext `.text` digest
-/// on packed builds. The packer renames the section in the shipped library, so this is the renamed name, not the raw
-/// build's.
-constexpr std::string_view kConfigSectionName = ".init";
 
 /// Whether the range `[offset, offset + length)` lies within a container of `size` bytes, checked without any addition
 /// that could overflow. Every bounds check on an attacker-controlled ELF offset and size goes through this, so a
@@ -511,26 +508,6 @@ namespace {
   return hex;
 }
 
-/// The expected plaintext `.text` digest a packed runtime carries, as hex: the `.rasp_config` section's 32 bytes before
-/// its keystore share, which the packer's fold writes there and binds into the root key. All-zero bytes mean the
-/// library was never packed, and the caller falls back to comparing the file against memory.
-///
-/// @param image The library's whole file bytes.
-/// @return The digest as hex. Nothing when the section is missing, too small, or unwritten.
-[[nodiscard]] std::optional<std::string> expected_text_hash(std::span<const std::uint8_t> image) {
-  const std::optional<SectionRegion> section = find_section_region(image, kConfigSectionName);
-  const std::uint64_t digest_pair = std::uint64_t{2} * kDigestSize;
-  if (!section || section->size < digest_pair || !range_fits(section->file_offset, section->size, image.size())) {
-    return std::nullopt;
-  }
-  const auto start = static_cast<std::size_t>(section->file_offset + section->size - digest_pair);
-  const std::span<const std::uint8_t> digest = image.subspan(start, kDigestSize);
-  if (std::ranges::all_of(digest, [](std::uint8_t byte) { return byte == 0; })) {
-    return std::nullopt;
-  }
-  return hex_encode(digest);
-}
-
 }  // namespace
 
 std::optional<std::string> sha256_hex(std::span<const std::uint8_t> bytes) {
@@ -541,7 +518,8 @@ std::optional<std::string> sha256_hex(std::span<const std::uint8_t> bytes) {
   return hex_encode(*digest);
 }
 
-std::vector<Observation> observe_text_hashes(std::string_view library_path, std::span<const std::uint8_t> text_memory) {
+std::vector<Observation> observe_text_hashes(std::string_view library_path, std::span<const std::uint8_t> text_memory,
+                                             const std::optional<std::array<std::uint8_t, kDigestSize>>& expected) {
   const std::optional<std::vector<std::uint8_t>> file = read_library_file(library_path, kMaxLibrarySize);
   if (!file) {
     return {failed(kTextHashSignal, kFileSource), failed(kTextHashSignal, kMemorySource)};
@@ -559,12 +537,11 @@ std::vector<Observation> observe_text_hashes(std::string_view library_path, std:
       text_memory.subspan(static_cast<std::size_t>(region->memory_address), static_cast<std::size_t>(region->size));
 
   // A packed library ships ciphertext where this digest was taken, so its file bytes can never match the decrypted
-  // memory. The packer's fold ships the expected plaintext digest in `.rasp_config` instead; comparing the running
-  // `.text` against it observes the same fact: the running code is the code that shipped.
-  if (const std::optional<std::string> expected = expected_text_hash(image)) {
+  // memory: the running `.text` is compared against the plaintext digest the packer wrote instead.
+  if (expected.has_value() && !std::ranges::all_of(*expected, [](std::uint8_t byte) { return byte == 0; })) {
     const std::optional<std::string> memory_hash = sha256_hex(memory_bytes);
     return {
-        observed(kTextHashSignal, kFileSource, *expected),
+        observed(kTextHashSignal, kFileSource, hex_encode(*expected)),
         memory_hash ? observed(kTextHashSignal, kMemorySource, *memory_hash) : failed(kTextHashSignal, kMemorySource),
     };
   }
@@ -652,7 +629,7 @@ std::vector<Observation> integrity() {
   }
   const std::span<const std::uint8_t> image(std::bit_cast<const std::uint8_t*>(library->load_bias),
                                             static_cast<std::size_t>(library->image_size));
-  return observe_text_hashes(library->path, image);
+  return observe_text_hashes(library->path, image, config::text_digest());
 }
 
 #else
