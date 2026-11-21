@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "util/property_area.h"
 #include "util/raw_file.h"
 #include "util/system_property.h"
 
@@ -31,6 +32,8 @@ constexpr std::string_view kPathsSignal = "root.fs_paths";
 constexpr std::string_view kAccessSource = "access";
 /// The source of the root-file probe that asks through stat().
 constexpr std::string_view kStatSource = "stat";
+/// The source of the root-file probe that asks the kernel directly.
+constexpr std::string_view kSyscallSource = "faccessat";
 /// The signal of the mount-table probe that reports the mounts a root tool made.
 constexpr std::string_view kMountsSignal = "root.mounts";
 /// The signal of the mount-table probe that reports the system folders mounted writable.
@@ -43,13 +46,19 @@ constexpr std::string_view kSelinuxSignal = "root.selinux_enforcing";
 constexpr std::string_view kSelinuxSource = "selinuxfs";
 /// The signal of the build-property probe.
 constexpr std::string_view kPropsSignal = "root.build_props";
-/// The source of the build-property probe.
+/// The source of the build-property probe that reads through libc.
 constexpr std::string_view kPropsSource = "system_property";
+/// The source of the probes that read the property files directly.
+constexpr std::string_view kAreaSource = "property_area";
+/// The signal of the probe that reports read-only properties written again after they were set.
+constexpr std::string_view kRewrittenSignal = "root.props_rewritten";
 
 /// The app's mount table.
 constexpr std::string_view kMountsPath = "/proc/self/mounts";
 /// The file that tells whether SELinux enforces its policy.
 constexpr std::string_view kEnforcePath = "/sys/fs/selinux/enforce";
+/// The app's memory map, where a property file the app may not open is found already mapped.
+constexpr std::string_view kMapsPath = "/proc/self/maps";
 
 /// The largest mount table read. A real one is a few tens of KiB.
 constexpr std::size_t kMaxMountsSize = std::size_t{1} << 20U;
@@ -143,6 +152,31 @@ constexpr auto kBuildProperties = std::to_array<std::string_view>({
     "ro.boot.flash.locked",
 });
 
+/// The read-only properties root tools rewrite to hide root, an unlocked bootloader or an emulator.
+constexpr auto kWatchedProperties = std::to_array<std::string_view>({
+    "ro.debuggable",
+    "ro.secure",
+    "ro.build.type",
+    "ro.build.tags",
+    "ro.build.fingerprint",
+    "ro.build.selinux",
+    "ro.boot.verifiedbootstate",
+    "ro.boot.vbmeta.device_state",
+    "ro.boot.flash.locked",
+    "ro.boot.veritymode",
+    "ro.boot.warranty_bit",
+    "ro.warranty_bit",
+    "ro.vendor.boot.warranty_bit",
+    "ro.vendor.warranty_bit",
+    "ro.hardware",
+    "ro.product.model",
+    "ro.product.brand",
+    "ro.product.manufacturer",
+    "ro.product.device",
+    "ro.kernel.qemu",
+    "ro.boot.qemu",
+});
+
 #ifdef __ANDROID__
 /// Whether this build runs on Android, the only place the probes mean anything.
 constexpr bool kOnAndroid = true;
@@ -160,6 +194,9 @@ constexpr bool kOnAndroid = false;
   return stat(path.c_str(), &info) == 0;
 }
 
+/// Whether the kernel, asked directly, finds a file at `path`.
+[[nodiscard]] bool found_by_syscall(const std::string& path) { return rasp::util::access_path(path) == 0; }
+
 /// One way of asking whether a file exists at a path.
 struct PathSource {
   /// The observation's source, such as access or stat.
@@ -172,6 +209,7 @@ struct PathSource {
 constexpr std::array kPathSources = {
     PathSource{.name = kAccessSource, .exists = found_by_access},
     PathSource{.name = kStatSource, .exists = found_by_stat},
+    PathSource{.name = kSyscallSource, .exists = found_by_syscall},
 };
 
 /// The fields of a mount table line that the probes read.
@@ -238,6 +276,19 @@ struct MountLine {
   return std::ranges::contains(kSystemMountPoints, mount.point) && has_option(mount.options, "rw");
 }
 
+/// The `name=value` lines of the build properties `read` finds set.
+template <typename Read>
+[[nodiscard]] std::vector<std::string> build_properties(Read read) {
+  std::vector<std::string> properties;
+  for (const std::string_view name : kBuildProperties) {
+    const std::optional<std::string> value = read(name);
+    if (value) {
+      properties.push_back(std::string(name) + "=" + *value);
+    }
+  }
+  return properties;
+}
+
 /// The first kMaxMountLines lines of `table` that `matches`, without their line breaks.
 [[nodiscard]] std::vector<std::string> matching_lines(std::string_view table, bool (*matches)(std::string_view line)) {
   std::vector<std::string> lines;
@@ -291,21 +342,38 @@ Observation observe_selinux(std::string_view enforce_path, rasp::util::ProcReade
 }
 
 Observation observe_build_props(util::PropertyReader read_property) {
-  std::vector<std::string> properties;
-  std::ranges::for_each(kBuildProperties, [&](const std::string_view name) {
-    const std::optional<std::string> value = read_property(name);
-    if (value) {
-      properties.push_back(std::string(name) + "=" + *value);
+  return observed(kPropsSignal, kPropsSource, build_properties(read_property));
+}
+
+Observation observe_build_props(util::PropertyAreas& areas) {
+  if (!areas.readable()) {
+    return failed(kPropsSignal, kAreaSource);
+  }
+  return observed(kPropsSignal, kAreaSource, build_properties([&areas](std::string_view name) {
+                    const std::optional<util::AreaProperty> property = areas.read(name);
+                    return property ? std::optional<std::string>(property->value) : std::nullopt;
+                  }));
+}
+
+Observation observe_rewritten_props(util::PropertyAreas& areas) {
+  if (!areas.readable()) {
+    return failed(kRewrittenSignal, kAreaSource);
+  }
+  std::vector<std::string> rewritten;
+  for (const std::string_view name : kWatchedProperties) {
+    const std::optional<util::AreaProperty> property = areas.read(name);
+    if (property && util::was_rewritten(property->serial)) {
+      rewritten.emplace_back(name);
     }
-  });
-  return observed(kPropsSignal, kPropsSource, std::move(properties));
+  }
+  return observed(kRewrittenSignal, kAreaSource, std::move(rewritten));
 }
 
 std::vector<Observation> root() {
   if (!kOnAndroid) {
     // Off Android the files, mounts and properties are not Android ones: report every probe as unsupported.
     std::vector<Observation> observations;
-    observations.reserve(kPathSources.size() + 4);
+    observations.reserve(kPathSources.size() + 6);
     for (const PathSource& source : kPathSources) {
       observations.push_back(unsupported(kPathsSignal, source.name));
     }
@@ -313,12 +381,17 @@ std::vector<Observation> root() {
     observations.push_back(unsupported(kRwMountsSignal, kMountsSource));
     observations.push_back(unsupported(kSelinuxSignal, kSelinuxSource));
     observations.push_back(unsupported(kPropsSignal, kPropsSource));
+    observations.push_back(unsupported(kPropsSignal, kAreaSource));
+    observations.push_back(unsupported(kRewrittenSignal, kAreaSource));
     return observations;
   }
   std::vector<Observation> observations = observe_paths(kArtifactPaths);
   std::ranges::move(observe_mounts(kMountsPath), std::back_inserter(observations));
   observations.push_back(observe_selinux(kEnforcePath));
   observations.push_back(observe_build_props(util::read_system_property));
+  util::PropertyAreas areas("/dev/__properties__", std::string(kMapsPath));
+  observations.push_back(observe_build_props(areas));
+  observations.push_back(observe_rewritten_props(areas));
   return observations;
 }
 

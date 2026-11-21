@@ -1,4 +1,4 @@
-/// read_proc_file and first_proc_line_matching, which read kernel-generated files through direct system calls.
+/// Direct-system-call file access: kernel-generated files, path checks and read-only file mappings.
 
 #include "raw_file.h"
 
@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <sys/mman.h>  // NOLINT(misc-include-cleaner): declares the mmap flags.
 #include <utility>
 
 #if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
@@ -172,6 +173,29 @@ constexpr long kExdev = 18;
   return -kExdev;
 }
 
+/// The size of the open file `fd`, from a direct lseek to its end: the size, or the negative errno.
+[[nodiscard]] long file_size(long fd) {
+  constexpr long kSeekEnd = 2;
+  return raw_syscall(__NR_lseek, fd, 0, kSeekEnd, 0, 0, 0);
+}
+
+/// Maps `size` bytes of `fd` read-only and shared through a direct system call: the address, or nothing.
+[[nodiscard]] std::optional<void*> map_file(long fd, std::size_t size) {
+  const long address =
+      raw_syscall(__NR_mmap, 0, static_cast<long>(size), PROT_READ, MAP_SHARED, fd, 0);  // NOLINT(misc-include-cleaner)
+  if (failed(address)) {
+    return std::nullopt;
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast,performance-no-int-to-ptr): mmap returns an address.
+  return reinterpret_cast<void*>(address);
+}
+
+/// Unmaps a mapping map_file made, through a direct system call.
+void unmap_file(const void* address, std::size_t size) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  static_cast<void>(raw_syscall(__NR_munmap, reinterpret_cast<long>(address), static_cast<long>(size), 0, 0, 0, 0));
+}
+
 #else
 
 /// Reads up to `size` bytes of `fd` into `data` through libc, on a host the direct system calls don't serve: the count
@@ -183,6 +207,26 @@ constexpr long kExdev = 18;
 
 /// Closes `fd` through libc: 0, or the negative errno.
 [[nodiscard]] long close_file(long fd) { return ::close(static_cast<int>(fd)) == 0 ? 0 : -static_cast<long>(errno); }
+
+/// The size of the open file `fd`, through libc: the size, or the negative errno.
+[[nodiscard]] long file_size(long fd) {
+  // NOLINTNEXTLINE(misc-include-cleaner): SEEK_END comes from the included <unistd.h>.
+  const auto size = ::lseek(static_cast<int>(fd), 0, SEEK_END);
+  return size < 0 ? -static_cast<long>(errno) : static_cast<long>(size);
+}
+
+/// Maps `size` bytes of `fd` read-only and shared through libc: the address, or nothing.
+[[nodiscard]] std::optional<void*> map_file(long fd, std::size_t size) {
+  // NOLINTNEXTLINE(misc-include-cleaner): the mmap flags come from the included <sys/mman.h>.
+  void* const address = ::mmap(nullptr, size, PROT_READ, MAP_SHARED, static_cast<int>(fd), 0);
+  if (address == MAP_FAILED) {  // NOLINT(cppcoreguidelines-pro-type-cstyle-cast): MAP_FAILED is libc's macro.
+    return std::nullopt;
+  }
+  return address;
+}
+
+/// Unmaps a mapping map_file made, through libc.
+void unmap_file(void* address, std::size_t size) { static_cast<void>(::munmap(address, size)); }
 
 #endif
 
@@ -258,6 +302,69 @@ std::optional<std::string> read_proc_file(std::string_view path, std::size_t lim
 }
 
 #endif
+
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+
+long access_path(std::string_view path) {
+  const std::string name(path);
+  constexpr long kExists = 0;
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  return raw_syscall(__NR_faccessat, static_cast<long>(AT_FDCWD), reinterpret_cast<long>(name.c_str()), kExists, 0, 0,
+                     0);
+}
+
+#else
+
+long access_path(std::string_view path) {
+  return ::faccessat(AT_FDCWD, std::string(path).c_str(), F_OK, 0) == 0 ? 0 : -static_cast<long>(errno);
+}
+
+#endif
+
+std::optional<MappedFile> MappedFile::map(std::string_view path, std::size_t limit) {
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+  const long fd = raw_open(path);
+#else
+  const long fd = open_proc_file(path);
+#endif
+  if (fd < 0) {
+    return std::nullopt;
+  }
+  const long size = file_size(fd);
+  std::optional<void*> address;
+  if (size > 0 && std::cmp_less_equal(size, limit)) {
+    address = map_file(fd, static_cast<std::size_t>(size));
+  }
+  static_cast<void>(close_file(fd));
+  if (!address) {
+    return std::nullopt;
+  }
+  return MappedFile(*address, static_cast<std::size_t>(size));
+}
+
+MappedFile::MappedFile(void* address, std::size_t size) noexcept : address_(address), size_(size) {}
+
+MappedFile::MappedFile(MappedFile&& other) noexcept
+    : address_(std::exchange(other.address_, nullptr)), size_(std::exchange(other.size_, 0)) {}
+
+MappedFile& MappedFile::operator=(MappedFile&& other) noexcept {
+  if (this != &other) {
+    if (address_ != nullptr) {
+      unmap_file(address_, size_);
+    }
+    address_ = std::exchange(other.address_, nullptr);
+    size_ = std::exchange(other.size_, 0);
+  }
+  return *this;
+}
+
+MappedFile::~MappedFile() {
+  if (address_ != nullptr) {
+    unmap_file(address_, size_);
+  }
+}
+
+std::string_view MappedFile::bytes() const { return {static_cast<const char*>(address_), size_}; }
 
 std::optional<std::string> first_proc_line_matching(std::string_view path, LinePredicate matches, std::size_t cap,
                                                     ProcOpener open_file) {

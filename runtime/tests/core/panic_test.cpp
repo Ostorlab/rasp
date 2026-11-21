@@ -125,6 +125,7 @@ TEST(Panic, detect_forAnInformationalSignal_neverDetectsByValue) {
       {"id.team_id", std::string("ATTACKER01")},
       {"id.cdhash", std::string("0123456789abcdef0123456789abcdef01234567")},
       {"integ.text_sha256", std::string("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")},
+      {"root.props_rewritten", Strings{"ro.boot.verifiedbootstate"}},
   };
 
   for (const auto& [signal, value] : cases) {

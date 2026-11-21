@@ -1,4 +1,4 @@
-/// read_proc_file and first_proc_line_matching, which read kernel-generated files through direct system calls.
+/// Direct-system-call file access: kernel-generated files, path checks and read-only file mappings.
 
 #pragma once
 
@@ -72,5 +72,34 @@ using LinePredicate = bool (*)(std::string_view);
 [[nodiscard]] std::optional<std::string> first_proc_line_matching(std::string_view path, LinePredicate matches,
                                                                   std::size_t cap,
                                                                   ProcOpener open_file = open_proc_file);
+
+/// Asks the kernel whether a file exists at `path`, through a direct faccessat system call.
+///
+/// @return 0 when it exists, or the negative errno.
+[[nodiscard]] long access_path(std::string_view path);
+
+/// A file mapped read-only and shared into memory through direct system calls, unmapped when the object goes away.
+class MappedFile {
+ public:
+  /// Maps the whole file at `path`.
+  ///
+  /// @return The mapping, or nothing when the file can't be opened or mapped, is empty, or is larger than `limit`.
+  [[nodiscard]] static std::optional<MappedFile> map(std::string_view path, std::size_t limit);
+
+  MappedFile(const MappedFile&) = delete;
+  MappedFile& operator=(const MappedFile&) = delete;
+  MappedFile(MappedFile&& other) noexcept;
+  MappedFile& operator=(MappedFile&& other) noexcept;
+  ~MappedFile();
+
+  /// The file's bytes.
+  [[nodiscard]] std::string_view bytes() const;
+
+ private:
+  MappedFile(void* address, std::size_t size) noexcept;
+
+  void* address_ = nullptr;
+  std::size_t size_ = 0;
+};
 
 }  // namespace rasp::util

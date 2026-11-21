@@ -153,6 +153,7 @@ constexpr auto kVerdicts = std::to_array<Verdict>({
     {.signal = "root.rw_mounts", .detected = has_writable_system_mount},
     {.signal = "root.selinux_enforcing", .detected = is_false},
     {.signal = "root.build_props", .detected = has_unsafe_build_property},
+    {.signal = "root.props_rewritten", .detected = informational},
     {.signal = "virt.exec_path", .detected = is_true},
     {.signal = "virt.foreign_images", .detected = is_non_empty_list},
 });

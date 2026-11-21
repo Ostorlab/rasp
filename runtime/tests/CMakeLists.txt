@@ -84,15 +84,16 @@ endforeach()
 foreach(check emulator root)
   add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
     ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp
-    ${PROJECT_SOURCE_DIR}/android/src/util/system_property.cpp)
+    ${PROJECT_SOURCE_DIR}/android/src/util/system_property.cpp
+    ${PROJECT_SOURCE_DIR}/android/src/util/property_area.cpp)
   target_include_directories(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
     ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(rasp_android_${check}_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
   gtest_discover_tests(rasp_android_${check}_test)
 endforeach()
 
-# The debugger, hooking and root checks read /proc through the shared raw reader, so their tests link it too.
-foreach(check debugger hooks root)
+# The debugger, emulator, hooking and root checks read through the shared raw reader, so their tests link it too.
+foreach(check debugger emulator hooks root)
   target_sources(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src/util/raw_file.cpp)
 endforeach()
 
@@ -130,6 +131,13 @@ add_executable(rasp_android_app_storage_test android/util/app_storage_test.cpp
 target_include_directories(rasp_android_app_storage_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
 target_link_libraries(rasp_android_app_storage_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_app_storage_test)
+
+add_executable(rasp_android_property_area_test android/util/property_area_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/property_area.cpp ${PROJECT_SOURCE_DIR}/android/src/util/raw_file.cpp)
+target_include_directories(rasp_android_property_area_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_android_property_area_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_property_area_test)
 
 # read_proc_file's direct-system-call path belongs to Linux on x86_64 or aarch64, and it refuses a file that doesn't live
 # on procfs, sysfs or selinuxfs, so its test writes a regular one: only that reader refuses it. On any other host

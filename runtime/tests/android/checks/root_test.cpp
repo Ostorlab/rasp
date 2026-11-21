@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -15,6 +16,8 @@
 #include "rasp/observation.h"
 #include "rasp/util/read_file.h"
 #include "support/files.h"
+#include "support/property_files.h"
+#include "util/property_area.h"
 
 namespace rasp::android::checks {
 namespace {
@@ -94,7 +97,7 @@ constexpr std::string_view kStockMounts =
 /// Reads properties that are all unset.
 [[nodiscard]] std::optional<std::string> read_nothing([[maybe_unused]] std::string_view name) { return std::nullopt; }
 
-TEST(Root, observePaths_whenOnePathExists_reportsItThroughBothSources) {
+TEST(Root, observePaths_whenOnePathExists_reportsItThroughEverySource) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string present = directory.path() + "/su";
@@ -108,6 +111,7 @@ TEST(Root, observePaths_whenOnePathExists_reportsItThroughBothSources) {
   EXPECT_EQ(observations, (std::vector<Observation>{
                               {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = found},
                               {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = found},
+                              {.signal = "root.fs_paths", .source = "faccessat", .status = Status::kOk, .value = found},
                           }));
 }
 
@@ -124,6 +128,7 @@ TEST(Root, observePaths_whenAPathIsADirectory_reportsIt) {
   EXPECT_EQ(observations, (std::vector<Observation>{
                               {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = found},
                               {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = found},
+                              {.signal = "root.fs_paths", .source = "faccessat", .status = Status::kOk, .value = found},
                           }));
 }
 
@@ -142,10 +147,11 @@ TEST(Root, observePaths_whenSeveralPathsExist_reportsThemInTheGivenOrder) {
   EXPECT_EQ(observations, (std::vector<Observation>{
                               {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = found},
                               {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = found},
+                              {.signal = "root.fs_paths", .source = "faccessat", .status = Status::kOk, .value = found},
                           }));
 }
 
-TEST(Root, observePaths_whenNoPathExists_reportsEmptyListsThroughBothSources) {
+TEST(Root, observePaths_whenNoPathExists_reportsEmptyListsThroughEverySource) {
   const TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::string missing = directory.path() + "/missing";
@@ -157,6 +163,7 @@ TEST(Root, observePaths_whenNoPathExists_reportsEmptyListsThroughBothSources) {
   EXPECT_EQ(observations, (std::vector<Observation>{
                               {.signal = "root.fs_paths", .source = "access", .status = Status::kOk, .value = none},
                               {.signal = "root.fs_paths", .source = "stat", .status = Status::kOk, .value = none},
+                              {.signal = "root.fs_paths", .source = "faccessat", .status = Status::kOk, .value = none},
                           }));
 }
 
@@ -458,16 +465,107 @@ TEST(Root, observeBuildProps_whenNoPropertyIsSet_reportsAnEmptyList) {
   EXPECT_EQ(observe_build_props(read_nothing), build_props({}));
 }
 
+/// A property folder with one property file, for `properties`, that the index maps every `ro.*` property to.
+class RootPropertyFiles {
+ public:
+  explicit RootPropertyFiles(std::span<const test_support::FileProperty> properties) {
+    const std::array<std::string, 1> contexts = {"u:object_r:build_prop:s0"};
+    const auto index = std::to_array<test_support::InfoNode>({
+        {.name = "", .context = std::nullopt, .prefixes = {}, .exact_matches = {}, .children = {1}},
+        {.name = "ro", .context = 0, .prefixes = {}, .exact_matches = {}, .children = {}},
+    });
+    written_ = !directory_.path().empty() &&
+               write_file(directory_.path() + "/property_info", test_support::property_info(contexts, index)) &&
+               write_file(directory_.path() + "/" + contexts[0], test_support::property_file(properties));
+  }
+
+  /// Whether the folder was written.
+  [[nodiscard]] bool written() const { return written_; }
+
+  /// A reader of the folder.
+  [[nodiscard]] util::PropertyAreas areas() const {
+    return {directory_.path(), directory_.path() + "/maps", rasp::util::read_file};
+  }
+
+ private:
+  TemporaryDirectory directory_;
+  bool written_ = false;
+};
+
+TEST(Root, observeBuildPropsFromTheFiles_whenThePropertiesAreSet_reportsThemThroughPropertyArea) {
+  const auto properties = std::to_array<test_support::FileProperty>({
+      {.name = "ro.build.tags", .value = "test-keys", .counter = 0},
+      {.name = "ro.debuggable", .value = "1", .counter = 0},
+      {.name = "ro.hardware", .value = "qcom", .counter = 0},
+  });
+  const RootPropertyFiles files(properties);
+  ASSERT_TRUE(files.written());
+  util::PropertyAreas areas = files.areas();
+
+  EXPECT_EQ(observe_build_props(areas),
+            (Observation{
+                .signal = "root.build_props",
+                .source = "property_area",
+                .status = Status::kOk,
+                .value = std::vector<std::string>{"ro.debuggable=1", "ro.build.tags=test-keys"},
+            }));
+}
+
+TEST(Root, observeBuildPropsFromTheFiles_whenTheIndexCantBeRead_reportsAnError) {
+  util::PropertyAreas areas("/nonexistent/__properties__", "/nonexistent/maps", rasp::util::read_file);
+
+  EXPECT_EQ(
+      observe_build_props(areas),
+      (Observation{.signal = "root.build_props", .source = "property_area", .status = Status::kError, .value = {}}));
+}
+
+TEST(Root, observeRewrittenProps_whenAWatchedPropertyWasWrittenAgain_reportsItsName) {
+  const auto properties = std::to_array<test_support::FileProperty>({
+      {.name = "ro.boot.verifiedbootstate", .value = "green", .counter = 2},
+      {.name = "ro.build.tags", .value = "release-keys", .counter = 0},
+      {.name = "ro.custom.flag", .value = "1", .counter = 4},
+  });
+  const RootPropertyFiles files(properties);
+  ASSERT_TRUE(files.written());
+  util::PropertyAreas areas = files.areas();
+
+  EXPECT_EQ(observe_rewritten_props(areas), (Observation{
+                                                .signal = "root.props_rewritten",
+                                                .source = "property_area",
+                                                .status = Status::kOk,
+                                                .value = std::vector<std::string>{"ro.boot.verifiedbootstate"},
+                                            }));
+}
+
+TEST(Root, observeRewrittenProps_whenNoPropertyWasWrittenAgain_reportsAnEmptyList) {
+  const auto properties = std::to_array<test_support::FileProperty>({
+      {.name = "ro.debuggable", .value = "0", .counter = 0},
+  });
+  const RootPropertyFiles files(properties);
+  ASSERT_TRUE(files.written());
+  util::PropertyAreas areas = files.areas();
+
+  EXPECT_EQ(observe_rewritten_props(areas), (Observation{
+                                                .signal = "root.props_rewritten",
+                                                .source = "property_area",
+                                                .status = Status::kOk,
+                                                .value = std::vector<std::string>{},
+                                            }));
+}
+
 TEST(Root, root_whenOffAndroid_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(
       root(),
       (std::vector<Observation>{
           {.signal = "root.fs_paths", .source = "access", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.fs_paths", .source = "stat", .status = Status::kUnsupported, .value = {}},
+          {.signal = "root.fs_paths", .source = "faccessat", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.mounts", .source = "proc_mounts", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.rw_mounts", .source = "proc_mounts", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.selinux_enforcing", .source = "selinuxfs", .status = Status::kUnsupported, .value = {}},
           {.signal = "root.build_props", .source = "system_property", .status = Status::kUnsupported, .value = {}},
+          {.signal = "root.build_props", .source = "property_area", .status = Status::kUnsupported, .value = {}},
+          {.signal = "root.props_rewritten", .source = "property_area", .status = Status::kUnsupported, .value = {}},
       }));
 }
 

@@ -64,9 +64,9 @@ DATA_READ_LITERALS = re.compile(
     rb"(?:"
     rb"(?:root|dbg|hook|mitm|integ|id|emu|cs)\.[a-z_]+"
     rb"|rasp\.v2\.[a-z_.]*"
-    # iOS probe source names, stored in constexpr arrays and reported as the observation's source through
-    # data pointers: debugger.cpp's kProbes and jailbreak.cpp's kPathSources.
-    rb"|(?:access|stat|sysctl|syscall|getppid|task_get_exception_ports|csops)"
+    # Probe source names, stored in constexpr arrays and reported as the observation's source through data
+    # pointers: iOS debugger.cpp's kProbes and jailbreak.cpp's kPathSources, and Android root.cpp's kPathSources.
+    rb"|(?:access|stat|faccessat|sysctl|syscall|getppid|task_get_exception_ports|csops)"
     # iOS jailbreak artifact paths and the sandbox probe (jailbreak.cpp kArtifactPaths/kSandboxProbe), iterated
     # by observe_paths, plus hooks.cpp's tweak folders and rootless-jailbreak roots and virtualizer.cpp's system
     # roots -- all read as constant data through span/array iteration, so the string pass must never encrypt them.

@@ -6,16 +6,18 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "util/property_area.h"
 #include "util/system_property.h"
 
 namespace rasp::android::checks {
 
 /// Runs the emulator checks and returns what they observed.
 ///
-/// On Android it reads the build properties through the system property store. Anywhere else the observation is
-/// unsupported instead, so the server still sees that the check ran.
+/// On Android it reads the build properties through the system property store and from the property files directly.
+/// Anywhere else the observations are unsupported instead, so the server still sees that the check ran.
 ///
-/// @return One observation per signal and source, in this order: emu.props through system_property.
+/// @return One observation per signal and source, in this order: emu.props through system_property, then through
+/// property_area.
 [[nodiscard]] std::vector<Observation> emulator();
 
 /// Reports the build properties whose value is an emulator tell, read through `read_property`.
@@ -30,5 +32,12 @@ namespace rasp::android::checks {
 /// @return One emu.props observation read through system_property: the matching `name=value` pairs. It never has an
 /// error status; a property that is unset or doesn't carry a tell is simply left out.
 [[nodiscard]] Observation observe_emulator_props(util::PropertyReader read_property);
+
+/// Reports the same properties, read from the property files directly, so a libc hook that changes one makes the two
+/// sources disagree.
+///
+/// @return One emu.props observation read through property_area, with an error status when the property files' index
+/// can't be read.
+[[nodiscard]] Observation observe_emulator_props(util::PropertyAreas& areas);
 
 }  // namespace rasp::android::checks

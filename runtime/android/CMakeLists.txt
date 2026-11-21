@@ -63,6 +63,7 @@ add_library(rasp SHARED
   src/util/apk_file.cpp
   src/util/app_storage.cpp
   src/util/jni.cpp
+  src/util/property_area.cpp
   src/util/raw_file.cpp
   src/util/system_property.cpp)
 target_include_directories(rasp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${rasp_kdf_dir})

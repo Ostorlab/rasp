@@ -3,6 +3,7 @@
 
 #include "checks/emulator.h"
 
+#include <array>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
@@ -11,6 +12,10 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "rasp/util/read_file.h"
+#include "support/files.h"
+#include "support/property_files.h"
+#include "util/property_area.h"
 
 namespace rasp::android::checks {
 namespace {
@@ -148,10 +153,36 @@ TEST(Emulator, observeEmulatorProps_whenAQemuFlagIsSetButEmpty_reportsItWithoutA
   EXPECT_EQ(observe_emulator_props(empty_qemu_flag), props({"ro.boot.qemu="}));
 }
 
+TEST(Emulator, observeEmulatorPropsFromTheFiles_whenOnTheEmulator_reportsTheTellsThroughPropertyArea) {
+  const test_support::TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::array<std::string, 1> contexts = {"u:object_r:build_prop:s0"};
+  const auto index = std::to_array<test_support::InfoNode>({
+      {.name = "", .context = std::nullopt, .prefixes = {}, .exact_matches = {}, .children = {1}},
+      {.name = "ro", .context = 0, .prefixes = {}, .exact_matches = {}, .children = {}},
+  });
+  const auto properties = std::to_array<test_support::FileProperty>({
+      {.name = "ro.hardware", .value = "ranchu", .counter = 0},
+      {.name = "ro.product.brand", .value = "google", .counter = 0},
+  });
+  ASSERT_TRUE(
+      test_support::write_file(directory.path() + "/property_info", test_support::property_info(contexts, index)));
+  ASSERT_TRUE(test_support::write_file(directory.path() + "/" + contexts[0], test_support::property_file(properties)));
+  util::PropertyAreas areas(directory.path(), directory.path() + "/maps", rasp::util::read_file);
+
+  EXPECT_EQ(observe_emulator_props(areas), (Observation{
+                                               .signal = "emu.props",
+                                               .source = "property_area",
+                                               .status = Status::kOk,
+                                               .value = std::vector<std::string>{"ro.hardware=ranchu"},
+                                           }));
+}
+
 TEST(Emulator, emulator_whenOffAndroid_reportsTheCheckAsUnsupported) {
   EXPECT_EQ(emulator(),
             (std::vector<Observation>{
                 {.signal = "emu.props", .source = "system_property", .status = Status::kUnsupported, .value = {}},
+                {.signal = "emu.props", .source = "property_area", .status = Status::kUnsupported, .value = {}},
             }));
 }
 

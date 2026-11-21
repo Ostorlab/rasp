@@ -10,10 +10,10 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 #include "rasp/observation.h"
+#include "util/property_area.h"
 #include "util/system_property.h"
 
 namespace rasp::android::checks {
@@ -30,8 +30,10 @@ constexpr bool kOnAndroid = false;
 
 /// The signal of the build-property probe.
 constexpr std::string_view kPropsSignal = "emu.props";
-/// The source of the build-property probe.
+/// The source of the build-property probe that reads through libc.
 constexpr std::string_view kPropsSource = "system_property";
+/// The source of the build-property probe that reads the property files directly.
+constexpr std::string_view kAreaSource = "property_area";
 
 /// The build properties the probe reads. Each one's value, on an emulator, carries a tell such as `goldfish` or `sdk`.
 constexpr auto kEmulatorProperties = std::to_array<std::string_view>({
@@ -117,27 +119,41 @@ constexpr auto kQemuProperties = std::to_array<std::string_view>({
                              [&lowered](std::string_view marker) { return holds_token(lowered, marker); });
 }
 
+/// The `name=value` lines of the emulator properties `read` finds holding a tell.
+template <typename Read>
+[[nodiscard]] std::vector<std::string> emulator_properties(Read read) {
+  std::vector<std::string> properties;
+  for (const std::string_view name : kEmulatorProperties) {
+    const std::optional<std::string> value = read(name);
+    if (value && (is_qemu_flag(name) || holds_marker(*value))) {
+      properties.push_back(std::string(name) + "=" + *value);
+    }
+  }
+  return properties;
+}
+
 }  // namespace
 
 Observation observe_emulator_props(util::PropertyReader read_property) {
-  std::vector<std::string> properties;
-  std::ranges::for_each(kEmulatorProperties, [&](const std::string_view name) {
-    const std::optional<std::string> value = read_property(name);
-    if (!value) {
-      return;
-    }
-    if (is_qemu_flag(name) || holds_marker(*value)) {
-      properties.push_back(std::string(name) + "=" + *value);
-    }
-  });
-  return observed(kPropsSignal, kPropsSource, std::move(properties));
+  return observed(kPropsSignal, kPropsSource, emulator_properties(read_property));
+}
+
+Observation observe_emulator_props(util::PropertyAreas& areas) {
+  if (!areas.readable()) {
+    return failed(kPropsSignal, kAreaSource);
+  }
+  return observed(kPropsSignal, kAreaSource, emulator_properties([&areas](std::string_view name) {
+                    const std::optional<util::AreaProperty> property = areas.read(name);
+                    return property ? std::optional<std::string>(property->value) : std::nullopt;
+                  }));
 }
 
 std::vector<Observation> emulator() {
   if (!kOnAndroid) {
-    return {unsupported(kPropsSignal, kPropsSource)};
+    return {unsupported(kPropsSignal, kPropsSource), unsupported(kPropsSignal, kAreaSource)};
   }
-  return {observe_emulator_props(util::read_system_property)};
+  util::PropertyAreas areas("/dev/__properties__", "/proc/self/maps");
+  return {observe_emulator_props(util::read_system_property), observe_emulator_props(areas)};
 }
 
 }  // namespace rasp::android::checks
