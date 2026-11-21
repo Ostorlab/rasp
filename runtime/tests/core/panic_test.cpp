@@ -14,6 +14,7 @@
 #include <variant>
 #include <vector>
 
+#include "rasp/config.h"
 #include "rasp/observation.h"
 
 namespace rasp {
@@ -320,7 +321,7 @@ TEST(Panic, panicOnDetection_whenASevereSignalIsDetected_endsTheProcessWithinThe
   };
   const steady_clock::time_point start = steady_clock::now();
 
-  ASSERT_TRUE(panic_on_detection(observations, record_end));
+  ASSERT_TRUE(panic_on_detection(observations, record_end, {}, CheckPlatform::kAndroid));
 
   EXPECT_EQ(end_calls().load(), before);
   ASSERT_TRUE(wait_for_end_calls(before + 1, kMaxSeverePanicDelay + kWaitMargin));
@@ -335,7 +336,7 @@ TEST(Panic, panicOnDetection_whenAnotherSignalIsDetected_armsAPanicThatEndsThePr
   };
   const steady_clock::time_point start = steady_clock::now();
 
-  ASSERT_TRUE(panic_on_detection(observations, record_end));
+  ASSERT_TRUE(panic_on_detection(observations, record_end, {}, CheckPlatform::kAndroid));
 
   EXPECT_EQ(end_calls().load(), before);
   ASSERT_TRUE(wait_for_end_calls(before + 1, kMaxPanicDelay + kWaitMargin));
@@ -350,7 +351,159 @@ TEST(Panic, panicOnDetection_whenNothingIsDetected_armsNothing) {
       failed("root.fs_paths", "stat"),
   };
 
-  EXPECT_FALSE(panic_on_detection(observations, record_end));
+  EXPECT_FALSE(panic_on_detection(observations, record_end, {}, CheckPlatform::kAndroid));
+}
+
+TEST(Panic, panicOnDetection_whenMitmReportsOnly_neverArmsForAVpnOrDisagreementOnEitherPlatform) {
+  const std::vector<Observation> observations = {
+      observed("mitm.tunnels", "getifaddrs", Strings{"tun0"}),
+      observed("mitm.tunnels", "other", Strings{}),
+      observed("mitm.proxies", "settings", Strings{"proxy"}),
+      observed("mitm.user_cas", "store", Strings{"certificate"}),
+  };
+  EXPECT_FALSE(panic_on_detection(observations, record_end,
+                                  {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = 1U << 4},
+                                  CheckPlatform::kAndroid));
+  EXPECT_FALSE(panic_on_detection(observations, record_end,
+                                  {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = 1U << 7},
+                                  CheckPlatform::kIos));
+  EXPECT_EQ(detect(observations).size(), 4U);
+}
+
+TEST(Panic, panicOnDetection_whenAKnownSignalDisagrees_honorsItsGroupOnEverySupportedPlatform) {
+  // The bit numbers follow the packer and each platform's monitoring dispatch.
+  const std::vector<std::pair<unsigned, Strings>> android = {
+      {0, {"root.fs_paths", "root.mounts", "root.rw_mounts", "root.selinux_enforcing", "root.build_props"}},
+      {1, {"dbg.tracer_pid", "dbg.java_debugger"}},
+      {2, {"hook.maps_hits", "hook.rwx_regions", "hook.threads", "hook.foreign_libs", "hook.inline"}},
+      {3, {"integ.text_sha256", "integ.monitor_alive"}},
+      {4, {"mitm.tunnels", "mitm.user_cas"}},
+      {5, {"id.package", "id.uid", "id.code_path", "id.debuggable", "sig.cert_sha256"}},
+      {6, {"emu.props"}},
+  };
+  const std::vector<std::pair<unsigned, Strings>> ios = {
+      {0, {"jb.fs_paths", "jb.sandbox_escape", "jb.fork_ok"}},
+      {1, {"dbg.traced", "dbg.parent", "dbg.exception_ports"}},
+      {2, {"hook.maps_hits", "hook.rwx_regions", "hook.dyld_env", "hook.frida_port", "hook.inline"}},
+      {3, {"id.bundle_id", "id.team_id", "id.cdhash", "id.debuggable"}},
+      {4, {"cs.valid", "cs.debugged", "cs.get_task_allow", "cs.library_validation"}},
+      {5, {"emu.simulator", "hw.machine"}},
+      {6, {"virt.exec_path", "virt.foreign_images"}},
+      {7, {"mitm.tunnels", "mitm.proxies", "mitm.user_cas"}},
+  };
+  const auto check_groups = [](const auto& groups, CheckPlatform platform) {
+    for (const auto& [bit, signals] : groups) {
+      for (const std::string& signal : signals) {
+        const std::vector<Observation> observations = {
+            observed(signal, "first", std::string("a")),
+            observed(signal, "second", std::string("b")),
+        };
+        ASSERT_FALSE(detect(observations).empty()) << signal;
+        EXPECT_FALSE(panic_on_detection(
+            observations, record_end,
+            {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = std::uint64_t{1} << bit}, platform))
+            << signal;
+      }
+    }
+  };
+  check_groups(android, CheckPlatform::kAndroid);
+  check_groups(ios, CheckPlatform::kIos);
+}
+
+TEST(Panic, panicOnDetection_whenOnlyTheSevereGroupReports_usesTheLongDelayForTheBlockingGroup) {
+  const int before = end_calls().load();
+  const std::vector<Observation> observations = {
+      observed("dbg.tracer_pid", "proc_status", std::int64_t{42}),
+      observed("mitm.tunnels", "getifaddrs", Strings{"tun0"}),
+  };
+  const steady_clock::time_point start = steady_clock::now();
+  ASSERT_TRUE(panic_on_detection(observations, record_end,
+                                 {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = 1U << 1},
+                                 CheckPlatform::kAndroid));
+  ASSERT_TRUE(wait_for_end_calls(before + 1, kMaxPanicDelay + kWaitMargin));
+  EXPECT_GE(steady_clock::now() - start, kMinPanicDelay);
+}
+
+TEST(Panic, panicOnDetection_whenTheGroupIsUnknown_blocksEvenWithEveryReportBitSet) {
+  const int before = end_calls().load();
+  const std::vector<Observation> observations = {
+      observed("unknown.signal", "first", true),
+      observed("unknown.signal", "second", false),
+  };
+  ASSERT_TRUE(panic_on_detection(observations, record_end,
+                                 {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = ~std::uint64_t{0}},
+                                 CheckPlatform::kIos));
+  ASSERT_TRUE(wait_for_end_calls(before + 1, kMaxPanicDelay + kWaitMargin));
+}
+
+TEST(Panic, panicOnDetection_whenDeviceStateChecksAreOff_armsNothingInEitherPlatformOrder) {
+  const std::vector<Observation> root = {observed("root.fs_paths", "access", Strings{"su"})};
+  const std::vector<Observation> jailbreak = {observed("jb.fs_paths", "access", Strings{"/var/jb"})};
+  // Root is Android-only; jailbreak is its iOS counterpart. Bit zero belongs to each platform's device check.
+  const Config mask{.build_id = {}, .checks_mask = 1U << 1};
+  const Config list{.build_id = {}, .checks = Strings{"debugger"}};
+  for (const Config& config : {mask, list}) {
+    EXPECT_FALSE(panic_on_detection(root, record_end, config, CheckPlatform::kAndroid));
+    EXPECT_FALSE(panic_on_detection(jailbreak, record_end, config, CheckPlatform::kIos));
+  }
+}
+
+TEST(Panic, panicOnDetection_whenTheEnabledMaskIsPresent_usesItInsteadOfTheList) {
+  const std::vector<Observation> root = {observed("root.fs_paths", "access", Strings{"su"})};
+  const Config config{.build_id = {}, .checks = Strings{"root"}, .checks_mask = 0};
+  EXPECT_FALSE(panic_on_detection(root, record_end, config, CheckPlatform::kAndroid));
+}
+
+TEST(Panic, panicOnDetection_whenAnOffGroupDisagrees_armsNothing) {
+  const std::vector<Observation> observations = {
+      observed("root.fs_paths", "access", Strings{"su"}),
+      observed("root.fs_paths", "stat", Strings{}),
+  };
+  ASSERT_FALSE(detect(observations).empty());
+  EXPECT_FALSE(
+      panic_on_detection(observations, record_end, {.build_id = {}, .checks_mask = 0}, CheckPlatform::kAndroid));
+}
+
+TEST(Panic, panicOnDetection_whenTheConfigHasNeitherMaskNorList_keepsBlockingDeviceDetections) {
+  const int before = end_calls().load();
+  const std::vector<Observation> observations = {observed("root.fs_paths", "access", Strings{"su"})};
+  ASSERT_TRUE(panic_on_detection(observations, record_end, {}, CheckPlatform::kAndroid));
+  ASSERT_TRUE(wait_for_end_calls(before + 1, kMaxPanicDelay + kWaitMargin));
+}
+
+TEST(Panic, panicOnDetection_whenOnlyTheSevereGroupIsOff_usesTheBlockingGroupsLongDelay) {
+  const int before = end_calls().load();
+  const std::vector<Observation> observations = {
+      observed("dbg.tracer_pid", "proc_status", std::int64_t{42}),
+      observed("root.fs_paths", "access", Strings{"su"}),
+  };
+  const steady_clock::time_point start = steady_clock::now();
+  ASSERT_TRUE(
+      panic_on_detection(observations, record_end, {.build_id = {}, .checks_mask = 1}, CheckPlatform::kAndroid));
+  ASSERT_TRUE(wait_for_end_calls(before + 1, kMaxPanicDelay + kWaitMargin));
+  EXPECT_GE(steady_clock::now() - start, kMinPanicDelay);
+}
+
+TEST(Panic, panicOnDetection_whenAMonitoringHeartbeatIsOff_armsNothing) {
+  const std::vector<Observation> observations = {observed("integ.monitor_alive", "heartbeat", false)};
+  EXPECT_FALSE(
+      panic_on_detection(observations, record_end, {.build_id = {}, .checks_mask = 0}, CheckPlatform::kAndroid));
+}
+
+TEST(Panic, panicOnDetection_whenOnlyTheReportMaskIsReadable_keepsBlocking) {
+  const int before = end_calls().load();
+  const std::vector<Observation> observations = {observed("root.fs_paths", "access", Strings{"su"})};
+  ASSERT_TRUE(
+      panic_on_detection(observations, record_end, {.build_id = {}, .report_only_mask = 1}, CheckPlatform::kAndroid));
+  ASSERT_TRUE(wait_for_end_calls(before + 1, kMaxPanicDelay + kWaitMargin));
+}
+
+TEST(Panic, panicOnDetection_whenTheGroupHasNoPlatformBit_keepsBlocking) {
+  const int before = end_calls().load();
+  const std::vector<Observation> observations = {observed("root.fs_paths", "access", Strings{"su"})};
+  const Config config{.build_id = {}, .checks_mask = 0, .report_only_mask = 0xFF};
+  ASSERT_TRUE(panic_on_detection(observations, record_end, config, CheckPlatform::kIos));
+  ASSERT_TRUE(wait_for_end_calls(before + 1, kMaxPanicDelay + kWaitMargin));
 }
 
 }  // namespace

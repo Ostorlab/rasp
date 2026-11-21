@@ -601,6 +601,7 @@ def testMain_whenInspectedAppIsProtected_printsAlignedLabelsAndValues(
             version="1.2.3",
             build_id=_BUILD_ID,
             checks=("debugger", "identity"),
+            actions={"debugger": "report", "identity": "block"},
             abis=("arm64-v8a", "x86_64"),
         ),
     )
@@ -616,6 +617,7 @@ def testMain_whenInspectedAppIsProtected_printsAlignedLabelsAndValues(
         "version    1.2.3\n"
         f"build id   {_BUILD_ID}\n"
         "checks     debugger,identity\n"
+        "actions    debugger=report,identity=block\n"
         "abis       arm64-v8a,x86_64\n"
     )
 
@@ -704,6 +706,7 @@ def testMain_whenInspectIsGivenJson_printsTheInspectionAsOneJsonObjectWithSorted
             version="1.2.3",
             build_id=_BUILD_ID,
             checks=("debugger", "identity"),
+            actions={"debugger": "report", "identity": "block"},
             abis=("arm64-v8a",),
         ),
     )
@@ -719,6 +722,7 @@ def testMain_whenInspectIsGivenJson_printsTheInspectionAsOneJsonObjectWithSorted
     assert output == {
         "abis": ["arm64-v8a"],
         "build_id": _BUILD_ID,
+        "actions": {"debugger": "report", "identity": "block"},
         "checks": ["debugger", "identity"],
         "package_name": "dev.ostorlab.demo",
         "protected": True,
@@ -736,6 +740,7 @@ def testMain_whenUnprotectedAppIsInspectedWithJson_printsANullBuildId(
     assert json.loads(capsys.readouterr().out) == {
         "abis": [],
         "build_id": None,
+        "actions": {},
         "checks": [],
         "package_name": "dev.ostorlab.demo",
         "protected": False,
@@ -845,3 +850,95 @@ def testMain_whenSubcommandHelpRequestedOnATerminal_printsNoBanner(
         cli.main(["pack", "--help"])
 
     assert "█" not in terminal.getvalue()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--report-only", "identity", "--block", "identity"],
+        ["--report-only", "hooks"],
+        ["--block", "hooks"],
+        ["--report-only", "jailbreak", "--strict"],
+    ],
+)
+def testMain_whenAnActionChoiceIsInvalid_failsBeforeReadingOrWritingTheApp(
+    tmp_path: pathlib.Path,
+    options: list[str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Conflicts, disabled groups and strict unknown overrides fail at validation."""
+    exit_code = cli.main(
+        [*_pack_arguments(tmp_path, platform="android"), "--checks", "root", *options]
+    )
+
+    assert exit_code == cli.EXIT_FAILED
+    assert not (tmp_path / "out.ipa").exists()
+    assert "cannot read" not in capsys.readouterr().err
+
+
+def testMain_whenActionOverridesAreGiven_packsTheirMaskAndWarnsForUnknownIds(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Actions use the checks list syntax and keep permissive unknown-id handling."""
+    app = tmp_path / "app.apk"
+    app.write_bytes(b"app")
+    configs: list[runtime_config.RuntimeConfig] = []
+
+    def fake_pack(
+        *, config: runtime_config.RuntimeConfig, **_: object
+    ) -> identity.AppIdentity:
+        """Records the runtime config without needing a device runtime."""
+        configs.append(config)
+        return identity.AppIdentity(package_name="example", version="1")
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+    exit_code = cli.main(
+        [
+            *_pack_arguments(tmp_path, app="app.apk", platform="android"),
+            "--checks",
+            "root, debugger",
+            "--report-only",
+            " debugger, jailbreak, ",
+            "--block",
+            "root",
+        ]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert configs[0].report_only_mask == 1 << 1
+    assert "'jailbreak' is not a check of android, skipped" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def testMain_whenTheInspectedConfigPredatesActions_reportsNoActions(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    json_output: bool,
+) -> None:
+    """Older runtimes have no known actions, in both CLI formats."""
+    monkeypatch.setattr(
+        inspection,
+        "inspect",
+        lambda **_: inspection.InspectResult(
+            protected=True,
+            package_name="example",
+            version="1",
+            build_id="old",
+            checks=("identity",),
+            abis=(),
+            actions={},
+        ),
+    )
+    arguments = ["inspect", str(tmp_path / "app.apk"), "--platform", "android"]
+    if json_output:
+        arguments.append("--json")
+
+    assert cli.main(arguments) == cli.EXIT_OK
+    output = capsys.readouterr().out
+    if json_output:
+        assert json.loads(output)["actions"] == {}
+    else:
+        assert "actions" not in output

@@ -8,9 +8,18 @@
 #include <string>
 #include <vector>
 
+#include "rasp/config.h"
 #include "rasp/observation.h"
 
 namespace rasp {
+
+/// The platform whose check order defines the report-only mask.
+enum class CheckPlatform {
+  /// The Android monitoring order.
+  kAndroid,
+  /// The iOS monitoring order.
+  kIos,
+};
 
 /// One positive finding of the built-in checks.
 struct Detection {
@@ -75,16 +84,22 @@ inline constexpr std::chrono::milliseconds kMaxPanicDelay{3000};
 /// @return Whether the thread started. When it can't start, nothing is armed.
 [[nodiscard]] bool arm_panic(EndProcess end_process, std::chrono::milliseconds delay) noexcept;
 
-/// The runtime's one response to a detection: when the built-in checks detected something, the process ends later.
+/// The runtime response to a detection: only enabled blocking groups arm the delayed process end.
 ///
-/// It judges `observations` as detect does. In a release build, when anything was detected, it arms a panic with
-/// arm_panic and returns. A dbg., hook. or virt. detection uses severe_panic_delay (100–500 ms); other detections use
-/// panic_delay (1–3 s). The process ends on the panic's own thread. A development build never ends the process: it
-/// logs `would panic: <signal>/<source>` once for each detection instead, and arms nothing.
+/// It judges `observations` as detect does. In a release build, when a blocking group detected something, it arms a
+/// panic with arm_panic and returns. A dbg., hook. or virt. detection uses severe_panic_delay (100–500 ms); other
+/// detections use panic_delay (1–3 s). Disabled groups arm nothing, including at startup and loader checkpoints.
+/// Only blocking detections choose the delay. Unknown groups and unreadable enabled-check configs block. The process
+/// ends on the panic's own thread. A development build never ends the process: it logs `would panic: <signal>/<source>`
+/// for blocking detections, `report only: <signal>/<source>` for report-only ones and `check off: <signal>/<source>`
+/// for disabled ones instead, and arms nothing.
 ///
 /// @param observations The observations of the built-in checks. A plugin's observations must not be passed.
 /// @param end_process The function that ends the process.
+/// @param config The runtime config, whose report-only mask selects the groups that never arm a panic.
+/// @param platform The platform whose check order defines that mask.
 /// @return Whether a panic was armed. Always `false` in a development build.
-[[nodiscard]] bool panic_on_detection(std::span<const Observation> observations, EndProcess end_process) noexcept;
+[[nodiscard]] bool panic_on_detection(std::span<const Observation> observations, EndProcess end_process,
+                                      const Config& config, CheckPlatform platform) noexcept;
 
 }  // namespace rasp

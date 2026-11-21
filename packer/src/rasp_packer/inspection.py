@@ -44,6 +44,7 @@ class InspectResult:
             protected.
         checks: The ids of the check groups the runtime's config turns on, sorted. Empty when the
             app is not protected.
+        actions: The action of each enabled group; empty for an unprotected app.
         abis: The ABIs whose native library directory carries the runtime, sorted. Empty on iOS
             and when the app is not protected.
     """
@@ -54,6 +55,7 @@ class InspectResult:
     build_id: str | None
     checks: tuple[str, ...]
     abis: tuple[str, ...]
+    actions: dict[str, check_groups.Action] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -62,6 +64,7 @@ class _Config:
 
     build_id: str
     checks: tuple[str, ...]
+    actions: dict[str, check_groups.Action]
 
 
 def inspect(*, app: pathlib.Path, platform: platforms.Platform) -> InspectResult:
@@ -196,7 +199,16 @@ def _parse_config(json_config: bytes, platform: platforms.Platform) -> _Config |
     enabled = sorted(
         check for index, check in enumerate(order) if mask & (1 << index) != 0
     )
-    return _Config(build_id=build_id, checks=tuple(enabled))
+    if "r" not in fields:
+        return _Config(build_id=build_id, checks=tuple(enabled), actions={})
+    report_mask = fields["r"]
+    if type(report_mask) is not int or report_mask < 0 or report_mask >= 1 << 64:
+        report_mask = 0
+    actions: dict[str, check_groups.Action] = {
+        group: "report" if report_mask & (1 << order.index(group)) else "block"
+        for group in enabled
+    }
+    return _Config(build_id=build_id, checks=tuple(enabled), actions=actions)
 
 
 def _result(
@@ -229,5 +241,6 @@ def _result(
         version=app_identity.version,
         build_id=configs[0].build_id,
         checks=configs[0].checks,
+        actions=configs[0].actions,
         abis=abis,
     )

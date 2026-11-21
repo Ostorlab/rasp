@@ -104,7 +104,7 @@ void* monitor(void* /*argument*/) {
   while (true) {
     heartbeat.beat(std::chrono::steady_clock::now());
     std::vector<Observation> builtin = run_checks(config);
-    static_cast<void>(panic_on_detection(builtin, end_process));
+    static_cast<void>(panic_on_detection(builtin, end_process, config, CheckPlatform::kAndroid));
     const std::vector<Observation> observations =
         rasp::plugins::run_plugins(rasp::plugins::compiled_in(), std::move(builtin), context);
     if constexpr (kLoggingEnabled) {

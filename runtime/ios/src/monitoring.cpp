@@ -173,7 +173,7 @@ void* monitor(void* argument) {
   while (true) {
     std::vector<Observation> builtin = run_checks(config, *environment);
     heartbeat.beat(std::chrono::steady_clock::now());
-    static_cast<void>(panic_on_detection(builtin, end_process));
+    static_cast<void>(panic_on_detection(builtin, end_process, config, CheckPlatform::kIos));
     const std::vector<Observation> observations =
         rasp::plugins::run_plugins(rasp::plugins::compiled_in(), std::move(builtin), context);
     if constexpr (kLoggingEnabled) {

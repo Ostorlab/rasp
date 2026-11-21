@@ -20,6 +20,7 @@
 #include <variant>
 #include <vector>
 
+#include "rasp/config.h"
 #include "rasp/observation.h"
 #include "rasp/util/logging.h"
 
@@ -114,48 +115,104 @@ constexpr std::string_view kTestKeysTag = "test-keys";
 struct Verdict {
   /// The signal, such as dbg.tracer_pid.
   std::string_view signal;
+  /// The check group that owns the signal, including when its sources disagree.
+  std::string_view group;
   /// Whether a `kOk` value of the signal is a positive finding.
   bool (*detected)(const Value& value);
 };
 
 /// The verdict for every signal the built-in checks of both platforms report.
 constexpr auto kVerdicts = std::to_array<Verdict>({
-    {.signal = "dbg.tracer_pid", .detected = is_positive},
-    {.signal = "dbg.traced", .detected = is_true},
-    {.signal = "dbg.parent", .detected = is_not_launchd},
-    {.signal = "dbg.exception_ports", .detected = informational},
-    {.signal = "dbg.java_debugger", .detected = is_true},
-    {.signal = "emu.props", .detected = is_non_empty_list},
-    {.signal = "emu.simulator", .detected = is_true},
-    {.signal = "hook.maps_hits", .detected = is_non_empty_list},
-    {.signal = "hook.rwx_regions", .detected = is_non_empty_list},
-    {.signal = "hook.threads", .detected = is_non_empty_list},
-    {.signal = "hook.dyld_env", .detected = is_non_empty_text},
-    {.signal = "hook.frida_port", .detected = is_true},
-    {.signal = "hook.inline", .detected = is_non_empty_list},
-    {.signal = "id.package", .detected = informational},
-    {.signal = "id.uid", .detected = informational},
-    {.signal = "id.code_path", .detected = informational},
-    {.signal = "id.bundle_id", .detected = informational},
-    {.signal = "id.team_id", .detected = informational},
-    {.signal = "id.cdhash", .detected = informational},
-    {.signal = "id.debuggable", .detected = is_true},
-    {.signal = "integ.text_sha256", .detected = informational},
-    {.signal = "integ.monitor_alive", .detected = is_false},
-    {.signal = "jb.fs_paths", .detected = is_non_empty_list},
-    {.signal = "jb.sandbox_escape", .detected = is_true},
-    {.signal = "jb.fork_ok", .detected = is_true},
-    {.signal = "mitm.tunnels", .detected = is_non_empty_list},
-    {.signal = "mitm.proxies", .detected = is_non_empty_list},
-    {.signal = "mitm.user_cas", .detected = is_non_empty_list},
-    {.signal = "root.fs_paths", .detected = is_non_empty_list},
-    {.signal = "root.mounts", .detected = is_non_empty_list},
-    {.signal = "root.rw_mounts", .detected = has_writable_system_mount},
-    {.signal = "root.selinux_enforcing", .detected = is_false},
-    {.signal = "root.build_props", .detected = has_unsafe_build_property},
-    {.signal = "virt.exec_path", .detected = is_true},
-    {.signal = "virt.foreign_images", .detected = is_non_empty_list},
+    {.signal = "sig.cert_sha256", .group = "identity", .detected = informational},
+    {.signal = "hw.machine", .group = "emulator", .detected = informational},
+    {.signal = "cs.valid", .group = "codesign", .detected = informational},
+    {.signal = "cs.debugged", .group = "codesign", .detected = informational},
+    {.signal = "cs.get_task_allow", .group = "codesign", .detected = informational},
+    {.signal = "cs.library_validation", .group = "codesign", .detected = informational},
+    {.signal = "hook.foreign_libs", .group = "hooks", .detected = informational},
+    {.signal = "dbg.tracer_pid", .group = "debugger", .detected = is_positive},
+    {.signal = "dbg.traced", .group = "debugger", .detected = is_true},
+    {.signal = "dbg.parent", .group = "debugger", .detected = is_not_launchd},
+    {.signal = "dbg.exception_ports", .group = "debugger", .detected = informational},
+    {.signal = "dbg.java_debugger", .group = "debugger", .detected = is_true},
+    {.signal = "emu.props", .group = "emulator", .detected = is_non_empty_list},
+    {.signal = "emu.simulator", .group = "emulator", .detected = is_true},
+    {.signal = "hook.maps_hits", .group = "hooks", .detected = is_non_empty_list},
+    {.signal = "hook.rwx_regions", .group = "hooks", .detected = is_non_empty_list},
+    {.signal = "hook.threads", .group = "hooks", .detected = is_non_empty_list},
+    {.signal = "hook.dyld_env", .group = "hooks", .detected = is_non_empty_text},
+    {.signal = "hook.frida_port", .group = "hooks", .detected = is_true},
+    {.signal = "hook.inline", .group = "hooks", .detected = is_non_empty_list},
+    {.signal = "id.package", .group = "identity", .detected = informational},
+    {.signal = "id.uid", .group = "identity", .detected = informational},
+    {.signal = "id.code_path", .group = "identity", .detected = informational},
+    {.signal = "id.bundle_id", .group = "identity", .detected = informational},
+    {.signal = "id.team_id", .group = "identity", .detected = informational},
+    {.signal = "id.cdhash", .group = "identity", .detected = informational},
+    {.signal = "id.debuggable", .group = "identity", .detected = is_true},
+    {.signal = "integ.text_sha256", .group = "integrity", .detected = informational},
+    {.signal = "integ.monitor_alive", .group = "integrity", .detected = is_false},
+    {.signal = "jb.fs_paths", .group = "jailbreak", .detected = is_non_empty_list},
+    {.signal = "jb.sandbox_escape", .group = "jailbreak", .detected = is_true},
+    {.signal = "jb.fork_ok", .group = "jailbreak", .detected = is_true},
+    {.signal = "mitm.tunnels", .group = "mitm", .detected = is_non_empty_list},
+    {.signal = "mitm.proxies", .group = "mitm", .detected = is_non_empty_list},
+    {.signal = "mitm.user_cas", .group = "mitm", .detected = is_non_empty_list},
+    {.signal = "root.fs_paths", .group = "root", .detected = is_non_empty_list},
+    {.signal = "root.mounts", .group = "root", .detected = is_non_empty_list},
+    {.signal = "root.rw_mounts", .group = "root", .detected = has_writable_system_mount},
+    {.signal = "root.selinux_enforcing", .group = "root", .detected = is_false},
+    {.signal = "root.build_props", .group = "root", .detected = has_unsafe_build_property},
+    {.signal = "virt.exec_path", .group = "virtualizer", .detected = is_true},
+    {.signal = "virt.foreign_images", .group = "virtualizer", .detected = is_non_empty_list},
 });
+
+/// The Android mask's groups, in the packer's CHECKS and monitoring dispatch order.
+constexpr auto kAndroidGroups =
+    std::to_array<std::string_view>({"root", "debugger", "hooks", "integrity", "mitm", "identity", "emulator"});
+/// The iOS mask's groups, in the packer's CHECKS and monitoring dispatch order.
+constexpr auto kIosGroups = std::to_array<std::string_view>(
+    {"jailbreak", "debugger", "hooks", "identity", "codesign", "emulator", "virtualizer", "mitm"});
+
+/// How a detection is handled after the group's enabled state and action are read.
+enum class DetectionResponse : std::uint8_t {
+  /// The detection arms the delayed end of the process.
+  kBlock,
+  /// The enabled group reports without arming a panic.
+  kReport,
+  /// The group is disabled, so even a startup or checkpoint detection arms nothing.
+  kOff,
+};
+
+/// Resolves a detection's enabled state and action. An unknown signal, group or enabled-check config blocks.
+[[nodiscard]] DetectionResponse detection_response(const Detection& detection, const Config& config,
+                                                   CheckPlatform platform) {
+  const auto* const verdict = std::ranges::find(kVerdicts, std::string_view(detection.signal), &Verdict::signal);
+  if (verdict == kVerdicts.end()) {
+    return DetectionResponse::kBlock;
+  }
+  const std::span<const std::string_view> groups = platform == CheckPlatform::kAndroid
+                                                       ? std::span<const std::string_view>(kAndroidGroups)
+                                                       : std::span<const std::string_view>(kIosGroups);
+  const auto group = std::ranges::find(groups, verdict->group);
+  if (group == groups.end()) {
+    return DetectionResponse::kBlock;
+  }
+  const auto bit = static_cast<unsigned>(group - groups.begin());
+  const std::uint64_t mask = std::uint64_t{1} << bit;
+  if (config.checks_mask.has_value()) {
+    if ((config.checks_mask.value() & mask) == 0) {
+      return DetectionResponse::kOff;
+    }
+  } else if (config.checks.has_value()) {
+    if (!std::ranges::contains(*config.checks, verdict->group)) {
+      return DetectionResponse::kOff;
+    }
+  } else {
+    return DetectionResponse::kBlock;
+  }
+  return (config.report_only_mask.value_or(0) & mask) != 0 ? DetectionResponse::kReport : DetectionResponse::kBlock;
+}
 
 /// Whether the `kOk` observation `observation` is a positive finding by its signal's verdict.
 [[nodiscard]] bool detected_by_value(const Observation& observation) {
@@ -255,12 +312,23 @@ bool arm_panic(EndProcess end_process, std::chrono::milliseconds delay) noexcept
   return started;
 }
 
-bool panic_on_detection(std::span<const Observation> observations, EndProcess end_process) noexcept {
-  const std::vector<Detection> detections = detect(observations);
-  if constexpr (kLoggingEnabled) {
-    for (const Detection& detection : detections) {
-      rasp::log("would panic: " + detection.signal + "/" + detection.source);
+bool panic_on_detection(std::span<const Observation> observations, EndProcess end_process, const Config& config,
+                        CheckPlatform platform) noexcept {
+  std::vector<Detection> detections = detect(observations);
+  std::erase_if(detections, [&](const Detection& detection) {
+    const DetectionResponse response = detection_response(detection, config, platform);
+    if constexpr (kLoggingEnabled) {
+      std::string_view prefix = "would panic: ";
+      if (response == DetectionResponse::kOff) {
+        prefix = "check off: ";
+      } else if (response == DetectionResponse::kReport) {
+        prefix = "report only: ";
+      }
+      rasp::log(std::string(prefix) + detection.signal + "/" + detection.source);
     }
+    return response != DetectionResponse::kBlock;
+  });
+  if constexpr (kLoggingEnabled) {
     return false;
   } else {
     const bool severe =

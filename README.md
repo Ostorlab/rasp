@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/9b5e266e-1334-4427-b5ec-0095379fac16
 
 - **Android and iOS:** APK, AAB and IPA.
 - **No source code changes:** protect the build you already ship.
-- **Choose the checks:** pick the check groups that fit your users.
+- **Choose the checks and actions:** report detections or block the app for each group.
 - **Detects:** root and jailbreak, debuggers, Frida and other hooking, emulators, app virtualizers, network
   interception (VPN tunnels and proxies), tampering with the runtime's code, and repackaged copies.
 - **Runs all the time:** the checks run when the app starts, then again at random intervals until the app exits.
@@ -99,7 +99,47 @@ result = packer.pack(
 - Pass the groups with `--checks` (or `checks=` in Python). `identity` is always added.
 - An unknown group is skipped with a warning, so a list written for an older version still packs.
 - Without `--checks`, the command line runs every check group the target platform supports. `checks=` in Python is required.
-- Some checks also run when the app starts, whatever the choice.
+- Some checks also run when the app starts, whatever the choice. Their enabled state and actions still apply.
+
+### Report or block
+
+A group has three states:
+
+- **Off:** omitted from `--checks`, so monitoring skips it. If startup or an Android loader checkpoint still runs
+  the check, its detections arm no panic.
+- **Report only:** enabled with `report`; monitoring runs it and plugins (including ADR) receive observations,
+  while detections at startup, in monitoring and at loader checkpoints arm no panic.
+- **Block:** enabled with `block`; a detection at any of those call sites arms the delayed process end.
+
+This changes `main`, where startup and checkpoint detections blocked whatever `--checks` selected.
+Only `report` and `block` are actions; Off disables the group. Choose overrides with
+`--report-only mitm,root` and `--block debugger,hooks`, or `report_only=` and `block=` in Python.
+An override must name an enabled group; the same group cannot have both actions.
+
+| Default action | Groups |
+|---|---|
+| `report` | `root`, `jailbreak`, `emulator`, `mitm` |
+| `block` | `debugger`, `hooks`, `integrity`, `codesign`, `virtualizer`, `identity` |
+
+The defaults live in the packer's single `DEFAULT_ACTIONS` table in `packer/src/rasp_packer/checks.py`: `report`
+for states of the device that honest users also have, `block` for attacks on the app. Configs without an action
+mask block enabled groups.
+If neither a check mask nor a list can be read,
+detections still block; an unreadable config never disables enforcement.
+A detection with an unknown group blocks. Development runtimes log actions and never arm a panic.
+
+On Android, Off and report-only control panic, not the independent DEX key schedule. At loader installation the key
+requires no native tracer, a JNI 1.x environment, a library under `/data/`, ownership of the package's data,
+`ro.debuggable` other than `1`, a non-debuggable app and plausible CPU/counter facts. Before each DEX decryption,
+the sensor guard requires no native tracer, an intact runtime `.text`, no framework maps, no unexpected RWX
+regions, no framework threads and no foreign libraries. These overlap `debugger`, `integrity`, `hooks`,
+`root`, `identity` and emulator-related environment checks. A tracer or changed sensor can therefore still
+prevent the app from loading or decrypting classes when its check group reports only. VPN, proxy and user-CA
+observations are not key inputs. The key schedule is unchanged; making these gates action-aware remains in TODO.
+The early non-dumpable process hardening also remains in force.
+
+The embedded config is cleartext and unauthenticated: the report-only mask has the same tampering limit as the
+checks mask. See `runtime_config.py` and `TODO.md`.
 
 ## Requirements
 

@@ -95,3 +95,18 @@ def testDefaultBuildId_whenTheAppIsMissing_raisesInvalidAppError(
         build_ids.default_build_id(
             app=tmp_path / "missing.ipa", platform=platforms.Platform.IOS, checks=[]
         )
+
+
+def testDefaultBuildId_whenActionsChange_returnsAnotherId(app: pathlib.Path) -> None:
+    """Enforcement changes must not reuse the default id of the previous policy."""
+    blocking = build_ids.default_build_id(
+        app=app, platform=platforms.Platform.IOS, checks=["debugger"]
+    )
+    reporting = build_ids.default_build_id(
+        app=app,
+        platform=platforms.Platform.IOS,
+        checks=["debugger"],
+        report_only=["debugger"],
+    )
+
+    assert blocking != reporting

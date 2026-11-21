@@ -12,6 +12,8 @@
 #include "checks/debugger.h"
 #include "checks/hooks.h"
 #include "panic/end_process.h"
+#include "rasp/config.h"
+#include "rasp/embedded_config.h"
 #include "rasp/observation.h"
 #include "rasp/panic.h"
 #include "rasp/util/logging.h"
@@ -33,6 +35,7 @@ namespace {
 }  // namespace
 
 void run_startup_checks(std::string_view inserted_libraries) noexcept {
+  const Config config = read_embedded_config();
   if constexpr (kLoggingEnabled) {
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     const std::vector<Observation> observations = startup_observations(inserted_libraries);
@@ -42,9 +45,10 @@ void run_startup_checks(std::string_view inserted_libraries) noexcept {
     for (const Observation& observation : observations) {
       rasp::log("start-up " + describe(observation));
     }
-    static_cast<void>(panic_on_detection(observations, end_process));
+    static_cast<void>(panic_on_detection(observations, end_process, config, CheckPlatform::kIos));
   } else {
-    static_cast<void>(panic_on_detection(startup_observations(inserted_libraries), end_process));
+    static_cast<void>(
+        panic_on_detection(startup_observations(inserted_libraries), end_process, config, CheckPlatform::kIos));
   }
 }
 

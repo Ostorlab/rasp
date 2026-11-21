@@ -34,8 +34,10 @@ result = packer.pack(
 ## Options
 
 - `--platform` (`platform=`): `android` or `ios`. When it is not given, the command line infers the platform from the app's extension, case-insensitively: `.apk` and `.aab` are Android, `.ipa` is iOS. Any other extension requires `--platform`.
-- `--build-id` (`build_id=`): the id of the protected build, written into the app as it is. `rasp pack` derives it when it is not given: the SHA-256 of the app's contents, the platform, the installed packer version and the resolved checks. The same inputs give the same id, and any change to the app, the packer version or the checks gives a new one. `pack` requires it.
+- `--build-id` (`build_id=`): the id of the protected build, written into the app as it is. `rasp pack` derives it when it is not given: the SHA-256 of the app's contents, the platform, the installed packer version the resolved checks and their actions. The same inputs give the same id, and any change to the app, the packer version the checks or their actions gives a new one. `pack` requires it.
 - `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added. Without `--checks`, the command line runs every group the target platform supports (`checks=` in Python is required). An unknown group is skipped with a warning. The warning suggests the closest matching group name. With `--strict`, `rasp pack` exits with status 1 instead. See the groups in the [repository's README](../README.md#checks).
+- `--report-only` (`report_only=`): enabled groups whose detections only report, in the same comma-separated syntax as `--checks`. Overrides the defaults.
+- `--block` (`block=`): enabled groups whose detections end the app. Overrides the defaults. A group in both options, or a known but disabled group, is an error. Unknown ids are skipped with warnings, or errors with `--strict`. See [actions, defaults and Android key-schedule limits](../README.md#report-or-block).
 - `--strict`: print an error for every unknown check group, write nothing, and exit with status 1, instead of skipping it with a warning.
 - `--output` (`output=`): where to write the protected app; an existing file at that path is refused. The command line defaults to `<name>-protected<extension>` next to the app, such as `app-protected.apk` for `app.apk`.
 - `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
@@ -49,13 +51,25 @@ result = packer.pack(
 - the check groups the app runs (`checks`)
 - the check groups it skipped (`skipped_checks`)
 
+## Enabled state and actions
+
+A group is Off when it is omitted from the resolved `--checks` list; monitoring skips it. Startup and Android
+loader checkpoints may still observe it, but those detections arm no panic. An enabled group set to `report`
+reports through monitoring plugins (including ADR) and arms no panic at startup, in monitoring or at checkpoints.
+An enabled group set to `block` arms the delayed process end on detection at any of those call sites.
+This changes `main`, where startup and checkpoint checks blocked regardless of `--checks`.
+
+An unreadable enabled-check mask and list still make detections block; missing action metadata does not disable
+an enabled group. Unknown runtime signals and platform groups also block. Android's independent DEX key schedule
+is unchanged by Off and report-only. See the [defaults and remaining key-schedule limits](../README.md#report-or-block).
+
 ## How do I sign the protected app?
 
 The packer returns the app unsigned and prints a reminder after a successful `rasp pack`. Sign it with your upload key (Play App Signing then signs the copy users install) or your release key, and on iOS with your distribution certificate and provisioning profile.
 
 ## How do I check whether an app is protected?
 
-**`rasp inspect`** opens a built app, never modifies it, and reports whether it carries the RASP runtime. For a protected app it also prints the build id and the check groups from the runtime's config, and on Android the ABIs that carry the runtime. It does not run the app, so it cannot tell whether a check actually fires, only that the runtime and its config are present.
+**`rasp inspect`** opens a built app, never modifies it, and reports whether it carries the RASP runtime. For a protected app it also prints each group's action, the build id and the check groups from the runtime's config, and on Android the ABIs that carry the runtime. It does not run the app, so it cannot tell whether a check actually fires, only that the runtime and its config are present.
 
 ```
 rasp inspect app-protected.apk --platform android
@@ -67,10 +81,15 @@ package    com.example.app
 version    2.4.1
 build id   my-build-1
 checks     debugger,hooks,identity,root
+actions    debugger=block,hooks=block,identity=block,root=report
 abis       arm64-v8a,armeabi-v7a
 ```
 
-An app without the runtime is not an error: `inspect` prints `protected  no` with its package and version and exits 0. With `--json`, `inspect` prints one JSON object with sorted keys instead: `abis` (an array of ABIs), `build_id` (a string, or null for an unprotected app), `checks` (an array of check ids), `package_name`, `protected` and `version`. `checks` and `abis` are always present: both are empty arrays for an unprotected app, and `abis` is also empty on iOS. From Python, `rasp_packer.inspection.inspect(app=pathlib.Path("app-protected.apk"), platform=platforms.Platform.ANDROID)` returns the same fields.
+An app without the runtime is not an error: `inspect` prints `protected  no` with its package and version and exits 0. With `--json`, `inspect` prints one JSON object with sorted keys instead: `actions` (an object from enabled group id to `report` or `block`, empty for an unprotected app or a config written before actions), `abis` (an array of ABIs), `build_id` (a string, or null for an unprotected app), `checks` (an array of check ids), `package_name`, `protected` and `version`. `checks` and `abis` are always present: both are empty arrays for an unprotected app, and `abis` is also empty on iOS. From Python, `rasp_packer.inspection.inspect(app=pathlib.Path("app-protected.apk"), platform=platforms.Platform.ANDROID)` returns the same fields.
+
+A protected app packed before actions has no `r` key. Its runtime behavior cannot be inferred from that config:
+`inspect` leaves the text `actions` line out and returns an empty `actions` object in JSON. This differs from the
+new runtime's conservative enforcement rule when it reads a missing `r` key.
 
 ## When does `rasp` print the banner?
 

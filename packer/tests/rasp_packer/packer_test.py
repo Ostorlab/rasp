@@ -44,7 +44,7 @@ def testPack_whenIosApp_packsWithAConfigHoldingTheGivenBuildId(
         "app": ipa_file,
         "output": tmp_path / "out.ipa",
         "config": runtime_config.RuntimeConfig(
-            build_id=_BUILD_ID, checks=("identity",), checks_mask=8
+            build_id=_BUILD_ID, checks=("identity",), checks_mask=8, report_only_mask=0
         ),
     }
 
@@ -129,6 +129,7 @@ def testPack_whenGivenChecks_packsWithAConfigHoldingThemSortedWithTheRequiredOne
             build_id=_BUILD_ID,
             checks=("debugger", "identity", "jailbreak"),
             checks_mask=11,
+            report_only_mask=1,
         )
     ]
 
@@ -153,7 +154,7 @@ def testPack_whenGivenNoChecks_packsWithAConfigHoldingOnlyTheRequiredOnes(
 
     assert configs == [
         runtime_config.RuntimeConfig(
-            build_id=_BUILD_ID, checks=("identity",), checks_mask=8
+            build_id=_BUILD_ID, checks=("identity",), checks_mask=8, report_only_mask=0
         )
     ]
 
@@ -179,7 +180,10 @@ def testPack_whenChecksAreNotOfThePlatform_packsWithTheOthersAndReportsThem(
 
     assert configs == [
         runtime_config.RuntimeConfig(
-            build_id=_BUILD_ID, checks=("hooks", "identity"), checks_mask=12
+            build_id=_BUILD_ID,
+            checks=("hooks", "identity"),
+            checks_mask=12,
+            report_only_mask=0,
         )
     ]
     assert result.checks == ("hooks", "identity")
@@ -238,7 +242,7 @@ def testPack_whenAndroidApp_packsWithAConfigHoldingTheGivenBuildId(
         "app": app,
         "output": tmp_path / "out.apk",
         "config": runtime_config.RuntimeConfig(
-            build_id=_BUILD_ID, checks=("identity",), checks_mask=32
+            build_id=_BUILD_ID, checks=("identity",), checks_mask=32, report_only_mask=0
         ),
     }
 

@@ -111,5 +111,16 @@ TEST(ParseConfig, parseConfig_whenTheStubClassIsNotAString_leavesItUnset) {
   EXPECT_FALSE(parse_config(R"({"s":127})").stub_class.has_value());
 }
 
+TEST(ParseConfig, parseConfig_whenTheReportMaskIsValid_readsItIncludingZero) {
+  EXPECT_EQ(parse_config(R"({"r":129})").report_only_mask, 129U);
+  EXPECT_EQ(parse_config(R"({"r":0})").report_only_mask, 0U);
+}
+
+TEST(ParseConfig, parseConfig_whenTheReportMaskIsMissingOrInvalid_leavesAllGroupsBlocking) {
+  for (const auto* json : {"{}", R"({"r":-1})", R"({"r":true})", R"({"r":"1"})", R"({"r":1.5})", R"({"r":null})"}) {
+    EXPECT_FALSE(parse_config(json).report_only_mask.has_value()) << json;
+  }
+}
+
 }  // namespace
 }  // namespace rasp

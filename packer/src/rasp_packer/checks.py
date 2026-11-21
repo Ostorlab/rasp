@@ -8,7 +8,9 @@ writes them into the runtime's config, and the runtime runs only those.
 import collections.abc
 import dataclasses
 import difflib
+import typing
 
+from rasp_packer import errors
 from rasp_packer import platforms
 
 CHECKS: collections.abc.Mapping[platforms.Platform, tuple[str, ...]] = {
@@ -33,6 +35,25 @@ CHECKS: collections.abc.Mapping[platforms.Platform, tuple[str, ...]] = {
     ),
 }
 """The ids of the check groups of each platform, in the order the runtime runs them."""
+
+Action = typing.Literal["report", "block"]
+"""The two responses to a detection of a check group."""
+
+DEFAULT_ACTIONS: collections.abc.Mapping[str, Action] = {
+    "root": "report",
+    "jailbreak": "report",
+    "emulator": "report",
+    "mitm": "report",
+    "debugger": "block",
+    "hooks": "block",
+    "integrity": "block",
+    "codesign": "block",
+    "virtualizer": "block",
+    "identity": "block",
+}
+"""The default action of every check group: `report` for states of the device that honest users also have, and
+`block` for attacks on the app."""
+
 
 REQUIRED_CHECKS: frozenset[str] = frozenset({"identity"})
 """The ids of the check groups every protected app runs, whatever the caller chooses, on every platform."""
@@ -59,6 +80,7 @@ class ResolvedChecks:
     """The check groups the runtime's config lists, and the ids the packer skipped.
 
     Attributes:
+        actions: The action of each enabled group, after defaults and overrides.
         checks: The chosen ids that are check groups of the platform, and the required ones, each
             once, sorted.
         skipped: The chosen ids that are not check groups of the platform, each once, in the order
@@ -66,18 +88,28 @@ class ResolvedChecks:
             passes a check group that was renamed or removed.
     """
 
+    actions: dict[str, Action]
     checks: tuple[str, ...]
     skipped: tuple[str, ...]
 
 
 def resolve_checks(
-    platform: platforms.Platform, checks: collections.abc.Iterable[str]
+    platform: platforms.Platform,
+    checks: collections.abc.Iterable[str],
+    *,
+    report_only: collections.abc.Iterable[str] = (),
+    block: collections.abc.Iterable[str] = (),
 ) -> ResolvedChecks:
     """Turns the check groups a caller chose into those the runtime's config lists.
 
     Args:
         platform: The platform of the app.
         checks: The ids of the groups the caller chose. A repeated id counts once.
+        report_only: The enabled groups whose detections only report.
+        block: The enabled groups whose detections end the app.
+
+    Raises:
+        InvalidCheckActionError: An enabled group has both actions, or an override names a disabled group.
 
     Returns:
         The chosen ids that are check groups of the platform with the required ones, and the
@@ -90,7 +122,25 @@ def resolve_checks(
             resolved.add(check)
         else:
             skipped[check] = None
-    return ResolvedChecks(checks=tuple(sorted(resolved)), skipped=tuple(skipped))
+    actions = {group: DEFAULT_ACTIONS[group] for group in sorted(resolved)}
+    reports = dict.fromkeys(report_only)
+    blocks = dict.fromkeys(block)
+    for group in dict.fromkeys((*reports, *blocks)):
+        if group not in CHECKS[platform]:
+            skipped[group] = None
+            continue
+        if group in reports and group in blocks:
+            raise errors.InvalidCheckActionError(
+                f"{group!r} is listed in both report-only and block"
+            )
+        if group not in resolved:
+            raise errors.InvalidCheckActionError(
+                f"{group!r} is not an enabled check of {platform}"
+            )
+        actions[group] = "report" if group in reports else "block"
+    return ResolvedChecks(
+        actions=actions, checks=tuple(sorted(resolved)), skipped=tuple(skipped)
+    )
 
 
 def suggest_check(platform: platforms.Platform, check: str) -> str | None:

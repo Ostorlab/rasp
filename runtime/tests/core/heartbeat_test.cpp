@@ -142,7 +142,7 @@ TEST(Heartbeat, panicOnDetection_whenTheHeartbeatIsReportedStopped_armsAPanic) {
   heartbeat.beat(at(milliseconds{0}));
   ASSERT_EQ(heartbeat.observe(at(kStale)), monitor_alive(true));
   const std::vector<Observation> observations = {heartbeat.observe(at(kStale + kStaleConfirmation))};
-  EXPECT_TRUE(panic_on_detection(observations, record_end));
+  EXPECT_TRUE(panic_on_detection(observations, record_end, {}, CheckPlatform::kAndroid));
   const steady_clock::time_point deadline = steady_clock::now() + kMaxPanicDelay + seconds{2};
   while (end_calls().load() == 0 && steady_clock::now() < deadline) {
     std::this_thread::sleep_for(milliseconds{10});
@@ -152,7 +152,7 @@ TEST(Heartbeat, panicOnDetection_whenTheHeartbeatIsReportedStopped_armsAPanic) {
 
 TEST(Heartbeat, panicOnDetection_whenTheHeartbeatIsReportedAlive_armsNothing) {
   const std::vector<Observation> observations = {monitor_alive(true)};
-  EXPECT_FALSE(panic_on_detection(observations, record_end));
+  EXPECT_FALSE(panic_on_detection(observations, record_end, {}, CheckPlatform::kAndroid));
 }
 
 }  // namespace

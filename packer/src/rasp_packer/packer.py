@@ -51,6 +51,8 @@ def pack(
     output: pathlib.Path,
     build_id: str,
     checks: collections.abc.Sequence[str],
+    report_only: collections.abc.Sequence[str] = (),
+    block: collections.abc.Sequence[str] = (),
     mapping: pathlib.Path | None = None,
     pin_certificate: pathlib.Path | None = None,
 ) -> PackResult:
@@ -76,6 +78,8 @@ def pack(
         build_id: The id of the protected build, written into the runtime's config.
         checks: The ids of the check groups the protected app runs. An empty sequence runs only
             the required groups. An id that is not one of the platform's groups is skipped.
+        report_only: The enabled groups whose detections only report, overriding their defaults.
+        block: The enabled groups whose detections end the app, overriding their defaults.
         mapping: The app's R8/ProGuard mapping file, for an Android release build R8 repackaged. It
             lets the packer find the app's own classes by their obfuscated names. Only Android apps
             have one: it is refused for iOS.
@@ -88,6 +92,7 @@ def pack(
         app runs, and the skipped check ids.
 
     Raises:
+        InvalidCheckActionError: An override conflicts or names a disabled group.
         InvalidBuildIdError: The build id is empty or has control characters.
         OutputExistsError: `output` already exists.
         DangerousAppError: The app archive holds an unsafe entry (encrypted, a symlink, or escaping
@@ -97,7 +102,9 @@ def pack(
         Error: The app cannot be packed; see the platform's packer.
     """
     _check_build_id(build_id)
-    resolved_checks = check_groups.resolve_checks(platform, checks)
+    resolved_checks = check_groups.resolve_checks(
+        platform, checks, report_only=report_only, block=block
+    )
     if output.exists() is True:
         raise errors.OutputExistsError(f"{output} already exists")
     if archive_safety.is_dangerous(app) is True:
@@ -109,6 +116,14 @@ def pack(
         build_id=build_id,
         checks=resolved_checks.checks,
         checks_mask=check_groups.checks_mask(platform, resolved_checks.checks),
+        report_only_mask=check_groups.checks_mask(
+            platform,
+            [
+                group
+                for group, action in resolved_checks.actions.items()
+                if action == "report"
+            ],
+        ),
     )
     app_identity: identity.AppIdentity
     match platform:

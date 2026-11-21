@@ -10,6 +10,7 @@
 #include <thread>
 #include <vector>
 
+#include "rasp/config.h"
 #include "rasp/observation.h"
 #include "rasp/panic.h"
 #include "rasp/util/logging.h"
@@ -44,6 +45,7 @@ void log(std::string_view message) noexcept { logged().emplace_back(message); }
 namespace {
 
 TEST(PanicDevelopment, panicOnDetection_whenSomethingIsDetected_logsEachDetectionAndNeverEndsTheProcess) {
+  logged().clear();
   ASSERT_TRUE(kLoggingEnabled);
   const std::vector<Observation> observations = {
       observed("dbg.tracer_pid", "proc_status", std::int64_t{4242}),
@@ -58,10 +60,43 @@ TEST(PanicDevelopment, panicOnDetection_whenSomethingIsDetected_logsEachDetectio
       "would panic: integ.text_sha256/file!=memory",
   };
 
-  EXPECT_FALSE(panic_on_detection(observations, record_end));
+  EXPECT_FALSE(panic_on_detection(observations, record_end, {}, CheckPlatform::kAndroid));
 
   EXPECT_EQ(logged(), expected);
   std::this_thread::sleep_for(kMaxPanicDelay + std::chrono::milliseconds{500});
+  EXPECT_EQ(end_calls().load(), 0);
+}
+
+TEST(PanicDevelopment, panicOnDetection_whenAGroupReports_logsItsActionAndKeepsBlockingLogsDistinct) {
+  logged().clear();
+  const std::vector<Observation> observations = {
+      observed("mitm.tunnels", "getifaddrs", std::vector<std::string>{"tun0"}),
+      observed("dbg.tracer_pid", "proc_status", std::int64_t{42}),
+  };
+  EXPECT_FALSE(panic_on_detection(observations, record_end,
+                                  {.build_id = {}, .checks_mask = 0xFF, .report_only_mask = 1U << 4},
+                                  CheckPlatform::kAndroid));
+  const std::vector<std::string> expected = {"report only: mitm.tunnels/getifaddrs",
+                                             "would panic: dbg.tracer_pid/proc_status"};
+  EXPECT_EQ(logged(), expected);
+  EXPECT_EQ(end_calls().load(), 0);
+}
+
+TEST(PanicDevelopment, panicOnDetection_whenAGroupIsOff_logsItDistinctlyFromReportAndBlock) {
+  logged().clear();
+  const std::vector<Observation> observations = {
+      observed("root.fs_paths", "access", std::vector<std::string>{"su"}),
+      observed("mitm.tunnels", "getifaddrs", std::vector<std::string>{"tun0"}),
+      observed("dbg.tracer_pid", "proc_status", std::int64_t{42}),
+  };
+  const Config config{.build_id = {}, .checks_mask = (1U << 1) | (1U << 4), .report_only_mask = 1U << 4};
+  EXPECT_FALSE(panic_on_detection(observations, record_end, config, CheckPlatform::kAndroid));
+  const std::vector<std::string> expected = {
+      "check off: root.fs_paths/access",
+      "report only: mitm.tunnels/getifaddrs",
+      "would panic: dbg.tracer_pid/proc_status",
+  };
+  EXPECT_EQ(logged(), expected);
   EXPECT_EQ(end_calls().load(), 0);
 }
 

@@ -63,3 +63,7 @@ class InvalidRuntimeError(Error):
 
 class ConfigTooLargeError(Error):
     """The runtime's config does not fit in the space the runtime's binary keeps for it."""
+
+
+class InvalidCheckActionError(Error):
+    """An action names a disabled group or gives one group two conflicting actions."""

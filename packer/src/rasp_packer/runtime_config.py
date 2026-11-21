@@ -12,7 +12,8 @@ import json
 from rasp_packer import errors
 
 # TODO: the config ships in the clear in the runtime's binary, so anyone who reads the binary can read it.
-# Encrypt it.
+# It is not authenticated either: the checks mask and report-only mask can be changed.
+# Encrypt and authenticate it.
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -24,6 +25,8 @@ class RuntimeConfig:
         checks: The ids of the check groups the protected app runs, sorted.
         checks_mask: The same groups as a mask, one bit per group in the platform's run order, which
             is the form the config carries: the shipped library names no check group.
+        report_only_mask: The report-only groups, in the same bit order as checks_mask. None
+            omits the field, which makes every group block as older configs do.
         stub_class: The name of the app's component factory class, with ``.`` separators: the stub the
             packer points the manifest at, whose native entry points the runtime binds. Empty when the
             platform has no stub (iOS), which leaves the field out of the JSON.
@@ -32,6 +35,7 @@ class RuntimeConfig:
     build_id: str
     checks: tuple[str, ...]
     checks_mask: int
+    report_only_mask: int | None = None
     stub_class: str = ""
 
     def to_json(self) -> bytes:
@@ -42,9 +46,11 @@ class RuntimeConfig:
         without carrying the class name in its own bytes.
 
         Returns:
-            A JSON object with the build id, the check mask and the stub class, in UTF-8.
+            A JSON object with the build id, the check mask, the optional report-only mask and stub class, in UTF-8.
         """
         fields: dict[str, object] = {"build_id": self.build_id, "m": self.checks_mask}
+        if self.report_only_mask is not None:
+            fields["r"] = self.report_only_mask
         if self.stub_class:
             fields["s"] = self.stub_class
         return json.dumps(

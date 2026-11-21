@@ -92,6 +92,18 @@ def _parser() -> argparse.ArgumentParser:
         f"{_required_checks()} always runs (default: every check group of the platform)",
     )
     pack.add_argument(
+        "--report-only",
+        type=_split_checks,
+        default=[],
+        help="the enabled groups whose detections only report, comma-separated; overrides their defaults",
+    )
+    pack.add_argument(
+        "--block",
+        type=_split_checks,
+        default=[],
+        help="the enabled groups whose detections end the app, comma-separated; overrides their defaults",
+    )
+    pack.add_argument(
         "--strict",
         action="store_true",
         help="fail without writing anything when a given check id is not a check of the platform, "
@@ -214,8 +226,18 @@ def _pack(arguments: argparse.Namespace) -> int:
     checks: list[str] | None = arguments.checks
     if checks is None:
         checks = list(check_groups.CHECKS[arguments.platform])
+    try:
+        resolved = check_groups.resolve_checks(
+            arguments.platform,
+            checks,
+            report_only=arguments.report_only,
+            block=arguments.block,
+        )
+    except errors.Error as error:
+        print(f"rasp pack: {error}", file=sys.stderr)
+        return EXIT_FAILED
     if arguments.strict is True:
-        unknown = check_groups.resolve_checks(arguments.platform, checks).skipped
+        unknown = resolved.skipped
         for check in unknown:
             print(
                 f"rasp pack: error: {_unknown_check_message(arguments.platform, check, skipped=False)}",
@@ -227,10 +249,18 @@ def _pack(arguments: argparse.Namespace) -> int:
     if output is None:
         output = packer.default_output_path(arguments.app)
     build_id: str | None = arguments.build_id
+    action_arguments = {}
+    if arguments.report_only:
+        action_arguments["report_only"] = arguments.report_only
+    if arguments.block:
+        action_arguments["block"] = arguments.block
     try:
         if build_id is None:
             build_id = build_ids.default_build_id(
-                app=arguments.app, platform=arguments.platform, checks=checks
+                app=arguments.app,
+                platform=arguments.platform,
+                checks=checks,
+                **action_arguments,
             )
         result = packer.pack(
             app=arguments.app,
@@ -238,6 +268,7 @@ def _pack(arguments: argparse.Namespace) -> int:
             output=output,
             build_id=build_id,
             checks=checks,
+            **action_arguments,
             mapping=arguments.mapping,
             pin_certificate=getattr(arguments, "pin_certificate", None),
         )
@@ -297,6 +328,15 @@ def _inspect(arguments: argparse.Namespace) -> int:
     if result.build_id is not None:
         lines.append(("build id", result.build_id))
         lines.append(("checks", ",".join(result.checks)))
+    if len(result.actions) > 0:
+        lines.append(
+            (
+                "actions",
+                ",".join(
+                    f"{group}={action}" for group, action in result.actions.items()
+                ),
+            )
+        )
     if len(result.abis) > 0:
         lines.append(("abis", ",".join(result.abis)))
     width = max(len(label) for label, _ in lines)

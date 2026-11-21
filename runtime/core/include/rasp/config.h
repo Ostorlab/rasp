@@ -22,6 +22,9 @@ struct Config {
   /// the order the platform's monitoring runs them. `std::nullopt` when the runtime can't read a mask: then the
   /// groups come from `checks`.
   std::optional<std::uint64_t> checks_mask = std::nullopt;
+  /// The report-only groups, in the same platform bit order as checks_mask. Missing or invalid means every group
+  /// blocks when enabled. Unknown groups and an unreadable enabled-check config also block.
+  std::optional<std::uint64_t> report_only_mask = std::nullopt;
   /// The id of this install of the app, a random UUID such as `0f8e5b8e-6c1a-4b7e-9d3a-2a4c5e6f7a8b`, which the runtime
   /// creates on the first launch and keeps in the app's own storage (`install_id.h`). `std::nullopt` when the runtime
   /// can't read or keep it. The packer does not write it.

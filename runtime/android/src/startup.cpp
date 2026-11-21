@@ -14,6 +14,8 @@
 #include "checks/integrity.h"
 #include "checks/root.h"
 #include "panic/end_process.h"
+#include "rasp/config.h"
+#include "rasp/embedded_config.h"
 #include "rasp/observation.h"
 #include "rasp/panic.h"
 #include "rasp/util/logging.h"
@@ -37,6 +39,7 @@ namespace {
 }  // namespace
 
 void run_startup_checks() noexcept {
+  const Config config = read_embedded_config();
   if constexpr (kLoggingEnabled) {
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     const std::vector<Observation> observations = startup_observations();
@@ -46,9 +49,9 @@ void run_startup_checks() noexcept {
     for (const Observation& observation : observations) {
       rasp::log("start-up " + describe(observation));
     }
-    static_cast<void>(panic_on_detection(observations, end_process));
+    static_cast<void>(panic_on_detection(observations, end_process, config, CheckPlatform::kAndroid));
   } else {
-    static_cast<void>(panic_on_detection(startup_observations(), end_process));
+    static_cast<void>(panic_on_detection(startup_observations(), end_process, config, CheckPlatform::kAndroid));
   }
 }
 

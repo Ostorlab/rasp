@@ -80,6 +80,7 @@ Config parse_config(std::string_view json) {
       .build_id = read_text(yyjson_obj_get(root, "build_id")),
       .checks = read_texts(yyjson_obj_get(root, "checks")),
       .checks_mask = read_mask(yyjson_obj_get(root, "m")),
+      .report_only_mask = read_mask(yyjson_obj_get(root, "r")),
       .stub_class = read_optional_text(yyjson_obj_get(root, "s")),
   };
   yyjson_doc_free(document);

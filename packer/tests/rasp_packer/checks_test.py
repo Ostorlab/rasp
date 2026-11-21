@@ -132,3 +132,35 @@ def testSuggestCheck_whenTheCloseCheckIsOfTheOtherPlatform_returnsNone() -> None
     suggestion = checks.suggest_check(platforms.Platform.ANDROID, "jailbrek")
 
     assert suggestion is None
+
+
+@pytest.mark.parametrize("platform", list(platforms.Platform))
+def testActionMask_whenComparedWithTheRuntime_usesTheDispatchOrder(
+    platform: platforms.Platform,
+) -> None:
+    """The action filter and enabled-check mask assign the same bit to each group."""
+    panic = (_RUNTIME / "core" / "src" / "panic.cpp").read_text()
+    name = "kAndroidGroups" if platform == platforms.Platform.ANDROID else "kIosGroups"
+    declaration = panic.split(name + " =", 1)[1].split(";", 1)[0]
+
+    assert tuple(re.findall(r'"(\w+)"', declaration)) == checks.CHECKS[platform]
+    assert set(checks.DEFAULT_ACTIONS) == set().union(*checks.CHECKS.values())
+
+
+def testVerdicts_whenComparedWithBuiltInChecks_coverEverySignalConstant() -> None:
+    """Every built-in signal, including those produced outside checks, has an explicit group."""
+    panic = (_RUNTIME / "core" / "src" / "panic.cpp").read_text()
+    verdicts = set(re.findall(r'\.signal = "([a-z]+\.[a-z0-9_]+)"', panic))
+    signals = {"integ.monitor_alive", "id.debuggable", "hook.inline", "hw.machine"}
+    for platform in platforms.Platform:
+        for source in (_RUNTIME / platform / "src" / "checks").glob("*.cpp"):
+            signals.update(
+                re.findall(
+                    r'constexpr\s+std::string_view\s+k\w*Signal\s*=\s*"([^"]+)"',
+                    source.read_text(),
+                )
+            )
+
+    assert signals <= verdicts, (
+        f"built-in signals without a verdict: {sorted(signals - verdicts)}"
+    )

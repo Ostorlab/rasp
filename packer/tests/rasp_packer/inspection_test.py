@@ -123,6 +123,7 @@ def testInspect_whenApkIsProtected_reportsTheConfigTheIdentityAndTheAbis(
         version="2.4.1",
         build_id=_BUILD_ID,
         checks=_ANDROID_CHECKS,
+        actions={},
         abis=("arm64-v8a", "x86_64"),
     )
 
@@ -234,6 +235,7 @@ def testInspect_whenIpaIsProtected_reportsTheConfigAndTheIdentity(
         version=conftest.VERSION,
         build_id=_BUILD_ID,
         checks=_IOS_CHECKS,
+        actions={},
         abis=(),
     )
 

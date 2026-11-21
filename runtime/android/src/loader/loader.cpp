@@ -49,8 +49,10 @@ namespace rasp::android::loader {
 
 namespace {
 
-/// Everything the installed loader needs, built once in `install` and kept for the life of the process.
+/// Everything the installed loader needs, built once and populated in `install`, kept for the life of the process.
 struct State {
+  /// The embedded config, read once and shared by every checkpoint and the JNI entry.
+  const Config config = read_embedded_config();
   /// Where a class defined from a business dex looks for the app's native libraries, for System.loadLibrary.
   std::string library_search_path;
   /// The class map and the dex master, opened in `install` from the root key the schedule recovered; empty when the
@@ -91,9 +93,10 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
 /// each call site holds its own copy, and patching one call site leaves the others. A development build logs the call
 /// site, how many classes were served since the last checkpoint, how long the check took and what it observed.
 ///
+/// @param config The loader's cached embedded config.
 /// @param site The call site, for development logs.
 /// @param name The binary name of the class being served, for development logs.
-[[gnu::always_inline]] inline void checkpoint(int site, const std::string& name) noexcept {
+[[gnu::always_inline]] inline void checkpoint(const Config& config, int site, const std::string& name) noexcept {
   static constinit RateLimit limit{kCheckpointInterval};
   static constinit std::atomic<std::uint32_t> served{0};
   if constexpr (kLoggingEnabled) {
@@ -127,7 +130,7 @@ constexpr std::chrono::milliseconds kCheckpointInterval{1000};
     }
     rasp::log(line);
   }
-  static_cast<void>(panic_on_detection(observations, end_process));
+  static_cast<void>(panic_on_detection(observations, end_process, config, CheckPlatform::kAndroid));
 }
 
 /// The environment the key schedule's gates measure, as the loader sees it at install time.
@@ -310,7 +313,7 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
   // best effort, since Android's memory-lock limit is often smaller than a dex; the pages are unlocked again right
   // after the wipe either way.
   static_cast<void>(::mlock(bytes->data(), bytes->size()));
-  checkpoint(2, name);
+  checkpoint(current.config, 2, name);
   jobject child = make_child_loader(env, generating, *bytes);
   // ART copies the buffer while it creates the loader, so our copy is wiped right after: no decrypted dex outlives
   // this call.
@@ -362,7 +365,7 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
     }
   }
   if (is_cached) {
-    checkpoint(1, name);
+    checkpoint(current.config, 1, name);
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): JNI jobject to jclass.
     return static_cast<jclass>(cached);
   }
@@ -423,7 +426,7 @@ void throw_class_not_found(JNIEnv* env, const std::string& name) {
     }
   }
   if (owner != nullptr) {
-    checkpoint(3, name);
+    checkpoint(current.config, 3, name);
   }
   return defined;
 }
@@ -687,7 +690,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     return JNI_ERR;
   }
   auto* env = static_cast<JNIEnv*>(raw_env);
-  const rasp::Config config = rasp::read_embedded_config();
+  const rasp::Config& config = rasp::android::loader::state().config;
   if (!config.stub_class.has_value() || config.stub_class->empty()) {
     return JNI_ERR;
   }
