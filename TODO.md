@@ -29,6 +29,10 @@ Work that is known and not done yet. Each item says what is missing and why it m
 - **Root hiding defeats these checks.** Magisk's DenyList and Shamiko unmount the root tool's files and mounts for the app, and `resetprop` changes the build properties. The checks catch a device that doesn't hide its root. Catching one that does needs probes the hiding doesn't cover, such as the app's own memory map and threads.
 - **Installed root apps aren't checked.** An installed root manager, an app that needs root, or a root-hiding app is a strong signal. RootBeer, an open-source Android root-detection library, lists their package names in its `Const.java`, and KernelSU (`me.weishu.kernelsu`) and HideMyApplist (`com.tsng.hidemyapplist`) belong on that list too. Looking them up needs `PackageManager` through JNI. Since Android 11, an app only sees the packages its manifest declares in `<queries>`, so the packer would have to add them. Magisk can also reinstall its app under a random package name.
 
+## Release
+
+- **The packer isn't published to PyPI.** A release attaches the packer's wheel to its GitHub release, so installing it means downloading that file by URL. A release should also publish the packer to PyPI, so `pip install` works by name.
+
 ## Packer: Android
 
 - **Only the manifest's package counts as the app's own code.** The packer encrypts the classes under the package the manifest declares, or the packages an R8 mapping maps back to it, and leaves every other class in the clear. An app often keeps its code in other packages too: shared modules, a company-wide namespace, or an application id that differs from the code's package. That code ships unprotected, and the user has no way to name those packages as theirs.
