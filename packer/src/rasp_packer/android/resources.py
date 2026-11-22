@@ -3,8 +3,7 @@
 Two artifacts come from the runtime build, not from the packer:
 
 - the stub dex: the small, generic component factory the manifest points to. It
-  declares the class the packer renames per app (defingerprint), which for older
-  packs was STUB_FACTORY_CLASS.
+  declares the class the packer renames per app (defingerprint).
 - the native runtime library, one per ABI. The stub loads it with
   System.loadLibrary, so the packer ships each under the per-app name it draws,
   or RUNTIME_LIBRARY when a caller asks for the default name.
@@ -22,8 +21,6 @@ import pathlib
 
 from rasp_packer import errors
 
-# The stub class of older packs, which carried the vendor's name; kept for tests of that legacy format.
-STUB_FACTORY_CLASS = "co.ostorlab.rasp.RaspStub"
 # The runtime library's default filename, the fallback of injection.library_entries.
 RUNTIME_LIBRARY = "librasp.so"
 
