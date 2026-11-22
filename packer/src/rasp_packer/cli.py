@@ -94,13 +94,22 @@ def _parser() -> argparse.ArgumentParser:
         help="extra Java packages to encrypt, comma-separated and repeatable, such as "
         "com.vendor.sdk; the manifest package is always encrypted",
     )
+    android.add_argument(
+        "--abis",
+        type=_split_abis,
+        default=None,
+        help="the ABIs the protected app supports, comma-separated, such as arm64-v8a,armeabi-v7a; the "
+        "app's native libraries for any other ABI are dropped (default: the app's own ABIs)",
+    )
     ios = pack_platforms.add_parser(
         "ios",
         help="protect an iOS app, an IPA",
         description="Adds the runtime to a built iOS app, an IPA. The result is unsigned.",
     )
     _add_pack_arguments(ios, platforms.Platform.IOS)
-    ios.set_defaults(mapping=None, pin_certificate=None, encrypt_package=None)
+    ios.set_defaults(
+        mapping=None, pin_certificate=None, encrypt_package=None, abis=None
+    )
 
     listing = commands.add_parser(
         "checks", help="list the check groups of a platform, or of both"
@@ -217,6 +226,12 @@ def _split_packages(value: str) -> list[str]:
     return packages
 
 
+def _split_abis(value: str) -> list[str]:
+    """Splits the comma-separated ABIs given on the command line, stripping spaces and dropping empty ones."""
+    abis = [abi.strip() for abi in value.split(",")]
+    return [abi for abi in abis if abi != ""]
+
+
 def _required_checks() -> str:
     """Returns the ids of the check groups every protected app runs, sorted and comma-separated."""
     return ",".join(sorted(check_groups.REQUIRED_CHECKS))
@@ -254,7 +269,7 @@ def _pack(arguments: argparse.Namespace) -> int:
     Without `--checks`, it packs the app with every check group of the platform. It warns
     about each given check id that is not one of the platform's groups, which the packer skips,
     and suggests the closest id. With `--strict`, it prints an error for each of them instead, writes
-    nothing and fails. After the result line it prints a reminder that the output is unsigned.
+    nothing and fails. It also warns about each ABI whose native libraries the packer dropped. After the result line it prints a reminder that the output is unsigned.
     """
     platform: platforms.Platform = arguments.platform
     app: pathlib.Path = arguments.app
@@ -299,6 +314,7 @@ def _pack(arguments: argparse.Namespace) -> int:
             encrypt_packages=encrypt_packages,
             mapping=arguments.mapping,
             pin_certificate=arguments.pin_certificate,
+            abis=arguments.abis,
         )
     except errors.Error as error:
         print(f"rasp pack: {error}", file=sys.stderr)
@@ -306,6 +322,11 @@ def _pack(arguments: argparse.Namespace) -> int:
     for check in result.skipped_checks:
         print(
             f"rasp pack: warning: {_unknown_check_message(platform, check, skipped=True)}",
+            file=sys.stderr,
+        )
+    for abi in result.dropped_abis:
+        print(
+            f"rasp pack: warning: dropped the app's native libraries for {abi}, which --abis does not name",
             file=sys.stderr,
         )
     if arguments.json is True:

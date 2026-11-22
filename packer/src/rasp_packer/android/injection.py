@@ -1,8 +1,9 @@
 """The APK edits that add the runtime to an app, kept apart from the assembly in packer.py.
 
-They place the native runtime libraries (one per ABI), drop the v1 signature entries that repacking
-makes invalid, read an APK entry, and name the base dexes. pack() calls them, so it reads as its
-sequence of steps and each edit is tested on its own.
+They choose the ABIs and place the native runtime libraries (one per ABI), list the native libraries
+of dropped ABIs, drop the v1 signature entries that repacking makes invalid, read an APK entry, and
+name the base dexes. pack() calls them, so it reads as its sequence of steps and each edit is tested
+on its own.
 """
 
 import collections.abc
@@ -31,57 +32,109 @@ def entry(apk: archive.Apk, name: str) -> bytes:
     return data
 
 
-def resolve_abis(app_abis: set[str], artifacts: resources_module.Artifacts) -> set[str]:
+def resolve_abis(
+    app_abis: collections.abc.Set[str],
+    artifacts: resources_module.Artifacts,
+    chosen: collections.abc.Set[str] | None = None,
+) -> set[str]:
     """Returns the ABIs to ship the runtime for.
 
-    When the app declares ABIs, the runtime must cover all of them. When the app
-    declares none, every runtime ABI is shipped.
+    Without a choice, the runtime covers every ABI the app ships native libraries for, or every runtime
+    ABI when the app ships none. With a choice, the runtime covers exactly the chosen ABIs, and the app's
+    native libraries for any other ABI are to be dropped.
 
     Args:
         app_abis: The ABIs the app ships native libraries for.
         artifacts: The prebuilt runtime libraries, by ABI.
+        chosen: The ABIs the protected app supports, or None to follow the app's own.
 
     Returns:
         The ABIs to include.
 
     Raises:
-        UnsupportedAbiError: The app ships an ABI the runtime is not built for.
+        UnsupportedAbiError: The runtime is not built for an ABI the app ships, without a choice, or for
+            a chosen ABI.
+        InvalidAbisError: The choice is empty, or names an ABI the app ships no native libraries for
+            while it ships some for other ABIs.
     """
-    if len(app_abis) == 0:
-        return set(artifacts.libraries)
-    unsupported = app_abis - set(artifacts.libraries)
+    runtime_abis = set(artifacts.libraries)
+    if chosen is None:
+        return _follow_app_abis(app_abis, runtime_abis)
+    if len(chosen) == 0:
+        raise errors.InvalidAbisError("no ABI is chosen; give at least one")
+    unsupported = chosen - runtime_abis
     if len(unsupported) > 0:
         raise errors.UnsupportedAbiError(
-            "the runtime is not built for the app's ABIs: "
-            + ", ".join(sorted(unsupported))
+            f"the runtime is not built for the chosen ABIs: {_listed(unsupported)}"
         )
-    return app_abis
+    missing = chosen - app_abis
+    if len(app_abis) > 0 and len(missing) > 0:
+        raise errors.InvalidAbisError(
+            f"the app ships no native libraries for the chosen ABIs: {_listed(missing)}; "
+            "its own native code would be missing on those devices"
+        )
+    return set(chosen)
+
+
+def _follow_app_abis(
+    app_abis: collections.abc.Set[str], runtime_abis: set[str]
+) -> set[str]:
+    """Returns the app's ABIs, or every runtime ABI when the app ships none, refusing one the runtime lacks."""
+    if len(app_abis) == 0:
+        return runtime_abis
+    unsupported = app_abis - runtime_abis
+    if len(unsupported) > 0:
+        pronoun = "it" if len(unsupported) == 1 else "them"
+        raise errors.UnsupportedAbiError(
+            f"the runtime is not built for the app's ABIs: {_listed(unsupported)}; "
+            f"pass --abis to drop {pronoun}"
+        )
+    return set(app_abis)
+
+
+def _listed(abis: collections.abc.Set[str]) -> str:
+    """Returns the ABIs sorted and comma-separated."""
+    return ", ".join(sorted(abis))
 
 
 def library_entries(
-    apk: archive.Apk, artifacts: resources_module.Artifacts, library_filename: str
+    abis: collections.abc.Set[str],
+    artifacts: resources_module.Artifacts,
+    library_filename: str,
 ) -> dict[str, bytes]:
-    """Returns the native runtime library entries to add to the app.
-
-    One library is added per ABI the app ships native libraries for, or one per runtime ABI when the
-    app ships none, so the runtime loads whichever ABI the device picks.
+    """Returns the native runtime library entries to add to the app, one per ABI.
 
     Args:
-        apk: The app's APK.
+        abis: The ABIs to ship the runtime for, as resolve_abis returns them.
         artifacts: The prebuilt runtime libraries, by ABI.
         library_filename: The library's filename in the app.
 
     Returns:
         The library entries, by APK entry name.
-
-    Raises:
-        UnsupportedAbiError: The app ships an ABI the runtime is not built for.
     """
-    abis = resolve_abis(native_abis(apk), artifacts)
     return {
         f"lib/{abi}/{library_filename}": artifacts.libraries[abi]
         for abi in sorted(abis)
     }
+
+
+def abi_folder_entries(
+    names: collections.abc.Iterable[str],
+    prefix: str,
+    abis: collections.abc.Set[str],
+) -> set[str]:
+    """Returns the names of the entries inside the library folder of any of `abis`.
+
+    Args:
+        names: The app's entry names.
+        prefix: The library directory's prefix, ``lib/`` for an APK and ``base/lib/`` for an AAB.
+        abis: The ABIs whose folders to list.
+
+    Returns:
+        The entry names.
+    """
+    folders = tuple(f"{prefix}{abi}/" for abi in abis)
+    return {name for name in names if name.startswith(folders)}
 
 
 def native_abis(apk: archive.Apk) -> set[str]:

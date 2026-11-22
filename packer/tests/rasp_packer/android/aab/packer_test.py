@@ -50,6 +50,11 @@ _PACKED_CONFIG = dataclasses.replace(_CONFIG, stub_class=_NAMES.stub_class_dotte
 _LIBRARY_ENTRY = f"base/lib/arm64-v8a/{_NAMES.library_filename}"
 _ARM64_SO = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _PACKAGE = "com.android.insecurebankv2"
+_ARM64_AND_X86_LIBRARIES = (
+    "base/lib/arm64-v8a/libapp.so",
+    "base/lib/x86/libapp.so",
+    "base/lib/x86/libextra.so",
+)
 
 _FRAMEWORK = (b"framework dex zero", b"framework dex one")
 _BUSINESS = (
@@ -118,6 +123,7 @@ def _pack_aab(
     *,
     native_libraries: list[str] | None = None,
     artifacts: resources.Artifacts | None = None,
+    abis: list[str] | None = None,
 ) -> pathlib.Path:
     app = tmp_path / "app.aab"
     output = tmp_path / "protected.aab"
@@ -130,6 +136,7 @@ def _pack_aab(
         aab_splitter=_recorded_aab_split(),
         # The seeded generator makes the pack's per-app names the predicted _NAMES.
         generator=random.Random(0),
+        abis=abis,
     )
     return output
 
@@ -454,17 +461,125 @@ def testPackAab_whenAlreadyHasMap_raisesAlreadyProtectedError(
         )
 
 
-def testPackAab_whenAppAbiHasNoRuntime_raisesUnsupportedAbiError(
+def testPackAab_whenAppAbiHasNoRuntime_raisesUnsupportedAbiErrorNamingTheOption(
     tmp_path: pathlib.Path,
 ) -> None:
-    with pytest.raises(errors.UnsupportedAbiError):
+    with pytest.raises(errors.UnsupportedAbiError, match="pass --abis to drop it"):
         _pack_aab(tmp_path, native_libraries=["base/lib/armeabi-v7a/libapp.so"])
+
+
+def testPackAab_whenAbisExcludeAnAppAbi_dropsItsLibrariesAndReportsIt(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "app.aab"
+    output = tmp_path / "protected.aab"
+    _make_aab(app, native_libraries=list(_ARM64_AND_X86_LIBRARIES))
+
+    result = packer.pack(
+        app=app,
+        output=output,
+        config=_CONFIG,
+        artifacts=_artifacts(),
+        aab_splitter=_recorded_aab_split(),
+        generator=random.Random(0),
+        abis=["arm64-v8a"],
+    )
+
+    with zipfile.ZipFile(output) as zf:
+        names = set(zf.namelist())
+    assert result.dropped_abis == ("x86",)
+    assert {name for name in names if name.startswith("base/lib/")} == {
+        "base/lib/arm64-v8a/libapp.so",
+        _LIBRARY_ENTRY,
+    }
+
+
+def testPackAab_whenAbisDropAnAppAbi_recoversTheRootWithTheSameConfigAndStub(
+    tmp_path: pathlib.Path,
+) -> None:
+    output = _pack_aab(
+        tmp_path, native_libraries=list(_ARM64_AND_X86_LIBRARIES), abis=["arm64-v8a"]
+    )
+
+    with zipfile.ZipFile(output) as zf:
+        root = _recover_root(zf)
+        assert root is not None
+        frame = zf.read(packer.AAB_MAP_ENTRY)
+        key = key_schedule.frame_key(root, frame[: cipher.NONCE_SIZE], packer.MAP_ENTRY)
+        assert len(cipher.decrypt(key, frame)) > 0
+        config = runtime_library.read_config(zf.read(_LIBRARY_ENTRY))
+        stub = zf.read("base/dex/classes3.dex")
+    assert config == _PACKED_CONFIG.to_json()
+    assert stub == _PATCHED_STUB_DEX
+
+
+def testPackAab_whenAppHasNoNativeLibrariesAndAbisGiven_shipsTheRuntimeOnlyForThem(
+    tmp_path: pathlib.Path,
+) -> None:
+    artifacts = resources.Artifacts(
+        stub_dex=_STUB_DEX, libraries={"arm64-v8a": _ARM64_SO, "x86_64": _ARM64_SO}
+    )
+
+    output = _pack_aab(tmp_path, artifacts=artifacts, abis=["arm64-v8a"])
+
+    with zipfile.ZipFile(output) as zf:
+        libraries = [name for name in zf.namelist() if name.startswith("base/lib/")]
+    assert libraries == [_LIBRARY_ENTRY]
+
+
+def testPackAab_whenNoAbisGiven_keepsEveryAppLibraryAndDropsNothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "app.aab"
+    output = tmp_path / "protected.aab"
+    _make_aab(app, native_libraries=["base/lib/arm64-v8a/libapp.so"])
+
+    result = packer.pack(
+        app=app,
+        output=output,
+        config=_CONFIG,
+        artifacts=_artifacts(),
+        aab_splitter=_recorded_aab_split(),
+        generator=random.Random(0),
+    )
+
+    with zipfile.ZipFile(output) as zf:
+        names = set(zf.namelist())
+    assert result.dropped_abis == ()
+    assert {"base/lib/arm64-v8a/libapp.so", _LIBRARY_ENTRY} <= names
+
+
+@pytest.mark.parametrize(
+    ("abis", "error", "message"),
+    [
+        (["arm64-v8a", "x86"], errors.UnsupportedAbiError, "not built for the chosen"),
+        (["arm64-v8a", "x86_64"], errors.InvalidAbisError, "no native libraries for"),
+        ([], errors.InvalidAbisError, "no ABI is chosen"),
+    ],
+    ids=["runtime not built for it", "app ships nothing for it", "empty choice"],
+)
+def testPackAab_whenAbisCannotBePacked_raisesAndWritesNothing(
+    tmp_path: pathlib.Path, abis: list[str], error: type[errors.Error], message: str
+) -> None:
+    artifacts = resources.Artifacts(
+        stub_dex=_STUB_DEX, libraries={"arm64-v8a": _ARM64_SO, "x86_64": _ARM64_SO}
+    )
+
+    with pytest.raises(error, match=message):
+        _pack_aab(
+            tmp_path,
+            native_libraries=list(_ARM64_AND_X86_LIBRARIES),
+            artifacts=artifacts,
+            abis=abis,
+        )
+
+    assert (tmp_path / "protected.aab").exists() is False
 
 
 def testPackAab_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     app = tmp_path / "app.aab"
     _make_aab(app)
-    app_identity = packer.pack(
+    result = packer.pack(
         app=app,
         output=tmp_path / "out.aab",
         config=_CONFIG,
@@ -472,8 +587,8 @@ def testPackAab_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
         aab_splitter=_recorded_aab_split(),
         generator=random.Random(0),
     )
-    assert app_identity.package_name == _PACKAGE
-    assert app_identity.version == "1.0"
+    assert result.app_identity.package_name == _PACKAGE
+    assert result.app_identity.version == "1.0"
 
 
 def testPack_whenAabAndMappingGiven_parsesItAndPassesItToTheSplitter(

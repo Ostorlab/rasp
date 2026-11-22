@@ -16,6 +16,7 @@ from rasp_packer.ios import packer as ios_packer
 
 _BUILD_ID = "a" * 64
 _IDENTITY = identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
+_ANDROID_RESULT = android_packer.PackResult(app_identity=_IDENTITY, dropped_abis=())
 
 
 def testPack_whenIosApp_packsWithAConfigHoldingTheGivenBuildId(
@@ -219,11 +220,11 @@ def testPack_whenAndroidApp_packsWithAConfigHoldingTheGivenBuildId(
 
     def fake_pack(
         *, app: pathlib.Path, output: pathlib.Path, config: object, **_: object
-    ) -> identity.AppIdentity:
+    ) -> android_packer.PackResult:
         calls["app"] = app
         calls["output"] = output
         calls["config"] = config
-        return _IDENTITY
+        return _ANDROID_RESULT
 
     monkeypatch.setattr(android_packer, "pack", fake_pack)
     packer.pack(
@@ -252,9 +253,9 @@ def testPack_whenAndroidAppWithMapping_passesTheMappingToTheAndroidPacker(
     mapping_file.write_text("app.Main -> a.b:\n", encoding="utf-8")
     captured: dict[str, object] = {}
 
-    def fake_pack(*, mapping: object = None, **_: object) -> identity.AppIdentity:
+    def fake_pack(*, mapping: object = None, **_: object) -> android_packer.PackResult:
         captured["mapping"] = mapping
-        return _IDENTITY
+        return _ANDROID_RESULT
 
     monkeypatch.setattr(android_packer, "pack", fake_pack)
     packer.pack(
@@ -326,9 +327,9 @@ def testPack_whenAndroidAppWithPinCertificate_passesTheCertificateToTheAndroidPa
 
     def fake_pack(
         *, pin_certificate: object = None, **_: object
-    ) -> identity.AppIdentity:
+    ) -> android_packer.PackResult:
         captured["pin_certificate"] = pin_certificate
-        return _IDENTITY
+        return _ANDROID_RESULT
 
     monkeypatch.setattr(android_packer, "pack", fake_pack)
     packer.pack(
@@ -352,9 +353,9 @@ def testPack_whenAndroidAppWithPackages_passesThemToTheAndroidPacker(
 
     def fake_pack(
         *, encrypt_packages: object = (), **_: object
-    ) -> identity.AppIdentity:
+    ) -> android_packer.PackResult:
         captured["encrypt_packages"] = encrypt_packages
-        return _IDENTITY
+        return _ANDROID_RESULT
 
     monkeypatch.setattr(android_packer, "pack", fake_pack)
     packer.pack(
@@ -401,13 +402,54 @@ def testPack_whenIosAppWithPackages_raisesInvalidPackageError(
         )
 
 
+def testPack_whenAndroidAppWithAbis_passesThemAndReportsTheDroppedAbis(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app.apk"
+    app.write_bytes(b"an apk")
+    captured: dict[str, object] = {}
+
+    def fake_pack(*, abis: object = None, **_: object) -> android_packer.PackResult:
+        captured["abis"] = abis
+        return android_packer.PackResult(app_identity=_IDENTITY, dropped_abis=("x86",))
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+    result = packer.pack(
+        app=app,
+        platform=platforms.Platform.ANDROID,
+        output=tmp_path / "out.apk",
+        build_id=_BUILD_ID,
+        checks=[],
+        abis=["arm64-v8a"],
+    )
+
+    assert captured["abis"] == ["arm64-v8a"]
+    assert result.dropped_abis == ("x86",)
+
+
+def testPack_whenIosAppWithAbis_raisesInvalidAbisError(
+    ipa_file: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    with pytest.raises(errors.InvalidAbisError, match="only to Android"):
+        packer.pack(
+            app=ipa_file,
+            platform=platforms.Platform.IOS,
+            output=tmp_path / "out.ipa",
+            build_id=_BUILD_ID,
+            checks=[],
+            abis=["arm64-v8a"],
+        )
+
+    assert (tmp_path / "out.ipa").exists() is False
+
+
 def testPack_whenAndroidApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An Android pack returns the protected app, its identity, the build id and the check groups."""
     app = tmp_path / "app.apk"
     app.write_bytes(b"an apk")
-    monkeypatch.setattr(android_packer, "pack", lambda **_: _IDENTITY)
+    monkeypatch.setattr(android_packer, "pack", lambda **_: _ANDROID_RESULT)
 
     result = packer.pack(
         app=app,
@@ -436,10 +478,10 @@ def testPack_whenAppArchiveIsDangerous_raisesBeforePackingTheApp(
         archive.writestr("../../etc/passwd", b"owned")
     packed = False
 
-    def fake_pack(**_: object) -> identity.AppIdentity:
+    def fake_pack(**_: object) -> android_packer.PackResult:
         nonlocal packed
         packed = True
-        return _IDENTITY
+        return _ANDROID_RESULT
 
     monkeypatch.setattr(android_packer, "pack", fake_pack)
 

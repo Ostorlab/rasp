@@ -21,6 +21,12 @@ from rasp_packer.android import packer as android_packer
 
 _BUILD_ID = "a" * 64
 _USAGE_ERROR = 2
+_ANDROID_RESULT = android_packer.PackResult(
+    app_identity=identity.AppIdentity(
+        package_name="dev.ostorlab.demo", version="1.2.3"
+    ),
+    dropped_abis=(),
+)
 
 
 _APPS = {"android": "app.apk", "ios": "app.ipa"}
@@ -275,9 +281,9 @@ def testMain_whenACheckIsUnknown_warnsAndPacksWithTheOtherChecks(
 
     def fake_pack(
         *, config: runtime_config.RuntimeConfig, **_: object
-    ) -> identity.AppIdentity:
+    ) -> android_packer.PackResult:
         configs.append(config)
-        return identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
+        return _ANDROID_RESULT
 
     monkeypatch.setattr(android_packer, "pack", fake_pack)
 
@@ -302,9 +308,7 @@ def testMain_whenACheckIsATypo_warnsWithTheSuggestion(
     monkeypatch.setattr(
         android_packer,
         "pack",
-        lambda **_: identity.AppIdentity(
-            package_name="dev.ostorlab.demo", version="1.2.3"
-        ),
+        lambda **_: _ANDROID_RESULT,
     )
 
     exit_code = cli.main(
@@ -327,10 +331,10 @@ def testMain_whenStrictAndACheckIsUnknown_printsTheErrorsAndPacksNothing(
 
     calls: list[object] = []
 
-    def fake_pack(**kwargs: object) -> identity.AppIdentity:
-        """Records the call and returns an identity."""
+    def fake_pack(**kwargs: object) -> android_packer.PackResult:
+        """Records the call and returns a fixed result."""
         calls.append(kwargs)
-        return identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
+        return _ANDROID_RESULT
 
     monkeypatch.setattr(android_packer, "pack", fake_pack)
 
@@ -361,10 +365,10 @@ def testMain_whenStrictAndChecksAreKnown_packsTheApp(
 
     def fake_pack(
         *, config: runtime_config.RuntimeConfig, **_: object
-    ) -> identity.AppIdentity:
-        """Records the config and returns an identity."""
+    ) -> android_packer.PackResult:
+        """Records the config and returns a fixed result."""
         configs.append(config)
-        return identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
+        return _ANDROID_RESULT
 
     monkeypatch.setattr(android_packer, "pack", fake_pack)
 
@@ -391,10 +395,10 @@ def testMain_whenStrictWithoutChecks_packsWithEveryCheckOfThePlatformAndWarnsNot
 
     def fake_pack(
         *, config: runtime_config.RuntimeConfig, **_: object
-    ) -> identity.AppIdentity:
-        """Records the config and returns an identity."""
+    ) -> android_packer.PackResult:
+        """Records the config and returns a fixed result."""
         configs.append(config)
-        return identity.AppIdentity(package_name="dev.ostorlab.demo", version="1.2.3")
+        return _ANDROID_RESULT
 
     monkeypatch.setattr(android_packer, "pack", fake_pack)
 
@@ -543,6 +547,87 @@ def testMain_whenIosAppIsPacked_passesNoMappingAndNoPinCertificate(
 
     assert captured["mapping"] is None
     assert captured["pin_certificate"] is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("arm64-v8a,armeabi-v7a", ["arm64-v8a", "armeabi-v7a"]),
+        ("arm64-v8a, x86_64,", ["arm64-v8a", "x86_64"]),
+    ],
+)
+def testMain_whenAbisGiven_passesTheAbisAloneToPack(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+    expected: list[str],
+) -> None:
+    """The `--abis` ids reach the packer without spaces or empty ids."""
+    captured: dict[str, object] = {}
+
+    def fake_pack(**kwargs: object) -> android_packer.PackResult:
+        """Records the arguments of the pack and returns a fixed result."""
+        captured.update(kwargs)
+        return _ANDROID_RESULT
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+
+    exit_code = cli.main(
+        [*_pack_arguments(tmp_path, platform="android"), "--abis", value]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert captured["abis"] == expected
+
+
+def testMain_whenNoAbis_passesNoneAsTheAbis(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without `--abis`, the packer keeps the app's own ABIs."""
+    captured: dict[str, object] = {}
+
+    def fake_pack(**kwargs: object) -> android_packer.PackResult:
+        """Records the arguments of the pack and returns a fixed result."""
+        captured.update(kwargs)
+        return _ANDROID_RESULT
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+
+    cli.main(_pack_arguments(tmp_path, platform="android"))
+
+    assert captured["abis"] is None
+
+
+def testMain_whenAbisDropAnAppAbi_warnsAboutEachDroppedAbi(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        android_packer,
+        "pack",
+        lambda **_: android_packer.PackResult(
+            app_identity=_ANDROID_RESULT.app_identity, dropped_abis=("mips", "x86")
+        ),
+    )
+
+    exit_code = cli.main(
+        [*_pack_arguments(tmp_path, platform="android"), "--abis", "arm64-v8a"]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert capsys.readouterr().err == (
+        "rasp pack: warning: dropped the app's native libraries for mips, which --abis does not name\n"
+        "rasp pack: warning: dropped the app's native libraries for x86, which --abis does not name\n"
+    )
+
+
+def testMain_whenAbisGivenForIos_exitsWithAUsageError(tmp_path: pathlib.Path) -> None:
+    """`rasp pack ios` has no `--abis` option, so argparse rejects it."""
+    with pytest.raises(SystemExit) as raised:
+        cli.main([*_pack_arguments(tmp_path, platform="ios"), "--abis", "arm64-v8a"])
+
+    assert raised.value.code == 2
 
 
 def testMain_whenPackagesGiven_passesTheFlattenedListToPack(
@@ -834,6 +919,7 @@ def testMain_whenPackIsGivenJson_printsOneJsonObjectWithSortedKeysAndWarnsOnStde
     assert output == {
         "build_id": _BUILD_ID,
         "checks": ["hooks", "identity"],
+        "dropped_abis": [],
         "output": str(tmp_path / "out.ipa"),
         "package_name": "dev.ostorlab.demo",
         "skipped_checks": ["oldcheck"],

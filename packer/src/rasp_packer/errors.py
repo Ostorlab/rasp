@@ -34,7 +34,12 @@ class MissingRuntimeArtifactError(Error):
 
 
 class UnsupportedAbiError(Error):
-    """The app ships native libraries for an ABI the runtime is not built for."""
+    """The runtime is not built for an ABI the app ships native libraries for, or for a chosen ABI."""
+
+
+class InvalidAbisError(Error):
+    """The chosen ABIs cannot be packed: none is chosen, the app is not an Android app, or the app ships
+    native libraries but none for a chosen ABI."""
 
 
 class OutputExistsError(Error):
