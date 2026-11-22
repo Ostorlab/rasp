@@ -16,6 +16,7 @@ from rasp_packer.android import packer as android_packer
 from rasp_packer.ios import packer as ios_packer
 
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
+_JAVA_PACKAGE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*")
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -51,6 +52,7 @@ def pack(
     output: pathlib.Path,
     build_id: str,
     checks: collections.abc.Sequence[str],
+    encrypt_packages: collections.abc.Sequence[str] = (),
     mapping: pathlib.Path | None = None,
     pin_certificate: pathlib.Path | None = None,
 ) -> PackResult:
@@ -79,6 +81,10 @@ def pack(
         build_id: The id of the protected build, written into the runtime's config.
         checks: The ids of the check groups the protected app runs. An empty sequence runs only
             the required groups. An id that is not one of the platform's groups is skipped.
+        encrypt_packages: Extra Java packages to encrypt, besides the manifest package, named in
+            original un-obfuscated form. Their classes are encrypted like the manifest package's,
+            mapped through `mapping` the same way when given. Only Android apps have packages to
+            encrypt: they are refused for iOS.
         mapping: The app's R8/ProGuard mapping file, for an Android release build R8 repackaged. It
             lets the packer find the app's own classes by their obfuscated names. Only Android apps
             have one: it is refused for iOS.
@@ -93,6 +99,8 @@ def pack(
 
     Raises:
         InvalidBuildIdError: The build id is empty or has control characters.
+        InvalidPackageError: A package name to encrypt is not a valid Java package name, or packages
+            to encrypt were given for an iOS app.
         OutputExistsError: `output` already exists.
         DangerousAppError: The app archive holds an unsafe entry (encrypted, a symlink, or escaping
             its root), or cannot be read.
@@ -101,8 +109,14 @@ def pack(
         InvalidCertificateError: A pinned certificate is given for an iOS app, or it cannot be read.
         Error: The app cannot be packed; see the platform's packer.
     """
-    _refuse_android_options(platform, mapping=mapping, pin_certificate=pin_certificate)
+    _refuse_android_options(
+        platform,
+        mapping=mapping,
+        pin_certificate=pin_certificate,
+        encrypt_packages=encrypt_packages,
+    )
     _check_build_id(build_id)
+    _check_packages(encrypt_packages)
     resolved_checks = check_groups.resolve_checks(platform, checks)
     if output.exists() is True:
         raise errors.OutputExistsError(f"{output} already exists")
@@ -124,6 +138,7 @@ def pack(
                 output=output,
                 config=config,
                 mapping=mapping,
+                encrypt_packages=encrypt_packages,
                 pin_certificate=pin_certificate,
             )
         case platforms.Platform.IOS:
@@ -152,6 +167,7 @@ def _refuse_android_options(
     *,
     mapping: pathlib.Path | None,
     pin_certificate: pathlib.Path | None,
+    encrypt_packages: collections.abc.Sequence[str],
 ) -> None:
     """Refuses the Android-only options for an app of another platform."""
     if platform is platforms.Platform.ANDROID:
@@ -161,6 +177,10 @@ def _refuse_android_options(
     if pin_certificate is not None:
         raise errors.InvalidCertificateError(
             "a pinned certificate applies only to Android apps"
+        )
+    if len(encrypt_packages) > 0:
+        raise errors.InvalidPackageError(
+            "packages to encrypt apply only to Android apps"
         )
 
 
@@ -172,3 +192,12 @@ def _check_build_id(build_id: str) -> None:
         raise errors.InvalidBuildIdError(
             f"the build id {build_id!r} has control characters"
         )
+
+
+def _check_packages(encrypt_packages: collections.abc.Sequence[str]) -> None:
+    """Refuses a package to encrypt that is not a valid Java package name."""
+    for package in encrypt_packages:
+        if _JAVA_PACKAGE.fullmatch(package) is None:
+            raise errors.InvalidPackageError(
+                f"{package!r} is not a valid Java package name"
+            )

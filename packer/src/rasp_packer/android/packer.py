@@ -40,6 +40,7 @@ import dataclasses
 import hashlib
 import pathlib
 import random
+import typing
 import zipfile
 
 from cryptography import x509
@@ -82,12 +83,29 @@ AAB_MAP_ENTRY = f"{_AAB_BASE}{MAP_ENTRY}"
 AAB_JAVA_PROGRAM_ENTRY = f"{_AAB_BASE}{JAVA_PROGRAM_ENTRY}"
 AAB_ASSET_PREFIX = f"{_AAB_BASE}{ASSET_PREFIX}"
 
-type Splitter = collections.abc.Callable[
-    [pathlib.Path, str, mapping_module.ClassMapping | None], split_module.Split
-]
-type AabSplitter = collections.abc.Callable[
-    [dict[str, bytes], str, mapping_module.ClassMapping | None], split_module.Split
-]
+
+class Splitter(typing.Protocol):
+    """Splits an APK's classes into framework and business dexes."""
+
+    def __call__(
+        self,
+        *,
+        app: pathlib.Path,
+        mapping: mapping_module.ClassMapping | None,
+        encrypt_packages: collections.abc.Sequence[str],
+    ) -> split_module.Split: ...
+
+
+class AabSplitter(typing.Protocol):
+    """Splits an AAB's classes, given as its pre-extracted dex entries, into framework and business dexes."""
+
+    def __call__(
+        self,
+        *,
+        dex_entries: dict[str, bytes],
+        mapping: mapping_module.ClassMapping | None,
+        encrypt_packages: collections.abc.Sequence[str],
+    ) -> split_module.Split: ...
 
 
 def pack(
@@ -96,6 +114,7 @@ def pack(
     output: pathlib.Path,
     config: runtime_config.RuntimeConfig,
     mapping: pathlib.Path | None = None,
+    encrypt_packages: collections.abc.Sequence[str] = (),
     artifacts: resources_module.Artifacts | None = None,
     splitter: Splitter = split_module.split,
     aab_splitter: AabSplitter = split_module.split_from_dex_entries,
@@ -111,6 +130,8 @@ def pack(
         mapping: The app's R8/ProGuard mapping file, for a release build R8 repackaged. With it, the
             packer finds the app's own classes by their obfuscated names and protects them whole.
             Without it, the packer picks the app's classes by the app's package.
+        encrypt_packages: Extra packages to encrypt, besides the manifest package. Their classes are
+            encrypted like the manifest package's, mapped through ``mapping`` the same way when given.
         artifacts: The prebuilt stub and libraries. Loaded from the package resources when not given.
         splitter: Splits an APK's classes. The default splits them in process.
         aab_splitter: Splits an AAB's classes from pre-extracted DEX entries.
@@ -143,6 +164,7 @@ def pack(
             output=output,
             config=config,
             mapping=class_mapping,
+            encrypt_packages=encrypt_packages,
             artifacts=artifacts,
             splitter=aab_splitter,
             generator=generator,
@@ -153,6 +175,7 @@ def pack(
         output=output,
         config=config,
         mapping=class_mapping,
+        encrypt_packages=encrypt_packages,
         artifacts=artifacts,
         splitter=splitter,
         generator=generator,
@@ -226,6 +249,7 @@ def _pack_apk(
     output: pathlib.Path,
     config: runtime_config.RuntimeConfig,
     mapping: mapping_module.ClassMapping | None,
+    encrypt_packages: collections.abc.Sequence[str],
     artifacts: resources_module.Artifacts,
     splitter: Splitter,
     generator: random.Random | None,
@@ -248,7 +272,13 @@ def _pack_apk(
     )
     config = dataclasses.replace(config, stub_class=names.stub_class_dotted)
 
-    result = splitter(app, app_identity.package_name, mapping)
+    result = splitter(
+        app=app,
+        mapping=mapping,
+        encrypt_packages=_packages_to_encrypt(
+            app_identity.package_name, encrypt_packages
+        ),
+    )
 
     patched_manifest = apk_manifest_module.set_app_component_factory(
         apk_manifest_module.clear_debuggable(
@@ -308,6 +338,7 @@ def _pack_aab(
     output: pathlib.Path,
     config: runtime_config.RuntimeConfig,
     mapping: mapping_module.ClassMapping | None,
+    encrypt_packages: collections.abc.Sequence[str],
     artifacts: resources_module.Artifacts,
     splitter: AabSplitter,
     generator: random.Random | None,
@@ -336,7 +367,13 @@ def _pack_aab(
         data = aab.get(name)
         if data is not None:
             dex_entries[name.removeprefix(_AAB_DEX_PREFIX)] = data
-    result = splitter(dex_entries, app_identity.package_name, mapping)
+    result = splitter(
+        dex_entries=dex_entries,
+        mapping=mapping,
+        encrypt_packages=_packages_to_encrypt(
+            app_identity.package_name, encrypt_packages
+        ),
+    )
 
     patched_manifest = aab_manifest_module.set_app_component_factory(
         aab_manifest_module.clear_debuggable(
@@ -400,6 +437,16 @@ def _pack_aab(
         remove=set(dex_names),
     )
     return app_identity
+
+
+def _packages_to_encrypt(
+    manifest_package: str, encrypt_packages: collections.abc.Sequence[str]
+) -> tuple[str, ...]:
+    """The packages to encrypt, the manifest package first, each once in first-seen order."""
+    seen: dict[str, None] = {}
+    for name in (manifest_package, *encrypt_packages):
+        seen.setdefault(name, None)
+    return tuple(seen)
 
 
 def _stored_apk_entries(

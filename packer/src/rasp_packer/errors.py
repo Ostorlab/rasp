@@ -25,6 +25,10 @@ class InvalidBuildIdError(Error):
     """The build id cannot be written into the app."""
 
 
+class InvalidPackageError(Error):
+    """A package name to encrypt is invalid, or packages to encrypt were given for a platform without them."""
+
+
 class MissingRuntimeArtifactError(Error):
     """A prebuilt runtime artifact the packer needs is not present."""
 

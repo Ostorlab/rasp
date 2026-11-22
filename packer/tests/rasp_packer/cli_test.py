@@ -545,6 +545,62 @@ def testMain_whenIosAppIsPacked_passesNoMappingAndNoPinCertificate(
     assert captured["pin_certificate"] is None
 
 
+def testMain_whenPackagesGiven_passesTheFlattenedListToPack(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Comma-separated and repeated `--encrypt-package` values reach the packer as one flat list."""
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out.apk"))
+
+    cli.main(
+        [
+            *_pack_arguments(tmp_path, platform="android"),
+            "--encrypt-package",
+            "com.vendor.a, com.vendor.b",
+            "--encrypt-package",
+            "com.vendor.c",
+        ]
+    )
+
+    assert calls[0]["encrypt_packages"] == [
+        "com.vendor.a",
+        "com.vendor.b",
+        "com.vendor.c",
+    ]
+
+
+def testMain_whenNoPackages_passesAnEmptyListToPack(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without `--encrypt-package`, the packer gets an empty list of packages to encrypt."""
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out.apk"))
+
+    cli.main(_pack_arguments(tmp_path, platform="android"))
+
+    assert calls[0]["encrypt_packages"] == []
+
+
+def testMain_whenPackageGivenForIos_exitsWithAUsageError(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`rasp pack ios` has no `--encrypt-package` option, so argparse rejects it."""
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out.ipa"))
+
+    with pytest.raises(SystemExit) as raised:
+        cli.main(
+            [
+                *_pack_arguments(tmp_path, platform="ios"),
+                "--encrypt-package",
+                "com.vendor.a",
+            ]
+        )
+
+    assert raised.value.code == 2
+    assert calls == []
+
+
 def testMain_whenPinCertificateGiven_passesTheCertificatePathToPack(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

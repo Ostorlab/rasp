@@ -104,15 +104,16 @@ def _make_apk(
 
 
 def _recorded_split(
-    captured: list[tuple[pathlib.Path, str, mapping.ClassMapping | None]] | None = None,
+    captured: list[tuple[pathlib.Path, mapping.ClassMapping | None, tuple[str, ...]]]
+    | None = None,
 ) -> packer.Splitter:
     def splitter(
         app: pathlib.Path,
-        package: str,
-        class_mapping: mapping.ClassMapping | None = None,
+        mapping: mapping.ClassMapping | None = None,
+        encrypt_packages: collections.abc.Sequence[str] = (),
     ) -> split.Split:
         if captured is not None:
-            captured.append((app, package, class_mapping))
+            captured.append((app, mapping, tuple(encrypt_packages)))
         return split.Split(framework=_FRAMEWORK, business=_BUSINESS)
 
     return splitter
@@ -218,7 +219,9 @@ def _pack_with_decoy(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str]:
 def testPack_whenValidApk_splitsOnTheManifestPackage(tmp_path: pathlib.Path) -> None:
     app = tmp_path / "app.apk"
     _make_apk(app)
-    captured: list[tuple[pathlib.Path, str, mapping.ClassMapping | None]] = []
+    captured: list[
+        tuple[pathlib.Path, mapping.ClassMapping | None, tuple[str, ...]]
+    ] = []
     packer.pack(
         app=app,
         output=tmp_path / "out.apk",
@@ -227,7 +230,32 @@ def testPack_whenValidApk_splitsOnTheManifestPackage(tmp_path: pathlib.Path) -> 
         splitter=_recorded_split(captured),
         generator=random.Random(0),
     )
-    assert captured == [(app, _PACKAGE, None)]
+    assert captured == [(app, None, (_PACKAGE,))]
+
+
+def testPack_whenExtraPackagesGiven_splitsOnTheManifestPackageThenEachExtraOnce(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "app.apk"
+    _make_apk(app)
+    captured: list[
+        tuple[pathlib.Path, mapping.ClassMapping | None, tuple[str, ...]]
+    ] = []
+    packer.pack(
+        app=app,
+        output=tmp_path / "out.apk",
+        config=_CONFIG,
+        encrypt_packages=[
+            "com.vendor.sdk",
+            _PACKAGE,
+            "com.vendor.other",
+            "com.vendor.sdk",
+        ],
+        artifacts=_artifacts(),
+        splitter=_recorded_split(captured),
+        generator=random.Random(0),
+    )
+    assert captured == [(app, None, (_PACKAGE, "com.vendor.sdk", "com.vendor.other"))]
 
 
 def testPack_whenMappingGiven_parsesItAndPassesItToTheSplitter(
@@ -237,7 +265,9 @@ def testPack_whenMappingGiven_parsesItAndPassesItToTheSplitter(
     _make_apk(app)
     mapping_file = tmp_path / "mapping.txt"
     mapping_file.write_text(f"myapp.Entry -> {_PACKAGE}.a:\n", encoding="utf-8")
-    captured: list[tuple[pathlib.Path, str, mapping.ClassMapping | None]] = []
+    captured: list[
+        tuple[pathlib.Path, mapping.ClassMapping | None, tuple[str, ...]]
+    ] = []
 
     packer.pack(
         app=app,
@@ -248,7 +278,7 @@ def testPack_whenMappingGiven_parsesItAndPassesItToTheSplitter(
         splitter=_recorded_split(captured),
     )
 
-    _, _, class_mapping = captured[0]
+    _, class_mapping, _ = captured[0]
     assert class_mapping is not None
     assert class_mapping.business_packages("myapp") == frozenset({_PACKAGE})
 

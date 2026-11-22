@@ -8,12 +8,13 @@ it for another splitter later touches only this file.
 
 There are two ways to tell business code from the rest:
 
-- **Without an R8 mapping** (the default), a class is business when its binary name is under the app's
-  package, and framework otherwise. This is right for a debug build, or a release build that does not
-  obfuscate. It is wrong for a release build that R8 repackaged: R8 moves the app's own classes out of
-  the app's package into generated packages such as ``Y2``, so almost none of them are still under the
-  app's package, and almost all of the app's code would ship in the clear. When this module sees that
-  shape, it logs a warning telling the operator to pass the mapping.
+- **Without an R8 mapping** (the default), a class is business when its binary name is under one of
+  the packages to encrypt, such as ``com.example``, and framework otherwise. This is right for a debug
+  build, or a release build that does not obfuscate. It is wrong for a release build that R8
+  repackaged: R8 moves the app's own classes out of their packages into generated packages such as
+  ``Y2``, so almost none of them are still under the packages to encrypt, and almost all of the app's
+  code would ship in the clear. When this module sees that shape, it logs a warning telling the
+  operator to pass the mapping.
 - **With an R8 mapping** (see ``rasp_packer.android.mapping``), the mapping says which obfuscated
   packages hold the app's own classes, and every class in one of those packages is business. The
   mapping is how the operator recovers full protection on a repackaged release build.
@@ -70,9 +71,9 @@ _ZIP_READ_ERRORS = (
 _ROOT_DEX = re.compile(r"classes[0-9]*\.dex")
 
 # When no mapping is given, warn that the app looks repackaged if it has at least this many classes
-# and at most this fraction of them are under the app's package. Both guard against false warnings: a
-# small app has too few classes for the fraction to mean much, and a healthy app has a real share of
-# its code under its own package.
+# and at most this fraction of them are under the packages to encrypt. Both guard against false
+# warnings: a small app has too few classes for the fraction to mean much, and a healthy app has a
+# real share of its code under those packages.
 _REPACKAGE_MIN_CLASSES = 500
 _REPACKAGE_MAX_BUSINESS_RATIO = 0.05
 
@@ -112,7 +113,7 @@ class SplitError(errors.Error):
 
 def split(
     app: pathlib.Path,
-    package: str,
+    encrypt_packages: collections.abc.Sequence[str],
     mapping: mapping_module.ClassMapping | None = None,
 ) -> Split:
     """Splits the classes of an app into framework and business dexes.
@@ -121,13 +122,14 @@ def split(
     framework set, then regroups the business set into dex files with every Java package kept whole
     and keeps the framework set in the dex files it came from.
 
-    Without ``mapping``, a class is business when its binary name is under ``package``. With
-    ``mapping``, a class is business when its (obfuscated) package is one the mapping says holds the
-    app's own classes; this recovers the app's code on an R8-repackaged release build.
+    Without ``mapping``, a class is business when its binary name is under one of the packages to
+    encrypt. With ``mapping``, a class is business when its (obfuscated) package is one the mapping
+    says holds a class under a package to encrypt; this recovers the app's code on an R8-repackaged
+    release build.
 
     Args:
         app: The app's APK.
-        package: The app's package, such as ``com.example``. Its classes are the business code.
+        encrypt_packages: The Java packages whose classes are business code, such as ``com.example``.
         mapping: The app's R8 mapping, or None to pick business classes by their package.
 
     Returns:
@@ -137,12 +139,12 @@ def split(
         SplitError: The app cannot be read, or its classes cannot be split.
     """
     dex_entries = _read_apk_dex_entries(app)
-    return _split(dex_entries, package, mapping=mapping, label=str(app))
+    return _split(dex_entries, encrypt_packages, mapping=mapping, label=str(app))
 
 
 def split_from_dex_entries(
     dex_entries: collections.abc.Mapping[str, bytes],
-    package: str,
+    encrypt_packages: collections.abc.Sequence[str],
     mapping: mapping_module.ClassMapping | None = None,
 ) -> Split:
     """Splits classes from pre-extracted DEX entries (e.g. from an AAB).
@@ -150,7 +152,7 @@ def split_from_dex_entries(
     Args:
         dex_entries: A mapping of bare root-level DEX file names (``classes.dex``, ``classes2.dex``,
             ...) to their bytes.
-        package: The app's package, such as ``com.example``.
+        encrypt_packages: The Java packages whose classes are business code, such as ``com.example``.
         mapping: The app's R8 mapping, or None to pick business classes by their package.
 
     Returns:
@@ -167,33 +169,39 @@ def split_from_dex_entries(
             raise SplitError(
                 f"dex_entries key must be a bare root-level .dex filename, got: {name!r}"
             )
-    return _split(dict(dex_entries), package, mapping=mapping, label="AAB DEX entries")
+    return _split(
+        dict(dex_entries),
+        encrypt_packages,
+        mapping=mapping,
+        label="AAB DEX entries",
+    )
 
 
 def _split(
     dex_entries: collections.abc.Mapping[str, bytes],
-    package: str,
+    encrypt_packages: collections.abc.Sequence[str],
     *,
     mapping: mapping_module.ClassMapping | None,
     label: str,
 ) -> Split:
     """Run the splitter with the packer's rules and shape its output into a Split."""
-    sets, assignments = _sets_and_assignments(package, mapping)
+    sets, assignments = _sets_and_assignments(encrypt_packages, mapping)
     try:
         result = splitter.split(dex_entries, sets, assignments)
     except dexsplit.Error as error:
         raise SplitError(f"splitting {label} failed: {error}") from error
-    _warn_if_unprotected(result, package, mapping)
+    _warn_if_unprotected(result, encrypt_packages, mapping)
     return _to_split(result)
 
 
 def _sets_and_assignments(
-    package: str, mapping: mapping_module.ClassMapping | None
+    encrypt_packages: collections.abc.Sequence[str],
+    mapping: mapping_module.ClassMapping | None,
 ) -> tuple[tuple[class_sets.ClassSet, ...], tuple[class_sets.Assignment, ...]]:
     """The business and framework sets, and the rules that sort classes into them.
 
-    Without a mapping, the single rule sends the classes under ``package`` to the business set. With
-    a mapping, one rule per obfuscated business package sends every class in that package to the
+    Without a mapping, one rule per package to encrypt sends the classes under it to the business set.
+    With a mapping, one rule per obfuscated business package sends every class in that package to the
     business set, so each such package is protected whole. A final ``**`` rule sends everything else
     to the framework set.
     """
@@ -203,11 +211,17 @@ def _sets_and_assignments(
     )
     business: tuple[class_sets.Assignment, ...]
     if mapping is None:
-        business = (class_sets.Assignment(f"{package}.**", _BUSINESS_SET),)
+        business = tuple(
+            class_sets.Assignment(f"{package}.**", _BUSINESS_SET)
+            for package in encrypt_packages
+        )
     else:
+        obfuscated: set[str] = set()
+        for package in encrypt_packages:
+            obfuscated |= mapping.business_packages(package)
         business = tuple(
             class_sets.Assignment(_package_pattern(business_package), _BUSINESS_SET)
-            for business_package in sorted(mapping.business_packages(package))
+            for business_package in sorted(obfuscated)
         )
     assignments = (*business, class_sets.Assignment("**", _FRAMEWORK_SET))
     return sets, assignments
@@ -228,14 +242,10 @@ def _package_pattern(package: str) -> str:
 
 def _warn_if_unprotected(
     result: splitter.Result,
-    package: str,
+    encrypt_packages: collections.abc.Sequence[str],
     mapping: mapping_module.ClassMapping | None,
 ) -> None:
-    """Warn when the split leaves none of the app's own code to protect, or suspiciously little.
-
-    Nothing to protect is always reported. Without a mapping, a large app with very few classes
-    under its package is reported too: it looks like R8 moved its classes out of the package.
-    """
+    """Warn when the split leaves none of the app's own code to protect, or suspiciously little."""
     business = sum(
         len(output.classes)
         for output in result.files
@@ -256,12 +266,12 @@ def _warn_if_unprotected(
     if business > total * _REPACKAGE_MAX_BUSINESS_RATIO:
         return
     _LOGGER.warning(
-        "only %d of %d classes are under %r; if R8 repackaged this release build, most of the app's "
+        "only %d of %d classes are under %s; if R8 repackaged this release build, most of the app's "
         "own code is shipping in the clear. Pass the R8 mapping file with --mapping so the packer can "
         "find the app's classes by their obfuscated names.",
         business,
         total,
-        package,
+        ", ".join(encrypt_packages),
     )
 
 

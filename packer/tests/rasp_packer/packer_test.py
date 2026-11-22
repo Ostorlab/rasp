@@ -343,6 +343,64 @@ def testPack_whenAndroidAppWithPinCertificate_passesTheCertificateToTheAndroidPa
     assert captured["pin_certificate"] == certificate
 
 
+def testPack_whenAndroidAppWithPackages_passesThemToTheAndroidPacker(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app.apk"
+    app.write_bytes(b"an apk")
+    captured: dict[str, object] = {}
+
+    def fake_pack(
+        *, encrypt_packages: object = (), **_: object
+    ) -> identity.AppIdentity:
+        captured["encrypt_packages"] = encrypt_packages
+        return _IDENTITY
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+    packer.pack(
+        app=app,
+        platform=platforms.Platform.ANDROID,
+        output=tmp_path / "out.apk",
+        build_id=_BUILD_ID,
+        checks=[],
+        encrypt_packages=["com.vendor.sdk"],
+    )
+
+    assert captured["encrypt_packages"] == ["com.vendor.sdk"]
+
+
+@pytest.mark.parametrize("package", ["9bad", "com.example.", "has space", ""])
+def testPack_whenPackageNameIsInvalid_raisesInvalidPackageError(
+    tmp_path: pathlib.Path, package: str
+) -> None:
+    app = tmp_path / "app.apk"
+    app.write_bytes(b"an apk")
+
+    with pytest.raises(errors.InvalidPackageError, match="valid Java package name"):
+        packer.pack(
+            app=app,
+            platform=platforms.Platform.ANDROID,
+            output=tmp_path / "out.apk",
+            build_id=_BUILD_ID,
+            checks=[],
+            encrypt_packages=[package],
+        )
+
+
+def testPack_whenIosAppWithPackages_raisesInvalidPackageError(
+    ipa_file: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    with pytest.raises(errors.InvalidPackageError, match="only to Android"):
+        packer.pack(
+            app=ipa_file,
+            platform=platforms.Platform.IOS,
+            output=tmp_path / "out.ipa",
+            build_id=_BUILD_ID,
+            checks=[],
+            encrypt_packages=["com.vendor.sdk"],
+        )
+
+
 def testPack_whenAndroidApp_returnsTheProtectedAppItsIdentityAndTheBuildId(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
