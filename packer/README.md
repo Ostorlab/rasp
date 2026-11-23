@@ -5,8 +5,11 @@ Adds the RASP runtime to a built app: an APK or an AAB for Android, an IPA for i
 The packer is a Python library, and the `rasp` command line is a thin client of it.
 
 ```
-rasp pack app.apk --build-id my-build-1 --checks root,debugger,hooks --output app-protected.apk
+rasp pack android app.apk --build-id my-build-1 --checks root,debugger,hooks --output app-protected.apk
+rasp pack ios app.ipa --build-id my-build-1 --checks jailbreak,debugger,hooks --output app-protected.ipa
 ```
+
+`rasp pack` has one subcommand per platform, and the subcommand is the platform of the app. `rasp pack android` takes an APK or an AAB, and `rasp pack ios` takes an IPA. The extension is compared without regard to case. An app with another extension is refused with one error line and exit status 1, before anything is written.
 
 To see a platform's check groups, listed in the order the runtime runs them with what each detects:
 
@@ -33,14 +36,18 @@ result = packer.pack(
 
 ## Options
 
-- `--platform` (`platform=`): `android` or `ios`. When it is not given, the command line infers the platform from the app's extension, case-insensitively: `.apk` and `.aab` are Android, `.ipa` is iOS. Any other extension requires `--platform`.
+Both `rasp pack android` and `rasp pack ios` take these options. In Python, `platform=` is `platforms.Platform.ANDROID` or `platforms.Platform.IOS`.
+
 - `--build-id` (`build_id=`): the id of the protected build, written into the app as it is. `rasp pack` derives it when it is not given: the SHA-256 of the app's contents, the platform, the installed packer version and the resolved checks. The same inputs give the same id, and any change to the app, the packer version or the checks gives a new one. `pack` requires it.
 - `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added. Without `--checks`, the command line runs every group the target platform supports (`checks=` in Python is required). An unknown group is skipped with a warning. The warning suggests the closest matching group name. With `--strict`, `rasp pack` exits with status 1 instead. See the groups in the [repository's README](../README.md#checks).
 - `--strict`: print an error for every unknown check group, write nothing, and exit with status 1, instead of skipping it with a warning.
 - `--output` (`output=`): where to write the protected app; an existing file at that path is refused. The command line defaults to `<name>-protected<extension>` next to the app, such as `app-protected.apk` for `app.apk`.
-- `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
-- `--pin-certificate` (Android): the certificate the app will be signed with, PEM or DER. The protected app then works only when it is signed with that certificate.
 - `--json`: prints the result as one JSON object with sorted keys instead of text: `build_id`, `checks` (an array of check ids), `output` (the path as a string), `package_name`, `skipped_checks` (an array of check ids) and `version`. Warnings still go to stderr.
+
+Only `rasp pack android` takes these options. `rasp pack ios` does not know them, and in Python `pack` refuses them for an iOS app.
+
+- `--mapping` (`mapping=`): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
+- `--pin-certificate` (`pin_certificate=`): the certificate the app will be signed with, PEM or DER. The protected app then works only when it is signed with that certificate.
 
 `pack` returns a result with:
 

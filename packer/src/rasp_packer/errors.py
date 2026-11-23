@@ -14,7 +14,7 @@ class InvalidAabError(Error):
 
 
 class InvalidCertificateError(Error):
-    """The certificate the developer pinned cannot be read."""
+    """The certificate the developer pinned cannot be read, or is given for an iOS app."""
 
 
 class ManifestError(Error):

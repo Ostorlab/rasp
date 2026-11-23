@@ -269,10 +269,20 @@ def testPack_whenAndroidAppWithMapping_passesTheMappingToTheAndroidPacker(
     assert captured["mapping"] == mapping_file
 
 
+def _write_output(*, output: pathlib.Path, **_: object) -> identity.AppIdentity:
+    """Writes the output, as a pack that went ahead would."""
+    output.write_bytes(b"packed")
+    return _IDENTITY
+
+
 def testPack_whenIosAppWithMapping_raisesMappingError(
-    ipa_file: pathlib.Path, tmp_path: pathlib.Path
+    ipa_file: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with pytest.raises(mapping.MappingError, match="only to Android"):
+    monkeypatch.setattr(ios_packer, "pack", _write_output)
+
+    with pytest.raises(
+        mapping.MappingError, match=r"^a mapping applies only to Android apps$"
+    ):
         packer.pack(
             app=ipa_file,
             platform=platforms.Platform.IOS,
@@ -281,6 +291,56 @@ def testPack_whenIosAppWithMapping_raisesMappingError(
             checks=[],
             mapping=tmp_path / "mapping.txt",
         )
+
+    assert (tmp_path / "out.ipa").exists() is False
+
+
+def testPack_whenIosAppWithPinCertificate_raisesInvalidCertificateError(
+    ipa_file: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ios_packer, "pack", _write_output)
+
+    with pytest.raises(
+        errors.InvalidCertificateError,
+        match=r"^a pinned certificate applies only to Android apps$",
+    ):
+        packer.pack(
+            app=ipa_file,
+            platform=platforms.Platform.IOS,
+            output=tmp_path / "out.ipa",
+            build_id=_BUILD_ID,
+            checks=[],
+            pin_certificate=tmp_path / "signer.pem",
+        )
+
+    assert (tmp_path / "out.ipa").exists() is False
+
+
+def testPack_whenAndroidAppWithPinCertificate_passesTheCertificateToTheAndroidPacker(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app.apk"
+    app.write_bytes(b"an apk")
+    certificate = tmp_path / "signer.pem"
+    captured: dict[str, object] = {}
+
+    def fake_pack(
+        *, pin_certificate: object = None, **_: object
+    ) -> identity.AppIdentity:
+        captured["pin_certificate"] = pin_certificate
+        return _IDENTITY
+
+    monkeypatch.setattr(android_packer, "pack", fake_pack)
+    packer.pack(
+        app=app,
+        platform=platforms.Platform.ANDROID,
+        output=tmp_path / "out.apk",
+        build_id=_BUILD_ID,
+        checks=[],
+        pin_certificate=certificate,
+    )
+
+    assert captured["pin_certificate"] == certificate
 
 
 def testPack_whenAndroidApp_returnsTheProtectedAppItsIdentityAndTheBuildId(

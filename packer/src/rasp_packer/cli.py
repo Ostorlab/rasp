@@ -45,7 +45,7 @@ class _RootParser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
-    """Builds the parser of the `rasp` command line, with its `pack`, `checks` and `inspect` commands."""
+    """Builds the parser of the `rasp` command line, with its `pack android`, `pack ios`, `checks` and `inspect` commands."""
     parser = _RootParser(
         prog="rasp",
         description="Protects built Android (APK, AAB) and iOS (IPA) apps with the RASP runtime.",
@@ -60,59 +60,38 @@ def _parser() -> argparse.ArgumentParser:
     )
 
     pack = commands.add_parser(
-        "pack", help="add the runtime to a built app (the result is unsigned)"
+        "pack",
+        help="add the runtime to a built app (the result is unsigned)",
+        description="Adds the runtime to a built app. The result is unsigned.",
     )
-    pack.add_argument(
-        "app", type=pathlib.Path, help="the built app, an APK, AAB, or IPA"
+    pack_platforms = pack.add_subparsers(required=True)
+    android = pack_platforms.add_parser(
+        "android",
+        help="protect an Android app, an APK or AAB",
+        description="Adds the runtime to a built Android app, an APK or AAB. The result is unsigned.",
     )
-    pack.add_argument(
-        "--platform",
-        type=platforms.Platform,
-        choices=list(platforms.Platform),
-        default=None,
-        help="the platform of the app (default: inferred from the app's extension, "
-        f"{', '.join(platforms.accepted_extensions())})",
-    )
-    pack.add_argument(
-        "--build-id",
-        help="id of the protected build, written into the app (default: derived from the app, "
-        "the platform, the packer version and the resolved checks)",
-    )
-    pack.add_argument(
-        "--output",
-        type=pathlib.Path,
-        default=None,
-        help="where to write the protected app (default: next to the app, named "
-        "<name>-protected<extension>, such as app-protected.apk)",
-    )
-    pack.add_argument(
-        "--checks",
-        type=_split_checks,
-        help="the check groups the app runs, comma-separated, such as debugger,hooks; "
-        f"{_required_checks()} always runs (default: every check group of the platform)",
-    )
-    pack.add_argument(
-        "--strict",
-        action="store_true",
-        help="fail without writing anything when a given check id is not a check of the platform, "
-        "instead of skipping it with a warning",
-    )
-    pack.add_argument(
+    _add_pack_arguments(android, platforms.Platform.ANDROID)
+    android.add_argument(
         "--mapping",
         type=pathlib.Path,
         default=None,
-        help=(
-            "the app's R8/ProGuard mapping file (Android only); with it the packer protects the "
-            "app's own classes even after R8 has repackaged them out of the app's package"
-        ),
+        help="the app's R8/ProGuard mapping file; with it the packer protects the app's own classes "
+        "even after R8 has repackaged them out of the app's package",
     )
-    pack.add_argument(
+    android.add_argument(
         "--pin-certificate",
         type=pathlib.Path,
+        default=None,
         help="the certificate the app will be signed with, PEM or DER; the pack refuses to decrypt "
-        "under any other signer (Android only)",
+        "under any other signer",
     )
-    _add_json_argument(pack)
+    ios = pack_platforms.add_parser(
+        "ios",
+        help="protect an iOS app, an IPA",
+        description="Adds the runtime to a built iOS app, an IPA. The result is unsigned.",
+    )
+    _add_pack_arguments(ios, platforms.Platform.IOS)
+    ios.set_defaults(mapping=None, pin_certificate=None)
 
     listing = commands.add_parser(
         "checks", help="list the check groups of a platform, or of both"
@@ -140,6 +119,45 @@ def _parser() -> argparse.ArgumentParser:
     )
     _add_json_argument(inspect_command)
     return parser
+
+
+def _add_pack_arguments(
+    command: argparse.ArgumentParser, platform: platforms.Platform
+) -> None:
+    """Adds the app and the options every platform's pack takes to the platform's pack command."""
+    extensions = platforms.extensions(platform)
+    command.set_defaults(platform=platform)
+    command.add_argument(
+        "app",
+        type=pathlib.Path,
+        help=f"the built app, ending in {' or '.join(extensions)}",
+    )
+    command.add_argument(
+        "--build-id",
+        help="id of the protected build, written into the app (default: derived from the app, "
+        "the platform, the packer version and the resolved checks)",
+    )
+    command.add_argument(
+        "--output",
+        type=pathlib.Path,
+        default=None,
+        help="where to write the protected app (default: next to the app, named "
+        f"<name>-protected<extension>, such as app-protected{extensions[0]})",
+    )
+    command.add_argument(
+        "--checks",
+        type=_split_checks,
+        help="the check groups the app runs, comma-separated, such as debugger,hooks; "
+        f"{_required_checks()} always runs; rasp checks --platform {platform} lists the valid groups "
+        f"(default: every check group of {platform})",
+    )
+    command.add_argument(
+        "--strict",
+        action="store_true",
+        help=f"fail without writing anything when a given check id is not a check of {platform}, "
+        "instead of skipping it with a warning",
+    )
+    _add_json_argument(command)
 
 
 def _add_json_argument(command: argparse.ArgumentParser) -> None:
@@ -205,55 +223,65 @@ def _unknown_check_message(
 def _pack(arguments: argparse.Namespace) -> int:
     """Packs the app given on the command line and prints the result, as text or, with `--json`, as one JSON object.
 
+    It first refuses an app whose extension is not one of the platform's, with one error line.
     Without `--build-id`, it derives the build id from the app, the platform, the packer version and the resolved checks.
     Without `--checks`, it packs the app with every check group of the platform. It warns
     about each given check id that is not one of the platform's groups, which the packer skips,
     and suggests the closest id. With `--strict`, it prints an error for each of them instead, writes
     nothing and fails. After the result line it prints a reminder that the output is unsigned.
     """
+    platform: platforms.Platform = arguments.platform
+    app: pathlib.Path = arguments.app
+    extensions = platforms.extensions(platform)
+    if app.suffix.lower() not in extensions:
+        print(
+            f"rasp pack {platform}: the app must be an {' or '.join(extensions)}, not {app.name!r}",
+            file=sys.stderr,
+        )
+        return EXIT_FAILED
     checks: list[str] | None = arguments.checks
     if checks is None:
-        checks = list(check_groups.CHECKS[arguments.platform])
+        checks = list(check_groups.CHECKS[platform])
     if arguments.strict is True:
-        unknown = check_groups.resolve_checks(arguments.platform, checks).skipped
+        unknown = check_groups.resolve_checks(platform, checks).skipped
         for check in unknown:
             print(
-                f"rasp pack: error: {_unknown_check_message(arguments.platform, check, skipped=False)}",
+                f"rasp pack: error: {_unknown_check_message(platform, check, skipped=False)}",
                 file=sys.stderr,
             )
         if len(unknown) > 0:
             return EXIT_FAILED
     output: pathlib.Path | None = arguments.output
     if output is None:
-        output = packer.default_output_path(arguments.app)
+        output = packer.default_output_path(app)
     build_id: str | None = arguments.build_id
     try:
         if build_id is None:
             build_id = build_ids.default_build_id(
-                app=arguments.app, platform=arguments.platform, checks=checks
+                app=app, platform=platform, checks=checks
             )
         result = packer.pack(
-            app=arguments.app,
-            platform=arguments.platform,
+            app=app,
+            platform=platform,
             output=output,
             build_id=build_id,
             checks=checks,
             mapping=arguments.mapping,
-            pin_certificate=getattr(arguments, "pin_certificate", None),
+            pin_certificate=arguments.pin_certificate,
         )
     except errors.Error as error:
         print(f"rasp pack: {error}", file=sys.stderr)
         return EXIT_FAILED
     for check in result.skipped_checks:
         print(
-            f"rasp pack: warning: {_unknown_check_message(arguments.platform, check, skipped=True)}",
+            f"rasp pack: warning: {_unknown_check_message(platform, check, skipped=True)}",
             file=sys.stderr,
         )
     if arguments.json is True:
         _print_json({**dataclasses.asdict(result), "output": str(result.output)})
         return EXIT_OK
     print(
-        f"packed {arguments.platform} app: {result.output} "
+        f"packed {platform} app: {result.output} "
         f"(package {result.package_name}, version {result.version}, build {result.build_id})"
     )
     print(NEXT_STEP)
@@ -319,11 +347,6 @@ def main(argv: collections.abc.Sequence[str] | None = None) -> int:
     if arguments.command is None:
         parser.print_help()
         return EXIT_OK
-    if arguments.command == "pack" and arguments.platform is None:
-        try:
-            arguments.platform = platforms.infer(arguments.app)
-        except ValueError as error:
-            parser.error(str(error))
     match arguments.command:
         case "pack":
             return _pack(arguments)

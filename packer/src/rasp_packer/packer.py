@@ -69,6 +69,9 @@ def pack(
     `skipped_checks`, so that a caller still packs when it passes a group that was renamed or
     removed.
 
+    The Android-only options are refused for an iOS app before any work: `mapping` and
+    `pin_certificate`.
+
     Args:
         app: Path to the built app: an APK or AAB for Android, an IPA for iOS.
         platform: The platform of the app.
@@ -81,7 +84,8 @@ def pack(
             have one: it is refused for iOS.
         pin_certificate: The certificate the developer will sign the protected app with, in PEM or
             DER form; the pack folds the certificate's digest into the key schedule, so a re-signed
-            install derives a different key and nothing decrypts. None leaves the pack unpinned.
+            install derives a different key and nothing decrypts. None leaves the pack unpinned. Only
+            Android apps are pinned: it is refused for iOS.
 
     Returns:
         The protected app, the app's package name and version, the build id, the check groups the
@@ -94,8 +98,10 @@ def pack(
             its root), or cannot be read.
         InvalidAppError: The app file cannot be read.
         MappingError: A mapping file is given for an iOS app, or it cannot be read.
+        InvalidCertificateError: A pinned certificate is given for an iOS app, or it cannot be read.
         Error: The app cannot be packed; see the platform's packer.
     """
+    _refuse_android_options(platform, mapping=mapping, pin_certificate=pin_certificate)
     _check_build_id(build_id)
     resolved_checks = check_groups.resolve_checks(platform, checks)
     if output.exists() is True:
@@ -121,10 +127,6 @@ def pack(
                 pin_certificate=pin_certificate,
             )
         case platforms.Platform.IOS:
-            if mapping is not None:
-                raise mapping_module.MappingError(
-                    "the R8 mapping applies only to Android apps; iOS apps have no dex"
-                )
             app_identity = ios_packer.pack(app=app, output=output, config=config)
     return PackResult(
         output=output,
@@ -143,6 +145,23 @@ def default_output_path(app: pathlib.Path) -> pathlib.Path:
     `dir/app-protected.apk`.
     """
     return app.with_name(f"{app.stem}-protected{app.suffix}")
+
+
+def _refuse_android_options(
+    platform: platforms.Platform,
+    *,
+    mapping: pathlib.Path | None,
+    pin_certificate: pathlib.Path | None,
+) -> None:
+    """Refuses the Android-only options for an app of another platform."""
+    if platform is platforms.Platform.ANDROID:
+        return
+    if mapping is not None:
+        raise mapping_module.MappingError("a mapping applies only to Android apps")
+    if pin_certificate is not None:
+        raise errors.InvalidCertificateError(
+            "a pinned certificate applies only to Android apps"
+        )
 
 
 def _check_build_id(build_id: str) -> None:
