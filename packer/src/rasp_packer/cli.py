@@ -76,7 +76,7 @@ def _parser() -> argparse.ArgumentParser:
     pack.add_argument(
         "--build-id",
         help="id of the protected build, written into the app (default: derived from the app, "
-        "the platform, the packer version and the resolved checks)",
+        "the platform, the packer version, the resolved checks and their actions)",
     )
     pack.add_argument(
         "--output",

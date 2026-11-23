@@ -27,16 +27,18 @@ The Android stub is Java and is built by a script, not by CMake. Set `ANDROID_JA
 ANDROID_JAR="$ANDROID_HOME/platforms/android-36/android.jar" android/stub/build.sh <output folder>
 ```
 
-## Detection actions
+## How do report-only and block work in the runtime?
 
-The packer writes report-only groups under `r`, a mask in the same platform order as the checks mask `m`.
-The enabled state comes from `m`, or the config's check list when no mask is readable. A group has three states:
+A group has three states.
 
 - **Off:** monitoring skips it; detections of that group from startup or Android loader checkpoints arm nothing.
 - **Report only:** the enabled group runs in monitoring and its detections arm nothing at every call site.
 - **Block:** the enabled group's detections arm a delayed process end at startup, in monitoring and at checkpoints.
 
-This changes `main`: startup and checkpoint checks previously blocked whatever `--checks` selected.
+Previously, startup and checkpoint detections blocked the app regardless of `--checks`.
+
+The packer writes report-only groups under `r`, a mask in the same platform order as the checks mask `m`.
+The enabled state comes from `m`, or the config's check list when no mask is readable.
 A missing or invalid `r` makes enabled groups block. If neither an enabled mask nor a list is readable,
 all detections still block, including when `r` is present. Unknown signals and groups without a platform bit block.
 Only blocking detections choose the panic delay: `dbg.`, `hook.` and `virt.` use 100–500 ms, others use 1–3 s.
@@ -50,7 +52,7 @@ and check both platform mask orders against dispatch. The loader keeps one immut
 thread no longer ends the app through panic. iOS has no integrity bit, so this unexpected signal still blocks there.
 Plugins receive complete monitoring observations; the response filter only acts on the separate detections.
 Off and report-only do not disable Android's independent DEX key schedule; see the
-[root README](../README.md#report-or-block). The config remains unauthenticated, with the same limit for `r` as `m`.
+[repository README](../README.md#report-or-block). The config remains unauthenticated, with the same limit for `r` as `m`.
 
 ## Logs
 
