@@ -295,6 +295,14 @@ TEST(Hooks, observeLoopbackPort_whenNothingListensOnThePort_reportsFalse) {
             (Observation{.signal = "hook.frida_port", .source = "connect", .status = Status::kOk, .value = false}));
 }
 
+#ifndef __APPLE__
+TEST(Hooks, observeInlineHooks_whenTheSystemHasNoProcessImages_reportsUnsupported) {
+  EXPECT_EQ(
+      observe_inline_hooks(),
+      (Observation{.signal = "hook.inline", .source = "self_check", .status = Status::kUnsupported, .value = {}}));
+}
+#endif
+
 TEST(Hooks, observeRegions_whenNoRegionIsWritableAndExecutable_reportsAnEmptyList) {
   EXPECT_EQ(observe_regions(clean_regions()), rwx_regions({}));
 }
@@ -402,16 +410,18 @@ TEST(Hooks, hooks_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
             (std::vector<Observation>{
                 {.signal = "hook.maps_hits", .source = "dyld", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.dyld_env", .source = "getenv", .status = Status::kUnsupported, .value = {}},
+                {.signal = "hook.inline", .source = "self_check", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.frida_port", .source = "connect", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.rwx_regions", .source = "vm_region", .status = Status::kUnsupported, .value = {}},
             }));
 }
 
-TEST(Hooks, fastHooks_whenOffAPhysicalDevice_reportsBothChecksAsUnsupported) {
+TEST(Hooks, fastHooks_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(fast_hooks("/usr/lib/systemhook.dylib"),
             (std::vector<Observation>{
                 {.signal = "hook.maps_hits", .source = "dyld", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.dyld_env", .source = "getenv", .status = Status::kUnsupported, .value = {}},
+                {.signal = "hook.inline", .source = "self_check", .status = Status::kUnsupported, .value = {}},
             }));
 }
 
