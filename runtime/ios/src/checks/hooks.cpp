@@ -517,7 +517,7 @@ std::optional<std::uintptr_t> decode_branch_target(std::span<const std::uint8_t,
     if (literal_offset < 0) {
       return std::nullopt;
     }
-    const std::size_t offset = static_cast<std::size_t>(literal_offset);
+    const auto offset = static_cast<std::size_t>(literal_offset);
     if (offset + sizeof(std::uintptr_t) > code.size()) {
       return std::nullopt;
     }

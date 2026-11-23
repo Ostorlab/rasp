@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 #include <netinet/in.h>
 #include <optional>
+#include <span>
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -332,14 +333,18 @@ struct Instruction {
 
 /// A trampoline prologue: `ldr x16, #8` as `first`, `br x16` right after it, and `literal` in the pool.
 [[nodiscard]] std::array<std::uint8_t, kPrologueBytes> trampoline(std::uint32_t first, std::uintptr_t literal) {
-  const std::array<Instruction, 2> instructions = {Instruction{.offset = 0, .word = first},
-                                                   Instruction{.offset = 4, .word = 0xD61F0200U}};
+  const std::array<Instruction, 2> instructions = {
+      Instruction{.offset = 0, .word = first},
+      Instruction{.offset = 4, .word = 0xD61F0200U},
+  };
   return prologue(instructions, literal);
 }
 
 /// A single-instruction prologue with `word` as the first instruction and no `br x16` after it.
 [[nodiscard]] std::array<std::uint8_t, kPrologueBytes> single(std::uint32_t word) {
-  const std::array<Instruction, 1> instructions = {Instruction{.offset = 0, .word = word}};
+  const std::array<Instruction, 1> instructions = {
+      Instruction{.offset = 0, .word = word},
+  };
   return prologue(instructions, 0);
 }
 
