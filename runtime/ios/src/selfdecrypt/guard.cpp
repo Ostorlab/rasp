@@ -8,6 +8,12 @@
 #include <cstdint>
 #include <span>
 
+#ifdef __APPLE__
+#include <dlfcn.h>
+#include <mach-o/getsect.h>
+#include <mach-o/loader.h>
+#endif
+
 #include "selfdecrypt/atrest.h"
 #include "selfdecrypt/chacha20.h"
 #include "selfdecrypt/seed.h"
@@ -37,17 +43,32 @@ constexpr std::array<std::uint8_t, kNonceSize> kNonce = {0x00, 0x00, 0x00, 0x00,
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables): the packer writes it, in the binary's file.
 std::array<volatile std::uint8_t, kGuardSize> guard_blob{};
 
-/// A fixed domain-separation constant the guard key is bound to for this first device-test version.
+/// The bytes of the runtime's own code the guard key is bound to: the `__TEXT,__text` section of this framework.
 ///
-/// This version binds the key to the scattered seed only, not to a hash of the runtime's live code. Binding to live
-/// code needs a window the packer can locate in the shipped, stripped, obfuscated binary and that is byte-identical in
-/// the file and in memory under ASLR; that is the next step. Until then this constant keeps hash_region in the key path
-/// so the derive_key shape is unchanged, and the packer uses the same constant, so a packed blob still decrypts.
+/// The section's bytes are identical in the shipped file and in memory (ASLR slides where `__text` loads, not what it
+/// holds), so the packer hashes the same bytes from the file that the runtime hashes from memory. A patch to any of the
+/// runtime's code changes `__text`, so the hash and the derived key change and the guard no longer decrypts.
+///
+/// `getsectiondata` returns the section's live, slide-adjusted address and size from this framework's own Mach-O
+/// header, which `dladdr` on a function of this module provides.
 [[nodiscard]] std::array<std::uint8_t, kKeyBytes> own_code_hash() {
-  // "rasp-atrest-v1" padded to 16 bytes.
-  constexpr std::array<std::uint8_t, 16> kDomain = {0x72, 0x61, 0x73, 0x70, 0x2d, 0x61, 0x74, 0x72,
-                                                    0x65, 0x73, 0x74, 0x2d, 0x76, 0x31, 0x00, 0x00};
-  return hash_region(kDomain);
+#ifdef __APPLE__
+  Dl_info info{};
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): take the address of a function of this module.
+  if (dladdr(reinterpret_cast<const void*>(&chacha20_xor), &info) == 0 || info.dli_fbase == nullptr) {
+    return {};
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): dli_fbase is this image's mach_header.
+  const auto* header = reinterpret_cast<const mach_header_64*>(info.dli_fbase);
+  unsigned long size = 0;
+  const std::uint8_t* text = getsectiondata(header, "__TEXT", "__text", &size);
+  if (text == nullptr || size == 0) {
+    return {};
+  }
+  return hash_region(std::span<const std::uint8_t>(text, size));
+#else
+  return {};
+#endif
 }
 
 }  // namespace

@@ -50,12 +50,12 @@ def write_guard(binary: bytes) -> bytes:
             section is smaller than the guard blob.
     """
     data = bytearray(binary)
-    key = _derive_key(_own_code_hash(), _reconstruct_seed())
-    for guard_offset, section_size in _slices(binary):
+    for guard_offset, section_size, text in _slices(binary):
         if section_size < _GUARD_SIZE:
             raise errors.InvalidRuntimeError(
                 f"the {MACHO_SEGMENT},{MACHO_SECTION} section is {section_size} bytes, smaller than the guard"
             )
+        key = _derive_key(_hash_region(text), _reconstruct_seed())
         blob = bytearray(_GUARD_SIZE)
         blob[: len(_MARKER)] = _MARKER
         _chacha20_xor(blob, key, _NONCE)
@@ -63,30 +63,31 @@ def write_guard(binary: bytes) -> bytes:
     return bytes(data)
 
 
-def _slices(binary: bytes) -> list[tuple[int, int]]:
-    """For each slice: the file offset of the guard section and its size."""
+def _slices(binary: bytes) -> list[tuple[int, int, bytes]]:
+    """For each slice: the guard section's file offset and size, and the __TEXT,__text bytes the key is bound to.
+
+    The runtime hashes its own __TEXT,__text section at load; the packer hashes the same bytes from the file. The two
+    match because ASLR slides where __text loads, not what it holds.
+    """
     fat = lief.MachO.parse(io.BytesIO(binary))
     if fat is None:
         raise errors.InvalidRuntimeError("the runtime binary is not a Mach-O file")
-    found: list[tuple[int, int]] = []
+    found: list[tuple[int, int, bytes]] = []
     for macho in fat:
         section = macho.get_section(MACHO_SEGMENT, MACHO_SECTION)
         if section is None:
             raise errors.InvalidRuntimeError(
                 f"the runtime binary has no {MACHO_SEGMENT},{MACHO_SECTION} section"
             )
-        found.append((macho.fat_offset + section.offset, section.size))
+        text_section = macho.get_section("__TEXT", "__text")
+        if text_section is None:
+            raise errors.InvalidRuntimeError("the runtime binary has no __TEXT,__text section")
+        start = macho.fat_offset + text_section.offset
+        text = binary[start : start + text_section.size]
+        if len(text) < text_section.size:
+            raise errors.InvalidRuntimeError("the __TEXT,__text section runs past the end of the binary")
+        found.append((macho.fat_offset + section.offset, section.size, text))
     return found
-
-
-def _own_code_hash() -> bytes:
-    """The fixed domain constant the guard key is bound to, matching the runtime's own_code_hash (v1).
-
-    This first version binds the key to the scattered seed only; binding to a hash of the runtime's live code is the next
-    step (it needs a window the packer can locate in the stripped, obfuscated binary and that matches memory under ASLR).
-    """
-    domain = bytes([0x72, 0x61, 0x73, 0x70, 0x2D, 0x61, 0x74, 0x72, 0x65, 0x73, 0x74, 0x2D, 0x76, 0x31, 0x00, 0x00])
-    return _hash_region(domain)
 
 
 def _reconstruct_seed() -> bytes:
