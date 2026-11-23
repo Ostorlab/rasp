@@ -67,8 +67,10 @@ An enabled group set to `block` arms the delayed process end on detection at any
 Previously, startup and checkpoint detections blocked the app regardless of `--checks`.
 
 If the runtime can read neither the enabled-check mask nor the check list, every detection uses `block`.
-Enabled groups also use `block` when action metadata is missing. Unknown runtime signals and platform groups also block. Android's independent DEX key schedule
-is unchanged by Off and report-only. See the [defaults and remaining key-schedule limits](../README.md#report-or-block).
+Enabled groups also use `block` when action metadata is missing. Unknown runtime signals and platform groups block.
+
+Android's independent DEX key schedule applies in every action mode.
+See the [defaults and remaining key-schedule limits](../README.md#report-or-block).
 
 ## How do I sign the protected app?
 

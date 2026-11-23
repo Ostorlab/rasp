@@ -38,6 +38,7 @@ def default_build_id(
 
     Raises:
         InvalidAppError: The app cannot be read.
+        InvalidCheckActionError: An override names a disabled group or assigns two actions to one group.
     """
     digest = hashlib.sha256()
     try:

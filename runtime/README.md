@@ -47,14 +47,16 @@ Every entry in `panic.cpp`'s verdict table names its group, for both value findi
 `sig.cert_sha256` belongs to identity and `hw.machine` belongs to emulator. Their values are informational
 in the verdict table, as are those of `cs.*` and `hook.foreign_libs`. For these signals, a detection requires
 disagreement between sources. The packer tests check every built-in signal constant against this table and
-both platform mask orders against dispatch. The loader keeps one immutable config in its shared state.
+both platform mask orders against dispatch.
 
 `integ.monitor_alive` stays with `integrity`. On Android, with integrity Off or report-only, a stalled monitoring
 thread no longer ends the app through panic. iOS has no integrity bit, so this unexpected signal still blocks there.
 Plugins receive every monitoring observation. `panic_on_detection` applies the action policy to detections
 when deciding whether to arm a panic.
-Off and report-only do not disable Android's independent DEX key schedule; see the
-[repository README](../README.md#report-or-block). The config remains unauthenticated, with the same limit for `r` as `m`.
+
+The Android loader reads the config once and shares it across checkpoints and the JNI entry.
+The independent DEX key schedule applies in every action mode. See the [repository README](../README.md#report-or-block).
+The config remains unauthenticated, with the same limit for `r` as `m`.
 
 ## Logs
 
