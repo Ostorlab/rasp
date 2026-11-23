@@ -16,9 +16,12 @@ import struct
 import lief
 
 from rasp_packer import errors
+from rasp_packer.ios import vm_assembler
 
 MACHO_SEGMENT = "__DATA"
 MACHO_SECTION = "__rasp_guard"
+VM_SEGMENT = "__DATA"
+VM_SECTION = "__rasp_vm"
 
 _GUARD_SIZE = 32
 _KEY_BYTES = 32
@@ -36,35 +39,46 @@ _MASK64 = (1 << 64) - 1
 
 
 def write_guard(binary: bytes) -> bytes:
-    """Encrypts the guard blob into every slice of the runtime binary.
+    """Encrypts the guard blob and writes the guard VM program into every slice of the runtime binary.
+
+    The guard's decision runs as byte-code on a VM in the runtime (see ios/src/selfdecrypt/vm.cpp). This writes both the
+    encrypted blob (into `__DATA,__rasp_guard`) and the program the VM runs over it (into `__DATA,__rasp_vm`). Writing
+    the program is part of packing because the runtime's `__text` -- which the key is bound to -- includes the VM, so
+    the blob and the program are produced together against the same shipped code.
 
     Args:
         binary: The content of the `RaspRuntime` binary.
 
     Returns:
-        The binary with the ciphertext of the marker written into the `__DATA,__rasp_guard` section of each slice. Its
-        size does not change.
+        The binary with the ciphertext of the marker written into the `__DATA,__rasp_guard` section and the guard
+        program written into the `__DATA,__rasp_vm` section of each slice. Its size does not change.
 
     Raises:
-        InvalidRuntimeError: The binary is not a Mach-O file, or a slice has no `__DATA,__rasp_guard` section, or the
-            section is smaller than the guard blob.
+        InvalidRuntimeError: The binary is not a Mach-O file, or a slice is missing one of the required sections, or a
+            section is smaller than what it must hold.
     """
+    program = vm_assembler.guard_program()
     data = bytearray(binary)
-    for guard_offset, section_size, text in _slices(binary):
-        if section_size < _GUARD_SIZE:
+    for guard_offset, guard_size, vm_offset, vm_size, text in _slices(binary):
+        if guard_size < _GUARD_SIZE:
             raise errors.InvalidRuntimeError(
-                f"the {MACHO_SEGMENT},{MACHO_SECTION} section is {section_size} bytes, smaller than the guard"
+                f"the {MACHO_SEGMENT},{MACHO_SECTION} section is {guard_size} bytes, smaller than the guard"
+            )
+        if vm_size < len(program):
+            raise errors.InvalidRuntimeError(
+                f"the {VM_SEGMENT},{VM_SECTION} section is {vm_size} bytes, smaller than the {len(program)}-byte program"
             )
         key = _derive_key(_hash_region(text), _reconstruct_seed())
         blob = bytearray(_GUARD_SIZE)
         blob[: len(_MARKER)] = _MARKER
         _chacha20_xor(blob, key, _NONCE)
         data[guard_offset : guard_offset + _GUARD_SIZE] = blob
+        data[vm_offset : vm_offset + len(program)] = program
     return bytes(data)
 
 
-def _slices(binary: bytes) -> list[tuple[int, int, bytes]]:
-    """For each slice: the guard section's file offset and size, and the __TEXT,__text bytes the key is bound to.
+def _slices(binary: bytes) -> list[tuple[int, int, int, int, bytes]]:
+    """For each slice: the guard and VM section file offsets and sizes, and the __TEXT,__text bytes the key is bound to.
 
     The runtime hashes its own __TEXT,__text section at load; the packer hashes the same bytes from the file. The two
     match because ASLR slides where __text loads, not what it holds.
@@ -72,13 +86,16 @@ def _slices(binary: bytes) -> list[tuple[int, int, bytes]]:
     fat = lief.MachO.parse(io.BytesIO(binary))
     if fat is None:
         raise errors.InvalidRuntimeError("the runtime binary is not a Mach-O file")
-    found: list[tuple[int, int, bytes]] = []
+    found: list[tuple[int, int, int, int, bytes]] = []
     for macho in fat:
-        section = macho.get_section(MACHO_SEGMENT, MACHO_SECTION)
-        if section is None:
+        guard_section = macho.get_section(MACHO_SEGMENT, MACHO_SECTION)
+        if guard_section is None:
             raise errors.InvalidRuntimeError(
                 f"the runtime binary has no {MACHO_SEGMENT},{MACHO_SECTION} section"
             )
+        vm_section = macho.get_section(VM_SEGMENT, VM_SECTION)
+        if vm_section is None:
+            raise errors.InvalidRuntimeError(f"the runtime binary has no {VM_SEGMENT},{VM_SECTION} section")
         text_section = macho.get_section("__TEXT", "__text")
         if text_section is None:
             raise errors.InvalidRuntimeError("the runtime binary has no __TEXT,__text section")
@@ -86,7 +103,15 @@ def _slices(binary: bytes) -> list[tuple[int, int, bytes]]:
         text = binary[start : start + text_section.size]
         if len(text) < text_section.size:
             raise errors.InvalidRuntimeError("the __TEXT,__text section runs past the end of the binary")
-        found.append((macho.fat_offset + section.offset, section.size, text))
+        found.append(
+            (
+                macho.fat_offset + guard_section.offset,
+                guard_section.size,
+                macho.fat_offset + vm_section.offset,
+                vm_section.size,
+                text,
+            )
+        )
     return found
 
 

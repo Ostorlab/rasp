@@ -14,9 +14,11 @@
 
 namespace {
 
-/// Ends the process when the at-rest guard was written by the packer but does not decrypt: the runtime's code or the
-/// embedded seed changed after packing, which a patched or stripped runtime produces. An unpacked build (kAbsent) and
-/// an intact one (kIntact) run on. This is what couples the app to the runtime: tamper with the runtime and it ends.
+/// Runs the at-rest guard. The guard's decision now lives in a byte-code program the guard VM interprets (see
+/// selfdecrypt/vm.h): on the tamper path the program itself ends the process, through the VM's kill opcode, so there is
+/// no native "if tampered then end" branch here for an attacker to patch out. The status is still checked on return as
+/// a fallback -- if the kill opcode were somehow bypassed, a kTampered result still ends the process -- but the primary
+/// enforcement is inside the virtualized program. An unpacked build (kAbsent) and an intact one (kIntact) run on.
 void enforce_at_rest_guard() noexcept {
   if (rasp::ios::selfdecrypt::at_rest_guard_status() == rasp::ios::selfdecrypt::GuardStatus::kTampered) {
     rasp::ios::end_process();

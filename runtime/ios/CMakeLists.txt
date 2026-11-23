@@ -18,6 +18,7 @@ add_library(RaspRuntime SHARED
   src/selfdecrypt/chacha20.cpp
   src/selfdecrypt/guard.cpp
   src/selfdecrypt/seed.cpp
+  src/selfdecrypt/vm.cpp
   src/startup.cpp
   src/util/macho.cpp
   src/util/sha256.cpp)
