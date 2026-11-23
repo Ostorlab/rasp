@@ -51,18 +51,21 @@ struct MemoryRegion {
 /// through getenv, hook.frida_port read through connect, then hook.rwx_regions read through vm_region.
 [[nodiscard]] std::vector<Observation> hooks(std::string_view inserted_libraries);
 
-/// Runs the hooking checks that read only the process's own state, and returns what they observed.
+/// Runs the fast hooking checks used at start-up, and returns what they observed.
 ///
-/// They are the first two checks of hooks: the loaded images and `inserted_libraries`. They neither connect to a port
-/// nor walk the app's memory.
+/// They are the loaded images, `inserted_libraries`, and whether Frida's default port accepts a connection. The first
+/// two read only the process's own state and never walk the app's memory; the port probe makes one bounded loopback
+/// connection. It is included here because an instrumentation framework injected by a jailbreak, which leaves no
+/// known image name and sets no `DYLD_INSERT_LIBRARIES`, is still caught by its listening port. The slower memory-region
+/// walk stays out of the start-up path and runs in the full hooks() instead.
 ///
 /// On a physical iOS device it runs the probes. Anywhere else, on a simulator, a Mac or a Linux host, every observation
 /// is unsupported instead, so the result still shows that the check ran.
 ///
 /// @param inserted_libraries The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, as read_inserted_libraries
 /// returns it.
-/// @return One observation per signal and source, in this order: hook.maps_hits read through dyld, then hook.dyld_env
-/// read through getenv.
+/// @return One observation per signal and source, in this order: hook.maps_hits read through dyld, hook.dyld_env read
+/// through getenv, then hook.frida_port read through connect.
 [[nodiscard]] std::vector<Observation> fast_hooks(std::string_view inserted_libraries);
 
 /// Reports the paths of `image_paths` that name a known instrumentation or hooking framework.

@@ -532,9 +532,17 @@ std::vector<Observation> hooks(std::string_view inserted_libraries) {
 
 std::vector<Observation> fast_hooks(std::string_view inserted_libraries) {
   if (!kPhysicalDevice) {
-    return {unsupported(kMapsHitsSignal, kDyldSource), unsupported(kDyldEnvSignal, kGetenvSource)};
+    return {
+        unsupported(kMapsHitsSignal, kDyldSource),
+        unsupported(kDyldEnvSignal, kGetenvSource),
+        unsupported(kFridaPortSignal, kConnectSource),
+    };
   }
-  return {observe_loaded_images(), observe_inserted_libraries(inserted_libraries)};
+  return {
+      observe_loaded_images(),
+      observe_inserted_libraries(inserted_libraries),
+      observe_loopback_port(kFridaPort),
+  };
 }
 
 }  // namespace rasp::ios::checks

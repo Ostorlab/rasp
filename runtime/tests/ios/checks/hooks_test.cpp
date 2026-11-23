@@ -407,11 +407,12 @@ TEST(Hooks, hooks_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
             }));
 }
 
-TEST(Hooks, fastHooks_whenOffAPhysicalDevice_reportsBothChecksAsUnsupported) {
+TEST(Hooks, fastHooks_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(fast_hooks("/usr/lib/systemhook.dylib"),
             (std::vector<Observation>{
                 {.signal = "hook.maps_hits", .source = "dyld", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.dyld_env", .source = "getenv", .status = Status::kUnsupported, .value = {}},
+                {.signal = "hook.frida_port", .source = "connect", .status = Status::kUnsupported, .value = {}},
             }));
 }
 

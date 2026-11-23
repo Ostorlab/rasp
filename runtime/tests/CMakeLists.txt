@@ -55,6 +55,13 @@ foreach(check codesign debugger emulator hooks identity jailbreak mitm virtualiz
   gtest_discover_tests(rasp_ios_${check}_test)
 endforeach()
 
+# Header-only iOS utilities (no .cpp of their own).
+add_executable(rasp_ios_hidden_string_test ios/util/hidden_string_test.cpp)
+target_include_directories(rasp_ios_hidden_string_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rasp_ios_hidden_string_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_ios_hidden_string_test)
+
 foreach(check identity)
   target_sources(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/macho.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/util/sha256.cpp)
