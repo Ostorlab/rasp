@@ -53,11 +53,12 @@ struct MemoryRegion {
 
 /// Runs the fast hooking checks used at start-up, and returns what they observed.
 ///
-/// They are the loaded images, `inserted_libraries`, and whether Frida's default port accepts a connection. The first
-/// two read only the process's own state and never walk the app's memory; the port probe makes one bounded loopback
-/// connection. It is included here because an instrumentation framework injected by a jailbreak, which leaves no
-/// known image name and sets no `DYLD_INSERT_LIBRARIES`, is still caught by its listening port. The slower memory-region
-/// walk stays out of the start-up path and runs in the full hooks() instead.
+/// They are the loaded images, `inserted_libraries`, and the self-check for inline hooks of the runtime's own
+/// functions. All three read only the process's own state and never walk the app's memory or connect to a port. The
+/// inline self-check is included here because an instrumentation framework injected by a jailbreak leaves no known
+/// image name, sets no `DYLD_INSERT_LIBRARIES`, and need not listen on a known port, but to instrument the runtime must
+/// overwrite a function's first instruction, which the self-check sees regardless of the port or name it uses. The
+/// slower memory-region walk and the port probe stay out of the start-up path and run in the full hooks() instead.
 ///
 /// On a physical iOS device it runs the probes. Anywhere else, on a simulator, a Mac or a Linux host, every observation
 /// is unsupported instead, so the result still shows that the check ran.
@@ -65,7 +66,7 @@ struct MemoryRegion {
 /// @param inserted_libraries The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, as read_inserted_libraries
 /// returns it.
 /// @return One observation per signal and source, in this order: hook.maps_hits read through dyld, hook.dyld_env read
-/// through getenv, then hook.frida_port read through connect.
+/// through getenv, then hook.inline read through self_check.
 [[nodiscard]] std::vector<Observation> fast_hooks(std::string_view inserted_libraries);
 
 /// Reports the paths of `image_paths` that name a known instrumentation or hooking framework.
@@ -140,6 +141,22 @@ struct MemoryRegion {
 /// is refused. It has an error status when a system call fails, or when the connection is neither accepted nor refused
 /// within 250 milliseconds.
 [[nodiscard]] Observation observe_loopback_port(std::uint16_t port);
+
+/// Reports which of the runtime's own functions are inline-hooked, from a self-check of their first instruction.
+///
+/// An instrumentation framework such as Frida hooks a function by overwriting its first instruction with a branch into
+/// a trampoline it places in anonymous memory, which belongs to no loaded image. The probe takes the addresses of
+/// several of the runtime's own functions at compile time, so there is no symbol to look up, and checks whether the
+/// first instruction of each is a branch whose target `dladdr` cannot attribute to any image. A pristine function
+/// starts with a real prologue, not such a branch, so an intact runtime reports an empty list. It names the runtime's
+/// own private functions, which a jailbreak's tweaks do not hook, rather than shared system functions that a device's
+/// own hooks would flag; this catches an attacker instrumenting the runtime regardless of the port or name the
+/// framework uses, and does not fire on an ordinary jailbroken device. It reads only the process's own memory, so it
+/// also runs on a Mac or a Linux host, where nothing is hooked.
+///
+/// @return One hook.inline observation read through self_check, with the names of the runtime's functions found hooked,
+/// empty when none are. It has the unsupported status off an Apple build.
+[[nodiscard]] Observation observe_inline_hooks();
 
 /// Reports the regions of `regions` whose current protection is both writable and executable.
 ///

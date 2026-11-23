@@ -17,6 +17,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -33,7 +34,9 @@ inline constexpr std::uint8_t kHiddenStringKey = 0x5A;
 /// @param index The byte's position in the string.
 /// @return The transformed byte. Applying this function twice with the same index returns the original byte.
 [[nodiscard]] constexpr std::uint8_t mask_byte(std::uint8_t value, std::size_t index) {
-  return static_cast<std::uint8_t>(value ^ kHiddenStringKey ^ static_cast<std::uint8_t>(index * 7U + 1U));
+  const auto position = static_cast<std::uint8_t>((index * 7U) + 1U);
+  return static_cast<std::uint8_t>(static_cast<unsigned>(value) ^ static_cast<unsigned>(kHiddenStringKey) ^
+                                   static_cast<unsigned>(position));
 }
 
 /// A string literal stored XOR-masked at compile time, so its plaintext never appears in the binary.
@@ -46,8 +49,9 @@ class HiddenString {
   ///
   /// @param text The string literal, such as "/Applications/Cydia.app".
   consteval explicit HiddenString(const char (&text)[N]) {
+    const std::span<const char, N> characters{text};
     for (std::size_t index = 0; index < N; ++index) {
-      masked_[index] = mask_byte(static_cast<std::uint8_t>(text[index]), index);
+      masked_.at(index) = mask_byte(static_cast<std::uint8_t>(characters[index]), index);
     }
   }
 
@@ -62,7 +66,7 @@ class HiddenString {
     std::string plaintext;
     plaintext.reserve(N - 1);
     for (std::size_t index = 0; index < N - 1; ++index) {
-      plaintext.push_back(static_cast<char>(mask_byte(masked_[index], index)));
+      plaintext.push_back(static_cast<char>(mask_byte(masked_.at(index), index)));
     }
     return plaintext;
   }
