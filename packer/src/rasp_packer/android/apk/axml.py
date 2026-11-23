@@ -31,6 +31,7 @@ reference to those strings.
 The parser is checked against manifests produced by aapt2; see the tests.
 """
 
+import collections.abc
 import dataclasses
 import struct
 from typing import Self
@@ -45,6 +46,7 @@ RES_XML_END_ELEMENT_TYPE = 0x0103
 RES_XML_CDATA_TYPE = 0x0104
 
 _ROOT_HEADER_SIZE = 8
+_CHUNK_HEADER_SIZE = 8
 _POOL_HEADER_SIZE = 28
 _NODE_HEADER_SIZE = 16
 _ATTR_EXT_SIZE = 20
@@ -87,6 +89,44 @@ def _u32(data: _Buffer, offset: int) -> int:
     return int(struct.unpack_from("<I", data, offset)[0])
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _Chunk:
+    """The header of one chunk, at `offset` in the buffer it was read from."""
+
+    offset: int
+    chunk_type: int
+    header_size: int
+    size: int
+
+
+def _chunk_at(data: _Buffer, offset: int) -> _Chunk:
+    """Reads the chunk header at `offset`, refusing a chunk whose declared size is malformed."""
+    if len(data) - offset < _CHUNK_HEADER_SIZE:
+        raise AxmlError("manifest chunk header runs past the end")
+    chunk_type = _u16(data, offset)
+    header_size = _u16(data, offset + 2)
+    size = _u32(data, offset + 4)
+    minimum = max(header_size, _CHUNK_HEADER_SIZE)
+    if size < minimum:
+        raise AxmlError(
+            f"manifest chunk {chunk_type:#06x} has size {size}, smaller than its {minimum}-byte header"
+        )
+    if size > len(data) - offset:
+        raise AxmlError(
+            f"manifest chunk {chunk_type:#06x} has size {size}, past the end"
+        )
+    return _Chunk(offset, chunk_type, header_size, size)
+
+
+def _chunks(region: _Buffer) -> collections.abc.Iterator[_Chunk]:
+    """Yields every chunk of `region` in order."""
+    offset = 0
+    while offset < len(region):
+        chunk = _chunk_at(region, offset)
+        yield chunk
+        offset += chunk.size
+
+
 @dataclasses.dataclass(slots=True)
 class _StringPool:
     """The string pool chunk, decoded enough to read strings and append one.
@@ -113,13 +153,12 @@ class _StringPool:
 
     @classmethod
     def parse(cls, data: bytes, start: int) -> tuple[Self, int]:
-        chunk_type = _u16(data, start)
-        if chunk_type != RES_STRING_POOL_TYPE:
+        chunk = _chunk_at(data, start)
+        if chunk.chunk_type != RES_STRING_POOL_TYPE:
             raise AxmlError(
-                f"expected a string pool at offset {start}, found type {chunk_type:#06x}"
+                f"expected a string pool at offset {start}, found type {chunk.chunk_type:#06x}"
             )
-        header_size = _u16(data, start + 2)
-        size = _u32(data, start + 4)
+        header_size = chunk.header_size
         string_count = _u32(data, start + 8)
         style_count = _u32(data, start + 12)
         flags = _u32(data, start + 16)
@@ -137,7 +176,7 @@ class _StringPool:
             length, text = _read_string(data, data_base + offset, is_utf8)
             encoded.append(data[data_base + offset : data_base + offset + length])
             decoded.append(text)
-        return cls(header_size, flags, encoded, decoded), size
+        return cls(header_size, flags, encoded, decoded), chunk.size
 
     def index(self, text: str) -> int | None:
         for i, value in enumerate(self.decoded):
@@ -248,15 +287,11 @@ class _Element:
 
 def _resource_map(region: _Buffer) -> list[int]:
     """Returns the resource ids of the resource map chunk, or an empty list when there is none."""
-    offset = 0
-    while offset < len(region):
-        chunk_type = _u16(region, offset)
-        header_size = _u16(region, offset + 2)
-        size = _u32(region, offset + 4)
-        if chunk_type == RES_XML_RESOURCE_MAP_TYPE:
-            count = (size - header_size) // 4
-            return [_u32(region, offset + header_size + i * 4) for i in range(count)]
-        offset += size
+    for chunk in _chunks(region):
+        if chunk.chunk_type == RES_XML_RESOURCE_MAP_TYPE:
+            count = (chunk.size - chunk.header_size) // 4
+            start = chunk.offset + chunk.header_size
+            return [_u32(region, start + i * 4) for i in range(count)]
     return []
 
 
@@ -269,11 +304,9 @@ def _string(pool: _StringPool, index: int) -> str:
 
 def _find_element(region: _Buffer, pool: _StringPool, name: str) -> _Element | None:
     """Returns the first start element named `name`, or None when there is none."""
-    offset = 0
-    while offset < len(region):
-        chunk_type = _u16(region, offset)
-        size = _u32(region, offset + 4)
-        if chunk_type == RES_XML_START_ELEMENT_TYPE:
+    for chunk in _chunks(region):
+        if chunk.chunk_type == RES_XML_START_ELEMENT_TYPE:
+            offset = chunk.offset
             name_index = _u32(region, offset + 20)
             if name_index != _NO_ENTRY and _string(pool, name_index) == name:
                 attributes_offset = (
@@ -281,7 +314,6 @@ def _find_element(region: _Buffer, pool: _StringPool, name: str) -> _Element | N
                 )
                 attribute_count = _u16(region, offset + 28)
                 return _Element(offset, attributes_offset, attribute_count)
-        offset += size
     return None
 
 
@@ -603,26 +635,20 @@ def _attribute_name_index(resource_map: list[int], resource_id: int) -> int | No
 
 def _insert_resource_map_entry(region: bytearray, index: int, resource_id: int) -> None:
     """Inserts `resource_id` into the resource map chunk at `index`, growing the chunk by four bytes."""
-    offset = 0
-    while offset < len(region):
-        chunk_type = _u16(region, offset)
-        header_size = _u16(region, offset + 2)
-        size = _u32(region, offset + 4)
-        if chunk_type == RES_XML_RESOURCE_MAP_TYPE:
-            at = offset + header_size + index * 4
+    for chunk in _chunks(region):
+        if chunk.chunk_type == RES_XML_RESOURCE_MAP_TYPE:
+            at = chunk.offset + chunk.header_size + index * 4
             region[at:at] = struct.pack("<I", resource_id)
-            struct.pack_into("<I", region, offset + 4, size + 4)
+            struct.pack_into("<I", region, chunk.offset + 4, chunk.size + 4)
             return
-        offset += size
     raise AxmlError("manifest has no resource map chunk")
 
 
 def _shift_string_references(region: bytearray, threshold: int) -> None:
     """Adds one to every pool string index in `region` that is `threshold` or more, for a string inserted there."""
-    offset = 0
-    while offset < len(region):
-        chunk_type = _u16(region, offset)
-        size = _u32(region, offset + 4)
+    for chunk in _chunks(region):
+        offset = chunk.offset
+        chunk_type = chunk.chunk_type
         if chunk_type in (RES_XML_START_NAMESPACE_TYPE, RES_XML_END_NAMESPACE_TYPE):
             _shift_index(region, offset + 12, threshold)
             _shift_index(region, offset + 16, threshold)
@@ -649,7 +675,6 @@ def _shift_string_references(region: bytearray, threshold: int) -> None:
             _shift_index(region, offset + 16, threshold)
             if region[offset + 23] == _TYPE_STRING:
                 _shift_index(region, offset + 24, threshold)
-        offset += size
 
 
 def _shift_index(region: bytearray, position: int, threshold: int) -> None:

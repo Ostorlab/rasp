@@ -1,9 +1,11 @@
-"""Fixtures: arm64 iOS executables, IPAs, a runtime framework, and stand-ins for the runtime's binaries."""
+"""Fixtures: arm64 iOS executables, IPAs, a runtime framework, stand-ins for the runtime's binaries, and a test deadline."""
 
 import collections.abc
 import pathlib
 import plistlib
 import shutil
+import signal
+import types
 import zipfile
 
 import pytest
@@ -18,6 +20,24 @@ APP_INFO = {
     "CFBundleIdentifier": PACKAGE_NAME,
     "CFBundleShortVersionString": VERSION,
 }
+
+_DEADLINE_SECONDS = 5
+
+
+@pytest.fixture
+def deadline() -> collections.abc.Iterator[None]:
+    """Fails the test with TimeoutError when it runs too long, instead of letting it hang."""
+
+    def expire(signal_number: int, frame: types.FrameType | None) -> None:
+        raise TimeoutError(f"the test still ran after {_DEADLINE_SECONDS} seconds")
+
+    previous = signal.signal(signal.SIGALRM, expire)
+    signal.alarm(_DEADLINE_SECONDS)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 @pytest.fixture

@@ -7,6 +7,7 @@ import hashlib
 import io
 import pathlib
 import random
+import struct
 import zipfile
 
 import lief
@@ -712,6 +713,33 @@ def testPack_whenNoPrimaryDex_raisesInvalidApkError(tmp_path: pathlib.Path) -> N
         packer.pack(
             app=app,
             output=output,
+            config=_CONFIG,
+            artifacts=_artifacts(),
+            splitter=_recorded_split(),
+            generator=random.Random(0),
+        )
+
+
+@pytest.mark.usefixtures("deadline")
+def testPack_whenAManifestChunkHasSizeZero_raisesManifestError(
+    tmp_path: pathlib.Path,
+) -> None:
+    manifest = bytearray((_FIXTURES / _MANIFEST).read_bytes())
+    pool_size = struct.unpack_from("<I", manifest, 12)[0]
+    struct.pack_into("<I", manifest, 8 + pool_size + 4, 0)
+    app = tmp_path / "app.apk"
+    with zipfile.ZipFile(app, "w") as archive:
+        archive.writestr(
+            "AndroidManifest.xml", bytes(manifest), compress_type=zipfile.ZIP_STORED
+        )
+        archive.writestr(
+            "classes.dex", b"app primary", compress_type=zipfile.ZIP_DEFLATED
+        )
+        archive.writestr("resources.arsc", _ARSC, compress_type=zipfile.ZIP_STORED)
+    with pytest.raises(errors.ManifestError, match="smaller than its"):
+        packer.pack(
+            app=app,
+            output=tmp_path / "out.apk",
             config=_CONFIG,
             artifacts=_artifacts(),
             splitter=_recorded_split(),

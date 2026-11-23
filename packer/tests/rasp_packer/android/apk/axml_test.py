@@ -35,6 +35,23 @@ def _with_string_values(data: bytes, *, data_type: int, index: int) -> bytes:
     return bytes(edited)
 
 
+def _chunk_offsets(data: bytes) -> list[int]:
+    """Returns the offset of every chunk after the root header of a well-formed manifest."""
+    offsets: list[int] = []
+    offset = 8
+    while offset < len(data):
+        offsets.append(offset)
+        offset += struct.unpack_from("<I", data, offset + 4)[0]
+    return offsets
+
+
+def _with_chunk_size(data: bytes, chunk: int, size: int) -> bytes:
+    """Sets the declared size of the manifest's `chunk`-th chunk after the root header."""
+    edited = bytearray(data)
+    struct.pack_into("<I", edited, _chunk_offsets(data)[chunk] + 4, size)
+    return bytes(edited)
+
+
 def testReadApplicationClass_whenPresent_returnsName() -> None:
     assert (
         axml.read_application_class(_with_application()) == "com.example.withapp.MyApp"
@@ -186,3 +203,54 @@ def testClearDebuggable_whenTheAppDoesNotDeclareIt_returnsTheManifestUnchanged()
     data = _with_application()
 
     assert axml.clear_debuggable(data) == data
+
+
+@pytest.mark.usefixtures("deadline")
+@pytest.mark.parametrize("chunk", [0, 1])
+def testReadApplicationClass_whenAChunkHasSizeZero_raisesAxmlError(chunk: int) -> None:
+    data = _with_chunk_size(_with_application(), chunk, 0)
+
+    with pytest.raises(axml.AxmlError, match="smaller than its"):
+        axml.read_application_class(data)
+
+
+@pytest.mark.usefixtures("deadline")
+def testSetAppComponentFactory_whenTheLastChunkHasSizeZero_raisesAxmlError() -> None:
+    data = _with_application()
+    data = _with_chunk_size(data, len(_chunk_offsets(data)) - 1, 0)
+
+    with pytest.raises(axml.AxmlError, match="smaller than its"):
+        axml.set_app_component_factory(data, _STUB)
+
+
+@pytest.mark.usefixtures("deadline")
+@pytest.mark.parametrize(("chunk", "size"), [(1, 4), (2, 12)])
+def testReadApplicationClass_whenAChunkIsSmallerThanItsHeader_raisesAxmlError(
+    chunk: int, size: int
+) -> None:
+    data = _with_chunk_size(_with_application(), chunk, size)
+
+    with pytest.raises(axml.AxmlError, match="smaller than its"):
+        axml.read_application_class(data)
+
+
+@pytest.mark.usefixtures("deadline")
+@pytest.mark.parametrize("chunk", [0, 1])
+def testReadApplicationClass_whenAChunkRunsPastTheEnd_raisesAxmlError(
+    chunk: int,
+) -> None:
+    data = _with_application()
+    data = _with_chunk_size(data, chunk, len(data))
+
+    with pytest.raises(axml.AxmlError, match="past the end"):
+        axml.read_application_class(data)
+
+
+@pytest.mark.usefixtures("deadline")
+def testSetAppComponentFactory_whenTheManifestEndsInsideAChunkHeader_raisesAxmlError() -> (
+    None
+):
+    data = _with_application() + bytes(4)
+
+    with pytest.raises(axml.AxmlError, match="past the end"):
+        axml.set_app_component_factory(data, _STUB)
