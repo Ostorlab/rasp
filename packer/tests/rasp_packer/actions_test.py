@@ -1,14 +1,10 @@
 """Tests of pack-time actions and the mask read by the runtime."""
 
-import json
-
 import pytest
 
 from rasp_packer import checks
 from rasp_packer import errors
-from rasp_packer import inspection
 from rasp_packer import platforms
-from rasp_packer import runtime_config
 
 
 @pytest.mark.parametrize("platform", list(platforms.Platform))
@@ -55,41 +51,6 @@ def testResolveChecks_whenActionsConflictOrNameADisabledGroup_refusesTheChoice(
         checks.resolve_checks(
             platforms.Platform.ANDROID, ["root"], report_only=report_only, block=block
         )
-
-
-@pytest.mark.parametrize("platform", list(platforms.Platform))
-def testConfig_whenReportMaskIsWritten_inspectionReadsEachGroupsAction(
-    platform: platforms.Platform,
-) -> None:
-    """The report mask uses the platform's checks order, including required groups."""
-    enabled = checks.CHECKS[platform]
-    config = runtime_config.RuntimeConfig(
-        build_id="actions",
-        checks=enabled,
-        checks_mask=checks.checks_mask(platform, enabled),
-        report_only_mask=checks.checks_mask(platform, ["mitm", "identity"]),
-    )
-
-    fields = inspection._parse_config(config.to_json(), platform)
-
-    assert json.loads(config.to_json())["r"] == checks.checks_mask(
-        platform, ["mitm", "identity"]
-    )
-    assert fields is not None
-    assert fields.actions == {
-        group: "report" if group in {"mitm", "identity"} else "block"
-        for group in sorted(enabled)
-    }
-
-
-def testInspect_whenReportMaskIsMissing_reportsNoActions() -> None:
-    """Inspection cannot infer the behavior of runtimes released before actions."""
-    config = inspection._parse_config(
-        b'{"build_id":"old","m":127}', platforms.Platform.ANDROID
-    )
-
-    assert config is not None
-    assert config.actions == {}
 
 
 def testResolveChecks_whenUnknownActionsAreRepeated_reportsThemOnceInInputOrder() -> (

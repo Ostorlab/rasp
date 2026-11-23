@@ -116,11 +116,11 @@ A group has three states:
 
 Previously, startup and checkpoint detections blocked the app regardless of `--checks`.
 Only `report` and `block` are actions; Off disables the group. Choose overrides with
-`--report-only mitm,root` and `--block debugger,hooks`, or `report_only=` and `block=` in Python.
+`--report-only debugger` and `--block mitm`, or `report_only=` and `block=` in Python.
 An override must name an enabled group. Each group can have one action.
 
 ```sh
-uv run rasp pack app.apk --platform android --build-id my-build-1 --checks root,debugger,mitm --report-only root,mitm --block debugger --output app-protected.apk
+uv run rasp pack app.apk --platform android --build-id my-build-1 --checks root,debugger,mitm --report-only debugger --block mitm --output app-protected.apk
 ```
 
 | Default action | Groups |
@@ -149,10 +149,10 @@ On Android, Off and report-only control panic. The independent DEX key schedule 
 These requirements overlap with the `debugger`, `integrity`, `hooks`, `root`, `identity` and emulator-related
 environment checks. A tracer or changed sensor can prevent the app from loading or decrypting classes even when
 its check group reports only. VPN, proxy and user-CA observations are outside the key inputs. Action-aware gates
-are tracked in TODO. Early non-dumpable process hardening applies in every mode.
+are tracked in [`TODO.md`](TODO.md#runtime-android). Early non-dumpable process hardening applies in every mode.
 
-The embedded config is cleartext and unauthenticated: the report-only mask has the same tampering limit as the
-checks mask. See `runtime_config.py` and `TODO.md`.
+The embedded config is cleartext and unauthenticated. Both masks share the same tampering limit, tracked in
+[`TODO.md`](TODO.md#packer-config).
 
 ## Requirements
 

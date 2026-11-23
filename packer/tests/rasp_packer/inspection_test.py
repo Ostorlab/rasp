@@ -34,13 +34,20 @@ _IOS_CHECKS = ("hooks", "identity", "jailbreak")
 
 
 def _config(
-    platform: platforms.Platform, checks: tuple[str, ...]
+    platform: platforms.Platform,
+    checks: tuple[str, ...],
+    report_only: tuple[str, ...] | None = None,
 ) -> runtime_config.RuntimeConfig:
-    """Returns the config the packer writes for the build id and the check groups."""
+    """Returns a config for the given checks, with an action mask when supplied."""
     return runtime_config.RuntimeConfig(
         build_id=_BUILD_ID,
         checks=checks,
         checks_mask=check_groups.checks_mask(platform, checks),
+        report_only_mask=(
+            check_groups.checks_mask(platform, report_only)
+            if report_only is not None
+            else None
+        ),
     )
 
 
@@ -88,13 +95,17 @@ def _make_aab(path: pathlib.Path) -> pathlib.Path:
     return path
 
 
-def _pack_android(app: pathlib.Path, output: pathlib.Path) -> pathlib.Path:
+def _pack_android(
+    app: pathlib.Path,
+    output: pathlib.Path,
+    report_only: tuple[str, ...] | None = None,
+) -> pathlib.Path:
     """Packs an Android app with the test runtime and returns the protected app."""
     splitter: collections.abc.Callable[..., split.Split] = _split
     android_packer.pack(
         app=app,
         output=output,
-        config=_config(platforms.Platform.ANDROID, _ANDROID_CHECKS),
+        config=_config(platforms.Platform.ANDROID, _ANDROID_CHECKS, report_only),
         artifacts=_artifacts(),
         splitter=splitter,
         aab_splitter=splitter,
@@ -102,10 +113,20 @@ def _pack_android(app: pathlib.Path, output: pathlib.Path) -> pathlib.Path:
     return output
 
 
+@pytest.mark.parametrize(
+    ("report_only", "actions"),
+    [
+        (None, {}),
+        ((), {"debugger": "block", "identity": "block"}),
+        (("identity",), {"debugger": "block", "identity": "report"}),
+    ],
+)
 def testInspect_whenApkIsProtected_reportsTheConfigTheIdentityAndTheAbis(
     tmp_path: pathlib.Path,
+    report_only: tuple[str, ...] | None,
+    actions: dict[str, check_groups.Action],
 ) -> None:
-    """A packed APK reports the packer's build id and checks, its identity and both runtime ABIs."""
+    """A packed APK reports the config's checks and actions, its identity and both ABIs."""
     app = _make_apk(
         tmp_path / "app.apk",
         {
@@ -113,7 +134,7 @@ def testInspect_whenApkIsProtected_reportsTheConfigTheIdentityAndTheAbis(
             "lib/x86_64/libapp.so": b"app native code",
         },
     )
-    protected = _pack_android(app, tmp_path / "protected.apk")
+    protected = _pack_android(app, tmp_path / "protected.apk", report_only)
 
     result = inspection.inspect(app=protected, platform=platforms.Platform.ANDROID)
 
@@ -123,7 +144,7 @@ def testInspect_whenApkIsProtected_reportsTheConfigTheIdentityAndTheAbis(
         version="2.4.1",
         build_id=_BUILD_ID,
         checks=_ANDROID_CHECKS,
-        actions={},
+        actions=actions,
         abis=("arm64-v8a", "x86_64"),
     )
 
@@ -215,16 +236,31 @@ def testInspect_whenOneAbiDirectoryCarriesTwoDifferentConfigs_raisesInvalidAppEr
         inspection.inspect(app=app, platform=platforms.Platform.ANDROID)
 
 
+@pytest.mark.parametrize(
+    ("report_only", "actions"),
+    [
+        (None, {}),
+        ((), {"hooks": "block", "identity": "block", "jailbreak": "block"}),
+        (
+            ("identity", "jailbreak"),
+            {"hooks": "block", "identity": "report", "jailbreak": "report"},
+        ),
+    ],
+)
 def testInspect_whenIpaIsProtected_reportsTheConfigAndTheIdentity(
-    ipa_file: pathlib.Path, runtime: pathlib.Path, tmp_path: pathlib.Path
+    ipa_file: pathlib.Path,
+    runtime: pathlib.Path,
+    tmp_path: pathlib.Path,
+    report_only: tuple[str, ...] | None,
+    actions: dict[str, check_groups.Action],
 ) -> None:
-    """A packed IPA reports the packer's build id and checks and its identity."""
+    """A packed IPA reports the config's checks and actions and the app's identity."""
     protected = tmp_path / "protected.ipa"
     ios_packer.pack(
         app=ipa_file,
         output=protected,
         runtime=runtime,
-        config=_config(platforms.Platform.IOS, _IOS_CHECKS),
+        config=_config(platforms.Platform.IOS, _IOS_CHECKS, report_only),
     )
 
     result = inspection.inspect(app=protected, platform=platforms.Platform.IOS)
@@ -235,7 +271,7 @@ def testInspect_whenIpaIsProtected_reportsTheConfigAndTheIdentity(
         version=conftest.VERSION,
         build_id=_BUILD_ID,
         checks=_IOS_CHECKS,
-        actions={},
+        actions=actions,
         abis=(),
     )
 

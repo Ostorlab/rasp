@@ -102,8 +102,8 @@ From Python, `rasp_packer.inspection.inspect(app=pathlib.Path("app-protected.apk
 returns the same fields.
 
 A protected app packed before actions has no `r` key, so `inspect` cannot infer its runtime behavior from the config.
-It omits the text `actions` line and returns an empty `actions` object in JSON. At runtime, a missing `r` key
-follows the conservative enforcement rule described above.
+It omits the text `actions` line and returns an empty `actions` object in JSON. The action-aware runtime keeps
+every enabled group on `block` when it reads a config without `r`.
 
 ## When does `rasp` print the banner?
 

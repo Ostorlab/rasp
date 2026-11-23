@@ -44,13 +44,15 @@ all detections still block, including when `r` is present. Unknown signals and g
 Only blocking detections choose the panic delay: `dbg.`, `hook.` and `virt.` use 100–500 ms, others use 1–3 s.
 
 Every entry in `panic.cpp`'s verdict table names its group, for both value findings and source disagreements.
-`sig.cert_sha256` belongs to identity; `hw.machine` belongs to emulator. They have informational value verdicts,
-as do `cs.*` and `hook.foreign_libs`. The packer tests check every built-in signal constant against this table,
-and check both platform mask orders against dispatch. The loader keeps one immutable config in its shared state.
+`sig.cert_sha256` belongs to identity and `hw.machine` belongs to emulator. Their values are informational
+in the verdict table, as are those of `cs.*` and `hook.foreign_libs`. For these signals, a detection requires
+disagreement between sources. The packer tests check every built-in signal constant against this table and
+both platform mask orders against dispatch. The loader keeps one immutable config in its shared state.
 
 `integ.monitor_alive` stays with `integrity`. On Android, with integrity Off or report-only, a stalled monitoring
 thread no longer ends the app through panic. iOS has no integrity bit, so this unexpected signal still blocks there.
-Plugins receive complete monitoring observations; the response filter only acts on the separate detections.
+Plugins receive every monitoring observation. `panic_on_detection` applies the action policy to detections
+when deciding whether to arm a panic.
 Off and report-only do not disable Android's independent DEX key schedule; see the
 [repository README](../README.md#report-or-block). The config remains unauthenticated, with the same limit for `r` as `m`.
 
