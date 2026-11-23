@@ -1,5 +1,6 @@
 # Builds the iOS and Android runtimes from a pushed v<major>.<minor>.<patch> tag on main, checks them, and publishes a
-# GitHub release of the tag with the packer's wheel. The release is created only when every step passed.
+# GitHub release of the tag with the packer's wheel, then the same wheel to PyPI. Nothing is published unless every
+# step before it passed.
 
 name: Release
 
@@ -263,7 +264,12 @@ jobs:
           python-version: "3.14"
           enable-cache: false
       - name: Build the wheel
-        run: uv build --wheel --out-dir "$RUNNER_TEMP/dist" packer
+        run: uv build --wheel --out-dir "$RUNNER_TEMP/build" packer
+      - name: Tag the wheel manylinux
+        run: |
+          uvx --from auditwheel==6.6.0 --with patchelf==0.17.2.4 \
+            auditwheel repair --wheel-dir "$RUNNER_TEMP/dist" "$RUNNER_TEMP"/build/*.whl
+          uvx twine==6.2.0 check --strict "$RUNNER_TEMP"/dist/*.whl
       - name: Check that the packer installs with its version and runtimes
         run: |
           uv venv --python 3.14 "$RUNNER_TEMP/venv"
@@ -298,3 +304,24 @@ jobs:
           \`\`\`
           pip install ${url}
           \`\`\`"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheel
+          path: ${{ runner.temp }}/dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  pypi:
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wheel
+          path: dist
+      - name: Publish the wheel to PyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
