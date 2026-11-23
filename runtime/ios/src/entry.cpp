@@ -6,6 +6,7 @@
 
 #include "checks/hooks.h"
 #include "monitoring.h"
+#include "panic/end_process.h"
 #include "rasp/util/logging.h"
 #include "rasp/version.h"
 #include "selfdecrypt/guard.h"
@@ -13,18 +14,22 @@
 
 namespace {
 
-/// Logs the runtime's version in a development build, reads `DYLD_INSERT_LIBRARIES` once, checks the at-rest guard,
+/// Ends the process when the at-rest guard was written by the packer but does not decrypt: the runtime's code or the
+/// embedded seed changed after packing, which a patched or stripped runtime produces. An unpacked build (kAbsent) and
+/// an intact one (kIntact) run on. This is what couples the app to the runtime: tamper with the runtime and it ends.
+void enforce_at_rest_guard() noexcept {
+  if (rasp::ios::selfdecrypt::at_rest_guard_status() == rasp::ios::selfdecrypt::GuardStatus::kTampered) {
+    rasp::ios::end_process();
+  }
+}
+
+/// Logs the runtime's version in a development build, reads `DYLD_INSERT_LIBRARIES` once, enforces the at-rest guard,
 /// runs the start-up checks, and starts the thread that runs the checks from then on.
-///
-/// The at-rest guard is checked for its result only (logged in a development build); it does not yet gate anything, so
-/// a build where the packer has not written the guard blob still runs. Gating real behaviour on it is the next step,
-/// once the decrypt is confirmed on a device.
 __attribute__((constructor)) void rasp_start() noexcept {
   if constexpr (rasp::kLoggingEnabled) {
     rasp::log(std::string(rasp::kRuntimeVersion) + " loaded");
-    const bool intact = rasp::ios::selfdecrypt::at_rest_guard_intact();
-    rasp::log(std::string("at-rest guard ") + (intact ? "intact" : "not intact"));
   }
+  enforce_at_rest_guard();
   std::string inserted_libraries = rasp::ios::checks::read_inserted_libraries();
   rasp::ios::run_startup_checks(inserted_libraries);
   rasp::ios::start_monitoring(std::move(inserted_libraries));

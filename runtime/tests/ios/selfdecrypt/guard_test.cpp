@@ -28,9 +28,10 @@ constexpr std::array<std::uint8_t, kNonceSize> kNonce = {0x00, 0x00, 0x00, 0x00,
   return derive_key(code_hash, seed);
 }
 
-TEST(Guard, atRestGuardIntact_whenUnpacked_isNotIntact) {
-  // The linked guard_blob is the default (all zeros, no packer), so the guard must read as not intact.
-  EXPECT_FALSE(at_rest_guard_intact());
+TEST(Guard, atRestGuardStatus_whenUnpacked_isAbsent) {
+  // The linked guard_blob is the default (all zeros, no packer), so the guard must read as absent, not tampered -- an
+  // unpacked build must not be treated as tampered and must not be ended.
+  EXPECT_EQ(at_rest_guard_status(), GuardStatus::kAbsent);
 }
 
 TEST(Guard, packerBlob_whenTheCodeHashMatches_recoversTheMarker) {

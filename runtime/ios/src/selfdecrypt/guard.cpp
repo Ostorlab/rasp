@@ -73,10 +73,17 @@ std::array<volatile std::uint8_t, kGuardSize> guard_blob{};
 
 }  // namespace
 
-bool at_rest_guard_intact() {
+GuardStatus at_rest_guard_status() {
   std::array<std::uint8_t, kGuardSize> blob{};
+  bool any_nonzero = false;
   for (std::size_t i = 0; i < kGuardSize; i++) {
     blob[i] = guard_blob[i];
+    if (blob[i] != 0) {
+      any_nonzero = true;
+    }
+  }
+  if (!any_nonzero) {
+    return GuardStatus::kAbsent;  // the packer wrote nothing: an unpacked or development build.
   }
 
   std::array<std::uint8_t, kSeedBytes> seed{};
@@ -87,10 +94,10 @@ bool at_rest_guard_intact() {
 
   for (std::size_t i = 0; i < kMarker.size(); i++) {
     if (blob[i] != kMarker[i]) {
-      return false;
+      return GuardStatus::kTampered;  // a written blob that does not decrypt: the code or seed changed.
     }
   }
-  return true;
+  return GuardStatus::kIntact;
 }
 
 }  // namespace rasp::ios::selfdecrypt

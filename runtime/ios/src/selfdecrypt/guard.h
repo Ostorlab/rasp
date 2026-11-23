@@ -13,10 +13,23 @@
 
 namespace rasp::ios::selfdecrypt {
 
-/// Decrypts the embedded guard blob and reports whether it decrypted to the expected marker.
+/// The result of checking the at-rest guard.
+enum class GuardStatus {
+  /// No packer wrote the guard blob (it is still the default zeros): an unpacked or development build. Not a tamper.
+  kAbsent,
+  /// The blob is present and decrypted to the marker: the runtime is intact and the key is right.
+  kIntact,
+  /// The blob is present but did not decrypt to the marker: the key is wrong, which a patched runtime produces.
+  kTampered,
+};
+
+/// Decrypts the embedded guard blob and reports what it found.
 ///
-/// @return true when the runtime is intact and the seed is correct, so the blob decrypts to the marker; false when the
-/// blob is still the default (no packer wrote it), the key is wrong (a patched runtime), or the marker does not match.
-[[nodiscard]] bool at_rest_guard_intact();
+/// Distinguishing kAbsent from kTampered lets the caller gate on tamper without breaking an unpacked build: only a
+/// present-but-wrong blob (kTampered) means the runtime's code or seed changed after the packer wrote it.
+///
+/// @return kAbsent when no blob was written, kIntact when it decrypts to the marker, kTampered when a written blob does
+/// not.
+[[nodiscard]] GuardStatus at_rest_guard_status();
 
 }  // namespace rasp::ios::selfdecrypt
