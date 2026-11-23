@@ -119,7 +119,8 @@ def dex_strings(dex: bytes) -> list[str]:
         raise ValueError(
             f"the stub dex holds {len(dex)} bytes, too few for a dex header"
         )
-    size, offsets = struct.unpack_from("<II", dex, _DEX_STRING_IDS_SIZE)
+    (size,) = struct.unpack_from("<I", dex, _DEX_STRING_IDS_SIZE)
+    (offsets,) = struct.unpack_from("<I", dex, _DEX_STRING_IDS_OFFSET)
     strings: list[str] = []
     for index in range(size):
         (data_offset,) = struct.unpack_from("<I", dex, offsets + index * 4)

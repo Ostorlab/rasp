@@ -50,19 +50,23 @@ def testNativeAbis_whenNoNativeLibraries_returnsEmpty() -> None:
 
 def testLibraryEntries_whenAppHasAbis_returnsOnePerAppAbi() -> None:
     apk = _apk(["lib/arm64-v8a/libapp.so"])
-    entries = injection.library_entries(apk, _artifacts(["arm64-v8a", "x86_64"]))
-    assert set(entries) == {"lib/arm64-v8a/librasp.so"}
+    entries = injection.library_entries(
+        apk, _artifacts(["arm64-v8a", "x86_64"]), "libqglm.so"
+    )
+    assert set(entries) == {"lib/arm64-v8a/libqglm.so"}
 
 
 def testLibraryEntries_whenAppHasNoAbis_returnsOnePerRuntimeAbi() -> None:
-    entries = injection.library_entries(_apk(["classes.dex"]), _artifacts(["a", "b"]))
-    assert set(entries) == {"lib/a/librasp.so", "lib/b/librasp.so"}
+    entries = injection.library_entries(
+        _apk(["classes.dex"]), _artifacts(["a", "b"]), "libqglm.so"
+    )
+    assert set(entries) == {"lib/a/libqglm.so", "lib/b/libqglm.so"}
 
 
 def testLibraryEntries_whenAppAbiHasNoRuntime_raisesUnsupportedAbiError() -> None:
     apk = _apk(["lib/riscv64/libapp.so"])
     with pytest.raises(errors.UnsupportedAbiError):
-        injection.library_entries(apk, _artifacts(["arm64-v8a"]))
+        injection.library_entries(apk, _artifacts(["arm64-v8a"]), "libqglm.so")
 
 
 def testStaleSignatureEntries_whenV1SignaturePresent_returnsThem() -> None:

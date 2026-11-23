@@ -238,13 +238,7 @@ def _pack_apk(
         raise errors.InvalidApkError(f"APK has no {PRIMARY_DEX} to protect")
     manifest = apk.manifest()
     app_identity = apk_manifest_module.app_identity(manifest)
-    declared_factory = apk_manifest_module.app_component_factory(manifest)
-    if (
-        MAP_ENTRY in apk.names()
-        # An older pack's manifest still names the vendor's stub class; a fresh pack's names are
-        # per-app random, so its protection shows in the map entry above.
-        or declared_factory == resources_module.STUB_FACTORY_CLASS
-    ):
+    if MAP_ENTRY in apk.names():
         raise errors.AlreadyProtectedError("the app is already protected")
 
     artifacts, names = defingerprint.fingerprint_free_artifacts(
@@ -327,13 +321,7 @@ def _pack_aab(
         raise errors.InvalidAabError(f"AAB has no {aab_primary_dex} to protect")
     manifest = aab.manifest()
     app_identity = aab_manifest_module.app_identity(manifest)
-    declared_factory = aab_manifest_module.app_component_factory(manifest)
-    if (
-        AAB_MAP_ENTRY in aab.names()
-        # An older pack's manifest still names the vendor's stub class; a fresh pack's names are
-        # per-app random, so its protection shows in the map entry above.
-        or declared_factory == resources_module.STUB_FACTORY_CLASS
-    ):
+    if AAB_MAP_ENTRY in aab.names():
         raise errors.AlreadyProtectedError("the app is already protected")
 
     artifacts, names = defingerprint.fingerprint_free_artifacts(

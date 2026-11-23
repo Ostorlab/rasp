@@ -59,7 +59,7 @@ def resolve_abis(app_abis: set[str], artifacts: resources_module.Artifacts) -> s
 
 
 def library_entries(
-    apk: archive.Apk, artifacts: resources_module.Artifacts, library_filename: str = ""
+    apk: archive.Apk, artifacts: resources_module.Artifacts, library_filename: str
 ) -> dict[str, bytes]:
     """Returns the native runtime library entries to add to the app.
 
@@ -69,6 +69,7 @@ def library_entries(
     Args:
         apk: The app's APK.
         artifacts: The prebuilt runtime libraries, by ABI.
+        library_filename: The library's filename in the app.
 
     Returns:
         The library entries, by APK entry name.
@@ -77,8 +78,10 @@ def library_entries(
         UnsupportedAbiError: The app ships an ABI the runtime is not built for.
     """
     abis = resolve_abis(native_abis(apk), artifacts)
-    filename = library_filename or resources_module.RUNTIME_LIBRARY
-    return {f"lib/{abi}/{filename}": artifacts.libraries[abi] for abi in sorted(abis)}
+    return {
+        f"lib/{abi}/{library_filename}": artifacts.libraries[abi]
+        for abi in sorted(abis)
+    }
 
 
 def native_abis(apk: archive.Apk) -> set[str]:
