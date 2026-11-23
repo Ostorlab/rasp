@@ -146,10 +146,11 @@ On Android, Off and report-only control panic. The independent DEX key schedule 
 - Before each DEX decryption, the sensor guard requires no native tracer, an intact runtime `.text`, no framework maps,
   no unexpected RWX regions, no framework threads and no foreign libraries.
 
-These requirements overlap with the `debugger`, `integrity`, `hooks`, `root`, `identity` and emulator-related
-environment checks. A tracer or changed sensor can prevent the app from loading or decrypting classes even when
-its check group reports only. VPN, proxy and user-CA observations are outside the key inputs. Action-aware gates
-are tracked in [`TODO.md`](TODO.md#runtime-android). Early non-dumpable process hardening applies in every mode.
+These requirements overlap with the `debugger`, `integrity`, `hooks`, `root` and `identity` groups.
+The loader checks hardware plausibility, while the `emulator` group uses Android system properties.
+A tracer or changed sensor can still prevent the app from loading or decrypting classes when its group is
+report-only. VPN, proxy and user-CA observations are outside the key inputs. Action-aware gates are tracked
+in [`TODO.md`](TODO.md#runtime-android). Early non-dumpable process hardening applies in every mode.
 
 The embedded config is cleartext and unauthenticated. Both masks share the same tampering limit, tracked in
 [`TODO.md`](TODO.md#packer-config).

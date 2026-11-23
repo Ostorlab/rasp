@@ -36,8 +36,8 @@ result = packer.pack(
 - `--platform` (`platform=`): `android` or `ios`. When it is not given, the command line infers the platform from the app's extension, case-insensitively: `.apk` and `.aab` are Android, `.ipa` is iOS. Any other extension requires `--platform`.
 - `--build-id` (`build_id=`): the id of the protected build, written into the app as it is. `rasp pack` derives it when it is not given: the SHA-256 of the app's contents, the platform, the installed packer version, the resolved checks and their actions. The same inputs give the same id, and any change to the app, the packer version, the checks or their actions gives a new one. `pack` requires it.
 - `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added. Without `--checks`, the command line runs every group the target platform supports (`checks=` in Python is required). An unknown group is skipped with a warning. The warning suggests the closest matching group name. With `--strict`, `rasp pack` exits with status 1 instead. See the groups in the [repository's README](../README.md#checks).
-- `--report-only` (`report_only=`): enabled groups whose detections only report, in the same comma-separated syntax as `--checks`. Overrides the defaults.
-- `--block` (`block=`): enabled groups whose detections end the app. Overrides the defaults. A group in both options, or a known but disabled group, is an error. By default, `rasp pack` warns about each unknown id and skips it. With `--strict`, it prints an error for each unknown id and exits with status 1 before writing output. See [actions, defaults and Android key-schedule limits](../README.md#report-or-block).
+- `--report-only` (`report_only=`): enabled groups whose detections only report, in the same comma-separated syntax as `--checks`. Overrides the defaults. See [action validation](#action-validation).
+- `--block` (`block=`): enabled groups whose detections end the app, in the same comma-separated syntax as `--checks`. Overrides the defaults. See [action validation](#action-validation).
 - `--strict`: print an error for every unknown check group, write nothing, and exit with status 1, instead of skipping it with a warning.
 - `--output` (`output=`): where to write the protected app; an existing file at that path is refused. The command line defaults to `<name>-protected<extension>` next to the app, such as `app-protected.apk` for `app.apk`.
 - `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
@@ -50,6 +50,13 @@ result = packer.pack(
 - the app's package name (`package_name`), version (`version`) and build id (`build_id`)
 - the check groups the app runs (`checks`)
 - the check groups it skipped (`skipped_checks`)
+
+### Action validation
+
+Both `--report-only` and `--block` reject a known group that the build skips. Listing a group in both options
+is also an error. By default, `rasp pack` warns about each unknown id and skips it. With `--strict`, it
+prints an error for each unknown id and exits with status 1 before writing output. See
+[actions, defaults and Android key-schedule limits](../README.md#report-or-block).
 
 ## How do report-only and block change what a check does?
 
