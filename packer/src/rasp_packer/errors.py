@@ -63,3 +63,7 @@ class InvalidRuntimeError(Error):
 
 class ConfigTooLargeError(Error):
     """The runtime's config does not fit in the space the runtime's binary keeps for it."""
+
+
+class InvalidConfigFileError(Error):
+    """The config file of a pack cannot be read, or sets an unknown option or a value of the wrong type."""

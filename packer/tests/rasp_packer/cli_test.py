@@ -947,7 +947,14 @@ def testMain_whenSubcommandHelpRequestedOnATerminal_printsNoBanner(
     assert "█" not in terminal.getvalue()
 
 
-_SHARED_PACK_OPTIONS = ["--build-id", "--output", "--checks", "--strict", "--json"]
+_SHARED_PACK_OPTIONS = [
+    "--build-id",
+    "--output",
+    "--checks",
+    "--strict",
+    "--json",
+    "--config",
+]
 
 
 def testMain_whenPackHelpRequested_listsTheTwoPlatforms(
@@ -986,3 +993,303 @@ def testMain_whenPackIosHelpRequested_listsTheSharedOptionsOnly(
         assert option in out
     assert "--mapping" not in out
     assert "--pin-certificate" not in out
+
+
+def _write_config(directory: pathlib.Path, content: str) -> pathlib.Path:
+    """Writes a config file with the content into the directory and returns its path."""
+    directory.mkdir(parents=True, exist_ok=True)
+    config = directory / "rasp.toml"
+    config.write_text(content)
+    return config
+
+
+def testMain_whenConfigSetsTheOptions_passesThemToThePacker(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out.apk"))
+    config = _write_config(
+        tmp_path,
+        "[android]\n"
+        'build-id = "file-build"\n'
+        f'output = "{tmp_path / "file-out.apk"}"\n'
+        'checks = ["debugger", "hooks"]\n'
+        f'mapping = "{tmp_path / "mapping.txt"}"\n'
+        f'pin-certificate = "{tmp_path / "signer.pem"}"\n',
+    )
+
+    exit_code = cli.main(
+        ["pack", "android", str(tmp_path / "app.apk"), "--config", str(config)]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert len(calls) == 1
+    assert calls[0]["build_id"] == "file-build"
+    assert calls[0]["output"] == tmp_path / "file-out.apk"
+    assert calls[0]["checks"] == ["debugger", "hooks"]
+    assert calls[0]["mapping"] == tmp_path / "mapping.txt"
+    assert calls[0]["pin_certificate"] == tmp_path / "signer.pem"
+
+
+def testMain_whenConfigSetsJson_printsOneJsonObject(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out.ipa"))
+    config = _write_config(tmp_path, "[ios]\njson = true\n")
+
+    exit_code = cli.main([*_pack_arguments(tmp_path), "--config", str(config)])
+
+    assert exit_code == cli.EXIT_OK
+    assert json.loads(capsys.readouterr().out)["build_id"] == _BUILD_ID
+
+
+def testMain_whenConfigSetsStrictAndACheckIsUnknown_printsTheErrorAndPacksNothing(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out.ipa"))
+    config = _write_config(tmp_path, '[ios]\nstrict = true\nchecks = ["telepathy"]\n')
+
+    exit_code = cli.main([*_pack_arguments(tmp_path), "--config", str(config)])
+
+    assert exit_code == cli.EXIT_FAILED
+    assert calls == []
+    assert capsys.readouterr().err == (
+        "rasp pack: error: 'telepathy' is not a check of ios.\n"
+    )
+
+
+def testMain_whenCommandLineAndConfigGiveAnOption_passesTheCommandLineValueToThePacker(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The command line overrides the options it gives, and the file still sets the others."""
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out.apk"))
+    config = _write_config(
+        tmp_path,
+        '[android]\nbuild-id = "file-build"\nchecks = ["debugger"]\nmapping = "mapping.txt"\n',
+    )
+
+    exit_code = cli.main(
+        [
+            *_pack_arguments(tmp_path, platform="android"),
+            "--checks",
+            "hooks",
+            "--config",
+            str(config),
+        ]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert calls[0]["build_id"] == _BUILD_ID
+    assert calls[0]["output"] == tmp_path / "out.apk"
+    assert calls[0]["checks"] == ["hooks"]
+    assert calls[0]["mapping"] == tmp_path / "mapping.txt"
+
+
+def testMain_whenConfigHasRelativePaths_resolvesThemAgainstTheConfigDirectory(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out.apk"))
+    config = _write_config(
+        tmp_path / "ci",
+        "[android]\n"
+        'output = "build/app-protected.apk"\n'
+        'mapping = "mapping.txt"\n'
+        'pin-certificate = "../keys/signer.pem"\n',
+    )
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    exit_code = cli.main(
+        [
+            "pack",
+            "android",
+            str(tmp_path / "app.apk"),
+            "--build-id",
+            _BUILD_ID,
+            "--config",
+            str(config),
+        ]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert calls[0]["output"] == tmp_path / "ci" / "build" / "app-protected.apk"
+    assert calls[0]["mapping"] == tmp_path / "ci" / "mapping.txt"
+    assert calls[0]["pin_certificate"] == tmp_path / "ci" / "../keys/signer.pem"
+
+
+@pytest.mark.parametrize(
+    ("platform", "build_id", "mapping"),
+    [("android", "android-build", "mapping.txt"), ("ios", "ios-build", None)],
+)
+def testMain_whenConfigHasBothTables_readsOnlyThePlatformsTable(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    build_id: str,
+    mapping: str | None,
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out"))
+    config = _write_config(
+        tmp_path,
+        '[android]\nbuild-id = "android-build"\nmapping = "mapping.txt"\n'
+        '[ios]\nbuild-id = "ios-build"\n',
+    )
+    arguments = _pack_arguments(tmp_path, platform=platform)
+    del arguments[arguments.index("--build-id") : arguments.index("--build-id") + 2]
+
+    exit_code = cli.main([*arguments, "--config", str(config)])
+
+    assert exit_code == cli.EXIT_OK
+    assert calls[0]["build_id"] == build_id
+    assert calls[0]["mapping"] == (None if mapping is None else tmp_path / mapping)
+
+
+def testMain_whenConfigHasNoTableForThePlatform_packsWithTheDefaults(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out.apk"))
+    config = _write_config(tmp_path, '[ios]\nbuild-id = "ios-build"\n')
+
+    exit_code = cli.main(
+        [
+            "pack",
+            "android",
+            str(tmp_path / "app.apk"),
+            "--build-id",
+            _BUILD_ID,
+            "--config",
+            str(config),
+        ]
+    )
+
+    assert exit_code == cli.EXIT_OK
+    assert calls[0]["output"] == tmp_path / "app-protected.apk"
+    assert calls[0]["checks"] == list(check_groups.CHECKS[platforms.Platform.ANDROID])
+    assert calls[0]["mapping"] is None
+    assert calls[0]["pin_certificate"] is None
+
+
+@pytest.mark.parametrize(
+    ("platform", "content", "problem"),
+    [
+        (
+            "android",
+            "[android]\nstrict = yes\n",
+            "not valid TOML: Invalid value (at line 2, column 10)",
+        ),
+        (
+            "ios",
+            '[ios]\nmapping = "mapping.txt"\n',
+            "'mapping' in [ios] is not an option of rasp pack ios",
+        ),
+        (
+            "android",
+            '[android]\nconfig = "other.toml"\n',
+            "'config' in [android] is not an option of rasp pack android",
+        ),
+        (
+            "android",
+            "[windows]\n",
+            "unknown table [windows]; the tables are [android] and [ios]",
+        ),
+        (
+            "android",
+            'build-id = "x"\n',
+            "'build-id' is outside a table; the tables are [android] and [ios]",
+        ),
+        (
+            "android",
+            '[android]\nstrict = "yes"\n',
+            "'strict' in [android] must be a boolean",
+        ),
+        (
+            "ios",
+            '[ios]\nchecks = "debugger"\n',
+            "'checks' in [ios] must be an array of strings",
+        ),
+        (
+            "ios",
+            "[ios]\nchecks = [1]\n",
+            "'checks' in [ios] must be an array of strings",
+        ),
+        (
+            "ios",
+            "[ios]\nchecks = []\n",
+            "'checks' in [ios] must name at least one value",
+        ),
+        (
+            "android",
+            "[android]\noutput = 1\n",
+            "'output' in [android] must be a string",
+        ),
+    ],
+)
+def testMain_whenConfigIsInvalid_printsOneErrorLineAndPacksNothing(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    content: str,
+    problem: str,
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out"))
+    config = _write_config(tmp_path, content)
+
+    exit_code = cli.main(
+        [*_pack_arguments(tmp_path, platform=platform), "--config", str(config)]
+    )
+
+    assert exit_code == cli.EXIT_FAILED
+    assert calls == []
+    assert capsys.readouterr().err == f"rasp pack {platform}: {config}: {problem}\n"
+
+
+def testMain_whenConfigIsMissing_printsOneErrorLineAndPacksNothing(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out.apk"))
+    config = tmp_path / "missing.toml"
+
+    exit_code = cli.main(
+        [*_pack_arguments(tmp_path, platform="android"), "--config", str(config)]
+    )
+
+    assert exit_code == cli.EXIT_FAILED
+    assert calls == []
+    assert capsys.readouterr().err == (
+        f"rasp pack android: {config}: cannot read the config file: No such file or directory\n"
+    )
+
+
+def testMain_whenConfigIsNotUtf8_printsOneErrorLineAndPacksNothing(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out.ipa"))
+    config = tmp_path / "rasp.toml"
+    config.write_bytes(b"\xff")
+
+    exit_code = cli.main([*_pack_arguments(tmp_path), "--config", str(config)])
+
+    assert exit_code == cli.EXIT_FAILED
+    assert calls == []
+    assert capsys.readouterr().err.startswith(
+        f"rasp pack ios: {config}: not valid TOML: 'utf-8' codec can't decode byte 0xff"
+    )

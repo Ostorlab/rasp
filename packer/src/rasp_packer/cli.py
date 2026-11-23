@@ -13,6 +13,7 @@ from importlib import metadata
 from rasp_packer import banner
 from rasp_packer import build_ids
 from rasp_packer import checks as check_groups
+from rasp_packer import config_file
 from rasp_packer import errors
 from rasp_packer import inspection
 from rasp_packer import packer
@@ -158,6 +159,13 @@ def _add_pack_arguments(
         "instead of skipping it with a warning",
     )
     _add_json_argument(command)
+    command.add_argument(
+        "--config",
+        type=pathlib.Path,
+        default=None,
+        help=f"a TOML file whose [{platform}] table sets these options, keyed by their names without "
+        "the leading --; the options given on the command line override it",
+    )
 
 
 def _add_json_argument(command: argparse.ArgumentParser) -> None:
@@ -220,10 +228,30 @@ def _unknown_check_message(
     return f"{message}.{hint}"
 
 
+def _fill_from_config(
+    arguments: argparse.Namespace, options: config_file.PackOptions
+) -> None:
+    """Sets each pack option the command line did not give to the config file's value."""
+    if arguments.build_id is None:
+        arguments.build_id = options.build_id
+    if arguments.output is None:
+        arguments.output = options.output
+    if arguments.checks is None and options.checks is not None:
+        arguments.checks = list(options.checks)
+    arguments.strict = arguments.strict is True or options.strict is True
+    arguments.json = arguments.json is True or options.json is True
+    if arguments.mapping is None:
+        arguments.mapping = options.mapping
+    if arguments.pin_certificate is None:
+        arguments.pin_certificate = options.pin_certificate
+
+
 def _pack(arguments: argparse.Namespace) -> int:
     """Packs the app given on the command line and prints the result, as text or, with `--json`, as one JSON object.
 
     It first refuses an app whose extension is not one of the platform's, with one error line.
+    With `--config`, it then refuses an invalid config file with one error line, or takes from it the options the
+    command line does not give.
     Without `--build-id`, it derives the build id from the app, the platform, the packer version and the resolved checks.
     Without `--checks`, it packs the app with every check group of the platform. It warns
     about each given check id that is not one of the platform's groups, which the packer skips,
@@ -239,6 +267,13 @@ def _pack(arguments: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_FAILED
+    if arguments.config is not None:
+        try:
+            options = config_file.read(arguments.config, platform)
+        except errors.InvalidConfigFileError as error:
+            print(f"rasp pack {platform}: {error}", file=sys.stderr)
+            return EXIT_FAILED
+        _fill_from_config(arguments, options)
     checks: list[str] | None = arguments.checks
     if checks is None:
         checks = list(check_groups.CHECKS[platform])
