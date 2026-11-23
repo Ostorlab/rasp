@@ -6,6 +6,7 @@
 #include <chrono>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "rasp/observation.h"
@@ -54,6 +55,23 @@ inline constexpr std::chrono::milliseconds kMaxPanicDelay{3000};
 /// @return One detection per observation whose value is a positive finding, in the order of `observations`, then one
 /// per signal whose sources disagree. Empty when nothing was detected.
 [[nodiscard]] std::vector<Detection> detect(std::span<const Observation> observations);
+
+/// Whether the detection's signal shows an active attack on the running process, rather than a risky device state.
+///
+/// A debugger, a hooking framework or a Java debugger (dbg., hook., virt.) is an active attack: someone is tampering
+/// with the process as it runs. A rooted device, a VPN or a proxy is a state the device is in. The runtime ends a
+/// severe detection sooner, and the iOS runtime also ends it inline at the detection site, without waiting on the
+/// panic thread.
+///
+/// @param signal The detection's signal, such as hook.maps_hits.
+/// @return `true` when the signal's prefix is dbg., hook. or virt.
+[[nodiscard]] bool is_severe(std::string_view signal) noexcept;
+
+/// Whether any detection in `detections` is severe, as is_severe judges it.
+///
+/// @param detections The detections, as detect returns them.
+/// @return `true` when at least one detection's signal is severe.
+[[nodiscard]] bool has_severe_detection(std::span<const Detection> detections) noexcept;
 
 /// Picks how long an armed panic waits before it ends the process.
 ///

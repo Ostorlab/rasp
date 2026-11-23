@@ -12,6 +12,7 @@
 #include "checks/debugger.h"
 #include "checks/hooks.h"
 #include "panic/end_process.h"
+#include "panic/terminate.h"
 #include "rasp/observation.h"
 #include "rasp/panic.h"
 #include "rasp/util/logging.h"
@@ -44,7 +45,14 @@ void run_startup_checks(std::string_view inserted_libraries) noexcept {
     }
     static_cast<void>(panic_on_detection(observations, end_process));
   } else {
-    static_cast<void>(panic_on_detection(startup_observations(inserted_libraries), end_process));
+    const std::vector<Observation> observations = startup_observations(inserted_libraries);
+    static_cast<void>(panic_on_detection(observations, end_process));
+    // Second, independent reaction welded inline, as in the monitoring loop: panic_on_detection arms the end on a
+    // separate thread through a replaceable function pointer; a debugger or hooking framework present at load is ended
+    // here too, inline, with no function to replace and no delay to race.
+    if (has_severe_detection(detect(observations))) {
+      terminate_now();
+    }
   }
 }
 

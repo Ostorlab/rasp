@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "rasp/observation.h"
+#include "util/hidden_string.h"
 
 #ifdef __APPLE__
 #include <TargetConditionals.h>
@@ -42,33 +43,29 @@ constexpr std::string_view kPathsSignal = "jb.fs_paths";
 constexpr std::string_view kSandboxSignal = "jb.sandbox_escape";
 /// The signal of the fork probe.
 constexpr std::string_view kForkSignal = "jb.fork_ok";
-/// The path the sandbox-write probe tries to create, outside the app's sandbox.
-constexpr std::string_view kSandboxProbe = "/private/.rasp_sandbox_probe";
+/// The path the sandbox-write probe tries to create, outside the app's sandbox. Hidden so it does not appear in the
+/// shipped framework as plaintext.
+constexpr util::HiddenString kSandboxProbe{"/private/.rasp_sandbox_probe"};
 
-/// The filesystem paths a jailbreak commonly leaves behind.
-constexpr std::array<std::string_view, 21> kArtifactPaths = {
-    "/Applications/Cydia.app",
-    "/Applications/Sileo.app",
-    "/Applications/Zebra.app",
-    "/Library/MobileSubstrate/MobileSubstrate.dylib",
-    "/usr/lib/libhooker.dylib",
-    "/usr/lib/libsubstitute.dylib",
-    "/usr/lib/substrate",
-    "/usr/lib/TweakInject",
-    "/usr/sbin/sshd",
-    "/usr/bin/ssh",
-    "/bin/bash",
-    "/bin/sh",
-    "/etc/apt",
-    "/private/var/lib/apt",
-    "/private/var/lib/cydia",
-    "/private/var/stash",
-    "/var/jb",
-    "/var/jb/usr/bin/sshd",
-    "/var/jb/Library/MobileSubstrate/MobileSubstrate.dylib",
-    "/var/checkra1n.dmg",
-    "/jb",
-};
+/// The filesystem paths a jailbreak commonly leaves behind, stored XOR-masked (see util/hidden_string.h) so `strings`
+/// on the shipped framework does not print the list of what the probe looks for. Each is revealed to a `std::string`
+/// in artifact_paths right before the probe iterates them.
+///
+/// @return The plaintext artifact paths, revealed on demand.
+[[nodiscard]] std::vector<std::string> artifact_paths() {
+  return util::reveal_all(
+      util::HiddenString{"/Applications/Cydia.app"}, util::HiddenString{"/Applications/Sileo.app"},
+      util::HiddenString{"/Applications/Zebra.app"},
+      util::HiddenString{"/Library/MobileSubstrate/MobileSubstrate.dylib"},
+      util::HiddenString{"/usr/lib/libhooker.dylib"}, util::HiddenString{"/usr/lib/libsubstitute.dylib"},
+      util::HiddenString{"/usr/lib/substrate"}, util::HiddenString{"/usr/lib/TweakInject"},
+      util::HiddenString{"/usr/sbin/sshd"}, util::HiddenString{"/usr/bin/ssh"}, util::HiddenString{"/bin/bash"},
+      util::HiddenString{"/bin/sh"}, util::HiddenString{"/etc/apt"}, util::HiddenString{"/private/var/lib/apt"},
+      util::HiddenString{"/private/var/lib/cydia"}, util::HiddenString{"/private/var/stash"},
+      util::HiddenString{"/var/jb"}, util::HiddenString{"/var/jb/usr/bin/sshd"},
+      util::HiddenString{"/var/jb/Library/MobileSubstrate/MobileSubstrate.dylib"},
+      util::HiddenString{"/var/checkra1n.dmg"}, util::HiddenString{"/jb"});
+}
 
 /// Whether access finds a file at `path`.
 [[nodiscard]] bool found_by_access(const std::string& path) { return access(path.c_str(), F_OK) == 0; }
@@ -155,8 +152,10 @@ std::vector<Observation> jailbreak() {
     observations.push_back(unsupported(kForkSignal, "fork"));
     return observations;
   }
-  std::vector<Observation> observations = observe_paths(kArtifactPaths);
-  observations.push_back(observe_sandbox_write(kSandboxProbe));
+  const std::vector<std::string> paths = artifact_paths();
+  std::vector<std::string_view> path_views(paths.begin(), paths.end());
+  std::vector<Observation> observations = observe_paths(path_views);
+  observations.push_back(observe_sandbox_write(kSandboxProbe.reveal()));
   observations.push_back(observe_fork());
   return observations;
 }

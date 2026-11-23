@@ -187,12 +187,11 @@ jobs:
           # The Release build defaults RASP_OBFUSCATE_IOS=ON. This catches a regression that disables O-MVLL
           # or breaks the data-read skip list:
           #  - configure must report that the obfuscation pass engaged, so the framework is obfuscated.
-          #  - 'dbg.traced', 'sysctl', 'syscall' and '/var/jb' are skip-listed in omvll_config.py (read through
-          #    data pointers), so they must stay readable; if the skip list breaks, the string pass encrypts
-          #    them and they vanish. '/var/jb' is a jailbreak artifact path and 'i386' a simulator machine name,
-          #    both iterated by the on-device checks ('i386' is the least arch-string-collision-prone of
-          #    emulator.cpp's kSimulatorMachines under the exact-line match below). 'syscall' is the dbg.traced
-          #    probe's second source, stored in kProbes and read back through a data pointer.
+          #  - 'dbg.traced', 'sysctl', 'syscall' are skip-listed in omvll_config.py (read through data pointers),
+          #    so they must stay readable; if the skip list breaks, the string pass encrypts them and they vanish.
+          #    'i386' is a simulator machine name iterated by emulator.cpp (the least arch-string-collision-prone of
+          #    kSimulatorMachines under the exact-line match below). 'syscall' is the dbg.traced probe's second
+          #    source, stored in kProbes and read back through a data pointer.
           #    The match is exact-line (grep -qxF): a skip-listed literal such as 'sysctl' or 'syscall' renders
           #    as its own line, distinct from the '_sysctl'/'_sysctlbyname'/'_syscall' import lines, so the
           #    probe-source skip list gets real coverage rather than matching the imports a substring grep would.
@@ -202,9 +201,17 @@ jobs:
           if ! grep -qF 'O-MVLL on; RaspRuntime is obfuscated' "$RUNNER_TEMP/ios-configure.log"; then
             echo "FAIL: configure did not report O-MVLL on; the framework is not obfuscated"; exit 1
           fi
-          for literal in dbg.traced sysctl syscall /var/jb i386; do
+          for literal in dbg.traced sysctl syscall i386; do
             if ! strings -a "$binary" | grep -qxF "$literal"; then
               echo "FAIL: '$literal' is missing; a data-read literal was encrypted (skip list broken?)"; exit 1
+            fi
+          done
+          # The jailbreak artifact paths are now XOR-masked at the source (util/hidden_string.h), not plaintext
+          # literals, so the shipped framework must NOT print the "what is checked" map. Assert the plaintext does
+          # not appear: if HiddenString is bypassed or the paths are reintroduced as literals, these reappear.
+          for hidden in '/Applications/Cydia.app' '/var/checkra1n.dmg' '/usr/lib/libhooker.dylib'; do
+            if strings -a "$binary" | grep -qF "$hidden"; then
+              echo "FAIL: '$hidden' is plaintext in the framework; jailbreak path hiding is broken"; exit 1
             fi
           done
       - name: Check the framework
@@ -243,6 +250,13 @@ jobs:
           fi
           # Positive control: the un-stripped dev build must still list them, or the check above proves nothing.
           nm "$dev" | grep -q rasp_start
+      - name: Upload the release framework (temporary - for attack testing)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RaspRuntime-ios-harden2
+          path: runtime/build/ios/ios/RaspRuntime.framework
+          if-no-files-found: error
       - name: Install clang-tidy
         env:
           LLVM_RELEASE: "23.1.3"

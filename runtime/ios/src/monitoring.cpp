@@ -30,6 +30,7 @@
 #include "checks/mitm.h"
 #include "checks/virtualizer.h"
 #include "panic/end_process.h"
+#include "panic/terminate.h"
 #include "rasp/config.h"
 #include "rasp/context.h"
 #include "rasp/embedded_config.h"
@@ -174,6 +175,15 @@ void* monitor(void* argument) {
     std::vector<Observation> builtin = run_checks(config, *environment);
     heartbeat.beat(std::chrono::steady_clock::now());
     static_cast<void>(panic_on_detection(builtin, end_process));
+    // Second, independent reaction welded inline: the call above arms the process end on a separate thread through an
+    // EndProcess function pointer, which an attacker can replace or hook to keep a tampered app running. For a severe
+    // live-attack detection (a debugger or a hooking framework such as Frida), end the process here too, inline, with
+    // no function to replace and no thread or delay to race. A development build never ends the process.
+    if constexpr (!kLoggingEnabled) {
+      if (has_severe_detection(detect(builtin))) {
+        terminate_now();
+      }
+    }
     const std::vector<Observation> observations =
         rasp::plugins::run_plugins(rasp::plugins::compiled_in(), std::move(builtin), context);
     if constexpr (kLoggingEnabled) {
