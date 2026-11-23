@@ -484,6 +484,8 @@ Observation observe_inserted_libraries(std::string_view inserted_libraries) {
 }
 
 #ifdef __APPLE__
+namespace {
+
 /// One of the runtime's own functions to check for an inline hook, by a stable name and its address.
 struct SelfFunction {
   /// A short, stable name reported when the function is found hooked, not a symbol the binary exports.
@@ -491,6 +493,10 @@ struct SelfFunction {
   /// The function's address in the process, taken at compile time so no symbol lookup is needed.
   const void* address;
 };
+
+/// The number of bytes of a function's prologue the self-check reads: one arm64 instruction plus the literal a far
+/// branch loads its target from.
+constexpr std::size_t kPrologueBytes = 16;
 
 /// Whether the function at `code` is inline-hooked: its first instruction is a branch outside every loaded image.
 ///
@@ -502,29 +508,31 @@ struct SelfFunction {
 ///
 /// @param code The function's first bytes, in the process's own memory.
 /// @return Whether the first instruction branches to memory outside every loaded image.
-[[nodiscard]] bool branches_outside_images(const std::uint8_t* code) {
+[[nodiscard]] bool branches_outside_images(std::span<const std::uint8_t, kPrologueBytes> code) {
   std::uint32_t word = 0;
-  std::memcpy(&word, code, sizeof(word));
-  const void* target = nullptr;
+  std::memcpy(&word, code.data(), sizeof(word));
+  std::uintptr_t target = 0;
+  const auto origin = reinterpret_cast<std::uintptr_t>(code.data());
   if ((word & 0xFC000000U) == 0x14000000U) {
     // B imm26: the branch offset is the 26-bit immediate, sign-extended, times four.
     std::int64_t immediate = word & 0x03FFFFFFU;
-    if ((immediate & 0x02000000) != 0) {
-      immediate -= 0x04000000;
+    if ((immediate & 0x02000000L) != 0) {
+      immediate -= 0x04000000L;
     }
-    target = code + immediate * 4;
+    target = origin + static_cast<std::uintptr_t>(immediate * 4);
   } else if ((word & 0xFF00001FU) == (0x58000000U | 16U)) {
     // LDR x16, #imm19 followed by BR x16: the literal at imm19*4 bytes ahead holds the branch target.
-    const std::uint32_t literal_offset = ((word >> 5U) & 0x7FFFFU) * 4U;
-    std::memcpy(&target, code + literal_offset, sizeof(target));
+    const std::size_t literal_offset = ((word >> 5U) & 0x7FFFFU) * 4U;
+    std::memcpy(&target, code.subspan(literal_offset).data(), sizeof(target));
   } else {
     return false;
   }
-  if (target == nullptr) {
+  if (target == 0) {
     return false;
   }
   Dl_info info{};
-  return dladdr(target, &info) == 0;
+  // NOLINTNEXTLINE(performance-no-int-to-ptr): a decoded branch target is read back as a code address.
+  return dladdr(reinterpret_cast<const void*>(target), &info) == 0;
 }
 
 /// The runtime's own functions the self-check reads, with the addresses taken here so no symbol lookup is needed.
@@ -545,15 +553,21 @@ struct SelfFunction {
   };
   // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
 }
+
+}  // namespace
 #endif
 
 Observation observe_inline_hooks() {
 #ifdef __APPLE__
   std::vector<std::string> hooked;
   for (const SelfFunction& function : self_functions()) {
+    if (function.address == nullptr) {
+      continue;
+    }
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): a function's code is read as bytes.
-    const auto* code = reinterpret_cast<const std::uint8_t*>(function.address);
-    if (code != nullptr && branches_outside_images(code)) {
+    const std::span<const std::uint8_t, kPrologueBytes> code{static_cast<const std::uint8_t*>(function.address),
+                                                             kPrologueBytes};
+    if (branches_outside_images(code)) {
       hooked.emplace_back(function.name);
     }
   }
@@ -603,12 +617,21 @@ Observation observe_memory_regions() {
 
 std::vector<Observation> hooks(std::string_view inserted_libraries) {
   if (!kPhysicalDevice) {
-    return {unsupported(kMapsHitsSignal, kDyldSource), unsupported(kDyldEnvSignal, kGetenvSource),
-            unsupported(kInlineSignal, kSelfCheckSource), unsupported(kFridaPortSignal, kConnectSource),
-            unsupported(kRwxRegionsSignal, kVmRegionSource)};
+    return {
+        unsupported(kMapsHitsSignal, kDyldSource),
+        unsupported(kDyldEnvSignal, kGetenvSource),
+        unsupported(kInlineSignal, kSelfCheckSource),
+        unsupported(kFridaPortSignal, kConnectSource),
+        unsupported(kRwxRegionsSignal, kVmRegionSource),
+    };
   }
-  return {observe_loaded_images(), observe_inserted_libraries(inserted_libraries), observe_inline_hooks(),
-          observe_loopback_port(kFridaPort), observe_memory_regions()};
+  return {
+      observe_loaded_images(),
+      observe_inserted_libraries(inserted_libraries),
+      observe_inline_hooks(),
+      observe_loopback_port(kFridaPort),
+      observe_memory_regions(),
+  };
 }
 
 std::vector<Observation> fast_hooks(std::string_view inserted_libraries) {
