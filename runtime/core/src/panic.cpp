@@ -133,6 +133,8 @@ constexpr auto kVerdicts = std::to_array<Verdict>({
     {.signal = "hook.dyld_env", .detected = is_non_empty_text},
     {.signal = "hook.frida_port", .detected = is_true},
     {.signal = "hook.inline", .detected = is_non_empty_list},
+    {.signal = "hook.exec_origin", .detected = informational},
+    {.signal = "hook.code_origin", .detected = is_non_empty_list},
     {.signal = "id.package", .detected = informational},
     {.signal = "id.uid", .detected = informational},
     {.signal = "id.code_path", .detected = informational},

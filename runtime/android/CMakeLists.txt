@@ -42,10 +42,12 @@ add_library(rasp SHARED
   src/monitoring.cpp
   src/apk/archive.cpp
   src/apk/location.cpp
+  src/checks/code_origin.cpp
   src/checks/debugger.cpp
   src/checks/emulator.cpp
   src/checks/hooks.cpp
   src/checks/identity.cpp
+  src/checks/inline_hooks.cpp
   src/checks/integrity.cpp
   src/checks/mitm.cpp
   src/checks/root.cpp
@@ -63,6 +65,8 @@ add_library(rasp SHARED
   src/util/apk_file.cpp
   src/util/app_storage.cpp
   src/util/jni.cpp
+  src/util/memory_map.cpp
+  src/util/own_library.cpp
   src/util/raw_file.cpp
   src/util/system_property.cpp)
 target_include_directories(rasp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${rasp_kdf_dir})

@@ -14,10 +14,12 @@
 #include <utility>
 #include <vector>
 
+#include "checks/code_origin.h"
 #include "checks/debugger.h"
 #include "checks/emulator.h"
 #include "checks/hooks.h"
 #include "checks/identity.h"
+#include "checks/inline_hooks.h"
 #include "checks/integrity.h"
 #include "checks/mitm.h"
 #include "checks/root.h"
@@ -61,6 +63,8 @@ namespace {
   }
   if (enabled(2, "hooks")) {
     std::ranges::move(checks::hooks(), std::back_inserter(observations));
+    std::ranges::move(checks::inline_hooks(), std::back_inserter(observations));
+    std::ranges::move(checks::code_origin(), std::back_inserter(observations));
   }
   if (enabled(3, "integrity")) {
     std::ranges::move(checks::integrity(), std::back_inserter(observations));

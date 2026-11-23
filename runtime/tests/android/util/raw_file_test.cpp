@@ -1,15 +1,19 @@
-/// Tests for read_proc_file and first_proc_line_matching, which read kernel-generated files through direct system
-/// calls.
+/// Tests for the direct-system-call readers of kernel files, file ranges and the process's own memory.
 
 #include "util/raw_file.h"
 
+#include <array>
+#include <bit>
 #include <cstddef>
+#include <cstdint>
 #include <fcntl.h>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #include "support/files.h"
 
@@ -187,6 +191,44 @@ TEST(RawFile, firstProcLineMatching_whenTheCapCutsTheMatchingLine_findsNothing) 
       path.string(), [](std::string_view l) { return l.contains("base.apk"); }, kTwoLineMap.size() - 1, plain_open);
 
   EXPECT_FALSE(line.has_value());
+}
+
+TEST(RawFile, readFileRange_whenTheRangeIsInsideTheFile_readsIt) {
+  const TemporaryDirectory dir{};
+  const std::string path = (std::filesystem::path(dir.path()) / "library").string();
+  ASSERT_TRUE(write_file(path, "0123456789"));
+
+  EXPECT_EQ(read_file_range(path, 3, 4), "3456");
+}
+
+TEST(RawFile, readFileRange_whenTheRangePassesTheEnd_readsWhatTheFileHolds) {
+  const TemporaryDirectory dir{};
+  const std::string path = (std::filesystem::path(dir.path()) / "library").string();
+  ASSERT_TRUE(write_file(path, "0123456789"));
+
+  EXPECT_EQ(read_file_range(path, 8, 16), "89");
+  EXPECT_EQ(read_file_range(path, 10, 4), "");
+}
+
+TEST(RawFile, readFileRange_whenTheFileIsMissing_readsNothing) {
+  const TemporaryDirectory dir{};
+
+  EXPECT_FALSE(read_file_range((std::filesystem::path(dir.path()) / "missing").string(), 0, 4).has_value());
+}
+
+TEST(RawFile, readOwnMemory_whenTheMemoryIsMapped_readsIt) {
+  const std::array<char, 8> bytes = {'r', 'a', 's', 'p', '-', 'm', 'e', 'm'};
+
+  EXPECT_EQ(read_own_memory(std::bit_cast<std::uintptr_t>(bytes.data()), bytes.size()), "rasp-mem");
+}
+
+TEST(RawFile, readOwnMemory_whenTheMemoryIsNotMapped_readsNothing) {
+  const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+  void* const region = mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  ASSERT_NE(region, MAP_FAILED);
+  ASSERT_EQ(munmap(region, page), 0);
+
+  EXPECT_FALSE(read_own_memory(std::bit_cast<std::uintptr_t>(region), 16).has_value());
 }
 
 }  // namespace

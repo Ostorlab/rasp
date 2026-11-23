@@ -131,6 +131,26 @@ target_include_directories(rasp_android_app_storage_test PRIVATE ${PROJECT_SOURC
 target_link_libraries(rasp_android_app_storage_test PRIVATE rasp_core rasp_warnings rasp_language GTest::gtest_main)
 gtest_discover_tests(rasp_android_app_storage_test)
 
+add_executable(rasp_android_memory_map_test android/util/memory_map_test.cpp
+  ${PROJECT_SOURCE_DIR}/android/src/util/memory_map.cpp)
+target_include_directories(rasp_android_memory_map_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src)
+target_link_libraries(rasp_android_memory_map_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_android_memory_map_test)
+
+# The inline-hook and code-origin checks read the process's own memory with process_vm_readv, a Linux system call.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  foreach(check code_origin inline_hooks)
+    add_executable(rasp_android_${check}_test android/checks/${check}_test.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/checks/${check}.cpp ${PROJECT_SOURCE_DIR}/android/src/util/memory_map.cpp
+      ${PROJECT_SOURCE_DIR}/android/src/util/raw_file.cpp)
+    target_include_directories(rasp_android_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/android/src
+      ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(rasp_android_${check}_test PRIVATE rasp_core rasp_warnings rasp_language
+      GTest::gtest_main)
+    gtest_discover_tests(rasp_android_${check}_test)
+  endforeach()
+endif()
+
 # read_proc_file's direct-system-call path belongs to Linux on x86_64, aarch64 or 32-bit ARM, and it refuses a file
 # that doesn't live on procfs, sysfs or selinuxfs, so its test writes a regular one: only that reader refuses it. On any
 # other host read_proc_file falls back to read_file, which reads the regular file, so the test must not run there.

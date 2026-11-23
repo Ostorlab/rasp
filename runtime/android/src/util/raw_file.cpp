@@ -1,11 +1,14 @@
-/// read_proc_file and first_proc_line_matching, which read kernel-generated files through direct system calls.
+/// The direct-system-call readers of kernel files, file ranges and the process's own memory.
 
 #include "raw_file.h"
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -21,10 +24,14 @@
 #include <sys/statfs.h>
 #endif
 #include <sys/syscall.h>
+#include <sys/uio.h>  // NOLINT(misc-include-cleaner): declares iovec.
 #else
 #include <cerrno>
 #include <fcntl.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/uio.h>  // NOLINT(misc-include-cleaner): declares iovec.
+#endif
 
 #include "rasp/util/read_file.h"
 #endif
@@ -151,6 +158,21 @@ constexpr long kExdev = 18;
 /// Closes `fd` through a direct system call: 0, or the negative errno.
 [[nodiscard]] long close_file(long fd) { return raw_syscall(__NR_close, fd, 0, 0, 0, 0, 0); }
 
+/// pread64 through a direct system call: the count read, 0 at the end of the file, or the negative errno.
+// NOLINTNEXTLINE(misc-const-correctness): the kernel writes through `data`, which reaches it as an integer register.
+[[nodiscard]] long read_at(long fd, char* data, std::size_t size, std::uint64_t offset) {
+#ifdef __arm__
+  // The kernel takes the 64-bit offset in an aligned register pair, after an unused register.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  return raw_syscall(__NR_pread64, fd, reinterpret_cast<long>(data), static_cast<long>(size), 0,
+                     static_cast<long>(offset & 0xFFFFFFFFU), static_cast<long>(offset >> 32U));
+#else
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  return raw_syscall(__NR_pread64, fd, reinterpret_cast<long>(data), static_cast<long>(size), static_cast<long>(offset),
+                     0, 0);
+#endif
+}
+
 /// Whether the open file `fd` lives on a filesystem whose files the kernel generates at read time.
 ///
 /// The sensor files this reader serves come from procfs, sysfs and selinuxfs. Their bytes are built at read time:
@@ -210,6 +232,16 @@ constexpr long kExdev = 18;
 /// Closes `fd` through libc: 0, or the negative errno.
 [[nodiscard]] long close_file(long fd) { return ::close(static_cast<int>(fd)) == 0 ? 0 : -static_cast<long>(errno); }
 
+/// pread64 through libc: the count read, 0 at the end of the file, or the negative errno.
+[[nodiscard]] long read_at(long fd, char* data, std::size_t size, std::uint64_t offset) {
+#ifdef __ANDROID__
+  const auto count = ::pread64(static_cast<int>(fd), data, size, static_cast<off64_t>(offset));
+#else
+  const auto count = ::pread(static_cast<int>(fd), data, size, static_cast<off_t>(offset));
+#endif
+  return count < 0 ? -static_cast<long>(errno) : static_cast<long>(count);
+}
+
 #endif
 
 }  // namespace
@@ -267,6 +299,26 @@ std::optional<std::string> read_proc_file(std::string_view path, std::size_t lim
   return content;
 }
 
+long open_file(std::string_view path) { return raw_open(path); }
+
+std::optional<std::string> read_own_memory(std::uintptr_t address, std::size_t size) {
+  std::string content(size, '\0');
+  // NOLINTBEGIN(misc-include-cleaner): iovec comes from the included <sys/uio.h>.
+  ::iovec local{.iov_base = content.data(), .iov_len = size};
+  ::iovec remote{.iov_base = std::bit_cast<void*>(address), .iov_len = size};
+  // NOLINTEND(misc-include-cleaner)
+  const long pid = raw_syscall(__NR_getpid, 0, 0, 0, 0, 0, 0);
+  // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast): the kernel takes the vectors' addresses as integers.
+  const long count =
+      raw_syscall(__NR_process_vm_readv, pid, reinterpret_cast<long>(&local), 1, reinterpret_cast<long>(&remote), 1, 0);
+  // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
+  if (count <= 0 && size != 0) {
+    return std::nullopt;
+  }
+  content.resize(failed(count) ? 0 : static_cast<std::size_t>(count));
+  return content;
+}
+
 #else
 
 long open_proc_file(std::string_view path) {
@@ -283,7 +335,61 @@ std::optional<std::string> read_proc_file(std::string_view path, std::size_t lim
   return read_file(path, limit);
 }
 
+long open_file(std::string_view path) { return open_proc_file(path); }
+
+std::optional<std::string> read_own_memory(std::uintptr_t address, std::size_t size) {
+#ifdef __linux__
+  std::string content(size, '\0');
+  // NOLINTBEGIN(misc-include-cleaner): iovec comes from the included <sys/uio.h>.
+  const ::iovec local{.iov_base = content.data(), .iov_len = size};
+  const ::iovec remote{.iov_base = std::bit_cast<void*>(address), .iov_len = size};
+  // NOLINTEND(misc-include-cleaner)
+  const auto count = ::process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
+  if (count <= 0 && size != 0) {
+    return std::nullopt;
+  }
+  content.resize(count < 0 ? 0 : static_cast<std::size_t>(count));
+  return content;
+#else
+  static_cast<void>(address);
+  static_cast<void>(size);
+  return std::nullopt;
 #endif
+}
+
+#endif
+
+std::optional<std::string> read_file_range(std::string_view path, std::uint64_t offset, std::size_t size,
+                                           ProcOpener opener) {
+  constexpr auto kLargestOffset = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  if (offset > kLargestOffset || size > kLargestOffset - offset) {
+    return std::nullopt;
+  }
+  const long fd = opener(path);
+  if (fd < 0) {
+    return std::nullopt;
+  }
+  std::string content(size, '\0');
+  std::size_t done = 0;
+  bool first_read_failed = false;
+  while (done < size) {
+    const long count = read_at(fd, std::span(content).subspan(done).data(), size - done, offset + done);
+    if (count == -kEintr) {
+      continue;
+    }
+    if (count <= 0) {
+      first_read_failed = count < 0 && done == 0;
+      break;
+    }
+    done += static_cast<std::size_t>(count);
+  }
+  static_cast<void>(close_file(fd));
+  if (first_read_failed) {
+    return std::nullopt;
+  }
+  content.resize(done);
+  return content;
+}
 
 std::optional<std::string> first_proc_line_matching(std::string_view path, LinePredicate matches, std::size_t cap,
                                                     ProcOpener open_file) {

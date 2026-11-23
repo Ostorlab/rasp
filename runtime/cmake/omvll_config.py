@@ -98,6 +98,10 @@ DATA_READ_LITERALS = re.compile(
     rb"|__TEXT"
     rb"|\.init"
     rb"|\.text"
+    # Android observation sources, which the report copies byte for byte.
+    rb"|apk_signing_block|debug_api|dladdr|file|getuid|heartbeat|jdwp_threads|memory|memory_file|package_manager"
+    rb"|proc_cmdline|proc_maps|proc_mounts|proc_status|proc_status_libc|proc_task|selinuxfs|system_property"
+    rb"|thread_stacks|user_cacerts"
     rb")\Z"
 )
 
