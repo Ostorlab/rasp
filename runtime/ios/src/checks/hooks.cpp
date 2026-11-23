@@ -498,20 +498,31 @@ std::optional<std::uintptr_t> decode_branch_target(std::span<const std::uint8_t,
     return origin + static_cast<std::uintptr_t>(offset);
   }
   if ((word & 0xFF00001FU) == (0x58000000U | 16U)) {
-    // LDR x16, #imm19 followed by BR x16: the literal at the signed imm19*4 byte offset holds the branch target. imm19
-    // is a signed 19-bit field (bit 23 of the word is its sign), so a negative value points before the instruction.
+    // LDR x16, #imm19 followed by BR x16: only the pair is a trampoline, so the second instruction must be BR x16
+    // (0xD61F0200); a lone LDR x16 at a function entry is not this hook form.
+    std::uint32_t second = 0;
+    std::memcpy(&second, code.subspan(4).data(), sizeof(second));
+    if (second != 0xD61F0200U) {
+      return std::nullopt;
+    }
+    // The literal at the signed imm19*4 byte offset holds the branch target. imm19 is a signed 19-bit field (bit 23 of
+    // the word is its sign), so a negative value points before the instruction.
     std::uint32_t imm19 = (word >> 5U) & 0x7FFFFU;
     if ((imm19 & 0x40000U) != 0) {
       imm19 |= 0xFFF80000U;  // sign-extend the 19-bit value into the full 32-bit word
     }
     const std::int64_t literal_offset = static_cast<std::int64_t>(static_cast<std::int32_t>(imm19)) * 4;
-    const auto end = literal_offset + static_cast<std::int64_t>(sizeof(std::uintptr_t));
-    // The literal must sit fully inside the bytes we read; otherwise this is not the trampoline the check matches.
-    if (literal_offset < 0 || end > static_cast<std::int64_t>(code.size())) {
+    // The literal must sit fully inside the bytes we read; otherwise this is not the trampoline the check matches. A
+    // negative offset points before the instruction, so it is rejected before the bounds are compared as sizes.
+    if (literal_offset < 0) {
+      return std::nullopt;
+    }
+    const std::size_t offset = static_cast<std::size_t>(literal_offset);
+    if (offset + sizeof(std::uintptr_t) > code.size()) {
       return std::nullopt;
     }
     std::uintptr_t target = 0;
-    std::memcpy(&target, code.subspan(static_cast<std::size_t>(literal_offset)).data(), sizeof(target));
+    std::memcpy(&target, code.subspan(offset).data(), sizeof(target));
     return target;
   }
   return std::nullopt;
