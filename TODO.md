@@ -27,7 +27,7 @@ Work that is known and not done yet. Each item says what is missing and why it m
   release-build and debuggable flags, app ownership and CPU/runtime plausibility. Each DEX sensor guard also
   measures native tracing, the runtime's text and framework maps, RWX regions, threads and foreign libraries.
   These overlap configurable check groups and still poison decryption when those groups are report-only.
-  Decide how action policy can cover these gates without weakening protection; this change leaves them intact.
+  The current action policy leaves these gates intact. Extend it to cover the gates while preserving protection.
 
 
 - **The payload keys are derivable from the app alone, so full-emulation dumping has a ceiling, not a wall.** A blind attacker who executes the library in a whole-app emulator (unidbg-class) needs no key and no understanding: the bootstrap runs as DT_INIT, the gates fold poison into the key instead of aborting (so a hooked exit reveals and bypasses nothing), and the Java arm now demands that the emulator resolve the app's program steps — real class loading, real hierarchies — correctly enough to derive the armed master, silently failing when it does not. But a carefully configured emulation still runs the whole chain and dumps the decrypted dexes at `InMemoryDexClassLoader`, because every key input is, in the end, app-derivable. Deepening the program's steps needs a dex reader on the packer side (fields, methods and per-app hierarchies of the app's own clear classes, which a fake loader must answer from the real dex). Only key material that an emulator cannot reproduce — the Android Keystore, a TEE-held secret, or a server-enrolled share with attestation — turns the ceiling into a wall. That needs an enrollment or first-run flow, not just the packer.
@@ -39,7 +39,7 @@ Work that is known and not done yet. Each item says what is missing and why it m
 ## Packer config
 
 - **The config is cleartext and unauthenticated.** Both the checks mask and the report-only mask can be changed.
-  Authenticate the config along with addressing its existing confidentiality limit.
+  Authenticate the config. Protect its confidentiality in the same change.
 
 ## Packer: Android
 

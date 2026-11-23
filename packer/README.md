@@ -37,7 +37,7 @@ result = packer.pack(
 - `--build-id` (`build_id=`): the id of the protected build, written into the app as it is. `rasp pack` derives it when it is not given: the SHA-256 of the app's contents, the platform, the installed packer version, the resolved checks and their actions. The same inputs give the same id, and any change to the app, the packer version, the checks or their actions gives a new one. `pack` requires it.
 - `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added. Without `--checks`, the command line runs every group the target platform supports (`checks=` in Python is required). An unknown group is skipped with a warning. The warning suggests the closest matching group name. With `--strict`, `rasp pack` exits with status 1 instead. See the groups in the [repository's README](../README.md#checks).
 - `--report-only` (`report_only=`): enabled groups whose detections only report, in the same comma-separated syntax as `--checks`. Overrides the defaults.
-- `--block` (`block=`): enabled groups whose detections end the app. Overrides the defaults. A group in both options, or a known but disabled group, is an error. Unknown ids are skipped with warnings, or errors with `--strict`. See [actions, defaults and Android key-schedule limits](../README.md#report-or-block).
+- `--block` (`block=`): enabled groups whose detections end the app. Overrides the defaults. A group in both options, or a known but disabled group, is an error. By default, `rasp pack` warns about each unknown id and skips it. With `--strict`, it prints an error for each unknown id and exits with status 1 before writing output. See [actions, defaults and Android key-schedule limits](../README.md#report-or-block).
 - `--strict`: print an error for every unknown check group, write nothing, and exit with status 1, instead of skipping it with a warning.
 - `--output` (`output=`): where to write the protected app; an existing file at that path is refused. The command line defaults to `<name>-protected<extension>` next to the app, such as `app-protected.apk` for `app.apk`.
 - `--mapping` (Android): the app's R8 or ProGuard mapping file, so the packer finds the app's own classes after R8 renamed them.
@@ -59,8 +59,8 @@ reports through monitoring plugins (including ADR) and arms no panic at startup,
 An enabled group set to `block` arms the delayed process end on detection at any of those call sites.
 Previously, startup and checkpoint detections blocked the app regardless of `--checks`.
 
-An unreadable enabled-check mask and list still make detections block; missing action metadata does not disable
-an enabled group. Unknown runtime signals and platform groups also block. Android's independent DEX key schedule
+If the runtime can read neither the enabled-check mask nor the check list, every detection uses `block`.
+Enabled groups also use `block` when action metadata is missing. Unknown runtime signals and platform groups also block. Android's independent DEX key schedule
 is unchanged by Off and report-only. See the [defaults and remaining key-schedule limits](../README.md#report-or-block).
 
 ## How do I sign the protected app?
