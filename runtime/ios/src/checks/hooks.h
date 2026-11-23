@@ -48,7 +48,8 @@ struct MemoryRegion {
 /// @param inserted_libraries The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, as read_inserted_libraries
 /// returns it.
 /// @return One observation per signal and source, in this order: hook.maps_hits read through dyld, hook.dyld_env read
-/// through getenv, hook.frida_port read through connect, then hook.rwx_regions read through vm_region.
+/// through getenv, hook.inline read through self_check, hook.frida_port read through connect, then hook.rwx_regions read
+/// through vm_region.
 [[nodiscard]] std::vector<Observation> hooks(std::string_view inserted_libraries);
 
 /// Runs the fast hooking checks used at start-up, and returns what they observed.

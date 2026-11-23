@@ -410,6 +410,7 @@ TEST(Hooks, hooks_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
             (std::vector<Observation>{
                 {.signal = "hook.maps_hits", .source = "dyld", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.dyld_env", .source = "getenv", .status = Status::kUnsupported, .value = {}},
+                {.signal = "hook.inline", .source = "self_check", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.frida_port", .source = "connect", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.rwx_regions", .source = "vm_region", .status = Status::kUnsupported, .value = {}},
             }));

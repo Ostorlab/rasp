@@ -606,6 +606,7 @@ std::vector<Observation> hooks(std::string_view inserted_libraries) {
     return {
         unsupported(kMapsHitsSignal, kDyldSource),
         unsupported(kDyldEnvSignal, kGetenvSource),
+        unsupported(kInlineSignal, kSelfCheckSource),
         unsupported(kFridaPortSignal, kConnectSource),
         unsupported(kRwxRegionsSignal, kVmRegionSource),
     };
@@ -613,6 +614,7 @@ std::vector<Observation> hooks(std::string_view inserted_libraries) {
   return {
       observe_loaded_images(),
       observe_inserted_libraries(inserted_libraries),
+      observe_inline_hooks(),
       observe_loopback_port(kFridaPort),
       observe_memory_regions(),
   };
