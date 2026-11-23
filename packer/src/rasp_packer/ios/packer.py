@@ -12,6 +12,7 @@ import tempfile
 from rasp_packer import errors
 from rasp_packer import identity
 from rasp_packer import runtime_config
+from rasp_packer.ios import guard
 from rasp_packer.ios import ipa
 from rasp_packer.ios import macho
 from rasp_packer.ios import resources
@@ -61,8 +62,7 @@ def pack(
         shutil.rmtree(bundle.app_dir / _CODE_SIGNATURE_DIR, ignore_errors=True)
         shutil.copytree(framework_dir, embedded)
         runtime_file = embedded / macho.RUNTIME_BINARY
-        runtime_file.write_bytes(
-            runtime_binary.write_config(runtime_file.read_bytes(), config)
-        )
+        with_config = runtime_binary.write_config(runtime_file.read_bytes(), config)
+        runtime_file.write_bytes(guard.write_guard(with_config))
         ipa.archive(bundle.payload_dir, output)
     return bundle.identity
