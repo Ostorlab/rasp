@@ -4,7 +4,9 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -20,6 +22,25 @@ constexpr std::uint32_t kProtectionRead = 1;
 constexpr std::uint32_t kProtectionWrite = 2;
 /// The bit of a Mach protection that allows running the memory as code, `VM_PROT_EXECUTE`.
 constexpr std::uint32_t kProtectionExecute = 4;
+
+/// The number of bytes of a function's prologue the inline-hook self-check reads: one arm64 instruction plus the
+/// literal a far branch loads its target from.
+constexpr std::size_t kPrologueBytes = 16;
+
+/// Decodes the branch target of the first arm64 instruction in `code`, when it is one of the two branch forms an
+/// inline hook writes.
+///
+/// It reads the first instruction and, when it is a direct `B imm26` or the `LDR x16, #imm19; BR x16` pair, returns
+/// where it branches to: the sign-extended immediate times four added to `origin` for a `B`, or the pointer held in
+/// the literal the `LDR` loads for the pair. The literal must sit fully inside `code`, so a far or negative `imm19`
+/// returns nothing. Any other first instruction, such as a normal prologue, is not a branch and returns nothing. It
+/// does no attribution of the target, so it is pure and runs on any host.
+///
+/// @param code The function's first bytes.
+/// @param origin The address `code` was read from, which a `B` offset is relative to.
+/// @return The branch target, or nothing when the first instruction is not a decodable branch.
+[[nodiscard]] std::optional<std::uintptr_t> decode_branch_target(std::span<const std::uint8_t, kPrologueBytes> code,
+                                                                 std::uintptr_t origin);
 
 /// One region of a task's address space, as the Mach region API describes it.
 struct MemoryRegion {
@@ -152,8 +173,8 @@ struct MemoryRegion {
 /// starts with a real prologue, not such a branch, so an intact runtime reports an empty list. It names the runtime's
 /// own private functions, which a jailbreak's tweaks do not hook, rather than shared system functions that a device's
 /// own hooks would flag; this catches an attacker instrumenting the runtime regardless of the port or name the
-/// framework uses, and does not fire on an ordinary jailbroken device. It reads only the process's own memory, so it
-/// also runs on a Mac or a Linux host, where nothing is hooked.
+/// framework uses, and does not fire on an ordinary jailbroken device. The self-check runs on an Apple build, iOS or a
+/// Mac; off an Apple build, such as a Linux host, it reports the unsupported status instead.
 ///
 /// @return One hook.inline observation read through self_check, with the names of the runtime's functions found hooked,
 /// empty when none are. It has the unsupported status off an Apple build.

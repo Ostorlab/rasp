@@ -484,6 +484,39 @@ Observation observe_inserted_libraries(std::string_view inserted_libraries) {
   return observed(kDyldEnvSignal, kGetenvSource, std::string(inserted_libraries.substr(0, kMaxInsertedLibrariesSize)));
 }
 
+std::optional<std::uintptr_t> decode_branch_target(std::span<const std::uint8_t, kPrologueBytes> code,
+                                                   std::uintptr_t origin) {
+  std::uint32_t word = 0;
+  std::memcpy(&word, code.data(), sizeof(word));
+  if ((word & 0xFC000000U) == 0x14000000U) {
+    // B imm26: the 26-bit immediate, sign-extended, times four, is the byte offset from this instruction.
+    std::uint32_t immediate = word & 0x03FFFFFFU;
+    if ((immediate & 0x02000000U) != 0) {
+      immediate |= 0xFC000000U;  // sign-extend the 26-bit value into the full 32-bit word
+    }
+    const std::int64_t offset = static_cast<std::int64_t>(static_cast<std::int32_t>(immediate)) * 4;
+    return origin + static_cast<std::uintptr_t>(offset);
+  }
+  if ((word & 0xFF00001FU) == (0x58000000U | 16U)) {
+    // LDR x16, #imm19 followed by BR x16: the literal at the signed imm19*4 byte offset holds the branch target. imm19
+    // is a signed 19-bit field (bit 23 of the word is its sign), so a negative value points before the instruction.
+    std::uint32_t imm19 = (word >> 5U) & 0x7FFFFU;
+    if ((imm19 & 0x40000U) != 0) {
+      imm19 |= 0xFFF80000U;  // sign-extend the 19-bit value into the full 32-bit word
+    }
+    const std::int64_t literal_offset = static_cast<std::int64_t>(static_cast<std::int32_t>(imm19)) * 4;
+    const auto end = literal_offset + static_cast<std::int64_t>(sizeof(std::uintptr_t));
+    // The literal must sit fully inside the bytes we read; otherwise this is not the trampoline the check matches.
+    if (literal_offset < 0 || end > static_cast<std::int64_t>(code.size())) {
+      return std::nullopt;
+    }
+    std::uintptr_t target = 0;
+    std::memcpy(&target, code.subspan(static_cast<std::size_t>(literal_offset)).data(), sizeof(target));
+    return target;
+  }
+  return std::nullopt;
+}
+
 #ifdef __APPLE__
 namespace {
 
@@ -495,48 +528,25 @@ struct SelfFunction {
   const void* address;
 };
 
-/// The number of bytes of a function's prologue the self-check reads: one arm64 instruction plus the literal a far
-/// branch loads its target from.
-constexpr std::size_t kPrologueBytes = 16;
-
 /// Whether the function at `code` is inline-hooked: its first instruction is a branch outside every loaded image.
 ///
 /// An inline hook, such as the ones Frida's gum engine writes, overwrites a function's first instruction with a branch
 /// into its own trampoline, which lives in anonymous memory that belongs to no image. A pristine function starts with a
 /// real prologue, not a branch; a legitimate thunk branches within a mapped image. Only an injected hook branches to
-/// memory that `dladdr` cannot attribute to any image, so that is the test. It decodes the two arm64 forms a hook
-/// uses: a direct `B` (immediate branch) and the `LDR x16, #imm; BR x16` pair whose literal holds the target.
+/// memory that `dladdr` cannot attribute to any image, so that is the test.
 ///
 /// @param code The function's first bytes, in the process's own memory.
 /// @return Whether the first instruction branches to memory outside every loaded image.
 [[nodiscard]] bool branches_outside_images(std::span<const std::uint8_t, kPrologueBytes> code) {
-  std::uint32_t word = 0;
-  std::memcpy(&word, code.data(), sizeof(word));
-  std::uintptr_t target = 0;
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the function's own code address, read as an integer.
   const auto origin = reinterpret_cast<std::uintptr_t>(code.data());
-  if ((word & 0xFC000000U) == 0x14000000U) {
-    // B imm26: the 26-bit immediate, sign-extended, times four, is the byte offset from this instruction.
-    std::uint32_t immediate = word & 0x03FFFFFFU;
-    const bool negative = (immediate & 0x02000000U) != 0;
-    if (negative) {
-      immediate |= 0xFC000000U;  // sign-extend the 26-bit value into the full 32-bit word
-    }
-    const auto offset = static_cast<std::int64_t>(static_cast<std::int32_t>(immediate)) * 4;
-    target = origin + static_cast<std::uintptr_t>(offset);
-  } else if ((word & 0xFF00001FU) == (0x58000000U | 16U)) {
-    // LDR x16, #imm19 followed by BR x16: the literal at imm19*4 bytes ahead holds the branch target.
-    const auto literal_offset = static_cast<std::size_t>((word >> 5U) & 0x7FFFFU) * 4U;
-    std::memcpy(&target, code.subspan(literal_offset).data(), sizeof(target));
-  } else {
-    return false;
-  }
-  if (target == 0) {
+  const std::optional<std::uintptr_t> target = decode_branch_target(code, origin);
+  if (!target.has_value() || *target == 0) {
     return false;
   }
   Dl_info info{};
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast,performance-no-int-to-ptr): a decoded branch target.
-  return dladdr(reinterpret_cast<const void*>(target), &info) == 0;
+  return dladdr(reinterpret_cast<const void*>(*target), &info) == 0;
 }
 
 /// The runtime's own functions the self-check reads, with the addresses taken here so no symbol lookup is needed.

@@ -4,10 +4,13 @@
 
 #include "checks/hooks.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <gtest/gtest.h>
 #include <netinet/in.h>
+#include <optional>
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -302,6 +305,54 @@ TEST(Hooks, observeInlineHooks_whenTheSystemHasNoProcessImages_reportsUnsupporte
       (Observation{.signal = "hook.inline", .source = "self_check", .status = Status::kUnsupported, .value = {}}));
 }
 #endif
+
+namespace {
+
+/// A 16-byte prologue whose first word is `word` and whose literal pool, eight bytes in, holds `literal`.
+[[nodiscard]] std::array<std::uint8_t, kPrologueBytes> prologue(std::uint32_t word, std::uintptr_t literal = 0) {
+  std::array<std::uint8_t, kPrologueBytes> bytes{};
+  std::memcpy(bytes.data(), &word, sizeof(word));
+  std::memcpy(bytes.data() + 8, &literal, sizeof(literal));
+  return bytes;
+}
+
+}  // namespace
+
+TEST(Hooks, decodeBranchTarget_whenTheFirstInstructionIsANormalPrologue_reportsNoBranch) {
+  // `sub sp, sp, #0x20` (0xd10083ff) is a normal prologue, not a branch.
+  const auto bytes = prologue(0xD10083FFU);
+  EXPECT_EQ(decode_branch_target(bytes, 0x1000), std::nullopt);
+}
+
+TEST(Hooks, decodeBranchTarget_whenTheFirstInstructionIsADirectBranch_reportsTheTarget) {
+  // `b #0x20` (imm26 = 8 words): target is origin + 0x20.
+  const auto bytes = prologue(0x14000008U);
+  EXPECT_EQ(decode_branch_target(bytes, 0x1000), std::optional<std::uintptr_t>(0x1020));
+}
+
+TEST(Hooks, decodeBranchTarget_whenTheDirectBranchIsNegative_reportsATargetBeforeTheOrigin) {
+  // `b #-4` (imm26 = -1): target is origin - 4.
+  const auto bytes = prologue(0x17FFFFFFU);
+  EXPECT_EQ(decode_branch_target(bytes, 0x1000), std::optional<std::uintptr_t>(0x0FFC));
+}
+
+TEST(Hooks, decodeBranchTarget_whenTheTrampolineLiteralIsInRange_reportsTheStoredPointer) {
+  // `ldr x16, #8` (0x58000050) loads the pointer eight bytes ahead, the `br x16` trampoline Frida writes.
+  const auto bytes = prologue(0x58000050U, 0xDEADBEEF);
+  EXPECT_EQ(decode_branch_target(bytes, 0x1000), std::optional<std::uintptr_t>(0xDEADBEEF));
+}
+
+TEST(Hooks, decodeBranchTarget_whenTheTrampolineLiteralIsOutOfRange_reportsNoBranch) {
+  // `ldr x16, #0x1000` (imm19 = 1024): the literal is far past the 16 bytes read, so nothing is decoded.
+  const auto bytes = prologue(0x58008010U);
+  EXPECT_EQ(decode_branch_target(bytes, 0x1000), std::nullopt);
+}
+
+TEST(Hooks, decodeBranchTarget_whenTheTrampolineLiteralIsBeforeTheInstruction_reportsNoBranch) {
+  // `ldr x16, #-4` (negative imm19): the literal sits before the bytes read, so nothing is decoded.
+  const auto bytes = prologue(0x58FFFFF0U);
+  EXPECT_EQ(decode_branch_target(bytes, 0x1000), std::nullopt);
+}
 
 TEST(Hooks, observeRegions_whenNoRegionIsWritableAndExecutable_reportsAnEmptyList) {
   EXPECT_EQ(observe_regions(clean_regions()), rwx_regions({}));
