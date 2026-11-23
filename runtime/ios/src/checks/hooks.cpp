@@ -1,8 +1,9 @@
 /// The iOS hooking checks: the loaded-image probe, the read of `DYLD_INSERT_LIBRARIES` at load time and the probe that
-/// reports it, the probe that connects to Frida's default port, the probe that walks the app's memory regions for ones
-/// that are both writable and executable, and their unsupported result off a physical device. The markers and folders
-/// draw on the names and places Frida, Cycript, Substrate, the tweak loaders and SSL Kill Switch install their
-/// libraries under, on rootful and rootless jailbreaks.
+/// reports it, the self-check that reads the runtime's own functions for an inline hook, the probe that connects to
+/// Frida's default port, the probe that walks the app's memory regions for ones that are both writable and executable,
+/// and their unsupported result off a physical device. The markers and folders draw on the names and places Frida,
+/// Cycript, Substrate, the tweak loaders and SSL Kill Switch install their libraries under, on rootful and rootless
+/// jailbreaks.
 
 #include "checks/hooks.h"
 
@@ -13,7 +14,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
+#include <iterator>
 #include <netinet/in.h>
 #include <optional>
 #include <span>
@@ -29,6 +32,7 @@
 
 #ifdef __APPLE__
 #include <TargetConditionals.h>
+#include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <mach/kern_return.h>
 #include <mach/mach_init.h>
@@ -80,6 +84,11 @@ constexpr int kConnectTimeoutMilliseconds = 250;
 constexpr std::string_view kRwxRegionsSignal = "hook.rwx_regions";
 /// The source of the probe.
 constexpr std::string_view kVmRegionSource = "vm_region";
+
+/// The signal of the probe that reports which of the runtime's own functions are inline-hooked.
+constexpr std::string_view kInlineSignal = "hook.inline";
+/// The source of the probe: it reads the first instruction of each function in the process's own memory.
+constexpr std::string_view kSelfCheckSource = "self_check";
 
 #ifdef __APPLE__
 /// The most images the probe reads from dyld's list. A real app loads far fewer.
@@ -475,6 +484,124 @@ Observation observe_inserted_libraries(std::string_view inserted_libraries) {
   return observed(kDyldEnvSignal, kGetenvSource, std::string(inserted_libraries.substr(0, kMaxInsertedLibrariesSize)));
 }
 
+std::optional<std::uintptr_t> decode_branch_target(std::span<const std::uint8_t, kPrologueBytes> code,
+                                                   std::uintptr_t origin) {
+  std::uint32_t word = 0;
+  std::memcpy(&word, code.data(), sizeof(word));
+  if ((word & 0xFC000000U) == 0x14000000U) {
+    // B imm26: the 26-bit immediate, sign-extended, times four, is the byte offset from this instruction.
+    std::uint32_t immediate = word & 0x03FFFFFFU;
+    if ((immediate & 0x02000000U) != 0) {
+      immediate |= 0xFC000000U;  // sign-extend the 26-bit value into the full 32-bit word
+    }
+    const std::int64_t offset = static_cast<std::int64_t>(static_cast<std::int32_t>(immediate)) * 4;
+    return origin + static_cast<std::uintptr_t>(offset);
+  }
+  if ((word & 0xFF00001FU) == (0x58000000U | 16U)) {
+    // LDR x16, #imm19 followed by BR x16: only the pair is a trampoline, so the second instruction must be BR x16
+    // (0xD61F0200); a lone LDR x16 at a function entry is not this hook form.
+    std::uint32_t second = 0;
+    std::memcpy(&second, code.subspan(4).data(), sizeof(second));
+    if (second != 0xD61F0200U) {
+      return std::nullopt;
+    }
+    // The literal at the signed imm19*4 byte offset holds the branch target. imm19 is a signed 19-bit field (bit 23 of
+    // the word is its sign), so a negative value points before the instruction.
+    std::uint32_t imm19 = (word >> 5U) & 0x7FFFFU;
+    if ((imm19 & 0x40000U) != 0) {
+      imm19 |= 0xFFF80000U;  // sign-extend the 19-bit value into the full 32-bit word
+    }
+    const std::int64_t literal_offset = static_cast<std::int64_t>(static_cast<std::int32_t>(imm19)) * 4;
+    // The literal must sit fully inside the bytes we read; otherwise this is not the trampoline the check matches. A
+    // negative offset points before the instruction, so it is rejected before the bounds are compared as sizes.
+    if (literal_offset < 0) {
+      return std::nullopt;
+    }
+    const auto offset = static_cast<std::size_t>(literal_offset);
+    if (offset + sizeof(std::uintptr_t) > code.size()) {
+      return std::nullopt;
+    }
+    std::uintptr_t target = 0;
+    std::memcpy(&target, code.subspan(offset).data(), sizeof(target));
+    return target;
+  }
+  return std::nullopt;
+}
+
+#ifdef __APPLE__
+namespace {
+
+/// One of the runtime's own functions to check for an inline hook, by a stable name and its address.
+struct SelfFunction {
+  /// A short, stable name reported when the function is found hooked, not a symbol the binary exports.
+  std::string_view name;
+  /// The function's address in the process, taken at compile time so no symbol lookup is needed.
+  const void* address;
+};
+
+/// Whether the function at `code` is inline-hooked: its first instruction is a branch outside every loaded image.
+///
+/// An inline hook, such as the ones Frida's gum engine writes, overwrites a function's first instruction with a branch
+/// into its own trampoline, which lives in anonymous memory that belongs to no image. A pristine function starts with a
+/// real prologue, not a branch; a legitimate thunk branches within a mapped image. Only an injected hook branches to
+/// memory that `dladdr` cannot attribute to any image, so that is the test.
+///
+/// @param code The function's first bytes, in the process's own memory.
+/// @return Whether the first instruction branches to memory outside every loaded image.
+[[nodiscard]] bool branches_outside_images(std::span<const std::uint8_t, kPrologueBytes> code) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the function's own code address, read as an integer.
+  const auto origin = reinterpret_cast<std::uintptr_t>(code.data());
+  const std::optional<std::uintptr_t> target = decode_branch_target(code, origin);
+  if (!target.has_value() || *target == 0) {
+    return false;
+  }
+  Dl_info info{};
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast,performance-no-int-to-ptr): a decoded branch target.
+  return dladdr(reinterpret_cast<const void*>(*target), &info) == 0;
+}
+
+/// The runtime's own functions the self-check reads, with the addresses taken here so no symbol lookup is needed.
+///
+/// They are functions compiled into this framework that an attacker would hook to blind the checks. The jailbreak hooks
+/// shared system functions, not these private ones, so a hook here is a targeted attack on the runtime rather than the
+/// device's own tweaks, which keeps the check from firing on an ordinary jailbroken device.
+///
+/// @return The functions to check and the names to report them under.
+[[nodiscard]] std::vector<SelfFunction> self_functions() {
+  // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast): a function pointer is read as a code address.
+  return {
+      {.name = "observe_loaded_images", .address = reinterpret_cast<const void*>(&observe_loaded_images)},
+      {.name = "observe_inserted_libraries", .address = reinterpret_cast<const void*>(&observe_inserted_libraries)},
+      {.name = "observe_loopback_port", .address = reinterpret_cast<const void*>(&observe_loopback_port)},
+      {.name = "observe_memory_regions", .address = reinterpret_cast<const void*>(&observe_memory_regions)},
+      {.name = "read_inserted_libraries", .address = reinterpret_cast<const void*>(&read_inserted_libraries)},
+  };
+  // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
+}
+
+}  // namespace
+#endif
+
+Observation observe_inline_hooks() {
+#ifdef __APPLE__
+  std::vector<std::string> hooked;
+  for (const SelfFunction& function : self_functions()) {
+    if (function.address == nullptr) {
+      continue;
+    }
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): a function's code is read as bytes.
+    const std::span<const std::uint8_t, kPrologueBytes> code{static_cast<const std::uint8_t*>(function.address),
+                                                             kPrologueBytes};
+    if (branches_outside_images(code)) {
+      hooked.emplace_back(function.name);
+    }
+  }
+  return observed(kInlineSignal, kSelfCheckSource, std::move(hooked));
+#else
+  return unsupported(kInlineSignal, kSelfCheckSource);
+#endif
+}
+
 Observation observe_loopback_port(std::uint16_t port) {
   const int descriptor = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (descriptor < 0) {
@@ -514,27 +641,32 @@ Observation observe_memory_regions() {
 }
 
 std::vector<Observation> hooks(std::string_view inserted_libraries) {
-  if (!kPhysicalDevice) {
-    return {
-        unsupported(kMapsHitsSignal, kDyldSource),
-        unsupported(kDyldEnvSignal, kGetenvSource),
-        unsupported(kFridaPortSignal, kConnectSource),
-        unsupported(kRwxRegionsSignal, kVmRegionSource),
-    };
+  std::vector<Observation> observations;
+  observations.reserve(5);
+  std::ranges::move(fast_hooks(inserted_libraries), std::back_inserter(observations));
+  if (kPhysicalDevice) {
+    observations.push_back(observe_loopback_port(kFridaPort));
+    observations.push_back(observe_memory_regions());
+  } else {
+    observations.push_back(unsupported(kFridaPortSignal, kConnectSource));
+    observations.push_back(unsupported(kRwxRegionsSignal, kVmRegionSource));
   }
-  return {
-      observe_loaded_images(),
-      observe_inserted_libraries(inserted_libraries),
-      observe_loopback_port(kFridaPort),
-      observe_memory_regions(),
-  };
+  return observations;
 }
 
 std::vector<Observation> fast_hooks(std::string_view inserted_libraries) {
-  if (!kPhysicalDevice) {
-    return {unsupported(kMapsHitsSignal, kDyldSource), unsupported(kDyldEnvSignal, kGetenvSource)};
+  std::vector<Observation> observations;
+  observations.reserve(3);
+  if (kPhysicalDevice) {
+    observations.push_back(observe_loaded_images());
+    observations.push_back(observe_inserted_libraries(inserted_libraries));
+    observations.push_back(observe_inline_hooks());
+  } else {
+    observations.push_back(unsupported(kMapsHitsSignal, kDyldSource));
+    observations.push_back(unsupported(kDyldEnvSignal, kGetenvSource));
+    observations.push_back(unsupported(kInlineSignal, kSelfCheckSource));
   }
-  return {observe_loaded_images(), observe_inserted_libraries(inserted_libraries)};
+  return observations;
 }
 
 }  // namespace rasp::ios::checks

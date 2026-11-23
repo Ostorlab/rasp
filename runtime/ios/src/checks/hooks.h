@@ -4,7 +4,9 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -20,6 +22,25 @@ constexpr std::uint32_t kProtectionRead = 1;
 constexpr std::uint32_t kProtectionWrite = 2;
 /// The bit of a Mach protection that allows running the memory as code, `VM_PROT_EXECUTE`.
 constexpr std::uint32_t kProtectionExecute = 4;
+
+/// The number of bytes of a function's prologue the inline-hook self-check reads: one arm64 instruction plus the
+/// literal a far branch loads its target from.
+constexpr std::size_t kPrologueBytes = 16;
+
+/// Decodes the branch target of the first arm64 instruction in `code`, when it is one of the two branch forms an
+/// inline hook writes.
+///
+/// It reads the first instruction and, when it is a direct `B imm26` or the `LDR x16, #imm19; BR x16` pair, returns
+/// where it branches to: the sign-extended immediate times four added to `origin` for a `B`, or the pointer held in
+/// the literal the `LDR` loads for the pair. The literal must sit fully inside `code`, so a far or negative `imm19`
+/// returns nothing. Any other first instruction, such as a normal prologue, is not a branch and returns nothing. It
+/// does no attribution of the target, so it is pure and runs on any host.
+///
+/// @param code The function's first bytes.
+/// @param origin The address `code` was read from, which a `B` offset is relative to.
+/// @return The branch target, or nothing when the first instruction is not a decodable branch.
+[[nodiscard]] std::optional<std::uintptr_t> decode_branch_target(std::span<const std::uint8_t, kPrologueBytes> code,
+                                                                 std::uintptr_t origin);
 
 /// One region of a task's address space, as the Mach region API describes it.
 struct MemoryRegion {
@@ -48,21 +69,26 @@ struct MemoryRegion {
 /// @param inserted_libraries The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, as read_inserted_libraries
 /// returns it.
 /// @return One observation per signal and source, in this order: hook.maps_hits read through dyld, hook.dyld_env read
-/// through getenv, hook.frida_port read through connect, then hook.rwx_regions read through vm_region.
+/// through getenv, hook.inline read through self_check, hook.frida_port read through connect, then hook.rwx_regions
+/// read through vm_region.
 [[nodiscard]] std::vector<Observation> hooks(std::string_view inserted_libraries);
 
-/// Runs the hooking checks that read only the process's own state, and returns what they observed.
+/// Runs the fast hooking checks used at start-up, and returns what they observed.
 ///
-/// They are the first two checks of hooks: the loaded images and `inserted_libraries`. They neither connect to a port
-/// nor walk the app's memory.
+/// They are the loaded images, `inserted_libraries`, and the self-check for inline hooks of the runtime's own
+/// functions. All three read only the process's own state and never walk the app's memory or connect to a port. The
+/// inline self-check is included here because an instrumentation framework injected by a jailbreak leaves no known
+/// image name, sets no `DYLD_INSERT_LIBRARIES`, and need not listen on a known port, but to instrument the runtime must
+/// overwrite a function's first instruction, which the self-check sees regardless of the port or name it uses. The
+/// slower memory-region walk and the port probe stay out of the start-up path and run in the full hooks() instead.
 ///
 /// On a physical iOS device it runs the probes. Anywhere else, on a simulator, a Mac or a Linux host, every observation
 /// is unsupported instead, so the result still shows that the check ran.
 ///
 /// @param inserted_libraries The value of `DYLD_INSERT_LIBRARIES` when the runtime loaded, as read_inserted_libraries
 /// returns it.
-/// @return One observation per signal and source, in this order: hook.maps_hits read through dyld, then hook.dyld_env
-/// read through getenv.
+/// @return One observation per signal and source, in this order: hook.maps_hits read through dyld, hook.dyld_env read
+/// through getenv, then hook.inline read through self_check.
 [[nodiscard]] std::vector<Observation> fast_hooks(std::string_view inserted_libraries);
 
 /// Reports the paths of `image_paths` that name a known instrumentation or hooking framework.
@@ -137,6 +163,22 @@ struct MemoryRegion {
 /// is refused. It has an error status when a system call fails, or when the connection is neither accepted nor refused
 /// within 250 milliseconds.
 [[nodiscard]] Observation observe_loopback_port(std::uint16_t port);
+
+/// Reports which of the runtime's own functions are inline-hooked, from a self-check of their first instruction.
+///
+/// An instrumentation framework such as Frida hooks a function by overwriting its first instruction with a branch into
+/// a trampoline it places in anonymous memory, which belongs to no loaded image. The probe takes the addresses of
+/// several of the runtime's own functions at compile time, so there is no symbol to look up, and checks whether the
+/// first instruction of each is a branch whose target `dladdr` cannot attribute to any image. A pristine function
+/// starts with a real prologue, not such a branch, so an intact runtime reports an empty list. It names the runtime's
+/// own private functions, which a jailbreak's tweaks do not hook, rather than shared system functions that a device's
+/// own hooks would flag; this catches an attacker instrumenting the runtime regardless of the port or name the
+/// framework uses, and does not fire on an ordinary jailbroken device. The self-check runs on an Apple build, iOS or a
+/// Mac; off an Apple build, such as a Linux host, it reports the unsupported status instead.
+///
+/// @return One hook.inline observation read through self_check, with the names of the runtime's functions found hooked,
+/// empty when none are. It has the unsupported status off an Apple build.
+[[nodiscard]] Observation observe_inline_hooks();
 
 /// Reports the regions of `regions` whose current protection is both writable and executable.
 ///

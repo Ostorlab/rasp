@@ -4,10 +4,14 @@
 
 #include "checks/hooks.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <gtest/gtest.h>
 #include <netinet/in.h>
+#include <optional>
+#include <span>
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -295,6 +299,99 @@ TEST(Hooks, observeLoopbackPort_whenNothingListensOnThePort_reportsFalse) {
             (Observation{.signal = "hook.frida_port", .source = "connect", .status = Status::kOk, .value = false}));
 }
 
+#ifndef __APPLE__
+TEST(Hooks, observeInlineHooks_whenTheSystemHasNoProcessImages_reportsUnsupported) {
+  EXPECT_EQ(
+      observe_inline_hooks(),
+      (Observation{.signal = "hook.inline", .source = "self_check", .status = Status::kUnsupported, .value = {}}));
+}
+#endif
+
+namespace {
+
+/// One arm64 instruction word placed at a byte offset in a prologue, so the prologue builder's arguments cannot be
+/// swapped by mistake.
+struct Instruction {
+  /// The byte offset of the word in the prologue.
+  std::size_t offset = 0;
+  /// The instruction word, little-endian.
+  std::uint32_t word = 0;
+};
+
+/// A 16-byte prologue built from the given instruction words, with `literal` written into the literal pool eight bytes
+/// in (where a `ldr x16, #8` trampoline reads its target).
+[[nodiscard]] std::array<std::uint8_t, kPrologueBytes> prologue(std::span<const Instruction> instructions,
+                                                                std::uintptr_t literal = 0) {
+  std::array<std::uint8_t, kPrologueBytes> bytes{};
+  const std::span<std::uint8_t, kPrologueBytes> view{bytes};
+  for (const Instruction& instruction : instructions) {
+    std::memcpy(view.subspan(instruction.offset).data(), &instruction.word, sizeof(instruction.word));
+  }
+  std::memcpy(view.subspan(8).data(), &literal, sizeof(literal));
+  return bytes;
+}
+
+/// A trampoline prologue: `ldr x16, #8` as `first`, `br x16` right after it, and `literal` in the pool.
+[[nodiscard]] std::array<std::uint8_t, kPrologueBytes> trampoline(std::uint32_t first, std::uintptr_t literal) {
+  const std::array<Instruction, 2> instructions = {
+      Instruction{.offset = 0, .word = first},
+      Instruction{.offset = 4, .word = 0xD61F0200U},
+  };
+  return prologue(instructions, literal);
+}
+
+/// A single-instruction prologue with `word` as the first instruction and no `br x16` after it.
+[[nodiscard]] std::array<std::uint8_t, kPrologueBytes> single(std::uint32_t word) {
+  const std::array<Instruction, 1> instructions = {
+      Instruction{.offset = 0, .word = word},
+  };
+  return prologue(instructions, 0);
+}
+
+}  // namespace
+
+TEST(Hooks, decodeBranchTarget_whenTheFirstInstructionIsANormalPrologue_reportsNoBranch) {
+  // `sub sp, sp, #0x20` (0xd10083ff) is a normal prologue, not a branch.
+  const auto bytes = single(0xD10083FFU);
+  EXPECT_EQ(decode_branch_target(bytes, 0x1000), std::nullopt);
+}
+
+TEST(Hooks, decodeBranchTarget_whenTheFirstInstructionIsADirectBranch_reportsTheTarget) {
+  // `b #0x20` (imm26 = 8 words): target is origin + 0x20.
+  const auto bytes = single(0x14000008U);
+  EXPECT_EQ(decode_branch_target(bytes, 0x1000), std::optional<std::uintptr_t>(0x1020));
+}
+
+TEST(Hooks, decodeBranchTarget_whenTheDirectBranchIsNegative_reportsATargetBeforeTheOrigin) {
+  // `b #-4` (imm26 = -1): target is origin - 4.
+  const auto bytes = single(0x17FFFFFFU);
+  EXPECT_EQ(decode_branch_target(bytes, 0x1000), std::optional<std::uintptr_t>(0x0FFC));
+}
+
+TEST(Hooks, decodeBranchTarget_whenTheTrampolineLiteralIsInRange_reportsTheStoredPointer) {
+  // `ldr x16, #8` (0x58000050) then `br x16` loads the pointer eight bytes ahead, the trampoline Frida writes.
+  const auto bytes = trampoline(0x58000050U, 0xDEADBEEF);
+  EXPECT_EQ(decode_branch_target(bytes, 0x1000), std::optional<std::uintptr_t>(0xDEADBEEF));
+}
+
+TEST(Hooks, decodeBranchTarget_whenAnLdrX16HasNoBrX16AfterIt_reportsNoBranch) {
+  // `ldr x16, #8` not followed by `br x16` is not the trampoline form, so nothing is decoded.
+  const auto bytes = single(0x58000050U);
+  EXPECT_EQ(decode_branch_target(bytes, 0x1000), std::nullopt);
+}
+
+TEST(Hooks, decodeBranchTarget_whenTheTrampolineLiteralIsOutOfRange_reportsNoBranch) {
+  // `ldr x16, #0x1000` (imm19 = 1024): the literal is far past the 16 bytes read, so nothing is decoded.
+  const auto bytes = trampoline(0x58008010U, 0xDEADBEEF);
+  EXPECT_EQ(decode_branch_target(bytes, 0x1000), std::nullopt);
+}
+
+TEST(Hooks, decodeBranchTarget_whenTheTrampolineLiteralIsBeforeTheInstruction_reportsNoBranch) {
+  // `ldr x16, #-4` (negative imm19): the literal sits before the bytes read, so nothing is decoded.
+  const auto bytes = trampoline(0x58FFFFF0U, 0xDEADBEEF);
+  EXPECT_EQ(decode_branch_target(bytes, 0x1000), std::nullopt);
+}
+
 TEST(Hooks, observeRegions_whenNoRegionIsWritableAndExecutable_reportsAnEmptyList) {
   EXPECT_EQ(observe_regions(clean_regions()), rwx_regions({}));
 }
@@ -402,16 +499,18 @@ TEST(Hooks, hooks_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
             (std::vector<Observation>{
                 {.signal = "hook.maps_hits", .source = "dyld", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.dyld_env", .source = "getenv", .status = Status::kUnsupported, .value = {}},
+                {.signal = "hook.inline", .source = "self_check", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.frida_port", .source = "connect", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.rwx_regions", .source = "vm_region", .status = Status::kUnsupported, .value = {}},
             }));
 }
 
-TEST(Hooks, fastHooks_whenOffAPhysicalDevice_reportsBothChecksAsUnsupported) {
+TEST(Hooks, fastHooks_whenOffAPhysicalDevice_reportsEveryCheckAsUnsupported) {
   EXPECT_EQ(fast_hooks("/usr/lib/systemhook.dylib"),
             (std::vector<Observation>{
                 {.signal = "hook.maps_hits", .source = "dyld", .status = Status::kUnsupported, .value = {}},
                 {.signal = "hook.dyld_env", .source = "getenv", .status = Status::kUnsupported, .value = {}},
+                {.signal = "hook.inline", .source = "self_check", .status = Status::kUnsupported, .value = {}},
             }));
 }
 
