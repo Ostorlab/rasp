@@ -1,5 +1,6 @@
 """Tests of the `rasp` command line."""
 
+import collections.abc
 import io
 import json
 import pathlib
@@ -22,24 +23,48 @@ _BUILD_ID = "a" * 64
 _USAGE_ERROR = 2
 
 
+_APPS = {"android": "app.apk", "ios": "app.ipa"}
+
+
 def _pack_arguments(
     tmp_path: pathlib.Path,
     *,
-    platform: str | None = "ios",
+    platform: str = "ios",
     build_id: str = _BUILD_ID,
-    app: str = "app.ipa",
+    app: str | None = None,
 ) -> list[str]:
-    """Returns the `rasp pack` arguments for an app and output in `tmp_path`."""
-    platform_arguments = [] if platform is None else ["--platform", platform]
+    """Returns the `rasp pack <platform>` arguments for an app and output in `tmp_path`, the app named after the platform by default."""
+    if app is None:
+        app = _APPS[platform]
     return [
         "pack",
+        platform,
         str(tmp_path / app),
-        *platform_arguments,
         "--build-id",
         build_id,
         "--output",
-        str(tmp_path / "out.ipa"),
+        str(tmp_path / f"out{pathlib.Path(app).suffix}"),
     ]
+
+
+def _fake_pack(
+    calls: list[dict[str, object]], output: pathlib.Path
+) -> collections.abc.Callable[..., packer.PackResult]:
+    """Returns a stand-in for `packer.pack` that records its arguments in `calls` and returns a fixed result."""
+
+    def fake_pack(**arguments: object) -> packer.PackResult:
+        """Records the arguments of the pack and returns a fixed result."""
+        calls.append(arguments)
+        return packer.PackResult(
+            output=output,
+            package_name="dev.ostorlab.demo",
+            version="1.2.3",
+            build_id=_BUILD_ID,
+            checks=("identity",),
+            skipped_checks=(),
+        )
+
+    return fake_pack
 
 
 def testMain_whenVersionRequested_printsTheInstalledVersion(
@@ -68,7 +93,7 @@ def testMain_whenNoCommand_printsTheHelpAndReturnsOk(
 
 def testMain_whenPlatformUnknown_exitsWithUsageError(tmp_path: pathlib.Path) -> None:
     with pytest.raises(SystemExit) as exit_info:
-        cli.main(_pack_arguments(tmp_path, platform="windows"))
+        cli.main(_pack_arguments(tmp_path, platform="windows", app="app.ipa"))
 
     assert exit_info.value.code == _USAGE_ERROR
 
@@ -459,14 +484,7 @@ def testMain_whenNoOutput_packsToTheProtectedNameNextToTheApp(
     monkeypatch.setattr(packer, "pack", fake_pack)
 
     exit_code = cli.main(
-        [
-            "pack",
-            str(tmp_path / "app.ipa"),
-            "--platform",
-            "ios",
-            "--build-id",
-            _BUILD_ID,
-        ]
+        ["pack", "ios", str(tmp_path / "app.ipa"), "--build-id", _BUILD_ID]
     )
 
     assert exit_code == cli.EXIT_OK
@@ -494,15 +512,17 @@ def testMain_whenMappingGiven_passesTheMappingPathToPack(
     monkeypatch.setattr(packer, "pack", fake_pack)
     mapping_file = tmp_path / "mapping.txt"
 
-    cli.main([*_pack_arguments(tmp_path), "--mapping", str(mapping_file)])
+    cli.main(
+        [*_pack_arguments(tmp_path, platform="android"), "--mapping", str(mapping_file)]
+    )
 
     assert captured["mapping"] == mapping_file
 
 
-def testMain_whenNoMapping_passesNoneAsTheMapping(
+def testMain_whenIosAppIsPacked_passesNoMappingAndNoPinCertificate(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without `--mapping`, the packer gets no mapping."""
+    """`rasp pack ios` has no Android options, so the packer gets neither."""
     captured: dict[str, object] = {}
 
     def fake_pack(**kwargs: object) -> packer.PackResult:
@@ -522,16 +542,17 @@ def testMain_whenNoMapping_passesNoneAsTheMapping(
     cli.main(_pack_arguments(tmp_path))
 
     assert captured["mapping"] is None
+    assert captured["pin_certificate"] is None
 
 
-def testMain_whenPlatformIsNotGiven_infersItFromTheAppExtension(
+def testMain_whenPinCertificateGiven_passesTheCertificatePathToPack(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Packs for the platform of the extension."""
+    """The `--pin-certificate` path reaches the packer."""
     captured: dict[str, object] = {}
 
     def fake_pack(**kwargs: object) -> packer.PackResult:
-        """Records the arguments and returns a result."""
+        """Records the arguments of the pack and returns a fixed result."""
         captured.update(kwargs)
         return packer.PackResult(
             output=tmp_path / "out.apk",
@@ -543,47 +564,126 @@ def testMain_whenPlatformIsNotGiven_infersItFromTheAppExtension(
         )
 
     monkeypatch.setattr(packer, "pack", fake_pack)
+    certificate = tmp_path / "signer.pem"
 
-    exit_code = cli.main(_pack_arguments(tmp_path, platform=None, app="app.APK"))
+    cli.main(
+        [
+            *_pack_arguments(tmp_path, platform="android"),
+            "--pin-certificate",
+            str(certificate),
+        ]
+    )
 
-    assert exit_code == cli.EXIT_OK
-    assert captured["platform"] == platforms.Platform.ANDROID
+    assert captured["pin_certificate"] == certificate
 
 
-def testMain_whenPlatformIsGiven_itWinsOverTheExtension(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("option", ["--mapping", "--pin-certificate"])
+def testMain_whenAndroidOptionGivenToPackIos_exitsWithUsageError(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, option: str
 ) -> None:
-    """Packs for the given platform, not the extension's."""
-    captured: dict[str, object] = {}
+    """`rasp pack ios` does not know the Android options, so argparse refuses them before any pack."""
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out.ipa"))
 
-    def fake_pack(**kwargs: object) -> packer.PackResult:
-        """Records the arguments and returns a result."""
-        captured.update(kwargs)
-        return packer.PackResult(
-            output=tmp_path / "out.ipa",
-            package_name="dev.ostorlab.demo",
-            version="1.2.3",
-            build_id=_BUILD_ID,
-            checks=("identity",),
-            skipped_checks=(),
-        )
-
-    monkeypatch.setattr(packer, "pack", fake_pack)
-
-    cli.main(_pack_arguments(tmp_path, platform="ios", app="app.apk"))
-
-    assert captured["platform"] == platforms.Platform.IOS
-
-
-def testMain_whenPlatformIsNotGivenAndExtensionIsUnknown_exitsWithUsageError(
-    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The usage error names the accepted extensions."""
     with pytest.raises(SystemExit) as exit_info:
-        cli.main(_pack_arguments(tmp_path, platform=None, app="app.zip"))
+        cli.main([*_pack_arguments(tmp_path), option, str(tmp_path / "x")])
 
     assert exit_info.value.code == _USAGE_ERROR
-    assert ".apk, .aab, .ipa" in capsys.readouterr().err
+    assert calls == []
+
+
+def testMain_whenAndroidAppIsPacked_packsItForAndroid(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`rasp pack android app.apk` packs the app for Android and prints the result."""
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out.apk"))
+
+    exit_code = cli.main(_pack_arguments(tmp_path, platform="android"))
+
+    assert exit_code == cli.EXIT_OK
+    assert [call["platform"] for call in calls] == [platforms.Platform.ANDROID]
+    assert [call["app"] for call in calls] == [tmp_path / "app.apk"]
+    assert capsys.readouterr().out.startswith(
+        f"packed android app: {tmp_path / 'out.apk'} "
+    )
+
+
+@pytest.mark.parametrize(
+    ("platform", "app"),
+    [("android", "app.aab"), ("android", "app.APK"), ("ios", "app.Ipa")],
+)
+def testMain_whenTheAppExtensionIsThePlatformsInAnyCase_packsTheApp(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, platform: str, app: str
+) -> None:
+    """Every extension of the platform is accepted, whatever its case."""
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out"))
+
+    exit_code = cli.main(_pack_arguments(tmp_path, platform=platform, app=app))
+
+    assert exit_code == cli.EXIT_OK
+    assert [call["platform"] for call in calls] == [platforms.Platform(platform)]
+
+
+@pytest.mark.parametrize(
+    ("platform", "app", "error"),
+    [
+        ("ios", "app.apk", "rasp pack ios: the app must be an .ipa, not 'app.apk'\n"),
+        (
+            "android",
+            "app.ipa",
+            "rasp pack android: the app must be an .apk or .aab, not 'app.ipa'\n",
+        ),
+        (
+            "android",
+            "app.zip",
+            "rasp pack android: the app must be an .apk or .aab, not 'app.zip'\n",
+        ),
+    ],
+)
+def testMain_whenTheAppExtensionIsNotThePlatforms_printsOneErrorLineAndReturnsFailed(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    app: str,
+    error: str,
+) -> None:
+    """An app of another platform fails with one line naming the subcommand, before any pack."""
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(packer, "pack", _fake_pack(calls, tmp_path / "out"))
+    (tmp_path / app).write_bytes(b"app bytes")
+
+    exit_code = cli.main(_pack_arguments(tmp_path, platform=platform, app=app))
+
+    captured = capsys.readouterr()
+    assert exit_code == cli.EXIT_FAILED
+    assert captured.err == error
+    assert captured.out == ""
+    assert calls == []
+    assert (tmp_path / f"out{pathlib.Path(app).suffix}").exists() is False
+
+
+def testMain_whenPackIsGivenThePlatformOption_exitsWithUsageError(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The subcommand is the platform, so `--platform` is not an option of `rasp pack ios`."""
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main([*_pack_arguments(tmp_path), "--platform", "ios"])
+
+    assert exit_info.value.code == _USAGE_ERROR
+
+
+def testMain_whenPackIsGivenNoPlatform_exitsWithUsageError(
+    tmp_path: pathlib.Path,
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["pack", str(tmp_path / "app.apk")])
+
+    assert exit_info.value.code == _USAGE_ERROR
 
 
 def testMain_whenInspectedAppIsProtected_printsAlignedLabelsAndValues(
@@ -845,3 +945,44 @@ def testMain_whenSubcommandHelpRequestedOnATerminal_printsNoBanner(
         cli.main(["pack", "--help"])
 
     assert "█" not in terminal.getvalue()
+
+
+_SHARED_PACK_OPTIONS = ["--build-id", "--output", "--checks", "--strict", "--json"]
+
+
+def testMain_whenPackHelpRequested_listsTheTwoPlatforms(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["pack", "--help"])
+
+    out = capsys.readouterr().out
+    assert exit_info.value.code == cli.EXIT_OK
+    assert "{android,ios}" in out
+    assert "--platform" not in out
+
+
+def testMain_whenPackAndroidHelpRequested_listsTheSharedAndTheAndroidOptions(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["pack", "android", "--help"])
+
+    out = capsys.readouterr().out
+    assert exit_info.value.code == cli.EXIT_OK
+    for option in [*_SHARED_PACK_OPTIONS, "--mapping", "--pin-certificate"]:
+        assert option in out
+
+
+def testMain_whenPackIosHelpRequested_listsTheSharedOptionsOnly(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["pack", "ios", "--help"])
+
+    out = capsys.readouterr().out
+    assert exit_info.value.code == cli.EXIT_OK
+    for option in _SHARED_PACK_OPTIONS:
+        assert option in out
+    assert "--mapping" not in out
+    assert "--pin-certificate" not in out

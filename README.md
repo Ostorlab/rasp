@@ -31,14 +31,14 @@ https://github.com/user-attachments/assets/9b5e266e-1334-4427-b5ec-0095379fac16
 your app (APK / AAB / IPA)
         │
         ▼
-  rasp pack --checks …        adds the runtime and writes the chosen checks into its config
+  rasp pack android|ios --checks …   adds the runtime and writes the chosen checks into its config
         │
         ▼
-protected app (unsigned)  ──▶  you sign it and ship it
+protected app (unsigned)  ────────▶  you sign it and ship it
         │
         ▼
-on the device                  the runtime runs the chosen checks and hands the observations
-                               to its plugins; a development build also logs them
+on the device                        the runtime runs the chosen checks and hands the observations
+                                     to its plugins; a development build also logs them
 ```
 
 A plugin is code compiled into the runtime ([API](runtime/core/include/rasp/plugin.h), [example](runtime/plugins/example/)). It can add its own checks, and it receives the observations of each run, for example to send them somewhere. A runtime built without plugins keeps the observations to itself, and a release build doesn't log them.
@@ -60,7 +60,7 @@ A plugin is code compiled into the runtime ([API](runtime/core/include/rasp/plug
 2. **Protect an app:**
 
    ```
-   uv run rasp pack app.apk --platform android --build-id my-build-1 --checks root,debugger,hooks --output app-protected.apk
+   uv run rasp pack android app.apk --build-id my-build-1 --checks root,debugger,hooks --output app-protected.apk
    ```
 
 3. **Sign** `app-protected.apk` with your release key, then ship it.

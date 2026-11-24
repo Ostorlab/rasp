@@ -40,7 +40,7 @@ _REMOVED = re.compile(r"^R8\$\$REMOVED\$\$CLASS\$\$[0-9]+$")
 
 
 class MappingError(errors.Error):
-    """The R8/ProGuard mapping file cannot be read."""
+    """The R8/ProGuard mapping file cannot be read, or is given for an iOS app."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
