@@ -52,7 +52,7 @@ def _artifacts() -> resources.Artifacts:
     )
 
 
-def _split(*_: object) -> split.Split:
+def _split(**_: object) -> split.Split:
     """Splits any app into one framework dex and one business dex."""
     return split.Split(
         framework=(b"framework dex",),

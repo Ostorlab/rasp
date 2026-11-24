@@ -85,13 +85,22 @@ def _parser() -> argparse.ArgumentParser:
         help="the certificate the app will be signed with, PEM or DER; the pack refuses to decrypt "
         "under any other signer",
     )
+    android.add_argument(
+        "--encrypt-package",
+        action="append",
+        type=_split_packages,
+        default=None,
+        metavar="PACKAGES",
+        help="extra Java packages to encrypt, comma-separated and repeatable, such as "
+        "com.vendor.sdk; the manifest package is always encrypted",
+    )
     ios = pack_platforms.add_parser(
         "ios",
         help="protect an iOS app, an IPA",
         description="Adds the runtime to a built iOS app, an IPA. The result is unsigned.",
     )
     _add_pack_arguments(ios, platforms.Platform.IOS)
-    ios.set_defaults(mapping=None, pin_certificate=None)
+    ios.set_defaults(mapping=None, pin_certificate=None, encrypt_package=None)
 
     listing = commands.add_parser(
         "checks", help="list the check groups of a platform, or of both"
@@ -191,6 +200,23 @@ def _split_checks(value: str) -> list[str]:
     return checks
 
 
+def _split_packages(value: str) -> list[str]:
+    """Splits the comma-separated packages given in one `--encrypt-package` occurrence.
+
+    Each name is stripped of the spaces around it, and the empty ones, such as the one after a
+    trailing comma, are dropped.
+
+    Raises:
+        argparse.ArgumentTypeError: No name is left, as with an empty value, so argparse exits with a
+            usage error rather than packing with an empty `--encrypt-package`.
+    """
+    packages = [package.strip() for package in value.split(",")]
+    packages = [package for package in packages if package != ""]
+    if len(packages) == 0:
+        raise argparse.ArgumentTypeError("give at least one package name")
+    return packages
+
+
 def _required_checks() -> str:
     """Returns the ids of the check groups every protected app runs, sorted and comma-separated."""
     return ",".join(sorted(check_groups.REQUIRED_CHECKS))
@@ -242,6 +268,10 @@ def _pack(arguments: argparse.Namespace) -> int:
     checks: list[str] | None = arguments.checks
     if checks is None:
         checks = list(check_groups.CHECKS[platform])
+    package_groups: list[list[str]] | None = arguments.encrypt_package
+    encrypt_packages = [
+        package for group in (package_groups or []) for package in group
+    ]
     if arguments.strict is True:
         unknown = check_groups.resolve_checks(platform, checks).skipped
         for check in unknown:
@@ -266,6 +296,7 @@ def _pack(arguments: argparse.Namespace) -> int:
             output=output,
             build_id=build_id,
             checks=checks,
+            encrypt_packages=encrypt_packages,
             mapping=arguments.mapping,
             pin_certificate=arguments.pin_certificate,
         )

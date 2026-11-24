@@ -1,5 +1,6 @@
 """End-to-end tests of the AAB packer, with a recorded split."""
 
+import collections.abc
 import dataclasses
 import hashlib
 import pathlib
@@ -95,16 +96,18 @@ def _make_aab(
 
 
 def _recorded_aab_split(
-    captured: list[tuple[dict[str, bytes], str, mapping.ClassMapping | None]]
+    captured: list[
+        tuple[dict[str, bytes], mapping.ClassMapping | None, tuple[str, ...]]
+    ]
     | None = None,
 ) -> packer.AabSplitter:
     def splitter(
         dex_entries: dict[str, bytes],
-        package: str,
-        class_mapping: mapping.ClassMapping | None = None,
+        mapping: mapping.ClassMapping | None = None,
+        encrypt_packages: collections.abc.Sequence[str] = (),
     ) -> split.Split:
         if captured is not None:
-            captured.append((dex_entries, package, class_mapping))
+            captured.append((dex_entries, mapping, tuple(encrypt_packages)))
         return split.Split(framework=_FRAMEWORK, business=_BUSINESS)
 
     return splitter
@@ -159,7 +162,9 @@ def _recover_root(archive: zipfile.ZipFile) -> bytes | None:
 def testPack_whenAab_detectsFormatAndUsesAabPath(tmp_path: pathlib.Path) -> None:
     app = tmp_path / "app.aab"
     _make_aab(app)
-    captured: list[tuple[dict[str, bytes], str, mapping.ClassMapping | None]] = []
+    captured: list[
+        tuple[dict[str, bytes], mapping.ClassMapping | None, tuple[str, ...]]
+    ] = []
     packer.pack(
         app=app,
         output=tmp_path / "out.aab",
@@ -169,10 +174,37 @@ def testPack_whenAab_detectsFormatAndUsesAabPath(tmp_path: pathlib.Path) -> None
         generator=random.Random(0),
     )
     assert len(captured) == 1
-    dex_entries, package, _ = captured[0]
-    assert package == _PACKAGE
+    dex_entries, _, encrypt_packages = captured[0]
+    assert encrypt_packages == (_PACKAGE,)
     assert "classes.dex" in dex_entries
     assert "classes2.dex" in dex_entries
+
+
+def testPack_whenAabAndExtraPackagesGiven_splitsOnTheManifestPackageThenEachExtraOnce(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "app.aab"
+    _make_aab(app)
+    captured: list[
+        tuple[dict[str, bytes], mapping.ClassMapping | None, tuple[str, ...]]
+    ] = []
+    packer.pack(
+        app=app,
+        output=tmp_path / "out.aab",
+        config=_CONFIG,
+        encrypt_packages=[
+            "com.vendor.sdk",
+            _PACKAGE,
+            "com.vendor.other",
+            "com.vendor.sdk",
+        ],
+        artifacts=_artifacts(),
+        aab_splitter=_recorded_aab_split(captured),
+        generator=random.Random(0),
+    )
+    assert len(captured) == 1
+    _, _, encrypt_packages = captured[0]
+    assert encrypt_packages == (_PACKAGE, "com.vendor.sdk", "com.vendor.other")
 
 
 def testPackAab_writesTheScheduleShareUnderBase(tmp_path: pathlib.Path) -> None:
@@ -451,7 +483,9 @@ def testPack_whenAabAndMappingGiven_parsesItAndPassesItToTheSplitter(
     _make_aab(app)
     mapping_file = tmp_path / "mapping.txt"
     mapping_file.write_text(f"myapp.Entry -> {_PACKAGE}.a:\n", encoding="utf-8")
-    captured: list[tuple[dict[str, bytes], str, mapping.ClassMapping | None]] = []
+    captured: list[
+        tuple[dict[str, bytes], mapping.ClassMapping | None, tuple[str, ...]]
+    ] = []
 
     packer.pack(
         app=app,
@@ -463,7 +497,7 @@ def testPack_whenAabAndMappingGiven_parsesItAndPassesItToTheSplitter(
     )
 
     assert len(captured) == 1
-    _, package, class_mapping = captured[0]
-    assert package == _PACKAGE
+    _, class_mapping, encrypt_packages = captured[0]
+    assert encrypt_packages == (_PACKAGE,)
     assert class_mapping is not None
     assert class_mapping.business_packages("myapp") == frozenset({_PACKAGE})
