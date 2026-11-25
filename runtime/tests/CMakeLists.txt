@@ -55,6 +55,51 @@ foreach(check codesign debugger emulator hooks identity jailbreak mitm virtualiz
   gtest_discover_tests(rasp_ios_${check}_test)
 endforeach()
 
+add_executable(rasp_ios_selfdecrypt_chacha20_test ios/selfdecrypt/chacha20_test.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/selfdecrypt/chacha20.cpp)
+target_include_directories(rasp_ios_selfdecrypt_chacha20_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_selfdecrypt_chacha20_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_ios_selfdecrypt_chacha20_test)
+
+add_executable(rasp_ios_selfdecrypt_atrest_test ios/selfdecrypt/atrest_test.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/selfdecrypt/atrest.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/selfdecrypt/chacha20.cpp)
+target_include_directories(rasp_ios_selfdecrypt_atrest_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_selfdecrypt_atrest_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_ios_selfdecrypt_atrest_test)
+
+add_executable(rasp_ios_selfdecrypt_seed_test ios/selfdecrypt/seed_test.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/selfdecrypt/seed.cpp)
+target_include_directories(rasp_ios_selfdecrypt_seed_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_selfdecrypt_seed_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_ios_selfdecrypt_seed_test)
+
+# guard.cpp and vm.cpp call rasp::ios::end_process on the tamper path; the real one is an arm64 XNU system call that
+# does not compile or run on the x86_64 host, so the test provides its own end_process (ios/selfdecrypt/end_process_stub)
+# that records the call and longjmps out instead of ending the process. The VM's kill path is covered through that stub.
+add_executable(rasp_ios_selfdecrypt_guard_test ios/selfdecrypt/guard_test.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/selfdecrypt/guard.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/selfdecrypt/vm.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/selfdecrypt/atrest.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/selfdecrypt/chacha20.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/selfdecrypt/seed.cpp
+  ios/selfdecrypt/end_process_stub.cpp)
+target_include_directories(rasp_ios_selfdecrypt_guard_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_selfdecrypt_guard_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_ios_selfdecrypt_guard_test)
+
+# The guard VM interpreter, tested directly over hand-written byte-code programs, with the same end_process stub so the
+# kill opcode is observable without ending the test process.
+add_executable(rasp_ios_selfdecrypt_vm_test ios/selfdecrypt/vm_test.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/selfdecrypt/vm.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/selfdecrypt/atrest.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/selfdecrypt/chacha20.cpp
+  ${PROJECT_SOURCE_DIR}/ios/src/selfdecrypt/seed.cpp
+  ios/selfdecrypt/end_process_stub.cpp)
+target_include_directories(rasp_ios_selfdecrypt_vm_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src)
+target_link_libraries(rasp_ios_selfdecrypt_vm_test PRIVATE rasp_warnings rasp_language GTest::gtest_main)
+gtest_discover_tests(rasp_ios_selfdecrypt_vm_test)
+
 foreach(check identity)
   target_sources(rasp_ios_${check}_test PRIVATE ${PROJECT_SOURCE_DIR}/ios/src/util/macho.cpp
     ${PROJECT_SOURCE_DIR}/ios/src/util/sha256.cpp)

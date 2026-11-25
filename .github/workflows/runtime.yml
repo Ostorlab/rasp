@@ -243,6 +243,13 @@ jobs:
           fi
           # Positive control: the un-stripped dev build must still list them, or the check above proves nothing.
           nm "$dev" | grep -q rasp_start
+      - name: Upload the release framework (temporary - for device testing)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RaspRuntime-ios-atrest
+          path: runtime/build/ios/ios/RaspRuntime.framework
+          if-no-files-found: error
       - name: Install clang-tidy
         env:
           LLVM_RELEASE: "23.1.3"
