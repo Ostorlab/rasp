@@ -1,5 +1,12 @@
-/// Tests for the at-rest guard. An unpacked build (the default zero blob) reads as not-intact; a blob the packer would
-/// write (the marker encrypted under the guard key) decrypts to the marker, which is what at_rest_guard_intact checks.
+/// Tests for the at-rest guard. The host tests exercise two parts:
+///
+///  1. `at_rest_guard_status` with the linked default blob (all zeros), which must read as kAbsent. The kIntact and
+///     kTampered paths run the same derive → decrypt → check that the round-trip tests below exercise, but they read
+///     from `guard_blob`, a module-private symbol the host test cannot inject into. A device test with a real packed
+///     framework covers those paths.
+///
+///  2. The round-trip property: a blob the packer would write (the marker encrypted under the guard key) decrypts back
+///     to the marker when the code hash matches, and does not when it differs.
 
 #include "selfdecrypt/guard.h"
 

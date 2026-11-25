@@ -77,15 +77,19 @@ std::array<volatile std::uint8_t, kGuardSize> guard_blob{};
 GuardStatus at_rest_guard_status() {
   std::array<std::uint8_t, kGuardSize> blob{};
   bool any_nonzero = false;
+  // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index): i is bounded by kGuardSize.
   for (std::size_t i = 0; i < kGuardSize; i++) {
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index): i is bounded by kGuardSize.
     blob[i] = guard_blob[i];
     if (blob[i] != 0) {
       any_nonzero = true;
     }
   }
+  // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
+  // TODO: replace the all-zero sentinel with a non-zero "written" magic so an attacker who zeros the blob after packing
+  // does not fall into the kAbsent path. The current check is needed for development/unpacked builds (the packer never
+  // ran, so the blob is the compiled-in zeros) but it lets a post-pack zeroing attack skip the guard.
   if (!any_nonzero) {
-    return GuardStatus::kAbsent;  // the packer wrote nothing: an unpacked or development build.
+    return GuardStatus::kAbsent;
   }
 
   std::array<std::uint8_t, kSeedBytes> seed{};

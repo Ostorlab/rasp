@@ -8,7 +8,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
-#include <span>
 #include <vector>
 
 #include "selfdecrypt/chacha20.h"
@@ -83,44 +82,6 @@ TEST(AtRest, decryptRegion_whenTheRuntimeIsIntact_recoversThePlaintext) {
   decrypt_region(region, code_hash, kSeed, kNonce.data());
 
   EXPECT_EQ(region, plaintext);
-}
-
-TEST(AtRest, hashFunctions_whenAnyCoveredFunctionIsPatched_changesTheDigest) {
-  // Three stand-in functions: the decrypt path and two checks. The key must cover all of them, so patching a check (not
-  // the decrypt path) still changes the digest -- the attacker cannot keep decrypt intact and strip a check.
-  std::vector<std::uint8_t> decrypt_fn = {0xff, 0x83, 0x00, 0xd1, 0x01, 0x02, 0x03, 0x04};
-  std::vector<std::uint8_t> check_a = {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22};
-  std::vector<std::uint8_t> check_b = {0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00};
-  const std::array<CodeSpan, 3> regions = {CodeSpan{decrypt_fn}, CodeSpan{check_a}, CodeSpan{check_b}};
-  const std::array<std::uint8_t, kKeyBytes> intact = hash_functions(regions);
-
-  // The attacker leaves the decrypt path alone and patches only a check.
-  check_a[0] ^= 0x01U;
-  const std::array<CodeSpan, 3> patched_regions = {CodeSpan{decrypt_fn}, CodeSpan{check_a}, CodeSpan{check_b}};
-  const std::array<std::uint8_t, kKeyBytes> patched = hash_functions(patched_regions);
-
-  EXPECT_NE(intact, patched);
-}
-
-TEST(AtRest, hashFunctions_whenAllCoveredFunctionsAreIntact_givesTheSameDigest) {
-  const std::vector<std::uint8_t> a = {0x01, 0x02, 0x03, 0x04};
-  const std::vector<std::uint8_t> b = {0x05, 0x06, 0x07, 0x08};
-  const std::array<CodeSpan, 2> regions = {CodeSpan{a}, CodeSpan{b}};
-
-  EXPECT_EQ(hash_functions(regions), hash_functions(regions));
-}
-
-TEST(AtRest, hashFunctions_whenAByteMovesBetweenRegions_stillChangesTheDigest) {
-  // The length separators make region boundaries part of the input, so the same bytes split differently differ.
-  const std::vector<std::uint8_t> left = {0x01, 0x02, 0x03};
-  const std::vector<std::uint8_t> right = {0x04, 0x05};
-  const std::array<CodeSpan, 2> split_three_two = {CodeSpan{left}, CodeSpan{right}};
-
-  const std::vector<std::uint8_t> left2 = {0x01, 0x02};
-  const std::vector<std::uint8_t> right2 = {0x03, 0x04, 0x05};
-  const std::array<CodeSpan, 2> split_two_three = {CodeSpan{left2}, CodeSpan{right2}};
-
-  EXPECT_NE(hash_functions(split_three_two), hash_functions(split_two_three));
 }
 
 TEST(AtRest, decryptRegion_whenTheRuntimeIsPatched_doesNotRecoverThePlaintext) {

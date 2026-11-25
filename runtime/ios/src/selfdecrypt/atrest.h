@@ -33,23 +33,6 @@ inline constexpr std::size_t kKeyBytes = kKeySize;
 /// @return The 32-byte digest.
 [[nodiscard]] std::array<std::uint8_t, kKeyBytes> hash_region(std::span<const std::uint8_t> bytes);
 
-/// A span of the runtime's own code to fold into the key: the first bytes of a function the key must depend on.
-///
-/// The key covers more than the decrypt path: it covers the check functions too, so an attacker who leaves the decrypt
-/// code intact but patches a check still changes the key and breaks the decryption. Each entry is the start of one such
-/// function, read from the live binary.
-using CodeSpan = std::span<const std::uint8_t>;
-
-/// Hashes several code regions together into one digest, so a change to any of them changes the digest.
-///
-/// The regions are folded in order with a per-region separator, so patching any single function (a check, the decrypt
-/// path, the key derivation) changes the combined digest and therefore the key. A region that is empty or whose pointer
-/// is null is folded as its length alone, so a function the build could not locate does not silently drop the others.
-///
-/// @param regions The code regions to cover, such as the first bytes of each check and of the decrypt path.
-/// @return The 32-byte combined digest.
-[[nodiscard]] std::array<std::uint8_t, kKeyBytes> hash_functions(std::span<const CodeSpan> regions);
-
 /// Derives the region's ChaCha20 key from the runtime's code hash and the per-build seed.
 ///
 /// The key is `hash_region(seed || code_hash)`, so it depends on both the secret seed the packer embedded and the

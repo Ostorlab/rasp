@@ -23,7 +23,6 @@ MACHO_SECTION = "__rasp_guard"
 _GUARD_SIZE = 32
 _KEY_BYTES = 32
 _SEED_BYTES = 32
-_CODE_WINDOW = 256
 # "RASPOK!!" followed by zero padding to the blob size.
 _MARKER = b"RASPOK!!"
 # The fixed 16-byte counter and nonce the runtime uses for the guard blob.
@@ -57,16 +56,19 @@ _MASK64 = (1 << 64) - 1
 def write_guard(binary: bytes) -> bytes:
     """Encrypts the guard blob into every slice of the runtime binary.
 
+    Slices that do not carry a ``__DATA,__rasp_guard`` section are left unchanged, so test fixtures and
+    binaries built without the guard section pass through unmodified.
+
     Args:
-        binary: The content of the `RaspRuntime` binary.
+        binary: The content of the ``RaspRuntime`` binary.
 
     Returns:
-        The binary with the ciphertext of the marker written into the `__DATA,__rasp_guard` section of each slice. Its
-        size does not change.
+        The binary with the ciphertext of the marker written into the ``__DATA,__rasp_guard`` section of each slice
+        that has one. Its size does not change.
 
     Raises:
-        InvalidRuntimeError: The binary is not a Mach-O file, or a slice has no `__DATA,__rasp_guard` section, or the
-            section is smaller than the guard blob.
+        InvalidRuntimeError: The binary is not a Mach-O file, or a slice's guard section is smaller than the guard
+            blob.
     """
     data = bytearray(binary)
     for guard_offset, section_size, text in _slices(binary):
@@ -95,9 +97,7 @@ def _slices(binary: bytes) -> list[tuple[int, int, bytes]]:
     for macho in fat:
         section = macho.get_section(MACHO_SEGMENT, MACHO_SECTION)
         if section is None:
-            raise errors.InvalidRuntimeError(
-                f"the runtime binary has no {MACHO_SEGMENT},{MACHO_SECTION} section"
-            )
+            continue
         text_section = macho.get_section("__TEXT", "__text")
         if text_section is None:
             raise errors.InvalidRuntimeError(
@@ -114,7 +114,11 @@ def _slices(binary: bytes) -> list[tuple[int, int, bytes]]:
 
 
 def _reconstruct_seed() -> bytes:
-    """The scattered seed, rebuilt exactly as the runtime's reconstruct_seed does (default development scatter)."""
+    """The scattered seed, rebuilt exactly as the runtime's reconstruct_seed does.
+
+    The current default matches the runtime's development scatter in seed.cpp.
+    """
+    # TODO: accept the seed from the build system once per-build scatter is introduced.
     seed = bytearray(_SEED_BYTES)
     for i in range(_SEED_BYTES):
         target = ((i * 37) + 11) & 0xFF

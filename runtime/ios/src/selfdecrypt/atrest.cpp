@@ -64,28 +64,6 @@ std::array<std::uint8_t, kKeyBytes> hash_region(std::span<const std::uint8_t> by
   return digest;
 }
 
-std::array<std::uint8_t, kKeyBytes> hash_functions(std::span<const CodeSpan> regions) {
-  // Concatenate each region with an eight-byte little-endian length separator, then hash the whole. The separator makes
-  // the boundaries part of the input, so moving a byte from one region to the next still changes the digest, and a
-  // missing region (null or empty) still contributes its length rather than being skipped silently.
-  std::vector<std::uint8_t> material;
-  std::size_t total = 0;
-  for (const CodeSpan& region : regions) {
-    total += region.size() + sizeof(std::uint64_t);
-  }
-  material.reserve(total);
-  for (const CodeSpan& region : regions) {
-    const auto length = static_cast<std::uint64_t>(region.size());
-    for (std::size_t i = 0; i < sizeof(length); i++) {
-      material.push_back(static_cast<std::uint8_t>(length >> (8U * i)));
-    }
-    if (region.data() != nullptr) {
-      material.insert(material.end(), region.begin(), region.end());
-    }
-  }
-  return hash_region(material);
-}
-
 std::array<std::uint8_t, kKeyBytes> derive_key(const std::array<std::uint8_t, kKeyBytes>& code_hash,
                                                std::span<const std::uint8_t> seed) {
   // key = hash_region(seed || code_hash): binds the key to both the embedded secret and the intact code.

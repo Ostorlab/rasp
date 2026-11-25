@@ -4,6 +4,7 @@
 
 #include "selfdecrypt/chacha20.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -55,12 +56,15 @@ void chacha20_block(const std::array<std::uint32_t, kStateWords>& in, std::array
 
 /// Reads four bytes as a little-endian 32-bit word.
 [[nodiscard]] std::uint32_t load32_le(const std::uint8_t* p) {
+  // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic): constant offsets into the caller's buffer.
   return static_cast<std::uint32_t>(p[0]) | (static_cast<std::uint32_t>(p[1]) << 8U) |
          (static_cast<std::uint32_t>(p[2]) << 16U) | (static_cast<std::uint32_t>(p[3]) << 24U);
+  // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 }
 
 }  // namespace
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): key and nonce16 are distinct by size (32 vs 16 bytes).
 void chacha20_xor(std::uint8_t* data, std::size_t len, const std::uint8_t* key, const std::uint8_t* nonce16) {
   std::array<std::uint32_t, kStateWords> state{};
   state[0] = 0x61707865U;
@@ -91,10 +95,7 @@ void chacha20_xor(std::uint8_t* data, std::size_t len, const std::uint8_t* key, 
       keystream[(4 * i) + 3] = static_cast<std::uint8_t>(block[i] >> 24U);
     }
     // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
-    std::size_t take = len - off;
-    if (take > kBlockBytes) {
-      take = kBlockBytes;
-    }
+    std::size_t take = std::min(len - off, kBlockBytes);
     for (std::size_t i = 0; i < take; i++) {
       // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic,cppcoreguidelines-pro-bounds-constant-array-index)
       data[off + i] = static_cast<std::uint8_t>(data[off + i] ^ keystream[i]);

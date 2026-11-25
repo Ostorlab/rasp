@@ -28,7 +28,7 @@ namespace {
   bytes.reserve(hex.size() / 2);
   for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index): i is bounded by hex.size().
-    bytes.push_back(static_cast<std::uint8_t>((nibble(hex[i]) << 4U) | nibble(hex[i + 1])));
+    bytes.push_back(static_cast<std::uint8_t>(static_cast<unsigned>(nibble(hex[i])) << 4U | nibble(hex[i + 1])));
   }
   return bytes;
 }
@@ -37,6 +37,7 @@ namespace {
 [[nodiscard]] std::array<std::uint8_t, kKeySize> vector_key() {
   std::array<std::uint8_t, kKeySize> key{};
   for (std::size_t i = 0; i < key.size(); ++i) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index): i is bounded by key.size().
     key[i] = static_cast<std::uint8_t>(i);
   }
   return key;
@@ -47,7 +48,7 @@ constexpr std::string_view kRfcPlaintext =
     "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be "
     "it.";
 
-/// RFC 8439's block counter 1 and nonce, as the 16 bytes the cipher takes.
+/// RFC 8439 §2.4.2 block counter 1 and nonce (000000000000004a00000000), as the 16 bytes the cipher takes.
 constexpr std::string_view kRfcCounterAndNonce = "01000000000000000000004a00000000";
 
 /// RFC 8439's ciphertext for kRfcPlaintext.
