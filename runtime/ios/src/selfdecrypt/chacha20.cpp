@@ -95,7 +95,7 @@ void chacha20_xor(std::uint8_t* data, std::size_t len, const std::uint8_t* key, 
       keystream[(4 * i) + 3] = static_cast<std::uint8_t>(block[i] >> 24U);
     }
     // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
-    std::size_t take = std::min(len - off, kBlockBytes);
+    const std::size_t take = std::min(len - off, kBlockBytes);
     for (std::size_t i = 0; i < take; i++) {
       // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic,cppcoreguidelines-pro-bounds-constant-array-index)
       data[off + i] = static_cast<std::uint8_t>(data[off + i] ^ keystream[i]);
