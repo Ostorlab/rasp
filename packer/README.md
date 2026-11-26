@@ -42,7 +42,7 @@ Both `rasp pack android` and `rasp pack ios` take these options. In Python, `pla
 - `--checks` (`checks=`): the check groups the app keeps running. `identity` is always added. Without `--checks`, the command line runs every group the target platform supports (`checks=` in Python is required). An unknown group is skipped with a warning. The warning suggests the closest matching group name. With `--strict`, `rasp pack` exits with status 1 instead. See the groups in the [repository's README](../README.md#checks).
 - `--strict`: print an error for every unknown check group, write nothing, and exit with status 1, instead of skipping it with a warning.
 - `--output` (`output=`): where to write the protected app; an existing file at that path is refused. The command line defaults to `<name>-protected<extension>` next to the app, such as `app-protected.apk` for `app.apk`.
-- `--json`: prints the result as one JSON object with sorted keys instead of text: `build_id`, `checks` (an array of check ids), `output` (the path as a string), `package_name`, `skipped_checks` (an array of check ids) and `version`. Warnings still go to stderr.
+- `--json`: prints the result as one JSON object with sorted keys instead of text: `build_id`, `checks` (an array of check ids), `dropped_abis` (an array of ABIs), `output` (the path as a string), `package_name`, `skipped_checks` (an array of check ids) and `version`. Warnings still go to stderr.
 
 Only `rasp pack android` takes these options. `rasp pack ios` does not know them, and in Python `pack` refuses them for an iOS app.
 
@@ -55,6 +55,7 @@ Only `rasp pack android` takes these options. `rasp pack ios` does not know them
 - the app's package name (`package_name`), version (`version`) and build id (`build_id`)
 - the check groups the app runs (`checks`)
 - the check groups it skipped (`skipped_checks`)
+- the ABIs whose native libraries it dropped (`dropped_abis`)
 
 ## How do I sign the protected app?
 

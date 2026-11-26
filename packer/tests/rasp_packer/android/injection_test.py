@@ -48,25 +48,87 @@ def testNativeAbis_whenNoNativeLibraries_returnsEmpty() -> None:
     assert injection.native_abis(_apk(["classes.dex", "resources.arsc"])) == set()
 
 
-def testLibraryEntries_whenAppHasAbis_returnsOnePerAppAbi() -> None:
-    apk = _apk(["lib/arm64-v8a/libapp.so"])
-    entries = injection.library_entries(
-        apk, _artifacts(["arm64-v8a", "x86_64"]), "libqglm.so"
+def testResolveAbis_whenAppHasAbisAndNoChoice_returnsTheAppAbis() -> None:
+    abis = injection.resolve_abis({"arm64-v8a"}, _artifacts(["arm64-v8a", "x86_64"]))
+    assert abis == {"arm64-v8a"}
+
+
+def testResolveAbis_whenAppHasNoAbisAndNoChoice_returnsEveryRuntimeAbi() -> None:
+    assert injection.resolve_abis(set(), _artifacts(["a", "b"])) == {"a", "b"}
+
+
+def testResolveAbis_whenAppAbiHasNoRuntimeAndNoChoice_raisesNamingTheOption() -> None:
+    with pytest.raises(
+        errors.UnsupportedAbiError,
+        match=r"^the runtime is not built for the app's ABIs: x86; pass --abis to drop it$",
+    ):
+        injection.resolve_abis({"arm64-v8a", "x86"}, _artifacts(["arm64-v8a"]))
+
+
+def testResolveAbis_whenChoiceExcludesAnAppAbi_returnsTheChoice() -> None:
+    abis = injection.resolve_abis(
+        {"arm64-v8a", "x86"}, _artifacts(["arm64-v8a", "x86_64"]), {"arm64-v8a"}
     )
-    assert set(entries) == {"lib/arm64-v8a/libqglm.so"}
+    assert abis == {"arm64-v8a"}
 
 
-def testLibraryEntries_whenAppHasNoAbis_returnsOnePerRuntimeAbi() -> None:
-    entries = injection.library_entries(
-        _apk(["classes.dex"]), _artifacts(["a", "b"]), "libqglm.so"
+def testResolveAbis_whenAppHasNoAbisAndAChoice_returnsTheChoice() -> None:
+    abis = injection.resolve_abis(
+        set(), _artifacts(["arm64-v8a", "x86_64"]), {"x86_64"}
     )
-    assert set(entries) == {"lib/a/libqglm.so", "lib/b/libqglm.so"}
+    assert abis == {"x86_64"}
 
 
-def testLibraryEntries_whenAppAbiHasNoRuntime_raisesUnsupportedAbiError() -> None:
-    apk = _apk(["lib/riscv64/libapp.so"])
-    with pytest.raises(errors.UnsupportedAbiError):
-        injection.library_entries(apk, _artifacts(["arm64-v8a"]), "libqglm.so")
+def testResolveAbis_whenChosenAbiHasNoRuntime_raisesUnsupportedAbiError() -> None:
+    with pytest.raises(
+        errors.UnsupportedAbiError,
+        match=r"^the runtime is not built for the chosen ABIs: x86$",
+    ):
+        injection.resolve_abis(
+            {"arm64-v8a", "x86"}, _artifacts(["arm64-v8a"]), {"arm64-v8a", "x86"}
+        )
+
+
+def testResolveAbis_whenAppShipsNoLibrariesForAChosenAbi_raisesInvalidAbisError() -> (
+    None
+):
+    with pytest.raises(
+        errors.InvalidAbisError,
+        match=r"^the app ships no native libraries for the chosen ABIs: x86_64;",
+    ):
+        injection.resolve_abis(
+            {"arm64-v8a"}, _artifacts(["arm64-v8a", "x86_64"]), {"arm64-v8a", "x86_64"}
+        )
+
+
+def testResolveAbis_whenChoiceIsEmpty_raisesInvalidAbisError() -> None:
+    with pytest.raises(errors.InvalidAbisError, match="no ABI is chosen"):
+        injection.resolve_abis({"arm64-v8a"}, _artifacts(["arm64-v8a"]), set())
+
+
+def testLibraryEntries_whenGivenAbis_returnsOnePerAbiUnderTheFilename() -> None:
+    entries = injection.library_entries(
+        {"a", "b"}, _artifacts(["a", "b", "c"]), "libx.so"
+    )
+    assert entries == {"lib/a/libx.so": b"a so", "lib/b/libx.so": b"b so"}
+
+
+def testAbiFolderEntries_whenAbisGiven_returnsEveryEntryInTheirFolders() -> None:
+    names = [
+        "lib/x86/libapp.so",
+        "lib/x86/libother.so",
+        "lib/x86_64/libapp.so",
+        "lib/arm64-v8a/libapp.so",
+        "classes.dex",
+    ]
+    assert injection.abi_folder_entries(names, "lib/", {"x86"}) == {
+        "lib/x86/libapp.so",
+        "lib/x86/libother.so",
+    }
+
+
+def testAbiFolderEntries_whenNoAbis_returnsEmpty() -> None:
+    assert injection.abi_folder_entries(["lib/x86/libapp.so"], "lib/", set()) == set()
 
 
 def testStaleSignatureEntries_whenV1SignaturePresent_returnsThem() -> None:

@@ -35,6 +35,9 @@ class PackResult:
         skipped_checks: The ids of the chosen check groups that are not groups of the platform,
             each once, in the order the caller gave them. The packer skipped them: the protected
             app does not run them.
+        dropped_abis: The ABIs whose native libraries the packer removed from an Android app because
+            they are not among the chosen ABIs, sorted. The protected app ships no native code for
+            them.
     """
 
     output: pathlib.Path
@@ -43,6 +46,7 @@ class PackResult:
     build_id: str
     checks: tuple[str, ...]
     skipped_checks: tuple[str, ...]
+    dropped_abis: tuple[str, ...] = ()
 
 
 def pack(
@@ -55,6 +59,7 @@ def pack(
     encrypt_packages: collections.abc.Sequence[str] = (),
     mapping: pathlib.Path | None = None,
     pin_certificate: pathlib.Path | None = None,
+    abis: collections.abc.Sequence[str] | None = None,
 ) -> PackResult:
     """Protects a built app: adds the runtime and writes the protected app to `output`.
 
@@ -92,10 +97,14 @@ def pack(
             DER form; the pack folds the certificate's digest into the key schedule, so a re-signed
             install derives a different key and nothing decrypts. None leaves the pack unpinned. Only
             Android apps are pinned: it is refused for iOS.
+        abis: The ABIs the protected Android app supports. The packer removes the app's native
+            libraries for every other ABI, reports those ABIs in the result's `dropped_abis`, and adds
+            the runtime for the chosen ABIs only. None keeps the app's own ABIs. Only Android apps
+            have ABIs: it is refused for iOS.
 
     Returns:
         The protected app, the app's package name and version, the build id, the check groups the
-        app runs, and the skipped check ids.
+        app runs, the skipped check ids, and the dropped ABIs.
 
     Raises:
         InvalidBuildIdError: The build id is empty or has control characters.
@@ -107,6 +116,8 @@ def pack(
         InvalidAppError: The app file cannot be read.
         MappingError: A mapping file is given for an iOS app, or it cannot be read.
         InvalidCertificateError: A pinned certificate is given for an iOS app, or it cannot be read.
+        InvalidAbisError: ABIs are given for an iOS app, or they cannot be packed; see the Android
+            packer.
         Error: The app cannot be packed; see the platform's packer.
     """
     _refuse_android_options(
@@ -114,6 +125,7 @@ def pack(
         mapping=mapping,
         pin_certificate=pin_certificate,
         encrypt_packages=encrypt_packages,
+        abis=abis,
     )
     _check_build_id(build_id)
     _check_packages(encrypt_packages)
@@ -131,16 +143,20 @@ def pack(
         checks_mask=check_groups.checks_mask(platform, resolved_checks.checks),
     )
     app_identity: identity.AppIdentity
+    dropped_abis: tuple[str, ...] = ()
     match platform:
         case platforms.Platform.ANDROID:
-            app_identity = android_packer.pack(
+            android_result = android_packer.pack(
                 app=app,
                 output=output,
                 config=config,
                 mapping=mapping,
                 encrypt_packages=encrypt_packages,
                 pin_certificate=pin_certificate,
+                abis=abis,
             )
+            app_identity = android_result.app_identity
+            dropped_abis = android_result.dropped_abis
         case platforms.Platform.IOS:
             app_identity = ios_packer.pack(app=app, output=output, config=config)
     return PackResult(
@@ -150,6 +166,7 @@ def pack(
         build_id=build_id,
         checks=resolved_checks.checks,
         skipped_checks=resolved_checks.skipped,
+        dropped_abis=dropped_abis,
     )
 
 
@@ -168,6 +185,7 @@ def _refuse_android_options(
     mapping: pathlib.Path | None,
     pin_certificate: pathlib.Path | None,
     encrypt_packages: collections.abc.Sequence[str],
+    abis: collections.abc.Sequence[str] | None,
 ) -> None:
     """Refuses the Android-only options for an app of another platform."""
     if platform is platforms.Platform.ANDROID:
@@ -182,6 +200,8 @@ def _refuse_android_options(
         raise errors.InvalidPackageError(
             "packages to encrypt apply only to Android apps"
         )
+    if abis is not None:
+        raise errors.InvalidAbisError("ABIs apply only to Android apps")
 
 
 def _check_build_id(build_id: str) -> None:

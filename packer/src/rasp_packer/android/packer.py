@@ -108,6 +108,20 @@ class AabSplitter(typing.Protocol):
     ) -> split_module.Split: ...
 
 
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class PackResult:
+    """What an Android pack produced.
+
+    Attributes:
+        app_identity: The app's package name and version, read from its manifest.
+        dropped_abis: The ABIs whose native libraries the pack removed because they are not chosen,
+            sorted.
+    """
+
+    app_identity: identity.AppIdentity
+    dropped_abis: tuple[str, ...]
+
+
 def pack(
     *,
     app: pathlib.Path,
@@ -120,7 +134,8 @@ def pack(
     aab_splitter: AabSplitter = split_module.split_from_dex_entries,
     generator: random.Random | None = None,
     pin_certificate: pathlib.Path | None = None,
-) -> identity.AppIdentity:
+    abis: collections.abc.Collection[str] | None = None,
+) -> PackResult:
     """Packs an Android app (APK or AAB), writing the protected output.
 
     Args:
@@ -137,9 +152,12 @@ def pack(
         aab_splitter: Splits an AAB's classes from pre-extracted DEX entries.
         generator: The source of the pack's per-app random names. None draws fresh entropy; a seeded
             generator makes a pack's names reproducible.
+        abis: The ABIs the protected app supports. The pack removes the app's native libraries for
+            every other ABI and adds the runtime for these only. None keeps the app's own ABIs.
 
     Returns:
-        The app's package name and version, read from its manifest.
+        The app's package name and version, read from its manifest, and the ABIs whose native
+        libraries the pack removed.
 
     Raises:
         InvalidApkError: The APK is invalid or missing required entries.
@@ -148,7 +166,10 @@ def pack(
         MissingRuntimeArtifactError: A prebuilt runtime artifact is missing.
         InvalidRuntimeError: A runtime library is not an ELF file or has no ``.rasp_config`` section.
         ConfigTooLargeError: The runtime's config does not fit in a runtime library.
-        UnsupportedAbiError: The app ships native libraries for an ABI the runtime is not built for.
+        UnsupportedAbiError: The runtime is not built for an ABI the app ships native libraries for,
+            without `abis`, or for a chosen ABI.
+        InvalidAbisError: `abis` is empty, or names an ABI the app ships no native libraries for while
+            it ships some for other ABIs.
         AlreadyProtectedError: The app was already protected: it holds the pack's map entry, or its
             manifest still names the older vendor-named stub.
         MappingError: The mapping file cannot be read.
@@ -158,6 +179,7 @@ def pack(
         artifacts = resources_module.load()
     pinned_signer = _read_pinned_certificate(pin_certificate)
     class_mapping = _load_mapping(mapping) if mapping is not None else None
+    chosen_abis = frozenset(abis) if abis is not None else None
     if is_aab(app) is True:
         return _pack_aab(
             app=app,
@@ -169,6 +191,7 @@ def pack(
             splitter=aab_splitter,
             generator=generator,
             pinned_signer=pinned_signer,
+            chosen_abis=chosen_abis,
         )
     return _pack_apk(
         app=app,
@@ -180,6 +203,7 @@ def pack(
         splitter=splitter,
         generator=generator,
         pinned_signer=pinned_signer,
+        chosen_abis=chosen_abis,
     )
 
 
@@ -254,7 +278,8 @@ def _pack_apk(
     splitter: Splitter,
     generator: random.Random | None,
     pinned_signer: bytes | None,
-) -> identity.AppIdentity:
+    chosen_abis: frozenset[str] | None,
+) -> PackResult:
     """Packs an APK."""
     apk = apk_archive.Apk.read(app)
     dex_names = apk.dex_names()
@@ -264,6 +289,9 @@ def _pack_apk(
     app_identity = apk_manifest_module.app_identity(manifest)
     if MAP_ENTRY in apk.names():
         raise errors.AlreadyProtectedError("the app is already protected")
+    app_abis = injection.native_abis(apk)
+    abis = injection.resolve_abis(app_abis, artifacts, chosen_abis)
+    dropped_abis = app_abis - abis
 
     artifacts, names = defingerprint.fingerprint_free_artifacts(
         artifacts,
@@ -289,13 +317,17 @@ def _pack_apk(
     libraries: dict[str, bytes] = {}
     digests: dict[str, bytes] = {}
     for name, library in injection.library_entries(
-        apk, artifacts, names.library_filename
+        abis, artifacts, names.library_filename
     ).items():
         configured = runtime_library.write_config(library, config)
         libraries[name] = self_encrypt.encrypt_library(configured)
         digests[name] = hashlib.sha256(runtime_library.text_region(configured)).digest()
     base_dexes = injection.base_dex_entries(result.framework, artifacts.stub_dex)
-    remove_set = set(dex_names) | injection.stale_signature_entries(apk)
+    remove_set = (
+        set(dex_names)
+        | injection.stale_signature_entries(apk)
+        | injection.abi_folder_entries(apk.names(), "lib/", dropped_abis)
+    )
     apk_stored_entries = _stored_apk_entries(
         apk, patched_manifest, base_dexes, libraries, remove_set
     )
@@ -327,9 +359,11 @@ def _pack_apk(
             **base_dexes,
             **lib_entries,
         },
-        remove=set(dex_names) | injection.stale_signature_entries(apk),
+        remove=remove_set,
     )
-    return app_identity
+    return PackResult(
+        app_identity=app_identity, dropped_abis=tuple(sorted(dropped_abis))
+    )
 
 
 def _pack_aab(
@@ -343,7 +377,8 @@ def _pack_aab(
     splitter: AabSplitter,
     generator: random.Random | None,
     pinned_signer: bytes | None,
-) -> identity.AppIdentity:
+    chosen_abis: frozenset[str] | None,
+) -> PackResult:
     """Packs an AAB."""
     aab = aab_archive.Aab.read(app)
     dex_names = aab.dex_names()
@@ -354,6 +389,9 @@ def _pack_aab(
     app_identity = aab_manifest_module.app_identity(manifest)
     if AAB_MAP_ENTRY in aab.names():
         raise errors.AlreadyProtectedError("the app is already protected")
+    app_abis = _aab_native_abis(aab)
+    abis = injection.resolve_abis(app_abis, artifacts, chosen_abis)
+    dropped_abis = app_abis - abis
 
     artifacts, names = defingerprint.fingerprint_free_artifacts(
         artifacts,
@@ -381,7 +419,6 @@ def _pack_aab(
         ),
         names.stub_class_dotted,
     )
-    abis = injection.resolve_abis(_aab_native_abis(aab), artifacts)
     libraries: dict[str, bytes] = {}
     digests: dict[str, bytes] = {}
     for abi in sorted(abis):
@@ -434,9 +471,12 @@ def _pack_aab(
             **base_dexes,
             **lib_entries,
         },
-        remove=set(dex_names),
+        remove=set(dex_names)
+        | injection.abi_folder_entries(aab.names(), _AAB_LIB_PREFIX, dropped_abis),
     )
-    return app_identity
+    return PackResult(
+        app_identity=app_identity, dropped_abis=tuple(sorted(dropped_abis))
+    )
 
 
 def _packages_to_encrypt(

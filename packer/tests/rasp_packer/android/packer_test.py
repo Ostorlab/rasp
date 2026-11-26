@@ -54,6 +54,11 @@ _PACKED_CONFIG = dataclasses.replace(_CONFIG, stub_class=_NAMES.stub_class_dotte
 _LIBRARY_ENTRY = f"lib/arm64-v8a/{_NAMES.library_filename}"
 _ARM64_SO = (conftest.RUNTIME_CONFIG_DATA / "librasp.so").read_bytes()
 _ARSC = b"resources table"
+_ARM64_AND_X86_LIBRARIES = (
+    "lib/arm64-v8a/libapp.so",
+    "lib/x86/libapp.so",
+    "lib/x86/libextra.so",
+)
 
 _FRAMEWORK = (b"framework dex zero", b"framework dex one")
 _BUSINESS = (
@@ -126,6 +131,7 @@ def _pack(
     native_libraries: collections.abc.Sequence[str] = (),
     artifacts: resources.Artifacts | None = None,
     pin_certificate: pathlib.Path | None = None,
+    abis: collections.abc.Collection[str] | None = None,
 ) -> pathlib.Path:
     app = tmp_path / "app.apk"
     output = tmp_path / "protected.apk"
@@ -139,6 +145,7 @@ def _pack(
         # The seeded generator makes the pack's per-app names the predicted _NAMES.
         generator=random.Random(0),
         pin_certificate=pin_certificate,
+        abis=abis,
     )
     return output
 
@@ -722,11 +729,121 @@ def testPack_whenAppDeclaresItsOwnComponentFactory_packsAndReplacesIt(
     assert axml.read_app_component_factory(packed_manifest) == _NAMES.stub_class_dotted
 
 
-def testPack_whenAppAbiHasNoRuntime_raisesUnsupportedAbiError(
+def testPack_whenAppAbiHasNoRuntime_raisesUnsupportedAbiErrorNamingTheOption(
     tmp_path: pathlib.Path,
 ) -> None:
-    with pytest.raises(errors.UnsupportedAbiError):
+    with pytest.raises(errors.UnsupportedAbiError, match="pass --abis to drop it"):
         _pack(tmp_path, native_libraries=["lib/armeabi-v7a/libapp.so"])
+
+
+def testPack_whenAbisExcludeAnAppAbi_dropsItsLibrariesAndReportsIt(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "app.apk"
+    output = tmp_path / "protected.apk"
+    _make_apk(app, native_libraries=_ARM64_AND_X86_LIBRARIES)
+
+    result = packer.pack(
+        app=app,
+        output=output,
+        config=_CONFIG,
+        artifacts=_artifacts(),
+        splitter=_recorded_split(),
+        generator=random.Random(0),
+        abis=["arm64-v8a"],
+    )
+
+    with zipfile.ZipFile(output) as archive:
+        names = set(archive.namelist())
+    assert result.dropped_abis == ("x86",)
+    assert [name for name in names if name.startswith("lib/x86/")] == []
+    assert {name for name in names if name.startswith("lib/")} == {
+        "lib/arm64-v8a/libapp.so",
+        _LIBRARY_ENTRY,
+    }
+
+
+def testPack_whenAbisDropAnAppAbi_recoversTheRootWithTheSameConfigAndStub(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The dropped libraries are not in the shipped APK, so the APK digest the runtime gathers must not
+    cover them either; the root recovers from the APK as shipped."""
+    output = _pack(
+        tmp_path, native_libraries=_ARM64_AND_X86_LIBRARIES, abis=["arm64-v8a"]
+    )
+
+    with zipfile.ZipFile(output) as archive:
+        root = _recover_root(archive)
+        assert root is not None
+        map_text = _decrypt_map(archive, root).decode("utf-8")
+        config = runtime_library.read_config(archive.read(_LIBRARY_ENTRY))
+        stub = archive.read("classes3.dex")
+    assert len([line for line in map_text.splitlines() if line]) == 3
+    assert config == _PACKED_CONFIG.to_json()
+    assert stub == _PATCHED_STUB_DEX
+
+
+def testPack_whenAppHasNoNativeLibrariesAndAbisGiven_shipsTheRuntimeOnlyForThem(
+    tmp_path: pathlib.Path,
+) -> None:
+    artifacts = resources.Artifacts(
+        stub_dex=_STUB_DEX, libraries={"arm64-v8a": _ARM64_SO, "x86_64": _ARM64_SO}
+    )
+
+    output = _pack(tmp_path, artifacts=artifacts, abis=["arm64-v8a"])
+
+    with zipfile.ZipFile(output) as archive:
+        libraries = [name for name in archive.namelist() if name.startswith("lib/")]
+    assert libraries == [_LIBRARY_ENTRY]
+
+
+def testPack_whenNoAbisGiven_keepsEveryAppLibraryAndDropsNothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = tmp_path / "app.apk"
+    output = tmp_path / "protected.apk"
+    _make_apk(app, native_libraries=["lib/arm64-v8a/libapp.so"])
+
+    result = packer.pack(
+        app=app,
+        output=output,
+        config=_CONFIG,
+        artifacts=_artifacts(),
+        splitter=_recorded_split(),
+        generator=random.Random(0),
+    )
+
+    with zipfile.ZipFile(output) as archive:
+        names = set(archive.namelist())
+    assert result.dropped_abis == ()
+    assert {"lib/arm64-v8a/libapp.so", _LIBRARY_ENTRY} <= names
+
+
+@pytest.mark.parametrize(
+    ("abis", "error", "message"),
+    [
+        (["arm64-v8a", "x86"], errors.UnsupportedAbiError, "not built for the chosen"),
+        (["arm64-v8a", "x86_64"], errors.InvalidAbisError, "no native libraries for"),
+        ([], errors.InvalidAbisError, "no ABI is chosen"),
+    ],
+    ids=["runtime not built for it", "app ships nothing for it", "empty choice"],
+)
+def testPack_whenAbisCannotBePacked_raisesAndWritesNothing(
+    tmp_path: pathlib.Path, abis: list[str], error: type[errors.Error], message: str
+) -> None:
+    artifacts = resources.Artifacts(
+        stub_dex=_STUB_DEX, libraries={"arm64-v8a": _ARM64_SO, "x86_64": _ARM64_SO}
+    )
+
+    with pytest.raises(error, match=message):
+        _pack(
+            tmp_path,
+            native_libraries=_ARM64_AND_X86_LIBRARIES,
+            artifacts=artifacts,
+            abis=abis,
+        )
+
+    assert (tmp_path / "protected.apk").exists() is False
 
 
 def testPack_whenNoPrimaryDex_raisesInvalidApkError(tmp_path: pathlib.Path) -> None:
@@ -780,7 +897,7 @@ def testPack_whenAManifestChunkHasSizeZero_raisesManifestError(
 def testPack_whenValidApk_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
     app = tmp_path / "app.apk"
     _make_apk(app)
-    app_identity = packer.pack(
+    result = packer.pack(
         app=app,
         output=tmp_path / "out.apk",
         config=_CONFIG,
@@ -788,8 +905,8 @@ def testPack_whenValidApk_returnsTheAppIdentity(tmp_path: pathlib.Path) -> None:
         splitter=_recorded_split(),
         generator=random.Random(0),
     )
-    assert app_identity.package_name == _PACKAGE
-    assert app_identity.version == "2.4.1"
+    assert result.app_identity.package_name == _PACKAGE
+    assert result.app_identity.version == "2.4.1"
 
 
 def _certificate(name: str) -> x509.Certificate:
