@@ -87,6 +87,7 @@ TEST(Panic, detect_forEverySignal_detectsOnlyItsPositiveFinding) {
       {.signal = "hook.dyld_env", .positive = std::string("/usr/lib/tweak.dylib"), .negative = std::string()},
       {.signal = "hook.frida_port", .positive = true, .negative = false},
       {.signal = "hook.inline", .positive = Strings{"open"}, .negative = Strings{}},
+      {.signal = "hook.code_origin", .positive = Strings{"gum-js-loop -> [anon]"}, .negative = Strings{}},
       {.signal = "id.debuggable", .positive = true, .negative = false},
       {.signal = "integ.monitor_alive", .positive = false, .negative = true},
       {.signal = "jb.fs_paths", .positive = Strings{"/var/jb"}, .negative = Strings{}},
@@ -125,6 +126,7 @@ TEST(Panic, detect_forAnInformationalSignal_neverDetectsByValue) {
       {"id.team_id", std::string("ATTACKER01")},
       {"id.cdhash", std::string("0123456789abcdef0123456789abcdef01234567")},
       {"integ.text_sha256", std::string("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")},
+      {"hook.exec_origin", Strings{"7f00-7f10 r-xp 00000000 00:00 0"}},
   };
 
   for (const auto& [signal, value] : cases) {

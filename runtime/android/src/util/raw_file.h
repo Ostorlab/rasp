@@ -1,8 +1,9 @@
-/// read_proc_file and first_proc_line_matching, which read kernel-generated files through direct system calls.
+/// Readers of kernel files, file ranges and the process's own memory, through direct system calls.
 
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -72,5 +73,33 @@ using LinePredicate = bool (*)(std::string_view);
 [[nodiscard]] std::optional<std::string> first_proc_line_matching(std::string_view path, LinePredicate matches,
                                                                   std::size_t cap,
                                                                   ProcOpener open_file = open_proc_file);
+
+/// Opens the file at `path` read-only with close-on-exec, through a direct system call, on any filesystem.
+///
+/// @return The descriptor, or the negative errno.
+[[nodiscard]] long open_file(std::string_view path);
+
+/// Reads up to `size` bytes at `offset` of the file `opener` opens at `path`.
+///
+/// @return The bytes read, fewer when the file ends or the rest can't be read, or nothing when the file can't be opened
+/// or the first read fails.
+[[nodiscard]] std::optional<std::string> read_file_range(std::string_view path, std::uint64_t offset, std::size_t size,
+                                                         ProcOpener opener = open_file);
+
+/// Reads up to `size` bytes of the process's own memory at `address` with process_vm_readv, so memory that isn't mapped
+/// reads as nothing instead of faulting. An app process isn't dumpable, so its own `/proc/self/mem` belongs to root.
+///
+/// @return The bytes read, fewer when the rest isn't mapped, or nothing when nothing at `address` is.
+[[nodiscard]] std::optional<std::string> read_own_memory(std::uintptr_t address, std::size_t size);
+
+/// The function a check reads the process's own memory with. The shipped runtime uses read_own_memory.
+using MemoryReader = std::optional<std::string> (*)(std::uintptr_t, std::size_t);
+
+/// How a check reads the process: its kernel files, its memory, and other files.
+struct ProcessAccess {
+  ProcReader read = read_proc_file;
+  MemoryReader read_memory = read_own_memory;
+  ProcOpener open = open_file;
+};
 
 }  // namespace rasp::util
