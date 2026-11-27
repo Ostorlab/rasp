@@ -14,6 +14,10 @@ add_library(RaspRuntime SHARED
   src/checks/mitm.cpp
   src/checks/virtualizer.cpp
   src/panic/end_process.cpp
+  src/selfdecrypt/atrest.cpp
+  src/selfdecrypt/chacha20.cpp
+  src/selfdecrypt/guard.cpp
+  src/selfdecrypt/seed.cpp
   src/startup.cpp
   src/util/macho.cpp
   src/util/sha256.cpp)
